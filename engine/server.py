@@ -133,7 +133,8 @@ def identify(url):
         if _edit_worthy(src, fp) and (base_title or E._is_named_credit(src.get("credit_title"))):
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
-                base_title, base_artist, edit_label, known_dir=mdir))
+                base_title, base_artist, edit_label, known_dir=mdir,
+                handle=src.get("handle")))
             ranked = [c for c in edit.get("ranked", []) if c.get("score", -1) > 0]
             for c in ranked[:6]:
                 candidates.append({"title": c["title"], "uploader": c["uploader"],

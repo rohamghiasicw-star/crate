@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from find_song import (resolve, scrape_music, fetch, cut, duration_of,
                        windows_for, shazam, SWEEP)
 import ig
+import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
 
 try:
     from curl_cffi import requests as creq   # real-browser TLS, beats TikTok's wall
@@ -394,9 +395,11 @@ def names_an_edit(credit_title, credit_author):
     return bool(EDIT_WORDS.search("%s %s" % (credit_title or "", credit_author or "")))
 
 
-def build_queries(credit_title, credit_author, base_title, base_artist, edit_label):
+def build_queries(credit_title, credit_author, base_title, base_artist, edit_label, handle=None):
     """The credit usually NAMES the edit ('cool for the summer hoodtrap by Kryd').
-    When it's just 'original sound', fall back to the base song + edit direction."""
+    When it's just 'original sound', fall back to the base song + edit direction.
+    Edits are niche - you find them by NAME (song + edit tag, the creator's handle),
+    never by plays - so the queries deliberately target the edit tags directly."""
     q, seen = [], set()
     def add(s):
         s = _clean(s)
@@ -412,13 +415,20 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         # Shazam often matches a WINDOW and names a qualified version ("worry
         # (Instrumental Slowed)"), but the exact edit may be the core song in a
         # different arrangement. Strip the qualifier and search the core + the
-        # common edit types (edits are niche - you find them by name, not by plays).
+        # common edit tags the niche uploads actually carry.
         core = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip()
         base = core if (core and core.lower() != base_title.lower()) else base_title
         add("%s %s %s" % (base_artist or "", base, edit_word or "edit"))
         add("%s %s" % (base_artist or "", base))
         add("%s %s bass boosted" % (base_artist or "", base))
-    return q[:6]
+        if edit_word == "slowed":
+            add("%s %s slowed reverb" % (base_artist or "", base))
+        # edit accounts upload under their own handle - a direct route to the exact,
+        # low-view source upload a bare song search buries under the popular versions.
+        h = re.sub(r"[._]+", " ", handle or "").strip()
+        if h and base and not _is_named_credit(credit_title):
+            add("%s %s" % (h, base))
+    return q[:8]
 
 
 def _num(s):
@@ -628,22 +638,27 @@ OTHER_RENDITION = re.compile(
     r"\b(cover|guitar|piano|live|instrumental|acoustic|karaoke|remaster|1 ?hour|hour loop)\b", re.I)
 
 
-def _download_and_score(cands, clip_spec, clip_fp, tmp, start, max_dl):
-    """Download + fingerprint up to max_dl candidates CONCURRENTLY. spectral = content
-    match (gates junk), fp = chromaprint overlap (picks the exact edit)."""
+def _download_and_score(cands, clip_audio, tmp, start, max_dl):
+    """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
+    verify() returns a calibrated same-master score that survives speed / pitch /
+    bass-boost edits, plus the measured speed and a bass-boost delta. This is the
+    exact-edit decider - where the old averaged-spectrum + raw chromaprint both sat
+    at the ~0.5 noise floor and let play counts silently pick the answer."""
     todo = [c for c in cands if not c.get("_done")][:max_dl]
 
     def work(i_c):
         i, c = i_c
         c["_done"] = True
         got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)))
-        c["_spec"] = _spec_of(got) if got else None
-        c["spectral"] = match_score(clip_spec, c["_spec"]) if got else -1.0
-        c["fp"] = fp_overlap(clip_fp, fp_raw(got)) if (got and clip_fp is not None) else 0.0
-        if clip_fp is not None and got:
-            c["score"] = c["fp"] if c["spectral"] > 0.55 else c["fp"] * 0.5
-        else:
-            c["score"] = c["spectral"]
+        if not got:
+            c.update(_spec=None, spectral=-1.0, fp=0.0, arr=0.0, vscore=0.0,
+                     score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0)
+            return
+        v = _verify.verify(clip_audio, got)
+        c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
+        c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"],
+                 vscore=v["score"], score=v["score"], same=v["same"],
+                 vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"])
 
     if todo:
         with ThreadPoolExecutor(max_workers=min(5, len(todo))) as ex:
@@ -652,19 +667,20 @@ def _download_and_score(cands, clip_spec, clip_fp, tmp, start, max_dl):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, max_dl=6):
+                    edit_label, known_dir=None, handle=None, max_dl=8):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
     re-pitched re-upload - that faked slows on plain, normal-speed clips."""
-    queries = build_queries(credit_title, credit_author, base_title, base_artist, edit_label)
+    queries = build_queries(credit_title, credit_author, base_title, base_artist,
+                            edit_label, handle=handle)
     # SC/YT search + open-web search run concurrently. The web (DuckDuckGo) surfaces
     # the crowd-known edits the way a person googling would find them, not just what
     # SC/YT's own search ranks - the "search reddit/the web for the edit" logic.
     web_q = queries[:2] + ([_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
                            if base_title else [])
     with ThreadPoolExecutor(max_workers=2) as ex:
-        f_sc = ex.submit(search_edits, queries)
+        f_sc = ex.submit(search_edits, queries, 8)
         f_web = ex.submit(web_search_edits, web_q)
         cands = f_sc.result()
         web = [w for w in f_web.result() if w["url"] not in {c["url"] for c in cands}][:5]
@@ -689,15 +705,28 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     key_terms = {t for t in key_terms if t and not EDIT_WORDS.search(t)}
     for c in cands:
         c["title_hits"] = sum(1 for t in key_terms if t in c["title"].lower())
-    # Download the song-relevant + most-played first. (key_terms is now the CORE
-    # song, so the popular real versions - vocal "worry (Slowed)" - out-rank the
-    # instrumental re-uploads that used to hog these slots.)
-    cands.sort(key=lambda c: (-c["title_hits"], -c.get("plays", 0)))
+    # DOWNLOAD PRIORITY - the crux of "edits have fewer plays than originals". Sorting
+    # by plays here downloads the popular ORIGINAL and its popular guitar/cover spins,
+    # so the niche exact edit (tens-to-thousands of views) never reaches the verifier.
+    # Instead lead with title-relevant, EDIT-tagged uploads (slowed/sped/bass/reverb,
+    # NOT guitar/cover/instrumental), then those matching the clip's slow/sped
+    # direction; plays is only a within-tier tiebreak. The verifier then throws out
+    # whatever doesn't actually match, so a broad edit-first pool is safe.
+    dir_word = (known_dir or "").split()[0] if known_dir else ""
 
-    clip_spec = _log_spec(_load(clip_audio))
-    clip_fp = fp_raw(clip_audio, length=30)
+    def _dl_priority(c):
+        t = c["title"].lower()
+        edit_titled = bool(EDIT_WORDS.search(t)) and not OTHER_RENDITION.search(t)
+        dir_match = bool(dir_word and dir_word in t)
+        return (-(c["title_hits"] >= 1),   # is this the right song at all
+                -edit_titled,               # a real edit upload before the plain original
+                -dir_match,                 # matches the clip's slow/sped direction
+                -c.get("plays", 0))         # popularity only breaks ties within a tier
+    cands.sort(key=_dl_priority)
+
+    clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     tmp = tempfile.mkdtemp()
-    n = _download_and_score(cands, clip_spec, clip_fp, tmp, 0, max_dl)
+    n = _download_and_score(cands, clip_audio, tmp, 0, max_dl)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
@@ -709,47 +738,39 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         for c in more:
             c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
         more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
-        _download_and_score(more, clip_spec, clip_fp, tmp, n, 5)
+        _download_and_score(more, clip_audio, tmp, n, 5)
         cands += more
 
-    # Keep genuine content matches (right song), then decide which are the SAME
-    # thing as the clip, then let POPULARITY surface the version people use.
-    #   - Speed edit (known_dir set): the matching upload is at the CLIP's speed;
-    #     the far-more-popular original is a DIFFERENT speed, so exclude it. This
-    #     is a RELATIVE clip-vs-candidate check (~1.0), which is reliable.
-    #   - Normal speed: chromaprint overlap picks the closest audio; the base song
-    #     and its official upload rank on popularity, which is correct - a plain
-    #     clip's answer IS the plain song, not a fabricated edit.
-    # Keep anything that plausibly IS this song: its title references the track, OR
-    # its fingerprint is a strong match. Don't require a high audio score on top of
-    # that - a clip's short section fingerprints its uploads at ~0.5 either way, and
-    # over-filtering there dropped the real popular versions (the vocal "worry
-    # (Slowed)") and left only instrumental re-uploads. The title-relevance gate
-    # still blocks a coincidental popular track (e.g. "Aura" for "Island - POST02").
+    # verify() has already told us, per candidate, whether it is the SAME underlying
+    # recording as the clip (same/vscore, calibrated and EQ/speed-robust) and how it
+    # differs (vspeed, bass_delta). Ranking is now driven by that audio verdict, with
+    # plays demoted to a strict last-resort tiebreak - because edits are niche and a
+    # play-count sort surfaces the ORIGINAL, which is exactly the wrong answer.
+    #
+    # keep = anything that plausibly IS this recording: verify says same-master, OR a
+    # decent audio score, OR title-relevant with a modest score. This blocks a
+    # coincidental popular track (low vscore, e.g. "Aura" for "Island - POST02")
+    # without over-filtering the real low-view edit.
     keep = [c for c in cands
-            if (c.get("title_hits", 0) >= 1 and (c.get("spectral", -1) > 0.3 or c.get("fp", 0) > 0.4))
-            or c.get("fp", 0) >= 0.72]
-    best_fp = max([c.get("fp", 0) for c in keep], default=0.0)
+            if c.get("same")
+            or c.get("vscore", 0) >= 0.45
+            or (c.get("title_hits", 0) >= 1 and c.get("vscore", 0) >= 0.30)]
     speed_edit = known_dir is not None
     for c in keep:
         not_other = not OTHER_RENDITION.search(c["title"])
         if speed_edit:
-            sr = None
-            if c.get("_spec") is not None and clip_spec is not None:
-                rr, conf = pitch_ratio(clip_spec, c["_spec"])
-                if conf > 0.3:
-                    sr = rr
-            c["editmatch"] = bool(sr is not None and abs(sr - 1.0) < 0.05
-                                  and c.get("spectral", -1) > 0.5 and not_other)
+            # the exact edit sits at the CLIP's speed (verify speed ~1.0 against it);
+            # the far-more-popular original is at a DIFFERENT speed, so it's excluded.
+            # verify's speed is tilt-robust, so this holds even when the edit is ALSO
+            # bass-boosted (The Box) - where the old pitch_ratio was fooled by the EQ.
+            c["editmatch"] = bool(c.get("same") and abs(c.get("vspeed", 1.0) - 1.0) < 0.06
+                                  and not_other)
         else:
-            c["editmatch"] = bool(best_fp > 0 and c.get("fp", 0) >= best_fp - 0.10 and not_other)
+            # no known speed edit -> same-master IS the edit match. bass/EQ-only
+            # (Comethazine) and rearranged jersey-club edits verify here on the
+            # tilt + EQ-invariant-arrangement paths, where chromaprint alone can't.
+            c["editmatch"] = bool(c.get("same") and not_other)
     ba = (base_artist or "").lower()
-    # match the clip's slow INTENSITY: Shazam named the level ("Slowed" vs "Ultra/
-    # Super Slowed"), so an upload at a different intensity is a different speed.
-    base_intense = bool(re.search(r"\b(ultra|super|extreme)\b", (base_title or "").lower()))
-
-    def qual_mismatch(c):
-        return 1 if bool(re.search(r"\b(ultra|super|extreme)\b", c["title"].lower())) != base_intense else 0
 
     def is_official_original(c):
         """The plain commercial master - artist's own / VEVO / Topic channel, no
@@ -760,24 +781,19 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             k in up for k in ("vevo", "- topic", "official", "records"))
         return official and not EDIT_WORDS.search(c["title"])
 
-    # Only rank on the fingerprint when SOME candidate matches clearly (a real
-    # exact-edit match, e.g. the bass-boosted upload against a bass-boosted clip).
-    # Otherwise all fps sit at ~0.5 (noise) and play count is the better signal.
-    em_fps = [c.get("fp", 0) for c in keep if c["editmatch"]]
-    fp_reliable = (max(em_fps) if em_fps else 0.0) >= 0.62
-
     def rank_key(c):
-        return (0 if c["editmatch"] else 1,           # the matching edit
-                1 if is_official_original(c) else 0,  # an edit before the plain original
-                qual_mismatch(c),                     # same slow-intensity as the clip
-                -round(c.get("fp", 0), 2) if fp_reliable else 0,  # exact audio match, when clear
-                -c.get("plays", 0),                   # else the version people use
-                -c.get("fp", 0))
+        return (0 if c["editmatch"] else 1,                     # the matching edit family
+                1 if is_official_original(c) else 0,            # plain original after real edits
+                -round(c.get("vscore", c.get("score", 0)), 3),  # best VERIFIED audio match
+                -c.get("plays", 0))                             # strict last-resort tiebreak
     ranked = sorted(keep, key=rank_key)
+    # decisive = the audio verdict is clear, not a play-count guess: a verified edit
+    # on top with a real vscore margin over the next verified rival.
     decisive = False
     if ranked and ranked[0].get("editmatch"):
         rivals = [c for c in ranked[1:] if c.get("editmatch")]
-        decisive = (not rivals) or ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1)
+        top = ranked[0].get("vscore", 0)
+        decisive = (top >= 0.6) and ((not rivals) or (top - rivals[0].get("vscore", 0) >= 0.10))
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None)
     return result
 
@@ -804,7 +820,7 @@ async def identify(url, deep=True):
 
     print("\nsearching soundcloud + youtube for the exact edit ...")
     edit = await find_edit(src["audio"], src["credit_title"], src["credit_author"],
-                           base_title, base_artist, edit_label)
+                           base_title, base_artist, edit_label, handle=src.get("handle"))
     print("queries  :", edit["queries"])
     print("\nranked candidates (score = match vs the actual clip audio):")
     for c in edit["ranked"][:6]:
