@@ -1099,6 +1099,10 @@ h2.sec-title {
 .result-meta .divider-tag { display: block; margin-bottom: 0.3rem; }
 .result-meta .divider-tag[data-warn] { color: var(--stamp); }
 
+.result-note b[data-v="edited"] { color: var(--stamp); }
+.result-note b[data-v="exact"]  { color: var(--lock); }
+.result-meta .divider-tag[data-lock] { color: var(--lock); }
+
 </style>
 <a class="skip" href="#deck">Skip to the finder</a>
 
@@ -1475,11 +1479,41 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     return fetch(api, { mode: "cors" }).then(function (r) {
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();
+    }).then(function (j) {
+      // A removed or private video soft-fails: 200 with an empty shell rather
+      // than a 400. Treat a missing title/author as dead, not as a real answer.
+      if (!j || (!j.title && !j.author_name)) throw new Error("empty");
+      return j;
     });
   }
 
   function stripQuery(u) {
     return String(u).split("?")[0].split("#")[0];
+  }
+
+  /* ---------- tier 02: actually listen to it ----------
+     TikTok sends no CORS header on its page or its audio CDN, so a browser can
+     never fetch the sound itself. That, not the recognition step, is what forces
+     a server. When the engine is running this calls it; when it isn't, the page
+     says so rather than pretending. */
+  var ENGINE = "http://127.0.0.1:8788";
+  var engineUp = null;
+
+  function checkEngine() {
+    if (engineUp !== null) return Promise.resolve(engineUp);
+    return fetch(ENGINE + "/health", { mode: "cors" })
+      .then(function (r) { return r.ok; })
+      .then(function (ok) { engineUp = ok; return ok; })
+      .catch(function () { engineUp = false; return false; });
+  }
+
+  function tier02(url) {
+    return checkEngine().then(function (up) {
+      if (!up) return null;
+      return fetch(ENGINE + "/find?url=" + encodeURIComponent(url), { mode: "cors" })
+        .then(function (r) { return r.json(); })
+        .catch(function (e) { return { result: "error", error: String(e).slice(0, 80) }; });
+    });
   }
 
   /* The credit appears twice in the embed HTML: once in a title attribute and
@@ -1740,13 +1774,33 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     var parts = isOriginalSound(credit) ? null : splitCredit(credit);
 
     if (!parts) {
-      // Honest dead end: the creator uploaded their own audio, so there is no
-      // track name to read. Only a fingerprint could name it, and that needs a
-      // server to fetch and hash the audio.
+      // The credit gives nothing, so this is the case tier 02 exists for.
+      // The browser can't fetch the audio (TikTok sends no CORS on the page or
+      // the CDN), so this only works when the local engine is running.
       hit.route = "original";
-      setStatus("Original sound", "idle");
-      traceLine("T02", "that's creator-uploaded audio, so there's no track name to read. " +
-                       "Naming the music inside it needs a fingerprint, which needs a server.", "miss");
+      traceLine("T02", "creator-uploaded audio: no track name to read. Listening to it instead.", "miss");
+      var deep = await tier02(parsed.url);
+      if (deep && deep.result === "found") {
+        hit.route = "fingerprint";
+        hit.deep = deep;
+        hit.known = matchCatalogue(deep.song, deep.artist);
+        setStatus("Found it", "locked");
+        traceLine("T02", "matched at <b>" + Math.round(deep.at) + "s</b> in &middot; " +
+                         deep.probes + " probe" + (deep.probes === 1 ? "" : "s") +
+                         " &middot; " + deep.secs + "s", "hit");
+        traceLine("T02", "<b>" + esc(deep.song) + "</b> &middot; " + esc(deep.version_text), "hit");
+      } else if (deep && deep.result === "no_match") {
+        setStatus("No match", "idle");
+        traceLine("T02", "listened to the whole sound at every speed and found nothing. " +
+                         "Usually means it's genuinely original audio, not a song.", "miss");
+      } else if (deep && deep.result === "error") {
+        setStatus("Engine error", "idle");
+        traceLine("T02", esc(deep.error || "the engine failed"), "miss");
+      } else {
+        setStatus("Original sound", "idle");
+        traceLine("T02", "no engine running, so the audio can't be read. A browser can't fetch " +
+                         "TikTok's audio (no CORS), so this step needs the local engine.", "miss");
+      }
     } else {
       hit.title = parts.title;
       hit.artist = parts.artist;
@@ -1795,7 +1849,40 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
       "</div>";
 
     var body;
-    if (hit.route === "resolved") {
+    if (hit.route === "fingerprint") {
+      // We listened to the audio and matched it. Say how, and say what version.
+      var dp = hit.deep, k = hit.known;
+      var vf = '<span class="fact" data-lock><b>Heard it</b> &middot; matched at ' +
+               Math.round(dp.at) + "s</span>";
+      if (dp.rate) {
+        vf += '<span class="fact"><b>' + dp.rate.toFixed(3) + "x</b>" +
+              (dp.rate_precise ? "" : " approx") + "</span>";
+      }
+      vf += '<span class="fact"><b>' + dp.probes + "</b> probe" + (dp.probes === 1 ? "" : "s") +
+            " &middot; " + dp.secs + "s</span>";
+      if (k && k.year) vf += '<span class="fact"><b>' + k.year + "</b></span>";
+
+      body =
+        '<div class="result-meta">' +
+          '<span class="divider-tag" data-lock>Fingerprinted the audio</span>' +
+          '<div class="result-title">' + esc(dp.song) + "</div>" +
+          '<div class="result-artist">' + esc(dp.artist || "") + "</div>" +
+          '<div class="result-facts">' + vf + "</div>" +
+          '<p class="result-note"><b data-v="' + esc(dp.version) + '">' +
+            (dp.version === "exact" ? "This exact version" :
+             dp.version === "edited" ? "A different version" : "Same as the original") +
+          "</b> &middot; " + esc(dp.version_text) +
+          (k && k.note ? "<br>" + esc(k.note) : "") + "</p>" +
+        "</div>" +
+        '<div class="result-actions">' +
+          (k ? '<button class="btn-crate" id="addBtn" type="button">Add to crate</button>' : "") +
+          '<div class="outlinks">' +
+            '<a class="outlink" href="' + searchUrl("spotify", { title: dp.song, artist: dp.artist }) + '" target="_blank" rel="noopener noreferrer">Spotify</a>' +
+            '<a class="outlink" href="' + searchUrl("yt", { title: dp.song, artist: dp.artist }) + '" target="_blank" rel="noopener noreferrer">YT</a>' +
+            (dp.shazam ? '<a class="outlink" href="' + esc(dp.shazam) + '" target="_blank" rel="noopener noreferrer">Shazam</a>' : "") +
+          "</div>" +
+        "</div>";
+    } else if (hit.route === "resolved") {
       var k = hit.known;
       var facts = '<span class="fact" data-lock><b>From the sound credit</b> &middot; free</span>';
       if (k) {
