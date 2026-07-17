@@ -1,347 +1,161 @@
 #!/usr/bin/env python3
-"""Crate's tier 02: name the song inside a TikTok "original sound".
+"""Crate engine (local). Paste a TikTok or Instagram reel -> the exact track.
 
-A browser can't do this. TikTok sends no CORS headers on its page or on the
-audio CDN, so the page can never touch the audio, whichever recognition API you
-pick. That's what forces a server. This is that server, and it's the whole thing:
+A browser can't do this itself: TikTok/Instagram send no CORS on their audio, and
+Instagram needs your login. So the page (local or on GitHub Pages) calls this
+local server, which does the whole job:
 
-  1. scrape the page for music.playUrl - a direct mp3 of the ISOLATED sound
-  2. fingerprint it via Shazam's own endpoint (no API key, no cost)
-  3. when a straight match fails, undo the edit and retry. Shazam breaks between
-     1.15x and 1.18x, and TikTok's "sped up" preset is 1.25-1.3x, just past it.
-     The factor that finally hits IS the answer to "sped up or slowed?"
+  1. get the isolated/clip audio + the platform's own sound credit
+       TikTok    - page JSON  (music.playUrl, no auth)
+       Instagram - media API with your local Chrome login (ig.py)
+  2. Shazam with a counter-speed sweep -> the BASE song, and how it was pitched
+  3. the base song isn't the answer when it's a hoodtrap / slowed / remix edit, so
+     search SoundCloud AND YouTube and verify each candidate against the real clip
+     audio -> the EXACT upload, with a link, not just a same-titled result
 
-Run:  python3 server.py           # -> http://127.0.0.1:8788
-Then the page finds it automatically and switches tier 02 on.
+Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, re, subprocess, tempfile, time, urllib.parse, urllib.request
+import asyncio, json, os, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import crate_engine as E
+
 PORT = int(os.environ.get("PORT", "8788"))
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
-
-# Ordered by how common the edit is, so the usual case costs one probe.
-SWEEP = [
-    (1.00, "as posted"),
-    (0.80, "sped up ~1.25x"),
-    (0.77, "sped up ~1.30x"),
-    (0.85, "sped up ~1.18x"),
-    (1.25, "slowed ~0.80x"),
-]
-SPAN = 20
-MAX_PROBES = 14          # keep a miss from grinding: bail once it's clearly not there
 CACHE = {}
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAGE = os.path.join(HERE, "crate.html")
 
 
-def fetch(url, binary=False, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read() if binary else r.read().decode("utf-8", "replace")
-
-
-def resolve(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.geturl()
-
-
-def scrape(url):
-    html = fetch(url)
-    m = re.search(r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
-                  html, re.S)
-    if not m:
-        raise RuntimeError("TikTok didn't serve the page data (rate limit or wall). Try again.")
-    d = json.loads(m.group(1))
-    it = d["__DEFAULT_SCOPE__"]["webapp.video-detail"]["itemInfo"]["itemStruct"]
-    mus = it.get("music") or {}
-    au = it.get("author") or {}
-    return {
-        "playUrl": mus.get("playUrl"),
-        "credit": "%s - %s" % (mus.get("title"), mus.get("authorName")),
-        "is_original": bool(mus.get("original")),
-        "desc": it.get("desc") or "",
-        "creator": au.get("uniqueId"),
-        "cover": mus.get("coverThumb") or it.get("video", {}).get("cover"),
-    }
-
-
-def duration_of(p):
-    o = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                        "-of", "csv=p=0", p], capture_output=True, text=True)
-    try:
-        return float(o.stdout.strip())
-    except ValueError:
-        return 0.0
-
-
-def windows_for(dur):
-    """Sport edits bury the drop at the END behind commentary, so search the tail
-    first and work outwards."""
-    if dur <= SPAN + 1:
-        return [0.0]
-    offs, t = [], 0.0
-    while t + 5 < dur:
-        offs.append(round(t, 1))
-        t += SPAN * 0.75
-    tail = max(0.0, dur - SPAN)
-    if tail not in offs:
-        offs.append(round(tail, 1))
-    offs.sort(key=lambda o: abs(o - tail))
-    return offs[:5]
-
-
-def cut(src, dst, off, rate):
-    af = [] if rate == 1.0 else ["-af", "asetrate=44100*%f,aresample=44100" % rate]
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(off), "-i", src,
-                    "-t", str(SPAN)] + af + ["-ac", "1", "-ar", "44100", dst], check=True)
-
-
-# Shazam's own catalogue carries edits as separate tracks, so if the match title
-# already says what it is, that IS the exact version rather than the base song.
-EDIT_WORDS = re.compile(
-    r"\b(sped ?up|speed ?up|slowed|reverb|nightcore|bass ?boost(ed)?|remix|"
-    r"instrumental|acoustic|cover|live|remaster(ed)?|edit|version|mashup|"
-    r"super ?slowed|daycore|8d)\b", re.I)
-
-
-async def shazam_file(p):
-    from shazamio import Shazam
-    out = await Shazam().recognize(p)
-    tr = (out or {}).get("track")
-    if not tr:
-        return None
-    imgs = tr.get("images") or {}
-    ms = (out or {}).get("matches") or []
-    # frequencyskew is how far the sample's pitch sits from the reference.
-    # Calibrated: 1.05x in -> 0.0501 out, exact. Beyond ~±5% it fails or aliases,
-    # so only trust it inside that band and lean on the counter-speed factor past it.
-    skew = ms[0].get("frequencyskew") if ms else None
-    return {"title": tr.get("title"), "artist": tr.get("subtitle"),
-            "shazam": tr.get("url"), "art": imgs.get("coverart"),
-            "skew": skew}
-
-
-def describe_version(title, rate, counter_label):
-    """Say plainly whether this is the original recording or some other version."""
-    named_edit = bool(EDIT_WORDS.search(title or ""))
-    if named_edit:
-        return ("exact", "Shazam has this exact version in its catalogue")
-    if rate is None:
-        return ("unknown", "matched, but the speed couldn't be measured")
-    off = abs(rate - 1.0)
-    if off < 0.006:
-        return ("original", "same as the original recording")
-    pct = off * 100
-    if rate > 1:
-        return ("edited", "the original, sped up about %.0f%%" % pct)
-    return ("edited", "the original, slowed about %.0f%%" % pct)
-
-
-# ---------- find the EXACT version, not just the base song ----------
-#
-# Shazam names the recording it knows, which is usually the master. But the audio
-# in the video is often a slowed/sped/bass-boosted upload that exists in its own
-# right. Shazam's frequencyskew can't settle it: calibration showed it aliases
-# past ~5% (a 1.15x input read back as -0.042), which is exactly how a 13% slowed
-# edit of blackbear's "idfc" read as "0.5%, basically original" and was wrong.
-#
-# So compare the actual waveforms against every release with that title, and let
-# the one that lines up at 1.0x win.
-
-def variant_candidates(title, artist):
-    """Every release carrying this title: masters, slowed, sped up, covers."""
-    seen, out = set(), []
-    for term in ("%s %s" % (artist, title), title):
-        try:
-            u = ("https://itunes.apple.com/search?term=%s&entity=song&limit=25"
-                 % urllib.parse.quote(term))
-            d = json.loads(fetch(u))
-        except Exception:
-            continue
-        for r in d.get("results", []):
-            if not r.get("previewUrl"):
-                continue
-            tn = (r.get("trackName") or "").lower()
-            base = re.sub(r"\(.*?\)|\[.*?\]", " ", tn)
-            base = re.sub(r"[^a-z0-9]+", " ", base).strip()
-            want = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
-            if want and want not in base and base not in want:
-                continue                       # different song entirely
-            k = (r["trackName"], r["artistName"])
-            if k in seen:
-                continue
-            seen.add(k)
-            out.append(r)
-    return out[:8]
-
-
-def pick_exact_version(tiktok_wav, title, artist):
-    """Wave-compare the video's audio against each candidate release.
-    The exact version is the one at ratio ~1.0 with the strongest correlation."""
-    try:
-        import numpy as np
-        from compare_waves import (to_wav, load, log_spectrum, pitch_ratio,
-                                   get as wget)
-    except Exception:
-        return None
-    cands = variant_candidates(title, artist)
-    if not cands:
-        return None
-    A = load(tiktok_wav)
-    sa = log_spectrum(A)
-    if sa is None:
-        return None
-    scored = []
-    tmp = tempfile.mkdtemp()
-    try:
-        for r in cands:
-            b = os.path.join(tmp, "b.wav")
-            try:
-                to_wav(wget(r["previewUrl"]), b)
-                sb = log_spectrum(load(b))
-                ratio, conf = pitch_ratio(sa, sb)
-            except Exception:
-                continue
-            finally:
-                if os.path.exists(b):
-                    os.remove(b)
-            scored.append({"title": r["trackName"], "artist": r["artistName"],
-                           "ratio": round(ratio, 4), "corr": round(conf, 3)})
-    finally:
-        try:
-            os.rmdir(tmp)
-        except Exception:
-            pass
-
-    at_speed = [s for s in scored if abs(s["ratio"] - 1.0) <= 0.03]
-    at_speed.sort(key=lambda s: -s["corr"])
-    if not at_speed:
-        return None
-
-    # MEASURED LIMIT, do not remove without re-testing: on blackbear's "idfc",
-    # eight different releases (8D, Jersey Club, Hardstyle, Slowed) all scored
-    # 0.82-0.96 with only 0.026 between the top two. Spectral correlation tells
-    # you which release is at the same SPEED, not which is the same AUDIO. So
-    # unless one candidate wins decisively, report the shortlist and say we
-    # don't know, rather than name the wrong edit with confidence.
-    top = at_speed[0]
-    gap = top["corr"] - (at_speed[1]["corr"] if len(at_speed) > 1 else 0.0)
-    top["decisive"] = bool(gap >= 0.08 and top["corr"] >= 0.80)
-    top["gap"] = round(gap, 3)
-    top["shortlist"] = [{"title": s["title"], "artist": s["artist"], "corr": s["corr"]}
-                        for s in at_speed[:4]]
-    return top
+def _edit_worthy(src, fp):
+    """Only spend the slow SoundCloud/YouTube pass when the clip could BE an edit:
+    an original sound, a pitched clip, or a credit that names a remix. A plain
+    licensed track used straight is already exact from Shazam."""
+    if src.get("is_original"):
+        return True
+    if fp and fp.get("rate", 1.0) != 1.0:
+        return True
+    if E._is_named_credit(src.get("credit_title")):
+        return True
+    return False
 
 
 def identify(url):
     t0 = time.time()
-    full = resolve(url)
-    key = full.split("?")[0]
+    key = url.split("?")[0]
     if key in CACHE:
         c = dict(CACHE[key]); c["cached"] = True
         return c
 
-    info = scrape(full)
-    res = {"credit": info["credit"], "desc": info["desc"][:120],
-           "creator": info["creator"], "is_original": info["is_original"],
-           "url": key, "art": None}
-    if not info["playUrl"]:
-        res.update(result="no_audio")
-        return res
-
-    tmp = tempfile.mkdtemp()
-    raw = os.path.join(tmp, "a.mp3")
     try:
-        open(raw, "wb").write(fetch(info["playUrl"], binary=True, timeout=60))
-        dur = duration_of(raw)
-        offs = windows_for(dur)
-        probes = 0
-        loop = asyncio.new_event_loop()
-        try:
-            for rate, label in SWEEP:
-                for off in offs:
-                    if probes >= MAX_PROBES:
-                        raise StopIteration
-                    wav = os.path.join(tmp, "w%s_%s.wav" % (off, rate))
-                    try:
-                        cut(raw, wav, off, rate)
-                        hit = loop.run_until_complete(shazam_file(wav))
-                        probes += 1
-                    except Exception:
-                        continue
-                    finally:
-                        if os.path.exists(wav):
-                            os.remove(wav)
-                    if hit:
-                        # true rate = whatever we undid, times the residual skew
-                        # Shazam still measured. Only trust skew inside ±5%.
-                        skew = hit.get("skew")
-                        if rate == 1.0 and skew is not None and abs(skew) <= 0.06:
-                            true_rate = 1.0 + skew
-                            precise = True
-                        elif rate != 1.0:
-                            true_rate = 1.0 / rate       # we undid it, so invert
-                            precise = False
-                        else:
-                            true_rate = None
-                            precise = False
-                        kind, human = describe_version(hit["title"], true_rate, label)
-                        res.update(result="found", song=hit["title"], artist=hit["artist"],
-                                   version=kind, version_text=human,
-                                   rate=round(true_rate, 4) if true_rate else None,
-                                   rate_precise=precise,
-                                   at=off, shazam=hit["shazam"], art=hit["art"],
-                                   probes=probes, length=round(dur))
+        src = E.get_source(url)
+    except RuntimeError as e:
+        if str(e) == "tiktok_rate_limited":
+            oe = getattr(e, "oembed", {}) or {}
+            ct, ca = oe.get("credit_title"), oe.get("credit_author")
+            base = {"result": "rate_limited", "platform": "tiktok",
+                    "credit": "%s - %s" % (ct, ca),
+                    "thumb": oe.get("thumb"), "handle": oe.get("handle"),
+                    "desc": (oe.get("desc") or "")[:120], "url": key,
+                    "secs": round(time.time() - t0, 1)}
+            # if the credit already names a real track (a licensed sound, not an
+            # 'original sound'), we don't need the audio - answer from the credit.
+            if ct and E._is_named_credit(ct) and not E.names_an_edit(ct, ca):
+                base.update(result="found", from_credit=True,
+                            base_song=ct, base_artist=ca, edit_certain=False,
+                            speed="as posted", decisive=False, exact=None, candidates=[])
+            return base
+        raise
+    res = {
+        "result": "pending",
+        "platform": src["platform"],
+        "credit": "%s - %s" % (src.get("credit_title"), src.get("credit_author")),
+        "is_original": src["is_original"],
+        "desc": (src.get("desc") or "")[:120],
+        "handle": src.get("handle"),
+        "thumb": src.get("thumb"),
+        "url": key,
+        "art": None,
+    }
 
-                        # Shazam gave the base recording. Now find which release
-                        # the video ACTUALLY uses, by comparing waveforms.
-                        try:
-                            ref = os.path.join(tmp, "ref.wav")
-                            cut(raw, ref, off, 1.0)
-                            ex = pick_exact_version(ref, hit["title"], hit["artist"])
-                            if os.path.exists(ref):
-                                os.remove(ref)
-                        except Exception:
-                            ex = None
-                        # Only let the wave-compare overrule Shazam when it wins
-                        # DECISIVELY. It ranks by spectral similarity, which on
-                        # "idfc" scored 8D / Jersey Club / Hardstyle / Slowed all
-                        # within 0.026 of each other. Naming the wrong edit
-                        # confidently is worse than saying we don't know.
-                        if ex:
-                            same = (ex["title"].lower() == (hit["title"] or "").lower()
-                                    and ex["artist"].lower() == (hit["artist"] or "").lower())
-                            if ex.get("decisive") and not same:
-                                res["exact"] = ex
-                                res["version"] = "exact"
-                                res["version_text"] = ("the video uses “%s” by %s "
-                                                       "(waveform lines up at %.2fx, conf %.2f)"
-                                                       % (ex["title"], ex["artist"],
-                                                          ex["ratio"], ex["corr"]))
-                            elif not same:
-                                # several edits fit equally well: show the options
-                                res["maybe"] = ex.get("shortlist")
-                                res["version_text"] += (
-                                    ". Several edits of this fit the audio equally "
-                                    "well, so which exact upload it is isn't certain")
-                        res["secs"] = round(time.time() - t0, 1)
-                        CACHE[key] = res
-                        return res
-            raise StopIteration
-        except StopIteration:
-            res.update(result="no_match", probes=probes,
-                       secs=round(time.time() - t0, 1), length=round(dur))
-            CACHE[key] = res
-            return res
-        finally:
-            loop.close()
+    loop = asyncio.new_event_loop()
+    try:
+        fp = loop.run_until_complete(E.fingerprint(src["audio"]))
+        base_title = base_artist = None
+        edit_label = ""
+        if fp:
+            base_title, base_artist = fp["title"], fp["artist"]
+            edit_label = fp["edit_label"]
+            res.update(
+                base_song=fp["title"], base_artist=fp["artist"],
+                shazam=fp.get("url"), art=fp.get("art"),
+                edit_label=fp["edit_label"], probes=fp["probes"],
+            )
+            if fp.get("multi"):
+                res["songs"] = [{"song": h["title"], "artist": h["artist"],
+                                 "at": round(h.get("at", 0)), "shazam": h.get("url"),
+                                 "art": h.get("art")} for h in fp["songs"]]
+
+        speed_edit = bool(fp and fp.get("rate", 1.0) != 1.0)
+        named_edit = E.names_an_edit(src.get("credit_title"), src.get("credit_author"))
+
+        exact = None
+        candidates = []
+        res["decisive"] = False
+        edit = None
+        if _edit_worthy(src, fp) and (base_title or E._is_named_credit(src.get("credit_title"))):
+            edit = loop.run_until_complete(E.find_edit(
+                src["audio"], src.get("credit_title"), src.get("credit_author"),
+                base_title, base_artist, edit_label))
+            ranked = [c for c in edit.get("ranked", []) if c.get("score", -1) > 0]
+            for c in ranked[:6]:
+                candidates.append({"title": c["title"], "uploader": c["uploader"],
+                                   "source": c["source"], "url": c["url"],
+                                   "score": round(c["score"], 3)})
+            if candidates:
+                exact = candidates[0]
+                res["decisive"] = bool(edit.get("decisive"))
+
+        # Speed label: the sweep names it when it had to counter-speed; otherwise
+        # find_edit MEASURES the clip against the master and catches a slow Shazam
+        # tolerated at normal speed (the "found but doesn't say slowed" case).
+        m_ratio = edit.get("speed_ratio") if edit else None
+        m_dir = edit.get("measured_dir") if edit else None
+        if speed_edit:
+            res["speed"] = edit_label
+            res["edit_certain"] = True
+        elif m_dir and m_ratio:
+            res["speed"] = "%s ~%.2fx" % (m_dir, m_ratio)
+            res["edit_certain"] = True
+        elif named_edit:
+            res["speed"] = "as posted"
+            res["edit_certain"] = True
+        else:
+            res["speed"] = "as posted" if fp else None
+            res["edit_certain"] = False
+
+        if fp or exact:
+            res["result"] = "found"
+            res["exact"] = exact
+            res["candidates"] = candidates
+        else:
+            res["result"] = "no_match"
+        res["secs"] = round(time.time() - t0, 1)
+        CACHE[key] = res
+        return res
     finally:
-        for f in os.listdir(tmp):
-            try: os.remove(os.path.join(tmp, f))
+        loop.close()
+        _cleanup(src.get("tmp"))
+
+
+def _cleanup(d):
+    if not d or not os.path.isdir(d):
+        return
+    for root, _, files in os.walk(d, topdown=False):
+        for f in files:
+            try: os.remove(os.path.join(root, f))
             except Exception: pass
-        try: os.rmdir(tmp)
+        try: os.rmdir(root)
         except Exception: pass
 
 
@@ -363,26 +177,43 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
+    def _send_page(self):
+        try:
+            with open(PAGE, "rb") as f:
+                b = f.read()
+        except FileNotFoundError:
+            return self._send(404, {"error": "crate.html not next to server.py"})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
     def do_GET(self):
         u = urlparse(self.path)
+        # serve the app itself, so page + engine share one origin (no CORS/PNA)
+        if u.path in ("/", "/index.html", "/crate.html"):
+            return self._send_page()
         if u.path == "/health":
-            return self._send(200, {"ok": True, "service": "crate tier-02"})
+            return self._send(200, {"ok": True, "service": "crate engine",
+                                    "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
         if u.path != "/find":
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
         link = (q.get("url") or [""])[0].strip()
-        if not link or "tiktok.com" not in link:
-            return self._send(400, {"error": "pass ?url=<a tiktok link>"})
+        if not link or not any(h in link for h in ("tiktok.com", "instagram.com")):
+            return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
         try:
             self._send(200, identify(link))
         except Exception as e:
-            self._send(200, {"result": "error", "error": str(e)[:160]})
+            self._send(200, {"result": "error", "error": str(e)[:200]})
 
     def log_message(self, *a):
         pass
 
 
 if __name__ == "__main__":
-    print("crate tier-02 listening on http://127.0.0.1:%d" % PORT)
-    print("  GET /find?url=<tiktok link>")
+    print("crate engine on http://127.0.0.1:%d  (tiktok + instagram + soundcloud + youtube)" % PORT)
+    print("  GET /find?url=<tiktok or instagram link>")
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

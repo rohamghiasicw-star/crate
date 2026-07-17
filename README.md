@@ -1,89 +1,60 @@
 # Crate
 
-Share a TikTok or Reel, get the song, keep it.
+Paste a TikTok or Instagram reel, get the song — including the exact edit.
 
-A working prototype of the share-to-identify flow. Live: https://rohamghiasicw-star.github.io/crate/
+Live page: https://rohamghiasicw-star.github.io/crate/ (the page; the identifying is
+done by the engine — see below).
 
 ## What it is
 
-You hear a sound in a TikTok, you can't find it, it's gone. Crate takes the link and names it.
+You hear a sound in a TikTok or reel, you can't find it, it's gone. Crate takes the
+link and names it — the real track, and the **exact edit** playing (slowed, sped-up,
+bass-boosted, hoodtrap, remix), not just the base commercial song. If a clip layers
+two songs, it names both, with timestamps.
 
-**The TikTok lookup is real, with no backend.** TikTok's oEmbed endpoint is public, needs no
-auth, and sends CORS headers, so the browser calls it directly. Paste a TikTok link and the
-video, creator, thumbnail and sound credit you get back are the actual ones, live, for $0.
+## How it works
 
-- **Paste the link**, one tap.
-- Also accepts `?url=`, so anything that can hand it a URL works (an iOS Shortcut, an Android
-  share target). As a native app it registers a Share Extension and iOS lists it in the share
-  sheet automatically, no setup.
-- Found sounds go in your crate, saved in your browser, exportable as JSON.
+- **Tier 1 — the credit (free, instant, in the browser).** TikTok's oEmbed endpoint
+  is public and CORS-open, so the page reads the sound credit directly. If the
+  creator used a licensed track, the credit *is* the answer.
+- **Tier 2 — hear the audio (the engine).** When the credit is just "original sound,"
+  the engine pulls the isolated audio, fingerprints it with Shazam (undoing
+  slowed/sped edits), then searches SoundCloud + YouTube and matches each candidate
+  against the clip with chromaprint to pick the **exact upload**. This can't run in a
+  browser — TikTok/Instagram send no CORS on their audio — so it runs as a small
+  local server that also serves the page (`engine/`).
 
-## The real pipeline
+## Run the engine
 
-1. **oEmbed first.** TikTok and Instagram both expose a public oEmbed endpoint that
-   returns the sound credit. No auth, no key, $0. If the creator used a licensed track, the
-   credit *is* the answer. It's the sanctioned embed endpoint, but using it binds you to
-   TikTok's developer terms, there's no published quota, and they can gate it at any time.
-2. **Fingerprint on a miss.** When the credit just says "original sound", pull the audio
-   and fingerprint it. AudD is the realistic option at ~$5/1,000 lookups. Apple's
-   ShazamKit is free with the best catalogue but is on-device Apple-only, so a web
-   backend can't call it.
-3. **Save, don't download.** "Download the song" doesn't ship: App Store rule 5.2.3 bans
-   saving or converting media from third-party sources *without explicit authorization from
-   those sources*, and TikTok won't authorize you. Licensed download APIs exist (7digital),
-   but they're for retailers. So it deep-links to Spotify / Apple Music / YouTube Music, and
-   the Spotify Web API can append straight to a real playlist.
+    brew install ffmpeg chromaprint
+    pip3 install -r engine/requirements.txt
+    python3 engine/server.py         # http://127.0.0.1:8788  (app + API, one origin)
 
-## What works, what doesn't
+or double-click **`engine/Crate.command`** — it starts the engine, opens the app, and
+prints a public share link (if `cloudflared` is installed).
 
-**Works:** TikTok lookups are a live call to TikTok's oEmbed. When the credit names a track,
-that's the real answer, free. The catalogue is 402 sounds, every title/artist/year fact-checked
-by a separate adversarial pass with anything unconfirmed dropped. Links and your crate are real.
+GitHub Pages serves the page statically but can't run the engine, so to actually
+identify you either open the engine's own URL, or point the hosted page at a running
+engine with `?engine=https://<your-engine-url>`.
 
-**Doesn't:** an "original sound" can't be named without fingerprinting the audio, which needs a
-server, so the page says so rather than guessing. Instagram doesn't work at all client-side
-because Meta's oEmbed refuses browser calls. Add-to-Spotify needs OAuth, which needs a backend.
+## What's real, what's hard
 
-A confident wrong answer is worse than no answer, so it never invents a track.
+**Real:** TikTok + Instagram both work (Instagram needs **no login** — a public reel
+resolves for anyone). Base song, exact edit, and multi-song are all live and tested.
 
-## Worth knowing before building it for real
+**Hard / honest limits:**
+- Several near-identical edits of one song can tie; it shows the ranked spread ("it's
+  one of these") rather than faking a winner.
+- ~5–7% of clips are Shazam-blank (no name, no caption, obscure bootleg) and need a
+  paid recognition catalogue (AudD / ACRCloud) to crack. It says "couldn't ID" rather
+  than guess.
+- 8D/pan-only edits, and private/region-locked reels, aren't recoverable here.
+- Scraping is against ToS and the Shazam endpoint is unofficial — fine for a personal
+  tool, not a licensed foundation at scale.
 
-Shazam already does this natively inside TikTok and Instagram (since 2023), and iOS has
-music recognition in Control Center. And fetching the audio in tier 2 is against TikTok's
-terms; every existing song-finder does it anyway and survives on obscurity. The honest
-wedge that's left is real but narrow: fewer taps, straight to a playlist.
+## Build the page
 
-## Build
+`index.html` is self-contained (fonts inlined). To regenerate from source:
 
-`index.html` is fully self-contained (fonts inlined as woff2 data URIs, no external
-requests). To regenerate:
-
-    python3 gen_catalogue.py   # verified workflow output -> src/catalogue.js
-    python3 build.py           # -> crate.html
-
-
-## Measured, not assumed
-
-Tested against **187 real niche TikTok URLs** harvested from news articles, NPR, Rolling Stone
-and Reddit, spanning 132 niches and 171 creators:
-
-| | |
-|---|---|
-| endpoint answered | **187/187 (100%)** |
-| named a track (free, instant) | **59 (31.6%)** |
-| original sound (needs a server) | **128 (68.4%)** |
-| latency | median **689 ms**, p90 915 ms |
-
-**That 68% is the whole business case.** The free tier only answers about a third of niche
-links. The other two thirds are exactly what you'd be paying AudD for.
-
-The test caught three real bugs, all fixed:
-- `isOriginalSound()` only knew 5 languages, so `原聲 - siyuanhorologe` was reported as a song
-  by an artist called "siyuanhorologe". Now covers ~34 locales.
-- The credit was read from a `title` attribute TikTok truncates at any quote, so
-  `The Force Theme (From "Star Wars") - Piano Version - Patrik Pietschmann` became
-  `The Force Theme (From`. Now reads the link text.
-- `matchCatalogue()` let a prefix match beat an exact one, attaching the wrong verified facts
-  (`Lights - Ellie Goulding` resolved to a Speed Radio sped-up entry).
-
-Reproduce: `python3 test_oembed.py test_urls.json`
+    python3 gen_catalogue.py    # -> src/catalogue.js
+    python3 build.py            # -> crate.html  (copied to index.html)

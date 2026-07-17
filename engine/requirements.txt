@@ -1,2 +1,5 @@
 shazamio
 numpy
+yt-dlp
+curl_cffi
+cryptography

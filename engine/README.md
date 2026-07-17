@@ -1,56 +1,57 @@
-# Crate engine (tier 02)
+# Crate engine
 
-Names the song inside a TikTok **original sound**, and says how it was edited.
+Paste a **TikTok or Instagram reel**, get the song inside it — including the exact
+edit (slowed / sped-up / bass-boosted / hoodtrap / remix), and every song when a
+clip layers more than one.
 
-## Why this can't live in the page
+## Why this can't live in the page alone
 
-TikTok sends **no CORS headers** on its video page or on its audio CDN. A browser
-therefore can never fetch the audio, whichever recognition API you point at it.
-That, and not the recognition step, is what forces a server. Measured, not assumed.
+TikTok and Instagram send **no CORS headers** on their audio, so a browser can't
+fetch and fingerprint it whatever recognition API you point at it. The engine also
+does the SoundCloud/YouTube search and the audio matching. So it runs as a small
+local server that **also serves the page** — page and API on one origin, no CORS.
 
 ## Run it
 
-    brew install ffmpeg
+    brew install ffmpeg chromaprint
     pip3 install -r requirements.txt
-    python3 server.py            # http://127.0.0.1:8788
+    python3 server.py            # http://127.0.0.1:8788  (serves the app + API)
 
-Then open the page from a local server (`python3 -m http.server 8731` next to
-`index.html`) and it finds the engine automatically. Note an https:// page cannot
-call `http://127.0.0.1` (Chrome's Private Network Access blocks it), so the
-GitHub Pages copy will not see a local engine.
+or just double-click **`Crate.command`** — it starts the engine, opens the app, and
+(if `cloudflared` is installed) prints a public share link.
 
-    GET /find?url=<tiktok link>
+    GET /find?url=<tiktok or instagram link>
+    GET /health
 
 ## How it works
 
-1. **Scrape** `music.playUrl` out of the page JSON: a direct mp3 of the
-   *isolated* sound track. No auth, no signed headers.
-2. **Fingerprint** it through Shazam's own endpoint via `shazamio`. No API key,
-   no cost.
-3. **Windows**: sport edits bury the song at the *end* behind commentary, so
-   probe the tail first and work outwards. One real example matched at 51s.
-4. **Speed sweep**: Shazam breaks between 1.15x and 1.18x, and TikTok's "sped up"
-   preset is 1.25-1.3x, just past it. So on a miss, re-pitch and retry. The
-   factor that hits tells you how it was edited.
+1. **Get the audio.**
+   - *TikTok:* `tiktok.com/embed/v2/{id}` via `curl_cffi` (real-browser TLS) →
+     the isolated `playUrl`. This survives the per-IP soft-wall that kills the
+     data API. Falls back to tikwm.com, the item-detail API, then oEmbed (credit).
+   - *Instagram:* `instagram.com/reel/{code}/embed/captioned/` via `curl_cffi` →
+     `video_url` + music metadata. **No login** — the TLS fingerprint is the whole
+     trick; plain requests get bot-flagged empty responses. Works for any public
+     reel for any visitor.
+2. **Fingerprint** with Shazam (`shazamio`, keyless). Phase 1 scans the whole clip
+   in short windows and collects **distinct songs** (a clip can hold two). Phase 2
+   is a fine counter-speed sweep that undoes slowed/sped edits Shazam won't match
+   straight (the gap that hid a 0.83x slow was between 1.15x and 1.25x).
+3. **Find the exact edit.** Search SoundCloud + YouTube (`yt-dlp`), download each
+   candidate, and rank by **chromaprint fingerprint overlap** (`fpcalc -raw`) —
+   which separates near-identical edits that averaged spectra blur together. Also
+   measure the clip's true pitch vs the master, catching a slow Shazam tolerated
+   and reported as normal.
 
-## Measured
+## Honest limits
 
-* **20/22 (91%)** on real mbappé edit videos whose credit was "original sound".
-* ~5s per hit. Most land on the first probe.
-* Shazam frequently has the *edit itself* as its own release, so you get
-  "DARK AGE FUNK (Super Slowed)" rather than the base track.
-
-## Known limits, do not remove without re-testing
-
-* **`frequencyskew` aliases past ~±5%.** Calibrated: 1.05x in reads back 0.0501
-  (exact), but 1.15x reads back **-0.042**, which is nonsense. A 13% slowed edit
-  of blackbear's "idfc" read as "0.5%, basically original" and was wrong.
-* **Spectral correlation cannot identify *which* edit.** On "idfc", 8D / Jersey
-  Club / Hardstyle / Slowed releases all scored 0.82-0.96 with 0.026 between the
-  top two. It tells you which release is at the same **speed**, not which is the
-  same **audio**. So `pick_exact_version` only speaks when one candidate wins by
-  a decisive margin; otherwise it returns a shortlist and says it doesn't know.
-  Fixing this properly needs real fingerprint comparison per candidate.
-* Scraping TikTok is against their ToS, and `amp.shazam.com` is a private
-  reverse-engineered endpoint with no contract. Fine for a demo; not a
-  foundation to attach a name to at scale. ACRCloud is the licensed path.
+* **Near-identical edits** (several slowed uploads of the same track) can score
+  within a hair; the engine then shows the ranked **spread** ("it's one of these")
+  instead of faking a single winner. It only crowns one when it wins decisively.
+* **~5–7% of clips are Shazam-blank** — no name, no caption, an obscure bootleg in
+  no free catalogue. Genuinely unrecoverable without a paid recognition API (AudD /
+  ACRCloud). The engine says "couldn't ID" rather than guess.
+* **8D / pan-only edits** collapse to the original in a mono pipeline.
+* **Private / age-gated / region-locked** reels can't be read (no login).
+* Scraping is against ToS and the Shazam endpoint is unofficial — fine for a
+  personal tool, not a licensed foundation at scale.
