@@ -726,13 +726,36 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                                   and c.get("spectral", -1) > 0.5 and not_other)
         else:
             c["editmatch"] = bool(best_fp > 0 and c.get("fp", 0) >= best_fp - 0.10 and not_other)
+    ba = (base_artist or "").lower()
+
+    def is_official_original(c):
+        """The plain commercial master - artist's own / VEVO / Topic channel, no
+        edit words. It should never outrank an actual edit (the whole point: the
+        clip is an edit, and the original is just the most-played thing)."""
+        up = (c.get("uploader") or "").lower()
+        official = (ba and (ba == up or ba in up)) or any(
+            k in up for k in ("vevo", "- topic", "official", "records"))
+        return official and not EDIT_WORDS.search(c["title"])
+
     def rank_key(c):
-        return (0 if c["editmatch"] else 1, -c.get("plays", 0), -c.get("fp", 0))
+        # 1) the matching edit, 2) an actual edit before the plain original,
+        # 3) closest fingerprint (0.02 buckets so same-edit uploads tie),
+        # 4) plays only break those ties -> the popular upload of the RIGHT edit,
+        # never the huge-play original over the edit.
+        return (0 if c["editmatch"] else 1,
+                1 if is_official_original(c) else 0,
+                -round(c.get("fp", 0) / 0.02),
+                -c.get("plays", 0))
     ranked = sorted(keep, key=rank_key)
     decisive = False
     if ranked and ranked[0].get("editmatch"):
         rivals = [c for c in ranked[1:] if c.get("editmatch")]
-        decisive = (not rivals) or ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1)
+        if not rivals:
+            decisive = True
+        else:
+            fp_gap = ranked[0].get("fp", 0) - rivals[0].get("fp", 0)
+            decisive = fp_gap >= 0.04 or (fp_gap <= 0.02 and
+                       ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1))
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None)
     return result
 
