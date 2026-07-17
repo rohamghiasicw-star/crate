@@ -458,6 +458,56 @@ def search_edits(queries, per=5):
     return cands
 
 
+_DDG_LINK = re.compile(r'href="[^"]*uddg=([^"&]+)[^"]*"[^>]*>(.*?)</a>', re.I | re.S)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def _ddg(query):
+    """Keyless web search (DuckDuckGo lite). Reddit's own API is 403-walled, but a
+    plain web search surfaces the crowd-known edit uploads (YouTube/SoundCloud/
+    Audiomack) the way a person googling 'song slowed tiktok' would find them."""
+    try:
+        r = _cffi_get("https://lite.duckduckgo.com/lite/?q=%s" % urllib.parse.quote(query))
+    except Exception:
+        return []
+    out = []
+    for enc, label in _DDG_LINK.findall(r.text):
+        url = urllib.parse.unquote(enc)
+        src = ("youtube" if ("youtube.com" in url or "youtu.be" in url)
+               else "soundcloud" if "soundcloud.com" in url
+               else "audiomack" if "audiomack.com" in url else None)
+        if not src or "/playlist" in url or "/sets/" in url:
+            continue
+        title = _TAGS.sub("", label).strip()
+        out.append({"title": title, "url": url.split("&")[0], "source": src})
+    return out
+
+
+def web_search_edits(queries):
+    """Run the web searches concurrently, dedup by url. Plays come later (metadata)."""
+    seen, out = set(), []
+    with ThreadPoolExecutor(max_workers=min(6, len(queries) or 1)) as ex:
+        for rows in ex.map(_ddg, queries):
+            for r in rows:
+                u = r["url"]
+                if u in seen:
+                    continue
+                seen.add(u); out.append(r)
+    return out
+
+
+def _meta(url):
+    """plays + title for a single URL (web results don't carry play counts)."""
+    try:
+        out = subprocess.run(YTDLP + [url, "--skip-download", "--print",
+                                      "%(view_count)s\t%(title)s\t%(uploader)s"],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        v, t, up = (out.split("\t") + ["", "", ""])[:3]
+        return _num(v), t, up
+    except Exception:
+        return 0, "", ""
+
+
 def dl_clip(url, dst, seconds=25):
     """Grab ~25s of a candidate as wav. SoundCloud takes download-sections; YouTube
     needs the android player client (web formats need a PO token now)."""
@@ -599,7 +649,24 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     sweep or frequencyskew). We no longer guess speed by comparing to a random
     re-pitched re-upload - that faked slows on plain, normal-speed clips."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist, edit_label)
-    cands = search_edits(queries)
+    # SC/YT search + open-web search run concurrently. The web (DuckDuckGo) surfaces
+    # the crowd-known edits the way a person googling would find them, not just what
+    # SC/YT's own search ranks - the "search reddit/the web for the edit" logic.
+    web_q = queries[:2] + ([_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
+                           if base_title else [])
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_sc = ex.submit(search_edits, queries)
+        f_web = ex.submit(web_search_edits, web_q)
+        cands = f_sc.result()
+        web = [w for w in f_web.result() if w["url"] not in {c["url"] for c in cands}][:5]
+    if web:
+        with ThreadPoolExecutor(max_workers=min(5, len(web))) as ex:
+            metas = list(ex.map(_meta, [w["url"] for w in web]))
+        for w, (pl, ti, up) in zip(web, metas):
+            w["plays"] = pl; w["likes"] = 0; w["query"] = "web"
+            if ti: w["title"] = ti
+            if up: w["uploader"] = up
+        cands += web
     result = {"queries": queries, "ranked": [], "decisive": False}
     if not cands:
         return result
