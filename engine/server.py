@@ -111,7 +111,8 @@ def identify(url):
             for c in ranked[:6]:
                 candidates.append({"title": c["title"], "uploader": c["uploader"],
                                    "source": c["source"], "url": c["url"],
-                                   "score": round(c["score"], 3)})
+                                   "score": round(c["score"], 3),
+                                   "plays": c.get("plays", 0)})
             if candidates:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))

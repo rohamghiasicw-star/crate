@@ -357,13 +357,22 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         add(credit_title)
     if base_title:
         add("%s %s %s" % (base_artist or "", base_title, edit_word))
+        add("%s %s edit" % (base_artist or "", base_title))
         add("%s %s remix" % (base_artist or "", base_title))
         add("%s %s" % (base_artist or "", base_title))
-    return q[:5]
+    return q[:6]
+
+
+def _num(s):
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return 0
 
 
 def search_edits(queries, per=6):
-    """SoundCloud + YouTube. These are where the bedroom edits live, not iTunes."""
+    """SoundCloud + YouTube (where the bedroom edits live). Carry plays + likes so
+    ranking can surface the POPULAR upload of the matching edit, not a random one."""
     cands, seen = [], set()
     for q in queries:
         for prefix, src in (("scsearch%d:" % per, "soundcloud"),
@@ -371,7 +380,7 @@ def search_edits(queries, per=6):
             try:
                 out = subprocess.run(
                     YTDLP + [prefix + q, "--flat-playlist",
-                             "--print", "%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s"],
+                             "--print", "%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s\t%(view_count)s\t%(like_count)s"],
                     capture_output=True, text=True, timeout=60).stdout
             except Exception:
                 continue
@@ -380,12 +389,14 @@ def search_edits(queries, per=6):
                 if len(parts) < 3 or not parts[2].startswith("http"):
                     continue
                 title, uploader, wurl = parts[0], parts[1], parts[2]
-                dur = parts[3] if len(parts) > 3 else ""
                 if wurl in seen:
                     continue
                 seen.add(wurl)
                 cands.append({"title": title, "uploader": uploader, "url": wurl,
-                              "source": src, "duration": dur, "query": q})
+                              "source": src, "duration": parts[3] if len(parts) > 3 else "",
+                              "plays": _num(parts[4]) if len(parts) > 4 else 0,
+                              "likes": _num(parts[5]) if len(parts) > 5 else 0,
+                              "query": q})
     return cands
 
 
@@ -541,7 +552,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     key_terms -= ORIGINAL_WORDS
     for c in cands:
         c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
-    cands.sort(key=lambda c: -c["title_hits"])
+    # download the title-relevant AND popular ones first, so the version people
+    # actually use gets fingerprinted (not just whatever the search returned first)
+    cands.sort(key=lambda c: (-c["title_hits"], -c.get("plays", 0)))
 
     clip_spec = _log_spec(_load(clip_audio))
     clip_fp = fp_raw(clip_audio, length=30)
@@ -580,26 +593,40 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         _download_and_score(more, clip_spec, clip_fp, tmp, n, 5)
         cands += more
 
-    # rank by chromaprint fp overlap (the edit discriminator), nudged toward the
-    # upload whose title matches the measured edit direction, penalising a
-    # different rendition. Keep only real content matches.
-    dir_word = "slow" if (mdir == "slowed" or "slow" in edit_label) else \
-               ("sped" if (mdir == "sped up" or "sped" in edit_label) else None)
+    # Keep genuine content matches (right song), then decide which are the SAME
+    # EDIT as the clip. Then let POPULARITY pick which upload to surface - the
+    # version people use. (User's call, and right: find the matching edits, the
+    # popular one pops up.)
+    #   - If a slow/speed was MEASURED, the matching edit is at the CLIP's speed;
+    #     the original (a different speed, and usually far more popular) must be
+    #     excluded, or it wrongly wins on play count.
+    #   - If no speed change (hoodtrap/remix at normal speed), the arrangement
+    #     differs, so chromaprint overlap picks the edit.
+    keep = [c for c in cands if c.get("spectral", -1) > 0.5 or c.get("fp", 0) > 0.6]
+    best_fp = max([c.get("fp", 0) for c in keep], default=0.0)
+    speed_measured = mdir is not None
+    for c in keep:
+        sr = None
+        if c.get("_spec") is not None and clip_spec is not None:
+            rr, conf = pitch_ratio(clip_spec, c["_spec"])
+            if conf > 0.3:
+                sr = rr
+        c["speed_vs_clip"] = round(sr, 3) if sr else None
+        not_other = not OTHER_RENDITION.search(c["title"])
+        if speed_measured:
+            c["editmatch"] = bool(sr is not None and abs(sr - 1.0) < 0.05
+                                  and c.get("spectral", -1) > 0.5 and not_other)
+        else:
+            c["editmatch"] = bool(best_fp > 0 and c.get("fp", 0) >= best_fp - 0.10 and not_other)
     def rank_key(c):
-        bonus = 0.0
-        tl = c["title"].lower()
-        if dir_word and dir_word in tl and not OTHER_RENDITION.search(tl):
-            bonus += 0.03
-        if OTHER_RENDITION.search(tl):
-            bonus -= 0.03
-        return -(c.get("score", -1) + bonus)
-    keep = [c for c in cands if c.get("spectral", -1) > 0.5 or c.get("score", -1) > 0.6]
+        return (0 if c["editmatch"] else 1,     # the matching edit first
+                -c.get("plays", 0),              # then the popular upload of it
+                -c.get("fp", 0))                 # then the closest fingerprint
     ranked = sorted(keep, key=rank_key)
     decisive = False
-    if len(ranked) >= 2:
-        decisive = (ranked[0]["score"] - ranked[1]["score"]) >= 0.05
-    elif len(ranked) == 1:
-        decisive = ranked[0]["score"] >= 0.7
+    if ranked and ranked[0].get("editmatch"):
+        rivals = [c for c in ranked[1:] if c.get("editmatch")]
+        decisive = (not rivals) or ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1)
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None)
     return result
 

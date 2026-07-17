@@ -841,11 +841,19 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     var label = source === "soundcloud" ? "SoundCloud" : source === "youtube" ? "YouTube" : source;
     return '<span class="badge badge-' + esc(source) + '">' + esc(label) + "</span>";
   }
+  function fmtPlays(n) {
+    n = +n || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "K";
+    return String(n);
+  }
   function candRow(c, top) {
+    var meta = esc(c.uploader || "");
+    if (c.plays) meta += (meta ? " &middot; " : "") + fmtPlays(c.plays) + " plays";
     return '<a class="cand' + (top ? " cand-top" : "") + '" href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer">' +
       srcBadge(c.source) +
       '<span class="cand-t">' + esc(c.title) + "</span>" +
-      '<span class="cand-u">' + esc(c.uploader || "") + "</span>" +
+      '<span class="cand-u">' + meta + "</span>" +
       '<span class="cand-open">Open &#8599;</span>' +
     "</a>";
   }
@@ -907,7 +915,7 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
             '<div class="cand-list">' +
               cands.slice(1, 6).map(function (c) { return candRow(c, false); }).join("") +
             "</div>" : "") +
-          '<div class="cand-note">Ranked by how closely each upload matches the audio in your clip.</div>' +
+          '<div class="cand-note">Matched to the audio in your clip, then ranked by plays - the version people actually use.</div>' +
         "</div>";
     } else if (deep.base_song) {
       editBlock =
