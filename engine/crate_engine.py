@@ -638,7 +638,13 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     #   - Normal speed: chromaprint overlap picks the closest audio; the base song
     #     and its official upload rank on popularity, which is correct - a plain
     #     clip's answer IS the plain song, not a fabricated edit.
-    keep = [c for c in cands if c.get("spectral", -1) > 0.5 or c.get("fp", 0) > 0.6]
+    # a candidate must both MATCH the audio and plausibly be the same song: either
+    # its title references the track, or its fingerprint is a strong match. This
+    # stops a coincidental popular track (e.g. "Aura", 91M plays) from winning on
+    # plays when the real song is "Island - POST02".
+    keep = [c for c in cands
+            if (c.get("spectral", -1) > 0.5 or c.get("fp", 0) > 0.6)
+            and (c.get("title_hits", 0) >= 1 or c.get("fp", 0) >= 0.72)]
     best_fp = max([c.get("fp", 0) for c in keep], default=0.0)
     speed_edit = known_dir is not None
     for c in keep:

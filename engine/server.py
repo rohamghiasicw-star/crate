@@ -108,7 +108,9 @@ def identify(url):
         if fp and sweep_rate != 1.0:
             speed_label = edit_label
             mdir = "slowed" if "slow" in edit_label else ("sped up" if "sped" in edit_label else None)
-        elif skew is not None and 0.02 <= abs(skew) <= 0.06:
+        elif skew is not None and 0.04 <= abs(skew) <= 0.06:
+            # 4-6% only: below 4% is noise (a 2% reading is "as posted", not "sped
+            # up 1.02x"); above ~6% frequencyskew aliases and the sweep handles it.
             sp = 1.0 + skew
             mdir = "slowed" if sp < 1 else "sped up"
             speed_label = "%s ~%.2fx" % (mdir, sp)
