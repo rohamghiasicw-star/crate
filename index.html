@@ -1543,12 +1543,20 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     "צליל מקורי", "оригинален звук", "sunetul original"
   ];
 
+  /* The marker is not always first. Turkish renders it "dexterc7 - orijinal ses"
+     and the credit is "<sound title> - <author>", so originals also come through
+     doubled ("original sound - Tricky - Tricky"). Anchoring to the prefix
+     silently passes those through as real tracks, which is how you end up
+     reporting a song called "agah" by an artist called "orijinal ses". So test
+     every " - " segment instead of just the head. */
   function isOriginalSound(credit) {
     if (!credit) return true;
-    var c = credit.trim().toLowerCase();
-    for (var i = 0; i < ORIGINAL_WORDS.length; i++) {
-      var w = ORIGINAL_WORDS[i];
-      if (c === w || c.indexOf(w + " -") === 0 || c.indexOf(w + " –") === 0) return true;
+    var segs = credit.trim().toLowerCase().split(/\s+[-–]\s+/);
+    for (var i = 0; i < segs.length; i++) {
+      var seg = segs[i].trim();
+      for (var j = 0; j < ORIGINAL_WORDS.length; j++) {
+        if (seg === ORIGINAL_WORDS[j]) return true;
+      }
     }
     return false;
   }
