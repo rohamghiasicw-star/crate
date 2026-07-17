@@ -21,16 +21,18 @@ video, creator, thumbnail and sound credit you get back are the actual ones, liv
 ## The real pipeline
 
 1. **oEmbed first.** TikTok and Instagram both expose a public oEmbed endpoint that
-   returns the sound credit. No auth, no key, no scraping, $0. If the creator used a
-   licensed track, the credit *is* the answer.
+   returns the sound credit. No auth, no key, $0. If the creator used a licensed track, the
+   credit *is* the answer. It's the sanctioned embed endpoint, but using it binds you to
+   TikTok's developer terms, there's no published quota, and they can gate it at any time.
 2. **Fingerprint on a miss.** When the credit just says "original sound", pull the audio
    and fingerprint it. AudD is the realistic option at ~$5/1,000 lookups. Apple's
    ShazamKit is free with the best catalogue but is on-device Apple-only, so a web
    backend can't call it.
-3. **Save, don't download.** "Download the song" can't ship: App Store rule 5.2.3 bans
-   apps that save or convert media from third-party sources, and no API sells you the
-   file at any price. So it deep-links to Spotify / Apple Music / YouTube Music, and the
-   Spotify Web API can append straight to a real playlist.
+3. **Save, don't download.** "Download the song" doesn't ship: App Store rule 5.2.3 bans
+   saving or converting media from third-party sources *without explicit authorization from
+   those sources*, and TikTok won't authorize you. Licensed download APIs exist (7digital),
+   but they're for retailers. So it deep-links to Spotify / Apple Music / YouTube Music, and
+   the Spotify Web API can append straight to a real playlist.
 
 ## What works, what doesn't
 
@@ -58,3 +60,30 @@ requests). To regenerate:
 
     python3 gen_catalogue.py   # verified workflow output -> src/catalogue.js
     python3 build.py           # -> crate.html
+
+
+## Measured, not assumed
+
+Tested against **187 real niche TikTok URLs** harvested from news articles, NPR, Rolling Stone
+and Reddit, spanning 132 niches and 171 creators:
+
+| | |
+|---|---|
+| endpoint answered | **187/187 (100%)** |
+| named a track (free, instant) | **59 (31.6%)** |
+| original sound (needs a server) | **128 (68.4%)** |
+| latency | median **689 ms**, p90 915 ms |
+
+**That 68% is the whole business case.** The free tier only answers about a third of niche
+links. The other two thirds are exactly what you'd be paying AudD for.
+
+The test caught three real bugs, all fixed:
+- `isOriginalSound()` only knew 5 languages, so `原聲 - siyuanhorologe` was reported as a song
+  by an artist called "siyuanhorologe". Now covers ~34 locales.
+- The credit was read from a `title` attribute TikTok truncates at any quote, so
+  `The Force Theme (From "Star Wars") - Piano Version - Patrik Pietschmann` became
+  `The Force Theme (From`. Now reads the link text.
+- `matchCatalogue()` let a prefix match beat an exact one, attaching the wrong verified facts
+  (`Lights - Ellie Goulding` resolved to a Speed Radio sped-up entry).
+
+Reproduce: `python3 test_oembed.py test_urls.json`

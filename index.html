@@ -1247,10 +1247,12 @@ h2.sec-title {
             <h3 class="tier-h">Ask the platform first. It's free, and it's allowed.</h3>
             <p class="tier-b">
               TikTok publishes an <code>oEmbed</code> endpoint that takes a public link and hands
-              back the post's title, author, thumbnail and sound credit. No auth, no scraping, no
-              API key, and it sends CORS headers, so your browser can call it directly with no
-              server at all. <strong>That's what this page does, live.</strong> When a creator used
-              a licensed track, the credit line <em>is</em> the answer and we stop here.
+              back the post's title, author, thumbnail and sound credit. No auth, no key, and it
+              sends CORS headers, so your browser calls it directly with no server at all.
+              <strong>That's what this page does, live.</strong> When a creator used a licensed
+              track, the credit line <em>is</em> the answer and we stop here. It's the sanctioned
+              embed endpoint, but using it binds you to TikTok's developer terms, there's no
+              published quota, and they can gate it whenever they like.
             </p>
             </div>
             <div class="tier-facts">
@@ -1269,7 +1271,8 @@ h2.sec-title {
               server: pull the audio, fingerprint it, match it against a commercial catalogue.
               <strong>AudD</strong> is the realistic option for an indie build at roughly $5 per
               1,000 lookups. Apple's <strong>ShazamKit</strong> is free and has the best catalogue,
-              but it only runs on-device on Apple platforms, so a web backend can't call it.
+              but it's an SDK you link into an app, not a REST API a web backend can call, and
+              matching against Apple's catalogue ties you to their attribution rules.
             </p>
             </div>
             <div class="tier-facts">
@@ -1284,11 +1287,13 @@ h2.sec-title {
           <div class="tier-main">
             <h3 class="tier-h">Put it in the playlist. Don't put it in a folder.</h3>
             <p class="tier-b">
-              The idea started as "download it". That version can't ship: App Store rule 5.2.3 bans
-              apps that save or convert media from third-party sources, and no API sells you the file
-              at any price. So Crate does the thing people actually wanted underneath the ask. It
-              deep-links to Spotify, Apple Music and YouTube Music, and the Spotify Web API lets it
-              append straight to a real playlist. You keep the song. Nobody gets sued.
+              The idea started as "download it". That version doesn't ship: App Store rule 5.2.3
+              bans saving or converting media from third-party sources <em>without explicit
+              authorization from those sources</em>, and TikTok isn't going to authorize you.
+              Licensed download APIs do exist (7digital sells them), but they're for retailers and
+              they won't sell you the track someone used in a Reel. So Crate does the thing people
+              actually wanted underneath the ask: deep-link to Spotify, Apple Music and YouTube
+              Music, and the Spotify Web API can append straight to a real playlist.
             </p>
             </div>
             <div class="tier-facts">
@@ -1477,24 +1482,53 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     return String(u).split("?")[0].split("#")[0];
   }
 
-  // The credit line lives in the returned embed HTML as "♬ <credit>".
+  /* The credit appears twice in the embed HTML: once in a title attribute and
+     once as the link text. TikTok truncates the attribute at any quote in the
+     track name, so `title="♬ The Force Theme (From"` loses the rest. The link
+     text is complete, so read that. */
   function creditFrom(json) {
-    var m = (json.html || "").match(/♬\s*([^<"]+)/);
+    var html = json.html || "";
+    var m = html.match(/>\s*♬\s*([^<]*)</);
+    if (m) return m[1].trim();
+    m = html.match(/♬\s*([^<"]+)/);   // fallback if the markup ever changes
     return m ? m[1].trim() : null;
   }
 
-  // "original sound - someone" means the creator uploaded their own audio, so
-  // there is no track name to read and only a fingerprint could name it.
+  /* "original sound - someone" means the creator uploaded their own audio, so
+     there is no track name to read. TikTok localises this string, and a real
+     catalogue of niche links is full of non-English ones, so missing a locale
+     means confidently reporting "原聲" as a song by "siyuanhorologe". */
+  var ORIGINAL_WORDS = [
+    "original sound", "som original", "sonido original", "son original",
+    "originalton", "suono originale", "origineel geluid", "oryginalny dźwięk",
+    "sunet original", "оригинальный звук", "оригінальний звук", "orijinal ses",
+    "âm thanh gốc", "suara asli", "เสียงต้นฉบับ", "オリジナル楽曲", "オリジナル曲",
+    "오리지널 사운드", "原聲", "原声", "原创音乐", "原創音樂", "الصوت الأصلي",
+    "मूल ध्वनि", "orihinal na tunog", "původní zvuk", "originalljud",
+    "alkuperäinen ääni", "original lyd", "eredeti hang", "αρχικός ήχος",
+    "צליל מקורי", "оригинален звук", "sunetul original"
+  ];
+
   function isOriginalSound(credit) {
-    return !credit || /^(original sound|som original|sonido original|son original|オリジナル楽曲)\s*[-–]/i.test(credit);
+    if (!credit) return true;
+    var c = credit.trim().toLowerCase();
+    for (var i = 0; i < ORIGINAL_WORDS.length; i++) {
+      var w = ORIGINAL_WORDS[i];
+      if (c === w || c.indexOf(w + " -") === 0 || c.indexOf(w + " –") === 0) return true;
+    }
+    return false;
   }
 
-  // A licensed credit reads "Title - Artist". Split on the LAST " - " so titles
-  // containing a hyphen survive.
+  /* A licensed credit always reads "Title - Artist". No separator means it
+     isn't a catalogue track (creators name their own sounds things like "-"),
+     so treat it as unnameable rather than invent a title. Split on the LAST
+     " - " so titles containing a hyphen survive. */
   function splitCredit(credit) {
     var i = credit.lastIndexOf(" - ");
-    if (i < 0) return { title: credit, artist: "" };
-    return { title: credit.slice(0, i).trim(), artist: credit.slice(i + 3).trim() };
+    if (i < 0) return null;
+    var t = credit.slice(0, i).trim(), a = credit.slice(i + 3).trim();
+    if (t.length < 2 || !a) return null;
+    return { title: t, artist: a };
   }
 
   function normStr(s) {
@@ -1503,20 +1537,23 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
       .replace(/[^a-z0-9]+/g, " ").trim();
   }
 
-  // If the credited track is one we know, enrich it with the verified facts.
+  /* If the credited track is one we know, enrich it with the verified facts.
+     Sound titles collide constantly (every sped-up edit reuses the title), so
+     an exact artist match must win over a prefix match no matter where it sits
+     in the array, and a title-only match is never good enough to attach
+     someone else's verified facts to. */
   function matchCatalogue(title, artist) {
     var nt = normStr(title), na = normStr(artist);
-    if (!nt) return null;
-    var best = null;
+    if (!nt || !na) return null;
+    var prefix = null;
     for (var i = 0; i < CATALOGUE.length; i++) {
       var c = CATALOGUE[i];
       if (normStr(c.title) !== nt) continue;
-      if (!na) { best = c; break; }
       var ca = normStr(c.artist);
-      if (ca === na || ca.indexOf(na) === 0 || na.indexOf(ca) === 0) { best = c; break; }
-      if (!best) best = c;
+      if (ca === na) return c;                       // exact: always wins
+      if (!prefix && (ca.indexOf(na) === 0 || na.indexOf(ca) === 0)) prefix = c;
     }
-    return best;
+    return prefix;
   }
 
   /* ---------- 7" label art ---------- */
@@ -1700,7 +1737,9 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
 
     var hit = { credit: credit, data: data };
 
-    if (isOriginalSound(credit)) {
+    var parts = isOriginalSound(credit) ? null : splitCredit(credit);
+
+    if (!parts) {
       // Honest dead end: the creator uploaded their own audio, so there is no
       // track name to read. Only a fingerprint could name it, and that needs a
       // server to fetch and hash the audio.
@@ -1709,7 +1748,6 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
       traceLine("T02", "that's creator-uploaded audio, so there's no track name to read. " +
                        "Naming the music inside it needs a fingerprint, which needs a server.", "miss");
     } else {
-      var parts = splitCredit(credit);
       hit.title = parts.title;
       hit.artist = parts.artist;
       hit.known = matchCatalogue(parts.title, parts.artist);
@@ -1744,7 +1782,8 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
   function renderResult(hit) {
     var d = hit.data;
     var thumb = d.thumbnail_url
-      ? '<img class="shot" src="' + esc(d.thumbnail_url) + '" alt="Thumbnail of the TikTok you pasted" loading="lazy">'
+      ? '<img class="shot" src="' + esc(d.thumbnail_url) + '" alt="Thumbnail of the TikTok you pasted" ' +
+        'referrerpolicy="no-referrer" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
       : '<div class="shot shot-none" aria-hidden="true"></div>';
 
     var head =
