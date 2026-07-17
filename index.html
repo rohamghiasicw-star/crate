@@ -312,6 +312,7 @@ canvas.wave { display: block; width: 100%; height: 90px; position: relative; z-i
 .song-links { flex: none; display: flex; gap: 0.5rem; }
 .song-links a { font-size: 0.625rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; text-decoration: none; }
 .song-links a:hover { color: var(--signal); }
+.cmt-line { font-size: 0.75rem; color: var(--muted); padding: 0.15rem 0; font-style: italic; }
 
 .acts { border-top: 1px solid var(--line); padding: 0.7rem 0.75rem; display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
 .out {
@@ -858,6 +859,14 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     "</a>";
   }
 
+  function commentBlock(deep) {
+    if (!deep.comment_hints || !deep.comment_hints.length) return "";
+    return '<div class="edit-strip"><div class="edit-label">From the comments</div>' +
+      deep.comment_hints.map(function (h) {
+        return '<div class="cmt-line">&ldquo;' + esc(h) + "&rdquo;</div>";
+      }).join("") + "</div>";
+  }
+
   function renderDeep(oe, deep, parsed) {
     var data = sourceOf(oe, deep, parsed);
     var base = { title: deep.base_song, artist: deep.base_artist };
@@ -926,7 +935,7 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
         "</div>";
     }
 
-    var body = head + songsBlock + editBlock +
+    var body = head + songsBlock + editBlock + commentBlock(deep) +
       '<div class="acts">' +
         (known ? '<button class="save" id="saveBtn" type="button">Save</button>' : "") +
         '<div style="flex:1;display:flex;gap:0.4rem;flex-wrap:wrap">' + outLinks(base) +
@@ -944,7 +953,7 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
           (parsed && parsed.host === "instagram" ? "Instagram reel" : "Original sound") + "</div>" +
         '<div class="rec-title">' + esc(credit || "original sound") + "</div>" +
         "<p>" + msg + "</p>" +
-      "</div>";
+      "</div>" + commentBlock(deep || {});
     card(data, body, null);
   }
 

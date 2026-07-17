@@ -96,17 +96,42 @@ def identify(url):
                                  "at": round(h.get("at", 0)), "shazam": h.get("url"),
                                  "art": h.get("art")} for h in fp["songs"]]
 
-        speed_edit = bool(fp and fp.get("rate", 1.0) != 1.0)
         named_edit = E.names_an_edit(src.get("credit_title"), src.get("credit_author"))
+        # RELIABLE speed only: the counter-speed sweep (Shazam couldn't match
+        # straight) or Shazam's frequencyskew (trustworthy within +-5%). We do NOT
+        # infer speed by comparing the clip to a random re-pitched re-upload - that
+        # faked "slowed" on plain, normal-speed clips.
+        sweep_rate = fp.get("rate", 1.0) if fp else 1.0
+        skew = fp.get("freqskew") if fp else None
+        mdir = None
+        speed_label = "as posted" if fp else None
+        if fp and sweep_rate != 1.0:
+            speed_label = edit_label
+            mdir = "slowed" if "slow" in edit_label else ("sped up" if "sped" in edit_label else None)
+        elif skew is not None and 0.02 <= abs(skew) <= 0.06:
+            sp = 1.0 + skew
+            mdir = "slowed" if sp < 1 else "sped up"
+            speed_label = "%s ~%.2fx" % (mdir, sp)
+        res["speed"] = speed_label
+        res["edit_certain"] = bool(mdir) or named_edit
+
+        # comments check - people name the edit in the comments, which helps most
+        # when Shazam is blank (an original sound with no catalogue match)
+        if src["platform"] == "tiktok":
+            try:
+                hints = E.comment_song_hints(E.tiktok_comments(url))
+                if hints:
+                    res["comment_hints"] = hints
+            except Exception:
+                pass
 
         exact = None
         candidates = []
         res["decisive"] = False
-        edit = None
         if _edit_worthy(src, fp) and (base_title or E._is_named_credit(src.get("credit_title"))):
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
-                base_title, base_artist, edit_label))
+                base_title, base_artist, edit_label, known_dir=mdir))
             ranked = [c for c in edit.get("ranked", []) if c.get("score", -1) > 0]
             for c in ranked[:6]:
                 candidates.append({"title": c["title"], "uploader": c["uploader"],
@@ -116,24 +141,6 @@ def identify(url):
             if candidates:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
-
-        # Speed label: the sweep names it when it had to counter-speed; otherwise
-        # find_edit MEASURES the clip against the master and catches a slow Shazam
-        # tolerated at normal speed (the "found but doesn't say slowed" case).
-        m_ratio = edit.get("speed_ratio") if edit else None
-        m_dir = edit.get("measured_dir") if edit else None
-        if speed_edit:
-            res["speed"] = edit_label
-            res["edit_certain"] = True
-        elif m_dir and m_ratio:
-            res["speed"] = "%s ~%.2fx" % (m_dir, m_ratio)
-            res["edit_certain"] = True
-        elif named_edit:
-            res["speed"] = "as posted"
-            res["edit_certain"] = True
-        else:
-            res["speed"] = "as posted" if fp else None
-            res["edit_certain"] = False
 
         if fp or exact:
             res["result"] = "found"

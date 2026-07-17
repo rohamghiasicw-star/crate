@@ -129,6 +129,56 @@ def tt_embed_v2(video_id):
             "desc": desc, "creator": mo.get("authorName")}
 
 
+def tiktok_comments(full_url, n=30):
+    """Comments via tikwm (1 req/s). People literally name the edit in the
+    comments ('song is X slowed by Y'), so it's a real signal - especially for
+    original sounds Shazam can't match."""
+    for attempt in range(3):
+        try:
+            r = _cffi_get("https://www.tikwm.com/api/comment/list/?url=%s&count=%d"
+                          % (urllib.parse.quote(full_url, safe=""), n))
+            d = json.loads(r.text)
+        except Exception:
+            return []
+        if d.get("code") == 0:
+            return [(c.get("text") or "").strip()
+                    for c in (d.get("data", {}).get("comments") or []) if c.get("text")]
+        time.sleep(1.3)
+    return []
+
+
+# song-specific edit words (NOT bare "edit"/"version" - those describe the video
+# on an edit account, and flood the comments as compliments like "fire edit")
+_C_EDIT = re.compile(r"\b(slowed|sped ?up|spedup|reverb|nightcore|bass ?boost(ed)?|"
+                     r"phonk|hardstyle|hoodtrap|mashup|daycore|remix)\b", re.I)
+_C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\s*(is|:|-)\s*\S+", re.I)
+_C_BY = re.compile(r"\bby\b", re.I)
+_COMPLIMENT = re.compile(r"\b(fire|best|clean|hard|sick|nice|goat(ed)?|insane|crazy|"
+                         r"good ?job|w edit|amazing|great)\b", re.I)
+
+
+def comment_song_hints(comments):
+    """Comment lines that actually NAME a track (not questions, not compliments)."""
+    hints = []
+    for t in comments:
+        t = (t or "").strip()
+        if not t or len(t) > 90 or t.endswith("?"):
+            continue
+        words = t.split()
+        edit = _C_EDIT.search(t)                 # a real edit-type word
+        songis = _C_SONGIS.search(t)             # "song is X"
+        titleish = _C_BY.search(t) and len(words) <= 8 and not _COMPLIMENT.search(t)  # "X by Y"
+        # an edit-word comment is only a name if it isn't just a compliment
+        if songis or titleish or (edit and (not _COMPLIMENT.search(t) or len(words) <= 4)):
+            hints.append(t)
+    seen, out = set(), []
+    for h in hints:
+        k = h.lower()
+        if k not in seen:
+            seen.add(k); out.append(h)
+    return out[:5]
+
+
 def tt_tikwm(full_url):
     """Third-party resolver: returns the isolated sound mp3 + rich credit. Hard
     1 req/s limit, so it's a fallback, not the front line."""
@@ -538,13 +588,14 @@ def _download_and_score(cands, clip_spec, clip_fp, tmp, start, max_dl):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, max_dl=6):
-    """Ranked candidate edits, verified against the clip, plus the MEASURED speed of
-    the clip vs the master (catches a slow Shazam tolerated and reported as normal)."""
+                    edit_label, known_dir=None, max_dl=6):
+    """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
+    up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
+    sweep or frequencyskew). We no longer guess speed by comparing to a random
+    re-pitched re-upload - that faked slows on plain, normal-speed clips."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist, edit_label)
     cands = search_edits(queries)
-    result = {"queries": queries, "ranked": [], "decisive": False,
-              "speed_ratio": None, "measured_dir": None}
+    result = {"queries": queries, "ranked": [], "decisive": False}
     if not cands:
         return result
 
@@ -561,67 +612,44 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     tmp = tempfile.mkdtemp()
     n = _download_and_score(cands, clip_spec, clip_fp, tmp, 0, max_dl)
 
-    # measure the clip's true speed against the cleanest master among candidates
-    # (best CONTENT match, title with no edit words). Catches a slow Shazam
-    # tolerated and reported at normal speed.
-    matched = [c for c in cands if c.get("spectral", -1) > 0.5 and c.get("_spec") is not None]
-    ratio = None
-    if matched:
-        matched.sort(key=lambda c: -c["spectral"])
-        masters = [c for c in matched if not EDIT_WORDS.search(c["title"])]
-        ref = (masters or matched)[0]
-        r, conf = pitch_ratio(clip_spec, ref["_spec"])
-        if r and conf > 0.3:
-            ratio = r
-    result["speed_ratio"] = round(ratio, 4) if ratio else None
-
+    # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
-    mdir = None
-    if ratio is not None and abs(ratio - 1.0) > 0.035:
-        mdir = "slowed" if ratio < 1 else "sped up"
-    result["measured_dir"] = mdir
-    if mdir and not swept and base_title:
-        extra_q = ["%s %s %s" % (base_artist or "", base_title, mdir),
-                   "%s %s" % (base_title, mdir),
-                   "%s %s %s reverb" % (base_artist or "", base_title, mdir)]
-        extra_q = [_clean(x) for x in extra_q]
+    if known_dir and not swept and base_title:
+        extra_q = [_clean("%s %s %s" % (base_artist or "", base_title, known_dir)),
+                   _clean("%s %s" % (base_title, known_dir))]
         more = [c for c in search_edits(extra_q, per=5)
                 if c["url"] not in {x["url"] for x in cands}]
         for c in more:
             c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
-        more.sort(key=lambda c: -(("slow" in c["title"].lower()) + ("sped" in c["title"].lower()) + c["title_hits"] * 0.1))
+        more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
         _download_and_score(more, clip_spec, clip_fp, tmp, n, 5)
         cands += more
 
     # Keep genuine content matches (right song), then decide which are the SAME
-    # EDIT as the clip. Then let POPULARITY pick which upload to surface - the
-    # version people use. (User's call, and right: find the matching edits, the
-    # popular one pops up.)
-    #   - If a slow/speed was MEASURED, the matching edit is at the CLIP's speed;
-    #     the original (a different speed, and usually far more popular) must be
-    #     excluded, or it wrongly wins on play count.
-    #   - If no speed change (hoodtrap/remix at normal speed), the arrangement
-    #     differs, so chromaprint overlap picks the edit.
+    # thing as the clip, then let POPULARITY surface the version people use.
+    #   - Speed edit (known_dir set): the matching upload is at the CLIP's speed;
+    #     the far-more-popular original is a DIFFERENT speed, so exclude it. This
+    #     is a RELATIVE clip-vs-candidate check (~1.0), which is reliable.
+    #   - Normal speed: chromaprint overlap picks the closest audio; the base song
+    #     and its official upload rank on popularity, which is correct - a plain
+    #     clip's answer IS the plain song, not a fabricated edit.
     keep = [c for c in cands if c.get("spectral", -1) > 0.5 or c.get("fp", 0) > 0.6]
     best_fp = max([c.get("fp", 0) for c in keep], default=0.0)
-    speed_measured = mdir is not None
+    speed_edit = known_dir is not None
     for c in keep:
-        sr = None
-        if c.get("_spec") is not None and clip_spec is not None:
-            rr, conf = pitch_ratio(clip_spec, c["_spec"])
-            if conf > 0.3:
-                sr = rr
-        c["speed_vs_clip"] = round(sr, 3) if sr else None
         not_other = not OTHER_RENDITION.search(c["title"])
-        if speed_measured:
+        if speed_edit:
+            sr = None
+            if c.get("_spec") is not None and clip_spec is not None:
+                rr, conf = pitch_ratio(clip_spec, c["_spec"])
+                if conf > 0.3:
+                    sr = rr
             c["editmatch"] = bool(sr is not None and abs(sr - 1.0) < 0.05
                                   and c.get("spectral", -1) > 0.5 and not_other)
         else:
             c["editmatch"] = bool(best_fp > 0 and c.get("fp", 0) >= best_fp - 0.10 and not_other)
     def rank_key(c):
-        return (0 if c["editmatch"] else 1,     # the matching edit first
-                -c.get("plays", 0),              # then the popular upload of it
-                -c.get("fp", 0))                 # then the closest fingerprint
+        return (0 if c["editmatch"] else 1, -c.get("plays", 0), -c.get("fp", 0))
     ranked = sorted(keep, key=rank_key)
     decisive = False
     if ranked and ranked[0].get("editmatch"):

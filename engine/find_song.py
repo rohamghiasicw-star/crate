@@ -105,8 +105,14 @@ async def shazam(path):
     tr = (out or {}).get("track")
     if not tr:
         return None
+    # frequencyskew = exact pitch deviation vs Shazam's master (speed - 1),
+    # reliable within about +-5%. The trustworthy "is this actually sped/slowed"
+    # signal - far better than comparing against a random re-pitched re-upload.
+    ms = (out or {}).get("matches") or []
     return {"title": tr.get("title"), "artist": tr.get("subtitle"),
-            "url": tr.get("url"), "key": tr.get("key")}
+            "url": tr.get("url"), "key": tr.get("key"),
+            "freqskew": ms[0].get("frequencyskew") if ms else None,
+            "timeskew": ms[0].get("timeskew") if ms else None}
 
 
 async def identify(url):
