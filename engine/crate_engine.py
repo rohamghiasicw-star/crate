@@ -154,23 +154,24 @@ _C_EDIT = re.compile(r"\b(slowed|sped ?up|spedup|reverb|nightcore|bass ?boost(ed
                      r"phonk|hardstyle|hoodtrap|mashup|daycore|remix)\b", re.I)
 _C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\s*(is|:|-)\s*\S+", re.I)
 _C_BY = re.compile(r"\bby\b", re.I)
-_COMPLIMENT = re.compile(r"\b(fire|best|clean|hard|sick|nice|goat(ed)?|insane|crazy|"
-                         r"good ?job|w edit|amazing|great)\b", re.I)
+# clear opinions only - a comment ABOUT the song ("song is dogshit") isn't NAMING
+# one. Kept narrow so real titles ("Bad Guy", "Good Days") still pass.
+_OPINION = re.compile(r"\b(fire|trash|mid|dog ?shi|dogshi|garbage|goated|so ?bad|"
+                      r"straight ?trash|worst|goofy|ahh)\b", re.I)
 
 
 def comment_song_hints(comments):
-    """Comment lines that actually NAME a track (not questions, not compliments)."""
+    """Comment lines that actually NAME a track (not questions, not opinions)."""
     hints = []
     for t in comments:
         t = (t or "").strip()
-        if not t or len(t) > 90 or t.endswith("?"):
+        if not t or len(t) > 90 or t.endswith("?") or _OPINION.search(t):
             continue
         words = t.split()
         edit = _C_EDIT.search(t)                 # a real edit-type word
         songis = _C_SONGIS.search(t)             # "song is X"
-        titleish = _C_BY.search(t) and len(words) <= 8 and not _COMPLIMENT.search(t)  # "X by Y"
-        # an edit-word comment is only a name if it isn't just a compliment
-        if songis or titleish or (edit and (not _COMPLIMENT.search(t) or len(words) <= 4)):
+        titleish = _C_BY.search(t) and len(words) <= 8  # "X by Y"
+        if songis or titleish or (edit and len(words) <= 6):
             hints.append(t)
     seen, out = set(), []
     for h in hints:
@@ -408,8 +409,16 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
     if base_title:
         add("%s %s %s" % (base_artist or "", base_title, edit_word or "edit"))
         add("%s %s" % (base_artist or "", base_title))
-        add("%s %s remix" % (base_artist or "", base_title))
-    return q[:4]
+        # Shazam often matches a WINDOW and names a qualified version ("worry
+        # (Instrumental Slowed)"), but the exact edit may be the core song in a
+        # different arrangement. Strip the qualifier and search the core + the
+        # common edit types (edits are niche - you find them by name, not by plays).
+        core = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip()
+        base = core if (core and core.lower() != base_title.lower()) else base_title
+        add("%s %s %s" % (base_artist or "", base, edit_word or "edit"))
+        add("%s %s" % (base_artist or "", base))
+        add("%s %s bass boosted" % (base_artist or "", base))
+    return q[:6]
 
 
 def _num(s):
@@ -643,7 +652,7 @@ def _download_and_score(cands, clip_spec, clip_fp, tmp, start, max_dl):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, max_dl=4):
+                    edit_label, known_dir=None, max_dl=6):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -671,12 +680,18 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     if not cands:
         return result
 
-    key_terms = set(_clean(base_title).lower().split()) | set(_clean(credit_title).lower().split())
+    # key terms = the CORE song identity, NOT the edit qualifiers. Including
+    # "instrumental"/"slowed" made instrumental uploads out-title-match the popular
+    # vocal version and hog the download slots (the worry bug).
+    core_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title or "").strip()
+    key_terms = set(_clean(core_title).lower().split()) | set(_clean(credit_title).lower().split())
     key_terms -= ORIGINAL_WORDS
+    key_terms = {t for t in key_terms if t and not EDIT_WORDS.search(t)}
     for c in cands:
-        c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
-    # download the title-relevant AND popular ones first, so the version people
-    # actually use gets fingerprinted (not just whatever the search returned first)
+        c["title_hits"] = sum(1 for t in key_terms if t in c["title"].lower())
+    # Download the song-relevant + most-played first. (key_terms is now the CORE
+    # song, so the popular real versions - vocal "worry (Slowed)" - out-rank the
+    # instrumental re-uploads that used to hog these slots.)
     cands.sort(key=lambda c: (-c["title_hits"], -c.get("plays", 0)))
 
     clip_spec = _log_spec(_load(clip_audio))
@@ -705,13 +720,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     #   - Normal speed: chromaprint overlap picks the closest audio; the base song
     #     and its official upload rank on popularity, which is correct - a plain
     #     clip's answer IS the plain song, not a fabricated edit.
-    # a candidate must both MATCH the audio and plausibly be the same song: either
-    # its title references the track, or its fingerprint is a strong match. This
-    # stops a coincidental popular track (e.g. "Aura", 91M plays) from winning on
-    # plays when the real song is "Island - POST02".
+    # Keep anything that plausibly IS this song: its title references the track, OR
+    # its fingerprint is a strong match. Don't require a high audio score on top of
+    # that - a clip's short section fingerprints its uploads at ~0.5 either way, and
+    # over-filtering there dropped the real popular versions (the vocal "worry
+    # (Slowed)") and left only instrumental re-uploads. The title-relevance gate
+    # still blocks a coincidental popular track (e.g. "Aura" for "Island - POST02").
     keep = [c for c in cands
-            if (c.get("spectral", -1) > 0.5 or c.get("fp", 0) > 0.6)
-            and (c.get("title_hits", 0) >= 1 or c.get("fp", 0) >= 0.72)]
+            if (c.get("title_hits", 0) >= 1 and (c.get("spectral", -1) > 0.3 or c.get("fp", 0) > 0.4))
+            or c.get("fp", 0) >= 0.72]
     best_fp = max([c.get("fp", 0) for c in keep], default=0.0)
     speed_edit = known_dir is not None
     for c in keep:
@@ -727,6 +744,12 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         else:
             c["editmatch"] = bool(best_fp > 0 and c.get("fp", 0) >= best_fp - 0.10 and not_other)
     ba = (base_artist or "").lower()
+    # match the clip's slow INTENSITY: Shazam named the level ("Slowed" vs "Ultra/
+    # Super Slowed"), so an upload at a different intensity is a different speed.
+    base_intense = bool(re.search(r"\b(ultra|super|extreme)\b", (base_title or "").lower()))
+
+    def qual_mismatch(c):
+        return 1 if bool(re.search(r"\b(ultra|super|extreme)\b", c["title"].lower())) != base_intense else 0
 
     def is_official_original(c):
         """The plain commercial master - artist's own / VEVO / Topic channel, no
@@ -737,25 +760,24 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             k in up for k in ("vevo", "- topic", "official", "records"))
         return official and not EDIT_WORDS.search(c["title"])
 
+    # Only rank on the fingerprint when SOME candidate matches clearly (a real
+    # exact-edit match, e.g. the bass-boosted upload against a bass-boosted clip).
+    # Otherwise all fps sit at ~0.5 (noise) and play count is the better signal.
+    em_fps = [c.get("fp", 0) for c in keep if c["editmatch"]]
+    fp_reliable = (max(em_fps) if em_fps else 0.0) >= 0.62
+
     def rank_key(c):
-        # 1) the matching edit, 2) an actual edit before the plain original,
-        # 3) closest fingerprint (0.02 buckets so same-edit uploads tie),
-        # 4) plays only break those ties -> the popular upload of the RIGHT edit,
-        # never the huge-play original over the edit.
-        return (0 if c["editmatch"] else 1,
-                1 if is_official_original(c) else 0,
-                -round(c.get("fp", 0) / 0.02),
-                -c.get("plays", 0))
+        return (0 if c["editmatch"] else 1,           # the matching edit
+                1 if is_official_original(c) else 0,  # an edit before the plain original
+                qual_mismatch(c),                     # same slow-intensity as the clip
+                -round(c.get("fp", 0), 2) if fp_reliable else 0,  # exact audio match, when clear
+                -c.get("plays", 0),                   # else the version people use
+                -c.get("fp", 0))
     ranked = sorted(keep, key=rank_key)
     decisive = False
     if ranked and ranked[0].get("editmatch"):
         rivals = [c for c in ranked[1:] if c.get("editmatch")]
-        if not rivals:
-            decisive = True
-        else:
-            fp_gap = ranked[0].get("fp", 0) - rivals[0].get("fp", 0)
-            decisive = fp_gap >= 0.04 or (fp_gap <= 0.02 and
-                       ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1))
+        decisive = (not rivals) or ranked[0].get("plays", 0) >= 2 * (rivals[0].get("plays", 0) + 1)
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None)
     return result
 
