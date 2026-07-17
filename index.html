@@ -1783,7 +1783,7 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     var d = hit.data;
     var thumb = d.thumbnail_url
       ? '<img class="shot" src="' + esc(d.thumbnail_url) + '" alt="Thumbnail of the TikTok you pasted" ' +
-        'referrerpolicy="no-referrer" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
+        'loading="eager" decoding="async" onerror="this.style.visibility=\'hidden\'">'
       : '<div class="shot shot-none" aria-hidden="true"></div>';
 
     var head =
