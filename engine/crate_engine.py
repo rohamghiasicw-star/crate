@@ -15,6 +15,7 @@ Pipeline
                          return the real source, not just a same-titled upload.
 """
 import asyncio, json, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -315,35 +316,34 @@ def _scan_windows(dur, span=12, step=6, cap=6):
     return offs
 
 
-async def fingerprint(audio, max_probes=40):
+async def fingerprint(audio):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
-    windows and collects DISTINCT songs (a clip can contain two). Phase 2 falls back
-    to a fine counter-speed sweep for a single heavily-edited song."""
+    windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
+    is a fine counter-speed sweep in concurrent batches for a heavily-edited song."""
     dur = duration_of(audio)
     tmp = tempfile.mkdtemp()
-    tried = 0
+    n = {"i": 0}
+    sem = asyncio.Semaphore(5)
 
     async def probe(off, rate, label, span=20):
-        nonlocal tried
-        wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
-        try:
-            cut(audio, wav, off, rate, span=span)
-            hit = await shazam(wav)
-            tried += 1
-        except Exception:
-            return None
+        async with sem:
+            wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
+            try:
+                cut(audio, wav, off, rate, span=span)
+                hit = await shazam(wav)
+            except Exception:
+                return None
+        n["i"] += 1
         if hit:
-            hit.update(edit_label=label, rate=rate, offset=off, probes=tried)
+            hit.update(edit_label=label, rate=rate, offset=off, probes=n["i"])
         return hit
 
-    # Phase 1: chronological short-window scan at normal speed -> distinct songs
+    # Phase 1: all windows at once -> distinct songs
     scan = _scan_windows(dur)
     span = 12 if len(scan) > 1 else 20
+    res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span) for o in scan])
     hits, seen = [], set()
-    for off in scan:
-        if tried >= max_probes:
-            break
-        h = await probe(off, 1.00, "as posted", span=span)
+    for off, h in zip(scan, res):
         if h:
             k = (h["title"].strip().lower(), (h["artist"] or "").strip().lower())
             if k not in seen:
@@ -355,18 +355,18 @@ async def fingerprint(audio, max_probes=40):
         primary["multi"] = len(hits) > 1
         return primary
 
-    # Phase 2: fine counter-speed sweep (single, heavily-edited song)
-    sweep_offs = windows_for(dur)[:2]
-    for rate, label in FINE_SWEEP:
-        for off in sweep_offs:
-            if tried >= max_probes:
-                return None
-            h = await probe(off, rate, label, span=20)
-            if h:
-                h["at"] = off
-                h["songs"] = [dict(h)]
-                h["multi"] = False
-                return h
+    # Phase 2: fine counter-speed sweep on the tail window, batched, first hit wins
+    off0 = windows_for(dur)[0]
+    for i in range(0, len(FINE_SWEEP), 5):
+        batch = FINE_SWEEP[i:i + 5]
+        res = await asyncio.gather(*[probe(off0, rate, label) for rate, label in batch])
+        got = [h for h in res if h]           # gather preserves order: earliest rate first
+        if got:
+            h = got[0]
+            h["at"] = off0
+            h["songs"] = [dict(h)]
+            h["multi"] = False
+            return h
     return None
 
 
@@ -406,11 +406,10 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         add("%s %s" % (credit_title, credit_author or ""))
         add(credit_title)
     if base_title:
-        add("%s %s %s" % (base_artist or "", base_title, edit_word))
-        add("%s %s edit" % (base_artist or "", base_title))
-        add("%s %s remix" % (base_artist or "", base_title))
+        add("%s %s %s" % (base_artist or "", base_title, edit_word or "edit"))
         add("%s %s" % (base_artist or "", base_title))
-    return q[:6]
+        add("%s %s remix" % (base_artist or "", base_title))
+    return q[:4]
 
 
 def _num(s):
@@ -420,33 +419,42 @@ def _num(s):
         return 0
 
 
-def search_edits(queries, per=6):
-    """SoundCloud + YouTube (where the bedroom edits live). Carry plays + likes so
-    ranking can surface the POPULAR upload of the matching edit, not a random one."""
-    cands, seen = [], set()
+_SEARCH_FMT = "%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s\t%(view_count)s\t%(like_count)s"
+
+
+def _run_search(spec):
+    prefix, src, q = spec
+    try:
+        out = subprocess.run(YTDLP + [prefix + q, "--flat-playlist", "--print", _SEARCH_FMT],
+                             capture_output=True, text=True, timeout=45).stdout
+    except Exception:
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or not parts[2].startswith("http"):
+            continue
+        rows.append({"title": parts[0], "uploader": parts[1], "url": parts[2],
+                     "source": src, "duration": parts[3] if len(parts) > 3 else "",
+                     "plays": _num(parts[4]) if len(parts) > 4 else 0,
+                     "likes": _num(parts[5]) if len(parts) > 5 else 0, "query": q})
+    return rows
+
+
+def search_edits(queries, per=5):
+    """SoundCloud + YouTube, all queries fired CONCURRENTLY. Carry plays + likes so
+    ranking can surface the popular upload of the matching edit."""
+    specs = []
     for q in queries:
-        for prefix, src in (("scsearch%d:" % per, "soundcloud"),
-                            ("ytsearch%d:" % per, "youtube")):
-            try:
-                out = subprocess.run(
-                    YTDLP + [prefix + q, "--flat-playlist",
-                             "--print", "%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s\t%(view_count)s\t%(like_count)s"],
-                    capture_output=True, text=True, timeout=60).stdout
-            except Exception:
-                continue
-            for line in out.splitlines():
-                parts = line.split("\t")
-                if len(parts) < 3 or not parts[2].startswith("http"):
+        specs.append(("scsearch%d:" % per, "soundcloud", q))
+        specs.append(("ytsearch%d:" % per, "youtube", q))
+    cands, seen = [], set()
+    with ThreadPoolExecutor(max_workers=min(10, len(specs) or 1)) as ex:
+        for rows in ex.map(_run_search, specs):
+            for r in rows:
+                if r["url"] in seen:
                     continue
-                title, uploader, wurl = parts[0], parts[1], parts[2]
-                if wurl in seen:
-                    continue
-                seen.add(wurl)
-                cands.append({"title": title, "uploader": uploader, "url": wurl,
-                              "source": src, "duration": parts[3] if len(parts) > 3 else "",
-                              "plays": _num(parts[4]) if len(parts) > 4 else 0,
-                              "likes": _num(parts[5]) if len(parts) > 5 else 0,
-                              "query": q})
+                seen.add(r["url"]); cands.append(r)
     return cands
 
 
@@ -562,33 +570,30 @@ OTHER_RENDITION = re.compile(
 
 
 def _download_and_score(cands, clip_spec, clip_fp, tmp, start, max_dl):
-    """Download up to max_dl candidates. spectral = content match (gates junk),
-    fp = chromaprint overlap (picks the exact edit). Final score = fp when we have
-    a clip fingerprint (gated by a real content match), else spectral."""
-    checked = 0
-    for c in cands:
-        if c.get("_done"):
-            continue
-        if checked >= max_dl:
-            continue
-        dst = os.path.join(tmp, "c%d.wav" % (start + checked))
-        got = dl_clip(c["url"], dst)
-        checked += 1
+    """Download + fingerprint up to max_dl candidates CONCURRENTLY. spectral = content
+    match (gates junk), fp = chromaprint overlap (picks the exact edit)."""
+    todo = [c for c in cands if not c.get("_done")][:max_dl]
+
+    def work(i_c):
+        i, c = i_c
         c["_done"] = True
+        got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)))
         c["_spec"] = _spec_of(got) if got else None
         c["spectral"] = match_score(clip_spec, c["_spec"]) if got else -1.0
         c["fp"] = fp_overlap(clip_fp, fp_raw(got)) if (got and clip_fp is not None) else 0.0
         if clip_fp is not None and got:
-            # a wrong song can coincidentally hit fp~0.5, so demote anything that
-            # isn't also a genuine content match first
             c["score"] = c["fp"] if c["spectral"] > 0.55 else c["fp"] * 0.5
         else:
             c["score"] = c["spectral"]
-    return checked
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(5, len(todo))) as ex:
+            list(ex.map(work, enumerate(todo)))
+    return len(todo)
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, max_dl=6):
+                    edit_label, known_dir=None, max_dl=4):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
