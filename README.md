@@ -8,10 +8,14 @@ A working prototype of the share-to-identify flow. Live: https://rohamghiasicw-s
 
 You hear a sound in a TikTok, you can't find it, it's gone. Crate takes the link and names it.
 
-- **Paste the link** and it identifies the sound in one tap.
-- It also accepts a link via `?url=`, so anything that can hand it a URL works
-  (an iOS Shortcut, an Android share target). As a native app this lives in the
-  share sheet automatically.
+**The TikTok lookup is real, with no backend.** TikTok's oEmbed endpoint is public, needs no
+auth, and sends CORS headers, so the browser calls it directly. Paste a TikTok link and the
+video, creator, thumbnail and sound credit you get back are the actual ones, live, for $0.
+
+- **Paste the link**, one tap.
+- Also accepts `?url=`, so anything that can hand it a URL works (an iOS Shortcut, an Android
+  share target). As a native app it registers a Share Extension and iOS lists it in the share
+  sheet automatically, no setup.
 - Found sounds go in your crate, saved in your browser, exportable as JSON.
 
 ## The real pipeline
@@ -28,18 +32,17 @@ You hear a sound in a TikTok, you can't find it, it's gone. Crate takes the link
    file at any price. So it deep-links to Spotify / Apple Music / YouTube Music, and the
    Spotify Web API can append straight to a real playlist.
 
-## What's real here, what isn't
+## What works, what doesn't
 
-**Real:** the pipeline, the costs, the 402 sounds (every title/artist/year fact-checked
-by a separate adversarial pass, anything unconfirmed dropped), the outbound links, your
-crate.
+**Works:** TikTok lookups are a live call to TikTok's oEmbed. When the credit names a track,
+that's the real answer, free. The catalogue is 402 sounds, every title/artist/year fact-checked
+by a separate adversarial pass with anything unconfirmed dropped. Links and your crate are real.
 
-**Demo:** the lookup is seeded playback, not a live API. There's no backend. The
-spectrogram is synthesised per sound rather than decoded from a video.
+**Doesn't:** an "original sound" can't be named without fingerprinting the audio, which needs a
+server, so the page says so rather than guessing. Instagram doesn't work at all client-side
+because Meta's oEmbed refuses browser calls. Add-to-Spotify needs OAuth, which needs a backend.
 
-The scan isn't decoration: Shazam's method finds the loudest peaks in a spectrogram and
-hashes them in *pairs* into a constellation, because pairs survive noise, re-encoding and
-a voiceover over the top. That's what's drawn on the scope, and it's computed for real.
+A confident wrong answer is worse than no answer, so it never invents a track.
 
 ## Worth knowing before building it for real
 

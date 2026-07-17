@@ -527,55 +527,6 @@ input.link-input::placeholder { color: var(--ink-subtle); }
 .chip:hover { color: var(--ink); border-color: var(--ink-faint); border-style: solid; }
 .chip:active { transform: scale(0.96); }
 
-/* ---------- the scope ---------- */
-
-.scope-wrap {
-  border-top: 1px solid var(--hairline);
-  background: var(--well);
-  position: relative;
-}
-.scope {
-  display: block;
-  width: 100%;
-  height: 208px;
-  border-radius: var(--r-scope);
-}
-@media (max-width: 560px) { .scope { height: 164px; } }
-
-.scope-legend {
-  position: absolute;
-  left: 0.7rem;
-  top: 0.6rem;
-  display: flex;
-  gap: 0.85rem;
-  pointer-events: none;
-}
-.legend-item {
-  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.688rem;
-  color: var(--on-well-muted);
-  letter-spacing: 0.04em;
-}
-.legend-item b { color: var(--on-well); font-weight: 400; }
-
-.scope-idle {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-  transition: opacity 320ms var(--exit);
-}
-.scope-idle p {
-  font-variation-settings: "wght" 600, "wdth" 68;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 0.719rem;
-  color: var(--on-well-muted);
-}
-.scope-wrap[data-busy="1"] .scope-idle { opacity: 0; }
-
 /* pipeline trace */
 .trace {
   border-top: 1px solid var(--hairline);
@@ -1108,6 +1059,46 @@ h2.sec-title {
   line-height: 1.45;
 }
 
+/* ---------- the found video: real oEmbed data ---------- */
+
+.found-vid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-1);
+}
+.shot {
+  width: 46px;
+  height: 61px;
+  object-fit: cover;
+  border-radius: var(--r-row);
+  border: 1px solid var(--hairline-strong);
+  display: block;
+  background: var(--sunk);
+}
+.shot-none { background: var(--sunk); }
+.found-vid-meta { min-width: 0; }
+.found-vid-t {
+  font-size: 0.813rem;
+  font-variation-settings: "wght" 560, "wdth" 100;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.found-vid-a {
+  font-size: 0.719rem;
+  color: var(--ink-subtle);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  margin-top: 0.15rem;
+}
+.result-meta .divider-tag { display: block; margin-bottom: 0.3rem; }
+.result-meta .divider-tag[data-warn] { color: var(--stamp); }
+
 </style>
 <a class="skip" href="#deck">Skip to the finder</a>
 
@@ -1145,14 +1136,13 @@ h2.sec-title {
       </h1>
       <div>
         <p class="hero-sub">
-          Copy the link off any TikTok or Reel, tap once, and <strong>Crate</strong> names the
-          sound and drops it in your playlist. No humming at Shazam. No comment-section
-          archaeology.
+          Copy a TikTok link, tap once, and <strong>Crate</strong> asks TikTok what the sound is,
+          for real, right now. No humming at Shazam. No comment-section archaeology.
         </p>
         <div class="hero-meta">
-          <span class="hero-meta-line"><b>Copy</b> the link off TikTok or Reels</span>
+          <span class="hero-meta-line"><b>Copy</b> a TikTok link</span>
           <span class="hero-meta-line"><b>Tap</b> paste, once</span>
-          <span class="hero-meta-line"><b>Done</b> the track, in your library</span>
+          <span class="hero-meta-line"><b>Done</b> the sound, named for free</span>
         </div>
       </div>
     </div>
@@ -1177,8 +1167,9 @@ h2.sec-title {
             </svg>
             <span id="pasteLabel">Paste the link</span>
           </button>
-          <p class="intake-hint" id="pasteHint">Copy the TikTok or Reel link, then tap once.</p>
-          <p class="intake-sub">As a real app this sits in the share sheet, so it's just Share then Crate. A web page can't put itself there, so for now: copy, tap.</p>
+          <p class="intake-hint" id="pasteHint">Copy a TikTok link, then tap once.</p>
+          <p class="intake-sub">This really calls TikTok. As an app it'd sit in the share sheet, so it's just
+          Share then Crate. A web page can't put itself there, so for now: copy, tap.</p>
         </div>
 
         <form class="intake-manual" id="intake" autocomplete="off">
@@ -1196,19 +1187,6 @@ h2.sec-title {
 
         <div class="chips" id="chips">
           <span class="chips-label">Try one</span>
-        </div>
-
-        <div class="scope-wrap" id="scopeWrap" data-busy="0">
-          <div class="scope-legend">
-            <span class="legend-item">FREQ <b>0.1 to 8k Hz</b></span>
-            <span class="legend-item">PEAKS <b id="peakCount">0</b></span>
-            <span class="legend-item">PAIRS <b id="pairCount">0</b></span>
-          </div>
-          <canvas class="scope" id="scope" role="img"
-                  aria-label="Spectrogram of the video's audio, with matched peak pairs drawn as a constellation"></canvas>
-          <div class="scope-idle" id="scopeIdle">
-            <p>Paste a link to read the audio</p>
-          </div>
         </div>
 
         <div class="trace" id="trace" aria-live="polite"></div>
@@ -1268,17 +1246,17 @@ h2.sec-title {
           <div class="tier-main">
             <h3 class="tier-h">Ask the platform first. It's free, and it's allowed.</h3>
             <p class="tier-b">
-              TikTok and Instagram both publish an <code>oEmbed</code> endpoint that takes a public
-              link and hands back the post's title, author and the sound credit. No auth, no scraping,
-              no API key. Meta dropped its token requirement in June 2026, so this tier costs nothing
-              and stays inside both platforms' terms. When a creator used a licensed commercial track,
-              the credit line <em>is</em> the answer and we stop here.
+              TikTok publishes an <code>oEmbed</code> endpoint that takes a public link and hands
+              back the post's title, author, thumbnail and sound credit. No auth, no scraping, no
+              API key, and it sends CORS headers, so your browser can call it directly with no
+              server at all. <strong>That's what this page does, live.</strong> When a creator used
+              a licensed track, the credit line <em>is</em> the answer and we stop here.
             </p>
             </div>
             <div class="tier-facts">
               <span class="fact"><b>Cost</b> $0</span>
               <span class="fact"><b>Auth</b> none</span>
-              <span class="fact"><b>Typical</b> ~200 ms</span>
+              <span class="fact"><b>Real</b> right now</span>
             </div>
           </article>
 
@@ -1287,8 +1265,8 @@ h2.sec-title {
           <div class="tier-main">
             <h3 class="tier-h">When the credit just says "original sound", listen to it.</h3>
             <p class="tier-b">
-              This is the case that actually hurts, and the only one worth paying for. We pull the
-              audio, run a fingerprint, and match it against a commercial catalogue.
+              This is the case that actually hurts, and the only one worth paying for. It needs a
+              server: pull the audio, fingerprint it, match it against a commercial catalogue.
               <strong>AudD</strong> is the realistic option for an indie build at roughly $5 per
               1,000 lookups. Apple's <strong>ShazamKit</strong> is free and has the best catalogue,
               but it only runs on-device on Apple platforms, so a web backend can't call it.
@@ -1326,39 +1304,40 @@ h2.sec-title {
     <div class="shell">
       <div class="sec-head">
         <span class="divider-tag">Straight up</span>
-        <h2 class="sec-title">What's real here, what isn't</h2>
+        <h2 class="sec-title">What works, what doesn't</h2>
       </div>
       <div class="note-grid">
         <div class="note-body">
           <p>
-            This page is a <strong>working prototype of the flow</strong>, not a live service. It
-            runs entirely in your browser with no backend, so the lookups are played back from a
-            seeded set of real tracks rather than hitting a real API. Everything you see on the
-            scope is genuinely computed, and the pipeline it walks through is the one a real build
-            would use.
+            <strong>The TikTok lookup is real.</strong> Paste a TikTok link and this page calls
+            TikTok's own oEmbed endpoint from your browser, live. The video, the creator, the
+            thumbnail and the sound credit you get back are the actual ones. It needs no key, no
+            login and no server, and it costs nothing.
           </p>
           <p>
-            The scan isn't decoration. Shazam's method finds the loudest peaks in a spectrogram and
-            hashes them in <em>pairs</em> into a constellation, because pairs survive noise,
-            re-encoding and a voiceover over the top. That's what's being drawn.
+            When the credit names a track, that <em>is</em> the answer and you're done. When it
+            says "original sound", the creator uploaded their own audio and there is no track
+            name to read. That's the case worth paying for, and naming it means fingerprinting
+            the audio on a server. So the page tells you that instead of guessing, because a
+            confident wrong answer is worse than no answer.
           </p>
           <p>
-            Two things worth knowing before anyone builds this for real. <strong>Shazam already
-            does it</strong>, natively, inside TikTok and Instagram since 2023, and iOS has music
-            recognition in Control Center. And <strong>fetching the audio in tier 02 is against
-            TikTok's terms</strong>. Every existing song-finder does it anyway and survives on
-            obscurity. The honest wedge that's left is real but narrow: fewer taps than anything
-            else, straight to a playlist.
+            <strong>Instagram doesn't work here.</strong> Meta's oEmbed refuses browser calls, so
+            Reels genuinely need a backend. And two things worth knowing before building this for
+            real: Shazam already does this natively inside TikTok and Instagram, and fetching the
+            audio for tier 02 is against TikTok's terms. Every existing song-finder does it anyway
+            and survives on obscurity. The honest wedge left is narrow but real: fewer taps,
+            straight to a playlist.
           </p>
         </div>
         <ul class="ledger">
-          <li data-real="1"><span class="mark">REAL</span><span><b>The pipeline.</b> oEmbed first, fingerprint only on a miss, deep link out.</span></li>
-          <li data-real="1"><span class="mark">REAL</span><span><b>The costs.</b> AudD is $5/1,000. oEmbed is free on both platforms.</span></li>
-          <li data-real="1"><span class="mark">REAL</span><span><b>The tracks and links.</b> Every song is real and every outbound link searches for it.</span></li>
-          <li data-real="1"><span class="mark">REAL</span><span><b>Your crate.</b> Saved in this browser, survives a refresh, exports to JSON.</span></li>
-          <li data-real="0"><span class="mark">DEMO</span><span><b>The lookup.</b> Seeded playback. A real build needs a server.</span></li>
-          <li data-real="0"><span class="mark">DEMO</span><span><b>The audio.</b> The spectrogram is synthesised per track, not decoded from a video.</span></li>
-          <li data-real="0"><span class="mark">DEMO</span><span><b>Add to Spotify.</b> Needs OAuth, which needs a backend.</span></li>
+          <li data-real="1"><span class="mark">REAL</span><span><b>TikTok lookups.</b> Live call to TikTok's oEmbed. Real video, creator, sound credit.</span></li>
+          <li data-real="1"><span class="mark">REAL</span><span><b>The answer.</b> When the credit names a track, that's the real track, free.</span></li>
+          <li data-real="1"><span class="mark">REAL</span><span><b>The catalogue.</b> 402 sounds, each fact-checked; unconfirmed ones were dropped.</span></li>
+          <li data-real="1"><span class="mark">REAL</span><span><b>The links + your crate.</b> Every link searches for the real track. The crate survives a refresh and exports.</span></li>
+          <li data-real="0"><span class="mark">NO</span><span><b>Original sounds.</b> Fingerprinting needs a server. We say so rather than guess.</span></li>
+          <li data-real="0"><span class="mark">NO</span><span><b>Instagram.</b> Meta's oEmbed blocks browser calls. Needs a backend.</span></li>
+          <li data-real="0"><span class="mark">NO</span><span><b>Add to Spotify.</b> Needs OAuth, which needs a backend.</span></li>
         </ul>
       </div>
     </div>
@@ -1382,10 +1361,12 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
 
 <script>
 /* ============================================================
-   CRATE — prototype logic
-   No network. Lookups replay from the verified CATALOGUE.
-   The scope genuinely computes a spectrogram and a Shazam-style
-   peak-pair constellation; only the source audio is synthetic.
+   CRATE
+   Tier 01 is REAL: TikTok's oEmbed endpoint is public, needs no
+   auth, and sends CORS headers, so the browser calls it directly
+   and the video, creator and sound credit are the actual ones.
+   Tier 02 (fingerprinting an "original sound") genuinely needs a
+   server, so we say so instead of guessing a track.
    ============================================================ */
 (function () {
   "use strict";
@@ -1394,15 +1375,10 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
      same track is credited "Title - Artist" when the creator picked it from
      the licensed library, and "original sound - someone" when they uploaded
      their own audio over it. So the route is decided by the link. */
+  /* Real TikTok posts, so the examples exercise the real endpoint. */
   var EXAMPLES = [
-    { label: "tiktok.com/@…/7361902", route: "oembed",
-      url: "https://www.tiktok.com/@sabrinacarpenter/video/7361902884417129771" },
-    { label: "instagram.com/reel/C8fQ… (og sound)", route: "fingerprint",
-      url: "https://www.instagram.com/reel/C8fQ2mNvXkL/" },
-    { label: "tiktok.com/@…/7298455 (og sound)", route: "fingerprint",
-      url: "https://www.tiktok.com/@noahfinnce.edits/video/7298455120384776001" },
-    { label: "instagram.com/reel/C2rB…", route: "oembed",
-      url: "https://www.instagram.com/reel/C2rB7pKtWqY/" }
+    { label: "a real one (original sound)",
+      url: "https://www.tiktok.com/@sam058357/video/7612015315525897485" }
   ];
 
   var $ = function (s) { return document.querySelector(s); };
@@ -1411,8 +1387,6 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     form: $("#intake"), input: $("#linkInput"), btn: $("#findBtn"),
     chips: $("#chips"), led: $("#led"), status: $("#status"),
     count: $("#deckCount"), trace: $("#trace"),
-    scope: $("#scope"), scopeWrap: $("#scopeWrap"),
-    peakCount: $("#peakCount"), pairCount: $("#pairCount"),
     resultWrap: $("#resultWrap"), crateBody: $("#crateBody"),
     themeBtn: $("#themeBtn"), footStat: $("#footStat"),
     catFilter: $("#catFilter"), catList: $("#catList"), catCount: $("#catCount"),
@@ -1433,7 +1407,6 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     var next = cur === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     try { localStorage.setItem("crate.theme", next); } catch (e) {}
-    palette = null;
     paintAllArt();
   });
 
@@ -1486,40 +1459,64 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     return { host: host, id: id, handle: handle, url: url };
   }
 
-  // Resolve a link to a track + the route that link would actually take.
-  function resolve(parsed) {
-    var url = parsed.url;
-    var pin = null;
-    for (var i = 0; i < EXAMPLES.length; i++) if (EXAMPLES[i].url === url) pin = EXAMPLES[i];
-
-    var track = CATALOGUE[hash(url, 0) % CATALOGUE.length];
-    var r = rngFrom(hash(url, 99));
-    r(); // discard first
-
-    var route;
-    if (pin) route = pin.route;
-    else {
-      // Creator-uploaded audio is common, and it's the only case worth paying
-      // to fingerprint. Native TikTok sounds skew that way harder.
-      var pOriginal = track.kind === "tiktok_sound" ? 0.7 : 0.42;
-      route = r() < pOriginal ? "fingerprint" : "oembed";
-    }
-
-    var credit = route === "oembed"
-      ? track.title + " - " + track.artist
-      : "original sound - " + (parsed.handle || genericHandle(hash(url, 7)));
-
-    var conf = route === "oembed" ? 100 : 86 + Math.floor(r() * 13);
-    var at = 8 + Math.floor(r() * 100);
-
-    return { track: track, route: route, credit: credit, conf: conf, at: at };
+  /* ---------- the real lookup ----------
+     TikTok's oEmbed endpoint is public, needs no auth, and sends CORS headers,
+     so the browser can call it directly. That makes tier 01 genuinely real: the
+     title, creator, thumbnail and sound credit below are the actual ones.
+     An error response carries no CORS header, so a dead or private link
+     surfaces as a failed fetch rather than a status code. */
+  function oembedTikTok(url) {
+    var api = "https://www.tiktok.com/oembed?url=" + encodeURIComponent(stripQuery(url));
+    return fetch(api, { mode: "cors" }).then(function (r) {
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
   }
 
-  var HANDLE_WORDS = ["edits", "audios", "core", "clips", "tapes", "hours", "sounds", "reels"];
-  function genericHandle(h) {
-    var r = rngFrom(h);
-    var a = HANDLE_WORDS[Math.floor(r() * HANDLE_WORDS.length)];
-    return "user" + (1000 + Math.floor(r() * 8999)) + "." + a;
+  function stripQuery(u) {
+    return String(u).split("?")[0].split("#")[0];
+  }
+
+  // The credit line lives in the returned embed HTML as "♬ <credit>".
+  function creditFrom(json) {
+    var m = (json.html || "").match(/♬\s*([^<"]+)/);
+    return m ? m[1].trim() : null;
+  }
+
+  // "original sound - someone" means the creator uploaded their own audio, so
+  // there is no track name to read and only a fingerprint could name it.
+  function isOriginalSound(credit) {
+    return !credit || /^(original sound|som original|sonido original|son original|オリジナル楽曲)\s*[-–]/i.test(credit);
+  }
+
+  // A licensed credit reads "Title - Artist". Split on the LAST " - " so titles
+  // containing a hyphen survive.
+  function splitCredit(credit) {
+    var i = credit.lastIndexOf(" - ");
+    if (i < 0) return { title: credit, artist: "" };
+    return { title: credit.slice(0, i).trim(), artist: credit.slice(i + 3).trim() };
+  }
+
+  function normStr(s) {
+    return String(s || "").toLowerCase()
+      .replace(/\(.*?\)|\[.*?\]/g, " ")
+      .replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  // If the credited track is one we know, enrich it with the verified facts.
+  function matchCatalogue(title, artist) {
+    var nt = normStr(title), na = normStr(artist);
+    if (!nt) return null;
+    var best = null;
+    for (var i = 0; i < CATALOGUE.length; i++) {
+      var c = CATALOGUE[i];
+      if (normStr(c.title) !== nt) continue;
+      if (!na) { best = c; break; }
+      var ca = normStr(c.artist);
+      if (ca === na || ca.indexOf(na) === 0 || na.indexOf(ca) === 0) { best = c; break; }
+      if (!best) best = c;
+    }
+    return best;
   }
 
   /* ---------- 7" label art ---------- */
@@ -1593,214 +1590,6 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
       var t = byId(arts[i].getAttribute("data-track"));
       if (t) paintLabel(arts[i], t);
     }
-    if (lastScopeRender) lastScopeRender();
-  }
-
-  /* ---------- the scope ---------- */
-  var COLS = 150, ROWS = 60;
-  var lastScopeRender = null;
-
-  function cssVarRaw(n) {
-    return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  }
-
-  /* Resolve any CSS colour to true sRGB.
-     getComputedStyle().color hands oklch() back verbatim rather than
-     converting it, so parsing that string yields the L/C/H numbers as if they
-     were R/G/B. Painting to a canvas forces a real sRGB conversion. */
-  var probeCv = document.createElement("canvas");
-  probeCv.width = probeCv.height = 1;
-  var probeCtx = probeCv.getContext("2d", { willReadFrequently: true });
-
-  function rgbOf(cssColor) {
-    probeCtx.clearRect(0, 0, 1, 1);
-    probeCtx.fillStyle = "#000";
-    probeCtx.fillStyle = cssColor;   // an unparseable value leaves #000 in place
-    probeCtx.fillRect(0, 0, 1, 1);
-    var d = probeCtx.getImageData(0, 0, 1, 1).data;
-    return [d[0], d[1], d[2]];
-  }
-
-  // Colour resolution happens once per theme, never per cell.
-  var palette = null;
-  function buildPalette() {
-    var stops = [
-      { at: 0.00, c: rgbOf(cssVarRaw("--viz-lo")), a: 0 },
-      { at: 0.20, c: rgbOf(cssVarRaw("--viz-lo")), a: 0.55 },
-      { at: 0.48, c: rgbOf(cssVarRaw("--viz-mid")), a: 0.90 },
-      { at: 0.72, c: rgbOf(cssVarRaw("--viz-hi")), a: 0.96 },
-      { at: 1.00, c: rgbOf(cssVarRaw("--viz-peak")), a: 1 }
-    ];
-    var lut = new Uint8ClampedArray(256 * 4);
-    for (var i = 0; i < 256; i++) {
-      var v = i / 255, s = 0;
-      while (s < stops.length - 2 && v > stops[s + 1].at) s++;
-      var a0 = stops[s], b0 = stops[s + 1];
-      var t = Math.max(0, Math.min(1, (v - a0.at) / Math.max(1e-6, b0.at - a0.at)));
-      lut[i * 4] = a0.c[0] + (b0.c[0] - a0.c[0]) * t;
-      lut[i * 4 + 1] = a0.c[1] + (b0.c[1] - a0.c[1]) * t;
-      lut[i * 4 + 2] = a0.c[2] + (b0.c[2] - a0.c[2]) * t;
-      lut[i * 4 + 3] = (a0.a + (b0.a - a0.a) * t) * 255;
-    }
-    palette = { lut: lut, onWell: cssVarRaw("--on-well"), lock: cssVarRaw("--lock"), peak: cssVarRaw("--viz-peak") };
-  }
-
-  // Spectral frames for a track: harmonic stack, a beat grid, noise floor.
-  function synthSpectrum(track) {
-    var rnd = rngFrom(hash(track.id, 3));
-    var bpm = track.bpm || (90 + (hash(track.id, 5) % 50));
-    var grid = [];
-    var fund = 4 + (Math.round(track.hue) % 7);
-    var beat = Math.max(4, Math.round(60 / bpm * 26));
-    for (var x = 0; x < COLS; x++) {
-      var col = new Float32Array(ROWS);
-      var onBeat = (x % beat) < 2;
-      for (var y = 0; y < ROWS; y++) {
-        var v = rnd() * 0.07;                                  // noise floor
-        v += Math.exp(-y / 6.5) * 0.20;                        // bass roll-off
-        for (var h = 1; h <= 7; h++) {                          // harmonic stack
-          var cy = fund * h + Math.sin(x / 17 + h) * 1.3;
-          var d = Math.abs(y - cy);
-          if (d < 2.0) v += (0.98 / Math.pow(h, 0.62)) * (1 - d / 2.0);
-        }
-        if (onBeat && y < 6) v += 0.40;                         // kick
-        if (onBeat && y > 42) v += 0.42 * rnd();                // hat
-        col[y] = Math.min(1, v);
-      }
-      grid.push(col);
-    }
-    return grid;
-  }
-
-  // Shazam's method: local maxima in the time-frequency plane...
-  function findPeaks(grid) {
-    var peaks = [];
-    for (var x = 2; x < COLS - 2; x++) {
-      for (var y = 2; y < ROWS - 2; y++) {
-        var v = grid[x][y];
-        if (v < 0.58) continue;
-        var isMax = true;
-        for (var dx = -2; dx <= 2 && isMax; dx++) {
-          for (var dy = -2; dy <= 2; dy++) {
-            if (!dx && !dy) continue;
-            if (grid[x + dx][y + dy] >= v) { isMax = false; break; }
-          }
-        }
-        if (isMax) peaks.push({ x: x, y: y });
-      }
-    }
-    return peaks;
-  }
-
-  // ...then hash them in PAIRS. Pairs survive noise, re-encoding and a
-  // voiceover over the top, which single peaks do not.
-  function pairPeaks(peaks) {
-    var pairs = [];
-    for (var i = 0; i < peaks.length; i++) {
-      var a = peaks[i], made = 0;
-      for (var j = i + 1; j < peaks.length && made < 2; j++) {
-        var b = peaks[j];
-        var dt = b.x - a.x;
-        if (dt < 2) continue;
-        if (dt > 16) break;
-        if (Math.abs(b.y - a.y) > 13) continue;
-        pairs.push([a, b]);
-        made++;
-      }
-    }
-    return pairs;
-  }
-
-  var scopeCtx = null, scopeW = 0, scopeH = 0;
-  function scopeGeom() {
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var w = els.scope.clientWidth, h = els.scope.clientHeight;
-    if (!scopeCtx || w !== scopeW || h !== scopeH) {
-      els.scope.width = w * dpr;
-      els.scope.height = h * dpr;
-      scopeCtx = els.scope.getContext("2d");
-      scopeW = w; scopeH = h;
-      scopeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    return { g: scopeCtx, w: w, h: h };
-  }
-
-  // The spectrogram never changes once computed: paint it once, blit per frame.
-  function buildLayer(grid) {
-    if (!palette) buildPalette();
-    var off = document.createElement("canvas");
-    off.width = COLS; off.height = ROWS;
-    var og = off.getContext("2d");
-    var img = og.createImageData(COLS, ROWS);
-    var d = img.data, lut = palette.lut;
-    for (var x = 0; x < COLS; x++) {
-      for (var y = 0; y < ROWS; y++) {
-        var v = grid[x][y];
-        var li = (v < 0 ? 0 : v > 1 ? 255 : v * 255) | 0;
-        var o = ((ROWS - 1 - y) * COLS + x) * 4;   // low frequencies at the bottom
-        d[o] = lut[li * 4]; d[o + 1] = lut[li * 4 + 1];
-        d[o + 2] = lut[li * 4 + 2]; d[o + 3] = lut[li * 4 + 3];
-      }
-    }
-    og.putImageData(img, 0, 0);
-    return off;
-  }
-
-  function drawScope(layer, peaks, pairs, progress, phase) {
-    if (!palette) buildPalette();
-    var geo = scopeGeom(), g = geo.g, w = geo.w, h = geo.h;
-    var padL = 6, padT = 26, plotW = w - 12, plotH = h - padT - 8;
-    var cw = plotW / COLS, ch = plotH / ROWS;
-
-    g.clearRect(0, 0, w, h);
-    var upTo = Math.max(1, Math.floor(COLS * progress));
-    g.imageSmoothingEnabled = false;
-    g.drawImage(layer, 0, 0, upTo, ROWS, padL, padT, upTo * cw, plotH);
-
-    if (phase === "scan" && progress < 1) {
-      var hx = padL + upTo * cw;
-      g.globalAlpha = 0.13; g.fillStyle = palette.peak;
-      g.fillRect(hx - 24, padT, 24, plotH);
-      g.globalAlpha = 0.9;
-      g.fillRect(hx, padT, 1.25, plotH);
-      g.globalAlpha = 1;
-    }
-
-    var px = function (p) { return padL + p.x * cw + cw / 2; };
-    var py = function (p) { return padT + (ROWS - 1 - p.y) * ch + ch / 2; };
-
-    if (phase === "pairs" || phase === "lock") {
-      g.strokeStyle = palette.onWell;
-      g.globalAlpha = phase === "lock" ? 0.32 : 0.24;
-      g.lineWidth = 0.5;
-      var shown = phase === "lock" ? pairs.length : Math.floor(pairs.length * progress);
-      g.beginPath();
-      for (var p = 0; p < shown; p++) {
-        g.moveTo(px(pairs[p][0]), py(pairs[p][0]));
-        g.lineTo(px(pairs[p][1]), py(pairs[p][1]));
-      }
-      g.stroke();
-      g.globalAlpha = 1;
-    }
-
-    if (phase === "peaks" || phase === "pairs" || phase === "lock") {
-      var pshown = phase === "peaks" ? Math.floor(peaks.length * progress) : peaks.length;
-      g.fillStyle = phase === "lock" ? palette.lock : palette.peak;
-      g.beginPath();
-      for (var i = 0; i < pshown; i++) {
-        g.moveTo(px(peaks[i]) + 1.7, py(peaks[i]));
-        g.arc(px(peaks[i]), py(peaks[i]), 1.7, 0, Math.PI * 2);
-      }
-      g.fill();
-    }
-
-    lastScopeRender = function () { drawScope(layer, peaks, pairs, progress, phase); };
-  }
-
-  function clearScope() {
-    var geo = scopeGeom();
-    geo.g.clearRect(0, 0, geo.w, geo.h);
-    lastScopeRender = null;
   }
 
   /* ---------- trace ---------- */
@@ -1848,16 +1637,27 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     });
   }
 
-  /* ---------- the run ---------- */
+  /* ---------- the run ----------
+     This is a real lookup, not a replay. Everything the result shows about the
+     video comes back from TikTok's own oEmbed endpoint. */
   async function run(rawUrl) {
     if (busy) return;
     var parsed = parseLink(rawUrl);
 
+    els.trace.innerHTML = "";
+    t0 = performance.now();
+
     if (!parsed.host) {
-      els.trace.innerHTML = "";
-      t0 = performance.now();
       setStatus("Bad link", "idle");
-      traceLine("ERR", "That isn't a TikTok or Instagram link. Paste a post URL, or tap an example.", "miss");
+      traceLine("ERR", "That isn't a TikTok or Instagram link. Paste a post URL.", "miss");
+      return;
+    }
+
+    if (parsed.host === "instagram") {
+      setStatus("Can't do Reels", "idle");
+      traceLine("LINK", "Host <b>Instagram</b>");
+      traceLine("IG", "Meta's oEmbed refuses browser calls, so a Reel needs a server. " +
+                      "TikTok links work right now.", "miss");
       return;
     }
 
@@ -1865,83 +1665,68 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     els.btn.disabled = true;
     els.resultWrap.hidden = true;
     els.resultWrap.innerHTML = "";
-    els.trace.innerHTML = "";
-    els.scopeWrap.setAttribute("data-busy", "1");
-    els.peakCount.textContent = "0";
-    els.pairCount.textContent = "0";
-    clearScope();
 
-    t0 = performance.now();
     clearInterval(ticker);
     ticker = setInterval(function () { els.count.textContent = fmt(elapsed()); }, 33);
 
-    var hit = resolve(parsed);
-    var track = hit.track;
-    var platform = parsed.host === "tiktok" ? "TikTok" : "Instagram";
-
     setStatus("Reading link", "scanning");
-    traceLine("LINK", "Host <b>" + platform + "</b> &middot; id <b>" + esc(parsed.id || "?") + "</b>");
-    await wait(170);
+    traceLine("LINK", "Host <b>TikTok</b> &middot; id <b>" + esc(parsed.id || "?") + "</b>");
 
-    setStatus("Tier 01 · oEmbed", "scanning");
-    traceLine("T01", "GET /oembed?url=… &middot; no auth, no key");
-    await wait(230);
-    traceLine("T01", 'sound credit: "<b>' + esc(hit.credit) + '</b>"');
-    await wait(150);
+    setStatus("Asking TikTok", "scanning");
+    traceLine("T01", "GET tiktok.com/oembed &middot; no auth, no key, $0");
 
-    if (hit.route === "oembed") {
-      traceLine("T01", "credit names a commercial track. Resolved. Cost $0.", "hit");
-      var layer1 = buildLayer(synthSpectrum(track));
-      await animate(460, function (p) { drawScope(layer1, [], [], p, "scan"); });
-      drawScope(layer1, [], [], 1, "idle");
-      setStatus("Locked", "locked");
-    } else {
-      traceLine("T01", "credit is user-generated audio. No track name. Escalating.", "miss");
-      await wait(180);
-
-      setStatus("Tier 02 · Fingerprint", "scanning");
-      traceLine("T02", "pulling ~12 s of audio &middot; billed per lookup (~$0.005)");
-      await wait(200);
-
-      var grid = synthSpectrum(track);
-      var peaks = findPeaks(grid);
-      var pairs = pairPeaks(peaks);
-      var layer = buildLayer(grid);
-
-      traceLine("T02", "STFT &middot; 2048-pt window &middot; " + COLS + " frames");
-      await animate(720, function (p) { drawScope(layer, peaks, pairs, p, "scan"); });
-
-      traceLine("T02", "picking spectral peaks (local maxima)");
-      await animate(380, function (p) {
-        drawScope(layer, peaks, pairs, p, "peaks");
-        els.peakCount.textContent = Math.floor(peaks.length * p);
-      });
-      els.peakCount.textContent = peaks.length;
-
-      traceLine("T02", "hashing peaks in pairs &rarr; constellation");
-      await animate(520, function (p) {
-        drawScope(layer, peaks, pairs, p, "pairs");
-        els.pairCount.textContent = Math.floor(pairs.length * p);
-      });
-      els.pairCount.textContent = pairs.length;
-
-      await wait(200);
-      drawScope(layer, peaks, pairs, 1, "lock");
-      traceLine("T02", "catalogue match &middot; " + pairs.length + " hashes aligned &middot; confidence <b>" +
-                hit.conf + "%</b>", "hit");
-      setStatus("Locked", "locked");
+    var data = null, failed = null;
+    try {
+      data = await oembedTikTok(parsed.url);
+    } catch (e) {
+      failed = e;
     }
 
     clearInterval(ticker);
     els.count.textContent = fmt(elapsed());
-    renderResult(track, hit, platform);
+
+    if (failed) {
+      setStatus("No answer", "idle");
+      traceLine("T01", "TikTok returned nothing for that link. It's usually deleted, private, " +
+                       "or region-locked. Check the link opens in a browser.", "miss");
+      busy = false;
+      els.btn.disabled = false;
+      return;
+    }
+
+    var credit = creditFrom(data);
+    traceLine("T01", "video: <b>" + esc((data.title || "untitled").slice(0, 64)) + "</b>");
+    traceLine("T01", 'sound credit: "<b>' + esc(credit || "none given") + '</b>"');
+
+    var hit = { credit: credit, data: data };
+
+    if (isOriginalSound(credit)) {
+      // Honest dead end: the creator uploaded their own audio, so there is no
+      // track name to read. Only a fingerprint could name it, and that needs a
+      // server to fetch and hash the audio.
+      hit.route = "original";
+      setStatus("Original sound", "idle");
+      traceLine("T02", "that's creator-uploaded audio, so there's no track name to read. " +
+                       "Naming the music inside it needs a fingerprint, which needs a server.", "miss");
+    } else {
+      var parts = splitCredit(credit);
+      hit.title = parts.title;
+      hit.artist = parts.artist;
+      hit.known = matchCatalogue(parts.title, parts.artist);
+      hit.route = "resolved";
+      setStatus("Found it", "locked");
+      traceLine("T01", "credit names a track. Resolved for free.", "hit");
+      if (hit.known) traceLine("CAT", "also in the catalogue &middot; " + hit.known.year, "hit");
+    }
+
+    renderResult(hit);
     busy = false;
     els.btn.disabled = false;
   }
 
   /* ---------- result ---------- */
-  function searchUrl(svc, track) {
-    var q = encodeURIComponent(track.artist + " " + track.title);
+  function searchUrl(svc, t) {
+    var q = encodeURIComponent(((t.artist || "") + " " + (t.title || "")).trim());
     if (svc === "spotify") return "https://open.spotify.com/search/" + q;
     if (svc === "apple") return "https://music.apple.com/search?term=" + q;
     return "https://music.youtube.com/search?q=" + q;
@@ -1956,48 +1741,80 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     });
   }
 
-  function renderResult(track, hit, platform) {
-    var via = hit.route === "oembed" ? "oEmbed" : "Fingerprint";
-    var facts =
-      '<span class="fact" data-lock><b>' + via + "</b> &middot; " + hit.conf + "% match</span>" +
-      '<span class="fact"><b>' + track.year + "</b></span>";
-    // only show what was actually verified
-    if (track.bpm) facts += '<span class="fact"><b>' + track.bpm + "</b> BPM</span>";
-    if (track.key) facts += '<span class="fact"><b>' + esc(track.key) + "</b></span>";
-    facts += '<span class="fact">hits at <b>' + secs(hit.at) + "</b></span>";
+  function renderResult(hit) {
+    var d = hit.data;
+    var thumb = d.thumbnail_url
+      ? '<img class="shot" src="' + esc(d.thumbnail_url) + '" alt="Thumbnail of the TikTok you pasted" loading="lazy">'
+      : '<div class="shot shot-none" aria-hidden="true"></div>';
 
-    els.resultWrap.hidden = false;
-    els.resultWrap.innerHTML =
-      '<div class="result">' +
-        '<canvas class="label-art" data-track="' + track.id + '" aria-label="Record label for ' +
-          esc(track.title) + '"></canvas>' +
-        '<div class="result-meta">' +
-          '<div class="result-title">' + esc(track.title) + "</div>" +
-          '<div class="result-artist">' + esc(track.artist) + "</div>" +
-          '<div class="result-facts">' + facts + "</div>" +
-          (track.note ? '<p class="result-note">' + esc(track.note) + "</p>" : "") +
-        "</div>" +
-        '<div class="result-actions">' +
-          '<button class="btn-crate" id="addBtn" type="button">Add to crate</button>' +
-          '<div class="outlinks">' +
-            '<a class="outlink" href="' + searchUrl("spotify", track) + '" target="_blank" rel="noopener noreferrer">Spotify</a>' +
-            '<a class="outlink" href="' + searchUrl("apple", track) + '" target="_blank" rel="noopener noreferrer">Apple</a>' +
-            '<a class="outlink" href="' + searchUrl("yt", track) + '" target="_blank" rel="noopener noreferrer">YT</a>' +
-          "</div>" +
+    var head =
+      '<div class="found-vid">' + thumb +
+        '<div class="found-vid-meta">' +
+          '<div class="found-vid-t">' + esc((d.title || "Untitled").slice(0, 120)) + "</div>" +
+          '<div class="found-vid-a">@' + esc(d.author_unique_id || d.author_name || "") + "</div>" +
         "</div>" +
       "</div>";
 
-    paintLabel(els.resultWrap.querySelector("canvas"), track);
+    var body;
+    if (hit.route === "resolved") {
+      var k = hit.known;
+      var facts = '<span class="fact" data-lock><b>From the sound credit</b> &middot; free</span>';
+      if (k) {
+        facts += '<span class="fact"><b>' + k.year + "</b></span>";
+        if (k.bpm) facts += '<span class="fact"><b>' + k.bpm + "</b> BPM</span>";
+        if (k.key) facts += '<span class="fact"><b>' + esc(k.key) + "</b></span>";
+      }
+      body =
+        '<div class="result-meta">' +
+          '<span class="divider-tag">The sound</span>' +
+          '<div class="result-title">' + esc(hit.title) + "</div>" +
+          (hit.artist ? '<div class="result-artist">' + esc(hit.artist) + "</div>" : "") +
+          '<div class="result-facts">' + facts + "</div>" +
+          (k && k.note ? '<p class="result-note">' + esc(k.note) + "</p>" : "") +
+        "</div>" +
+        '<div class="result-actions">' +
+          (k ? '<button class="btn-crate" id="addBtn" type="button">Add to crate</button>' : "") +
+          '<div class="outlinks">' +
+            '<a class="outlink" href="' + searchUrl("spotify", hit) + '" target="_blank" rel="noopener noreferrer">Spotify</a>' +
+            '<a class="outlink" href="' + searchUrl("apple", hit) + '" target="_blank" rel="noopener noreferrer">Apple</a>' +
+            '<a class="outlink" href="' + searchUrl("yt", hit) + '" target="_blank" rel="noopener noreferrer">YT</a>' +
+          "</div>" +
+        "</div>";
+    } else {
+      // no track name exists to find. Say so plainly rather than guess one.
+      body =
+        '<div class="result-meta">' +
+          '<span class="divider-tag" data-warn>Original sound</span>' +
+          '<div class="result-title">' + esc(hit.credit || "original sound") + "</div>" +
+          '<p class="result-note">' +
+            "The creator uploaded their own audio, so TikTok has no track name to give. " +
+            "Naming the music inside it means fingerprinting the audio, and that needs a " +
+            "server. This is the exact case tier 02 exists for." +
+          "</p>" +
+        "</div>" +
+        '<div class="result-actions">' +
+          '<div class="outlinks">' +
+            '<a class="outlink" href="https://music.youtube.com/search?q=' +
+              encodeURIComponent((d.title || "").slice(0, 60)) +
+              '" target="_blank" rel="noopener noreferrer">Try YT</a>' +
+          "</div>" +
+        "</div>";
+    }
+
+    els.resultWrap.hidden = false;
+    els.resultWrap.innerHTML = head + '<div class="result">' + body + "</div>";
 
     var addBtn = els.resultWrap.querySelector("#addBtn");
-    if (getCrate().some(function (r) { return r.id === track.id; })) {
+    if (!addBtn || !hit.known) return;
+    var id = hit.known.id;
+    if (getCrate().some(function (r) { return r.id === id; })) {
       addBtn.textContent = "In your crate";
       addBtn.setAttribute("data-added", "1");
     }
     addBtn.addEventListener("click", function () {
       var crate = getCrate();
-      if (crate.some(function (r) { return r.id === track.id; })) return;
-      crate.unshift({ id: track.id, via: via, platform: platform });
+      if (crate.some(function (r) { return r.id === id; })) return;
+      crate.unshift({ id: id, via: "Sound credit", platform: "TikTok" });
       setCrate(crate);
       addBtn.textContent = "In your crate";
       addBtn.setAttribute("data-added", "1");
@@ -2212,11 +2029,11 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
   var rt;
   window.addEventListener("resize", function () {
     clearTimeout(rt);
-    rt = setTimeout(function () { if (lastScopeRender) lastScopeRender(); paintAllArt(); }, 120);
+    rt = setTimeout(paintAllArt, 120);
   });
 
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
-    if (!document.documentElement.getAttribute("data-theme")) { palette = null; paintAllArt(); }
+    if (!document.documentElement.getAttribute("data-theme")) paintAllArt();
   });
 
   renderCrate();
