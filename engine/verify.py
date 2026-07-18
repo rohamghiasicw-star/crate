@@ -308,7 +308,8 @@ def verify(clip_path, cand_path, seconds=20):
         spectral   float        coarse content match
     """
     out = {"score": 0.0, "same": False, "speed": 1.0, "bass_delta": 0.0,
-           "lag": 0.0, "fp": 0.0, "arr": 0.0, "spectral": -1.0}
+           "lag": 0.0, "fp": 0.0, "arr": 0.0, "spectral": -1.0, "core": 0.0,
+           "clip_tilt": 0.0, "cand_tilt": 0.0}
     try:
         xc = _decode(clip_path, seconds)
         xk = _decode(cand_path, seconds)
@@ -357,13 +358,20 @@ def verify(clip_path, cand_path, seconds=20):
     out["lag"] = round(lag, 2)
 
     # D. spectral-tilt delta on the SPEED-MATCHED bands (bass-boost signature).
-    bass_delta = _tilt_db(xc) - _tilt_db(xk_sm)
+    clip_tilt = _tilt_db(xc)
+    cand_tilt = _tilt_db(xk_sm)
+    bass_delta = clip_tilt - cand_tilt
     out["bass_delta"] = round(bass_delta, 2)
+    out["clip_tilt"] = round(clip_tilt, 2)
+    out["cand_tilt"] = round(cand_tilt, 2)
 
     # E. combine. Same-master evidence = the stronger of the two independent paths.
+    # This is EQ/bass-INDEPENDENT (fp is gain-invariant, arr removes each band's mean),
+    # so `core` is the pure "is this the same recording" signal; bass is handled apart.
     core = max(_norm(fp, FP_LO, FP_HI), _norm(arr, ARR_LO, ARR_HI))
     if out["spectral"] < SPC_GATE:         # coarse content says junk -> collapse
         core *= 0.3
+    out["core"] = round(_clip01(core), 4)
     # tilt penalty: a clean original many dB flatter than a boosted clip is a
     # DIFFERENT edit member (req 3). Small EQ gaps are free (req: allow boost diffs).
     tilt_pen = _clip01((abs(bass_delta) - TILT_FREE_DB) / TILT_SPAN_DB)

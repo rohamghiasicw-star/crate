@@ -135,15 +135,22 @@ def identify(url):
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
                 handle=src.get("handle")))
-            ranked = [c for c in edit.get("ranked", []) if c.get("score", -1) > 0]
+            ranked = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
             for c in ranked[:6]:
                 candidates.append({"title": c["title"], "uploader": c["uploader"],
                                    "source": c["source"], "url": c["url"],
-                                   "score": round(c["score"], 3),
-                                   "plays": c.get("plays", 0)})
+                                   "score": round(c.get("final", c["score"]), 3),
+                                   "plays": c.get("plays", 0),
+                                   "bass": round(c.get("bass_delta", 0.0), 1)})
             if candidates:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
+            # bass boost is part of the edit's identity - surface it in the label.
+            if edit.get("bass_boosted"):
+                base = res.get("speed") or "as posted"
+                res["speed"] = ("bass boosted" if base in (None, "as posted")
+                                else base + " + bass boosted")
+                res["bass_boosted"] = True
 
         if fp or exact:
             res["result"] = "found"
