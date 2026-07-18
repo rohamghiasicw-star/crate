@@ -16,6 +16,7 @@ local server, which does the whole job:
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
 import asyncio, json, os, re, time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -209,18 +210,21 @@ def identify(url):
                     r = speed_from_master.measure_consensus(src["audio"], refs) if refs else None
                     if (not r or not r.get("confident")) and base_artist:
                         core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
-                        got = []
                         offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
                                                "%s %s audio" % (base_artist, core_t)], 4)
-                        for i, c in enumerate(offs):
-                            t = (c.get("title") or "").lower()
-                            if (core_t.lower() in t and "slow" not in t and "remix" not in t
-                                    and "sped" not in t and not E.OTHER_RENDITION.search(t)):
-                                mp = E.dl_clip(c["url"], os.path.join(src["tmp"], "om%d.wav" % i))
-                                if mp:
-                                    got.append(mp)
-                            if len(got) >= 3:   # pooled cluster is robust with 3 refs
-                                break
+                        pick = [c for c in offs
+                                if core_t.lower() in (c.get("title") or "").lower()
+                                and "slow" not in (c.get("title") or "").lower()
+                                and "remix" not in (c.get("title") or "").lower()
+                                and "sped" not in (c.get("title") or "").lower()
+                                and not E.OTHER_RENDITION.search(c.get("title") or "")][:5]
+                        # download the reference masters CONCURRENTLY (was sequential) - 5
+                        # attempts so a couple of dropped downloads still leave a quorum
+                        with ThreadPoolExecutor(max_workers=5) as ex:
+                            got = [p for p in ex.map(
+                                lambda ic: E.dl_clip(ic[1]["url"],
+                                                     os.path.join(src["tmp"], "om%d.wav" % ic[0])),
+                                list(enumerate(pick))) if p]
                         if got:
                             r = speed_from_master.measure_consensus(src["audio"], got)
                     if r and r.get("confident") and r.get("label") != "as posted":

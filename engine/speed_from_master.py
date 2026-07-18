@@ -159,7 +159,7 @@ def measure_consensus(clip_path, ref_paths, DEADBAND=0.045, seconds=25):
     n_win, n_ref = int(sel.sum()), len(set(refidx[sel].tolist()))
     out["speed"] = round(sp, 4); out["agree"] = n_ref
     out["spread"] = round(float(10 ** logs.max() - 10 ** logs.min()), 3)
-    if not (n_ref >= 2 or n_win >= 3):           # cluster must be corroborated
+    if not (n_ref >= 2 or n_win >= 2):           # a tight >=2-window cluster is enough
         out["reason"] = "cluster too weak (%d win / %d ref)" % (n_win, n_ref); return out
     out["confident"] = True
     if abs(np.log10(sp)) < np.log10(1.0 + DEADBAND):
