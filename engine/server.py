@@ -15,11 +15,13 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, time
+import asyncio, json, os, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import crate_engine as E
+import wrong_song
+import speed_from_master
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
@@ -118,14 +120,27 @@ def identify(url):
         res["edit_certain"] = bool(mdir) or named_edit
 
         # comments check - people name the edit in the comments, which helps most
-        # when Shazam is blank (an original sound with no catalogue match)
+        # when Shazam is blank OR mis-IDs the song (the crowd names the real track).
+        hint_texts = []
         if src["platform"] == "tiktok":
             try:
-                hints = E.comment_song_hints(E.tiktok_comments(url))
-                if hints:
-                    res["comment_hints"] = hints
+                hint_texts = E.comment_song_hints(E.tiktok_comments(url)) or []
+                if hint_texts:
+                    res["comment_hints"] = hint_texts
             except Exception:
                 pass
+
+        # Is the Shazam base trustworthy, or a bogus cover / unverifiable ID? When it's
+        # untrustworthy we stop seeding search from its (wrong) name and lean on the
+        # credit + comment hints instead (the Where-Have-You-Been / Fade-To-Blue fix).
+        shazam_reliable = True
+        if fp:
+            corpus = [src.get("credit_title")] + hint_texts
+            untrust, why = wrong_song.shazam_untrustworthy(
+                base_title, base_artist, skew, corpus, None)
+            shazam_reliable = not untrust
+            if untrust:
+                res["shazam_suspect"] = why
 
         exact = None
         candidates = []
@@ -134,23 +149,55 @@ def identify(url):
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
-                handle=src.get("handle")))
-            ranked = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
-            for c in ranked[:6]:
-                candidates.append({"title": c["title"], "uploader": c["uploader"],
-                                   "source": c["source"], "url": c["url"],
-                                   "score": round(c.get("final", c["score"]), 3),
+                handle=src.get("handle"), hints=hint_texts,
+                shazam_reliable=shazam_reliable))
+            rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
+            # ONLY surface a candidate that actually VERIFIES as the same recording
+            # (editmatch). A plain track then correctly reports no edit instead of a
+            # coincidental same-title different song (the seyti / 8ball false positives).
+            verified = [c for c in rk if c.get("editmatch")]
+            for c in verified[:6]:
+                candidates.append({"title": c.get("title", ""),
+                                   "uploader": c.get("uploader", ""),
+                                   "source": c.get("source", ""), "url": c.get("url", ""),
+                                   "score": round(c.get("final", c.get("score", 0)), 3),
                                    "plays": c.get("plays", 0),
                                    "bass": round(c.get("bass_delta", 0.0), 1)})
-            if candidates:
+            top = verified[0] if verified else None
+            if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
-            # bass boost is part of the edit's identity - surface it in the label.
-            if edit.get("bass_boosted"):
+                # SPEED from the verified edit's OWN title (authoritative - the upload
+                # names itself "slowed"/"sped"), adding a measured ratio only when a
+                # confident master measurement agrees in direction. A genre remix
+                # (jersey-club) has no speed word, so it stays as Shazam had it - never a
+                # spurious "sped up" from comparing a remix to the base song.
+                et = (top.get("title") or "").lower()
+                t_slow = bool(re.search(r"\b(slowed|slow|daycore)\b", et))
+                t_fast = bool(re.search(r"\b(sped|speed ?up|nightcore)\b", et))
+                cur = res.get("speed") or "as posted"
+                cur_slow, cur_fast = "slow" in cur, "sped" in cur
+                if (t_slow and not cur_slow) or (t_fast and not cur_fast):
+                    d = "slowed" if t_slow else "sped up"
+                    ratio = ""
+                    if edit.get("master_path") and edit.get("master_core") is not None:
+                        try:
+                            _, sinfo = speed_from_master.refine_speed_label(
+                                "as posted", src["audio"], edit["master_path"], edit["master_core"])
+                            ms = sinfo.get("speed", 1.0) if sinfo else 1.0
+                            if sinfo and sinfo.get("confident") and ((t_slow and ms < 1) or (t_fast and ms > 1)):
+                                ratio = " ~%.2fx" % ms
+                                res["speed_measured"] = ms
+                        except Exception:
+                            pass
+                    res["speed"] = d + ratio
+            # bass boost is part of the edit's identity - surface it, only on a real edit.
+            if edit.get("bass_boosted") and top:
                 base = res.get("speed") or "as posted"
                 res["speed"] = ("bass boosted" if base in (None, "as posted")
                                 else base + " + bass boosted")
                 res["bass_boosted"] = True
+            _cleanup(edit.get("tmp"))
 
         if fp or exact:
             res["result"] = "found"

@@ -404,42 +404,73 @@ def names_an_edit(credit_title, credit_author):
     return bool(EDIT_WORDS.search("%s %s" % (credit_title or "", credit_author or "")))
 
 
-def build_queries(credit_title, credit_author, base_title, base_artist, edit_label, handle=None):
-    """The credit usually NAMES the edit ('cool for the summer hoodtrap by Kryd').
-    When it's just 'original sound', fall back to the base song + edit direction.
-    Edits are niche - you find them by NAME (song + edit tag, the creator's handle),
-    never by plays - so the queries deliberately target the edit tags directly."""
+# edit-family tags the niche SOURCE upload carries that a plain "<artist> <song>"
+# search never reaches. Targeting the exact family (hoodtrap/tiktok version/...) is
+# how the true low-view edit gets surfaced.
+EDIT_TAGS = ["hoodtrap", "mylancore", "phonk", "nightcore", "hardstyle",
+             "jersey club", "daycore", "8d", "tiktok version", "slowed reverb"]
+
+
+def _tags_in(*strings):
+    """Which edit-family tags are literally present in the credit / Shazam / comment
+    text, so we target that exact remix family directly."""
+    blob = " ".join(s or "" for s in strings).lower().replace(" ", "")
+    return [t for t in EDIT_TAGS if t.replace(" ", "") in blob]
+
+
+def build_queries(credit_title, credit_author, base_title, base_artist, edit_label,
+                  handle=None, hints=None, shazam_reliable=True):
+    """Queries that SURFACE the exact niche edit, not just a same-titled original.
+    Trust order: (1) comment hints - the crowd naming the song, the only text signal
+    when Shazam mis-IDs a bogus cover over an 'original sound' credit; (2) the named
+    credit verbatim; (3) the Shazam base VERBATIM + edit-family token variants
+    (tiktok version / hoodtrap / mylancore / bass boosted) a plain search never
+    reaches. Found by NAME + tag, never plays; the verifier throws out misses, so a
+    broad edit-tagged pool is safe. Cap 14 - pull more, let the verifier rank."""
     q, seen = [], set()
     def add(s):
         s = _clean(s)
-        if s and s.lower() not in seen:
+        if s and len(s) > 1 and s.lower() not in seen:
             seen.add(s.lower()); q.append(s)
-    edit_word = "slowed" if "slow" in edit_label else ("sped up" if "sped" in edit_label else "")
+    edit_word = "slowed" if "slow" in (edit_label or "") else ("sped up" if "sped" in (edit_label or "") else "")
+
+    # 1) COMMENT HINTS FIRST - the only reliable text when Shazam mis-IDs the song.
+    for h in (hints or [])[:4]:
+        add(h)
+        if edit_word:
+            add("%s %s" % (h, edit_word))
+        tags = _tags_in(h)
+        for tg in tags:
+            add("%s %s" % (h, tg))
+        if not tags:
+            add("%s hoodtrap" % h)
+            add("%s tiktok version %s" % (h, edit_word or ""))
+
+    # 2) NAMED CREDIT (verbatim)
     if _is_named_credit(credit_title):
         add("%s %s" % (credit_title, credit_author or ""))
         add(credit_title)
-    if base_title:
-        add("%s %s %s" % (base_artist or "", base_title, edit_word or "edit"))
-        add("%s %s" % (base_artist or "", base_title))
-        # Shazam often matches a WINDOW and names a qualified version ("worry
-        # (Instrumental Slowed)"), but the exact edit may be the core song in a
-        # different arrangement. Strip the qualifier and search the core + the
-        # common edit tags the niche uploads actually carry.
+
+    # 3) SHAZAM BASE SONG + edit-family tokens (only when Shazam is trusted)
+    if base_title and shazam_reliable:
         core = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip()
         base = core if (core and core.lower() != base_title.lower()) else base_title
+        add(base_title)                                         # verbatim Shazam title
+        add("%s %s" % (base_artist or "", base_title))
         add("%s %s %s" % (base_artist or "", base, edit_word or "edit"))
         add("%s %s" % (base_artist or "", base))
+        add("%s tiktok version %s" % (base, edit_word or ""))   # the PIXY/Yoh_dono lever
+        add("%s hoodtrap" % base)
+        add("%s mylancore" % base)
+        for tg in _tags_in(credit_title, base_title):
+            add("%s %s" % (base, tg))
         add("%s %s bass boosted" % (base_artist or "", base))
-        add("%s %s %s bass boosted" % (base_artist or "", base, edit_word) if edit_word
-            else "%s %s super bass boosted" % (base_artist or "", base))
         if edit_word == "slowed":
             add("%s %s slowed reverb" % (base_artist or "", base))
-        # edit accounts upload under their own handle - a direct route to the exact,
-        # low-view source upload a bare song search buries under the popular versions.
         h = re.sub(r"[._]+", " ", handle or "").strip()
         if h and base and not _is_named_credit(credit_title):
             add("%s %s" % (h, base))
-    return q[:8]
+    return q[:14]
 
 
 def _num(s):
@@ -509,7 +540,8 @@ def _ddg(query):
         if not src or "/playlist" in url or "/sets/" in url:
             continue
         title = _TAGS.sub("", label).strip()
-        out.append({"title": title, "url": url.split("&")[0], "source": src})
+        out.append({"title": title, "url": url.split("&")[0], "source": src,
+                    "uploader": "", "plays": 0})
     return out
 
 
@@ -668,6 +700,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl):
             return
         v = _verify.verify(clip_audio, got)
         c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
+        c["path"] = got                     # kept so the caller can measure speed vs it
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
                  vscore=v["score"], score=v["score"], same=v["same"],
                  vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
@@ -680,13 +713,15 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=10):
+                    edit_label, known_dir=None, handle=None, max_dl=12,
+                    hints=None, shazam_reliable=True):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
     re-pitched re-upload - that faked slows on plain, normal-speed clips."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist,
-                            edit_label, handle=handle)
+                            edit_label, handle=handle, hints=hints,
+                            shazam_reliable=shazam_reliable)
     # SC/YT search + open-web search run concurrently. The web (DuckDuckGo) surfaces
     # the crowd-known edits the way a person googling would find them, not just what
     # SC/YT's own search ranks - the "search reddit/the web for the edit" logic.
@@ -837,9 +872,18 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         rivals = [c for c in ranked[1:] if c.get("editmatch")]
         top = ranked[0].get("final", 0)
         decisive = (top >= 0.55) and ((not rivals) or (top - rivals[0].get("final", 0) >= 0.10))
+    # expose the confirmed ORIGINAL master (for measuring the clip's TRUE speed vs it):
+    # prefer the official/original upload, else the strongest same-recording match.
+    masters = [c for c in keep if is_official_original(c) and c.get("core", 0) >= 0.55
+               and c.get("path")]
+    if not masters:
+        masters = [c for c in keep if c.get("core", 0) >= 0.7 and c.get("path")]
+    master = max(masters, key=lambda c: c.get("core", 0)) if masters else None
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None,
                   bass_boosted=bool(bassy), clip_tilt=round(clip_tilt, 1),
-                  target_tilt=round(target_tilt, 1))
+                  target_tilt=round(target_tilt, 1), tmp=tmp,
+                  master_path=(master.get("path") if master else None),
+                  master_core=(master.get("core", 0.0) if master else None))
     return result
 
 

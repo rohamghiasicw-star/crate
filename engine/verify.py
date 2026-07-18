@@ -277,6 +277,61 @@ def _arr_score(Mc, Mk, hop=1024, freq_shifts=(-2, -1, 0, 1, 2)):
     return best, best_lag * hop / SR
 
 
+# --------------------------------------------- music-frame gate (noise-robust)
+def _midband_gate(x, n=2048, hop=1024, keep_pct=45.0):
+    """Boolean CLIP-frame mask that drops engine/rumble-dominated frames.
+    ratio = mid-band (400-3500 Hz, melody/vocals) over low-band (40-250 Hz, where
+    car-engine / crowd rumble dominates). Keep frames at/above the keep_pct
+    percentile, so at most ~55% (the rumble frames) drop. Falls back to all frames
+    if too few survive (never gate a short clip away)."""
+    if len(x) < n:
+        x = np.pad(x, (0, n - len(x)))
+    win = np.hanning(n)
+    nfr = 1 + (len(x) - n) // hop
+    fr = np.fft.rfftfreq(n, 1.0 / SR)
+    lo = (fr >= 40) & (fr <= 250)
+    mid = (fr >= 400) & (fr <= 3500)
+    r = np.empty(nfr, np.float32)
+    for t in range(nfr):
+        p = np.abs(np.fft.rfft(x[t * hop:t * hop + n] * win)) ** 2
+        r[t] = p[mid].sum() / (p[lo].sum() + 1e-12)
+    m = r >= np.percentile(r, keep_pct)
+    if m.sum() < 3:
+        m = np.ones(nfr, bool)
+    return m
+
+
+def _arr_gated(Mc, Mk, clip_mask, hop=1024, freq_shifts=(-2, -1, 0, 1, 2)):
+    """_arr_score, but only music-dominant CLIP frames (clip_mask) carry weight in
+    the time-aligned EQ-invariant correlation. Reduces to _arr_score when the mask
+    is all-True. Lets a genuine match survive when the noise is only in part of the
+    clip; taken as max() with the ungated arr, so it can only ever RAISE a score."""
+    if Mc is None or Mk is None or Mc.shape[0] < 3 or Mk.shape[0] < 3:
+        return 0.0, 0.0
+    A = _eq_invariant(Mc)
+    Tc = A.shape[0]
+    Tk = _eq_invariant(Mk).shape[0]
+    if clip_mask is None or clip_mask.shape[0] != Tc:
+        w = np.ones(Tc, np.float32)
+    else:
+        w = clip_mask.astype(np.float32)
+    counts = np.correlate(w, np.ones(Tk), mode="full")
+    min_overlap = max(3.0, 0.4 * float(w.sum()))
+    best, best_lag = 0.0, 0
+    for fs in freq_shifts:
+        B = _eq_invariant(np.roll(Mk, fs, axis=1))
+        num = np.zeros(Tc + Tk - 1)
+        for b in range(A.shape[1]):
+            num += np.correlate(A[:, b] * w, B[:, b], mode="full")
+        mean_cos = num / np.maximum(counts, 1e-6)
+        mean_cos[counts < min_overlap] = -1.0
+        j = int(np.argmax(mean_cos))
+        if mean_cos[j] > best:
+            best = float(mean_cos[j])
+            best_lag = j - (Tk - 1)
+    return best, best_lag * hop / SR
+
+
 # --------------------------------------------------------- coarse content gate
 def _content_xcorr(clip_s, cand_s):
     """crate_engine.match_score: coarse log-spec cross-correlation. Cheap junk
@@ -353,7 +408,13 @@ def verify(clip_path, cand_path, seconds=20):
     out["fp"] = round(fp, 4)
 
     # C2. EQ-invariant, time-aligned spectrogram correlation (partial-overlap ok).
-    arr, lag = _arr_score(_spectrogram(xc), _spectrogram(xk_sm))
+    # Take the max of the ungated arr and a music-frame-gated arr (drops engine/crowd
+    # rumble frames) so a genuine same-master match survives partial noise; max() means
+    # it can only RAISE a real match, never lower one or admit a different recording.
+    Sc, Sk = _spectrogram(xc), _spectrogram(xk_sm)
+    a0, l0 = _arr_score(Sc, Sk)
+    a1, l1 = _arr_gated(Sc, Sk, _midband_gate(xc))
+    arr, lag = (a1, l1) if a1 > a0 else (a0, l0)
     out["arr"] = round(arr, 4)
     out["lag"] = round(lag, 2)
 
