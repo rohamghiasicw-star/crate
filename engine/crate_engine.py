@@ -487,7 +487,7 @@ def _run_search(spec):
     prefix, src, q = spec
     try:
         out = subprocess.run(YTDLP + [prefix + q, "--flat-playlist", "--print", _SEARCH_FMT],
-                             capture_output=True, text=True, timeout=45).stdout
+                             capture_output=True, text=True, timeout=25).stdout
     except Exception:
         return []
     rows = []
@@ -581,7 +581,7 @@ def dl_clip(url, dst, seconds=25):
     else:
         args += ["--download-sections", "*0-%d" % seconds, "--force-keyframes-at-cuts"]
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=150, check=True)
+        subprocess.run(args, capture_output=True, text=True, timeout=35, check=True)
     except Exception:
         return None
     if not os.path.exists(dst):
@@ -879,11 +879,21 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     if not masters:
         masters = [c for c in keep if c.get("core", 0) >= 0.7 and c.get("path")]
     master = max(masters, key=lambda c: c.get("core", 0)) if masters else None
+    # PLAIN (non-edit) uploads we already downloaded = speed REFERENCES. Measuring the
+    # clip's speed vs SEVERAL of these and taking the agreeing median (dropping a bad
+    # re-upload that's itself off-speed) is what makes the speed exact - reusing these
+    # costs no extra download.
+    _PLAIN = re.compile(r"\b(slow(ed)?|sped|speed ?up|nightcore|daycore|bass ?boost(ed)?|"
+                        r"reverb|remix|hoodtrap|mylancore|jersey ?club|phonk|8d|hardstyle|"
+                        r"flip|mashup|cover|guitar|instrumental)\b", re.I)
+    ref_paths = [c["path"] for c in cands
+                 if c.get("path") and c.get("title") and not _PLAIN.search(c["title"])][:5]
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None,
                   bass_boosted=bool(bassy), clip_tilt=round(clip_tilt, 1),
                   target_tilt=round(target_tilt, 1), tmp=tmp,
                   master_path=(master.get("path") if master else None),
-                  master_core=(master.get("core", 0.0) if master else None))
+                  master_core=(master.get("core", 0.0) if master else None),
+                  ref_paths=ref_paths)
     return result
 
 

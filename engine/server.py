@@ -197,12 +197,58 @@ def identify(url):
                 res["speed"] = ("bass boosted" if base in (None, "as posted")
                                 else base + " + bass boosted")
                 res["bass_boosted"] = True
+            # SPEED via multi-reference CONSENSUS. Reuse the plain-master uploads find_edit
+            # already downloaded (ref_paths): measure the clip vs several and take the
+            # agreeing median, dropping any off-speed re-upload. High-pass beats car/crowd
+            # rumble so a slowed clip Shazam matched "straight" (Dark Horse) is caught.
+            # No extra download when refs exist; trusts Shazam's ID; deadband stops false slows.
+            if (fp and shazam_reliable and base_title
+                    and (res.get("speed") in (None, "as posted"))):
+                try:
+                    refs = list(edit.get("ref_paths") or [])
+                    r = speed_from_master.measure_consensus(src["audio"], refs) if refs else None
+                    if (not r or not r.get("confident")) and base_artist:
+                        core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
+                        got = []
+                        offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
+                                               "%s %s audio" % (base_artist, core_t)], 4)
+                        for i, c in enumerate(offs):
+                            t = (c.get("title") or "").lower()
+                            if (core_t.lower() in t and "slow" not in t and "remix" not in t
+                                    and "sped" not in t and not E.OTHER_RENDITION.search(t)):
+                                mp = E.dl_clip(c["url"], os.path.join(src["tmp"], "om%d.wav" % i))
+                                if mp:
+                                    got.append(mp)
+                            if len(got) >= 3:   # pooled cluster is robust with 3 refs
+                                break
+                        if got:
+                            r = speed_from_master.measure_consensus(src["audio"], got)
+                    if r and r.get("confident") and r.get("label") != "as posted":
+                        res["speed"] = r["label"]
+                        res["speed_measured"] = r.get("speed")
+                        res["speed_refs"] = r.get("agree")
+                except Exception:
+                    pass
             _cleanup(edit.get("tmp"))
 
-        if fp or exact:
+        # If Shazam's ID is a likely-wrong cover AND nothing recovered the real song,
+        # don't present the bogus name as the answer - say so honestly instead of
+        # showing "Fade To Blue (Cover)" as if it were right (the Where-Have-You-Been case).
+        if res.get("shazam_suspect") and not exact:
+            res["base_uncertain"] = True
+            res["base_song_guess"] = res.get("base_song")
+            res["base_song"] = None
+            res["base_artist"] = None
+            res["speed"] = None
+            res["note"] = ("Couldn't confidently ID this one - Shazam matched a likely-wrong "
+                           "cover, and nothing in the caption or comments named the real track.")
+
+        if exact or (fp and not res.get("base_uncertain")):
             res["result"] = "found"
             res["exact"] = exact
             res["candidates"] = candidates
+        elif res.get("base_uncertain"):
+            res["result"] = "uncertain"
         else:
             res["result"] = "no_match"
         res["secs"] = round(time.time() - t0, 1)
