@@ -351,7 +351,21 @@ def _norm(x, lo, hi):
 
 
 # ------------------------------------------------------------------- verify
-def verify(clip_path, cand_path, seconds=20):
+def prepare_clip(clip_path, seconds=20):
+    """Precompute the CLIP-side features once so verify() can reuse them across many
+    candidates instead of re-decoding + re-fingerprinting the clip every call (the clip
+    is identical for a whole lookup). Returns None if the clip is unreadable/too short."""
+    try:
+        xc = _decode(clip_path, seconds)
+    except Exception:
+        return None
+    if xc.size < SR:
+        return None
+    return {"s": _avg_logspec(xc), "fp": _fp_raw(clip_path), "spec": _spectrogram(xc),
+            "gate": _midband_gate(xc), "tilt": _tilt_db(xc)}
+
+
+def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
     """Is cand the same recording (same edit family) as clip? Returns a dict:
         score      float 0..1   calibrated confidence
         same       bool         score >= SAME_THRESHOLD and content gate passed
@@ -365,15 +379,18 @@ def verify(clip_path, cand_path, seconds=20):
     out = {"score": 0.0, "same": False, "speed": 1.0, "bass_delta": 0.0,
            "lag": 0.0, "fp": 0.0, "arr": 0.0, "spectral": -1.0, "core": 0.0,
            "clip_tilt": 0.0, "cand_tilt": 0.0}
+    if clip_ctx is None:
+        clip_ctx = prepare_clip(clip_path, seconds)
+    if clip_ctx is None:
+        return out
     try:
-        xc = _decode(clip_path, seconds)
         xk = _decode(cand_path, seconds)
     except Exception:
         return out
-    if xc.size < SR or xk.size < SR:      # under ~1s of audio -> nothing to do
+    if xk.size < SR:                      # under ~1s of audio -> nothing to do
         return out
 
-    clip_s = _avg_logspec(xc)
+    clip_s = clip_ctx["s"]
     cand_s = _avg_logspec(xk)
     out["spectral"] = _content_xcorr(clip_s, cand_s)
 
@@ -397,7 +414,7 @@ def verify(clip_path, cand_path, seconds=20):
     os.close(fd)
     try:
         _write_wav(xk_sm, sm_wav)
-        fp = _fp_overlap(_fp_raw(clip_path), _fp_raw(sm_wav))
+        fp = _fp_overlap(clip_ctx["fp"], _fp_raw(sm_wav))
     except Exception:
         fp = 0.0
     finally:
@@ -411,15 +428,15 @@ def verify(clip_path, cand_path, seconds=20):
     # Take the max of the ungated arr and a music-frame-gated arr (drops engine/crowd
     # rumble frames) so a genuine same-master match survives partial noise; max() means
     # it can only RAISE a real match, never lower one or admit a different recording.
-    Sc, Sk = _spectrogram(xc), _spectrogram(xk_sm)
-    a0, l0 = _arr_score(Sc, Sk)
-    a1, l1 = _arr_gated(Sc, Sk, _midband_gate(xc))
+    Sk = _spectrogram(xk_sm)
+    a0, l0 = _arr_score(clip_ctx["spec"], Sk)
+    a1, l1 = _arr_gated(clip_ctx["spec"], Sk, clip_ctx["gate"])
     arr, lag = (a1, l1) if a1 > a0 else (a0, l0)
     out["arr"] = round(arr, 4)
     out["lag"] = round(lag, 2)
 
     # D. spectral-tilt delta on the SPEED-MATCHED bands (bass-boost signature).
-    clip_tilt = _tilt_db(xc)
+    clip_tilt = clip_ctx["tilt"]
     cand_tilt = _tilt_db(xk_sm)
     bass_delta = clip_tilt - cand_tilt
     out["bass_delta"] = round(bass_delta, 2)

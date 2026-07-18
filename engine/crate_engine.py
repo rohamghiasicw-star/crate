@@ -510,7 +510,7 @@ def search_edits(queries, per=5):
         specs.append(("scsearch%d:" % per, "soundcloud", q))
         specs.append(("ytsearch%d:" % per, "youtube", q))
     cands, seen = [], set()
-    with ThreadPoolExecutor(max_workers=min(10, len(specs) or 1)) as ex:
+    with ThreadPoolExecutor(max_workers=min(16, len(specs) or 1)) as ex:
         for rows in ex.map(_run_search, specs):
             for r in rows:
                 if r["url"] in seen:
@@ -681,7 +681,7 @@ OTHER_RENDITION = re.compile(
     r"\b(cover|guitar|piano|live|instrumental|acoustic|karaoke|remaster|1 ?hour|hour loop)\b", re.I)
 
 
-def _download_and_score(cands, clip_audio, tmp, start, max_dl):
+def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
     verify() returns a calibrated same-master score that survives speed / pitch /
     bass-boost edits, plus the measured speed and a bass-boost delta. This is the
@@ -698,7 +698,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl):
                      score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
                      clip_tilt=0.0, cand_tilt=0.0)
             return
-        v = _verify.verify(clip_audio, got)
+        v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
         c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
         c["path"] = got                     # kept so the caller can measure speed vs it
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
@@ -707,7 +707,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl):
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
 
     if todo:
-        with ThreadPoolExecutor(max_workers=min(5, len(todo))) as ex:
+        with ThreadPoolExecutor(max_workers=min(8, len(todo))) as ex:
             list(ex.map(work, enumerate(todo)))
     return len(todo)
 
@@ -786,8 +786,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     cands.sort(key=_dl_priority)
 
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
+    clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = tempfile.mkdtemp()
-    n = _download_and_score(cands, clip_audio, tmp, 0, max_dl)
+    n = _download_and_score(cands, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
@@ -799,7 +800,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         for c in more:
             c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
         more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
-        _download_and_score(more, clip_audio, tmp, n, 5)
+        _download_and_score(more, clip_audio, tmp, n, 5, clip_ctx=clip_ctx)
         cands += more
 
     # ---- which upload IS the exact audio in the clip ----
