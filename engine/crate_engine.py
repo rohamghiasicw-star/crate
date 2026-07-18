@@ -32,14 +32,15 @@ except Exception:
 
 SR = 22050
 YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
-# clip low-minus-high spectral tilt (dB) above which we treat the edit as bass-boosted.
-# A normal master sits ~+8; a boosted TikTok/IG edit runs +13 and up. (Platform
-# playback normalisation only cuts the bass we can measure, so this is a floor.)
-BASS_BOOST_TILT = 12.0
-# when the clip is thinner than EVERY real upload (playback normalisation cut its
-# bass), aim up to this many dB bassier than the clip toward the family's bass end.
-BASS_MAX_COMP = 6.0
-BASS_FIT_SPAN = 8.0     # dB from target at which the bass fit falls to 0
+# --- exact-edit matching thresholds (see find_edit ranking) ---
+CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
+CORE_EDIT = 0.62     # min core to count as a real edit match, not a coincidence
+# if a same-recording upload is this many dB bassier than the (normalised) clip, the
+# clip's bass was cut on playback -> treat it as bass-boosted and target the family's
+# bass end (the heavy version the person actually hears). Below the gap, trust the clip.
+BASS_STRIP_GAP = 6.0
+BASS_FIT_SPAN = 8.0  # dB from the bass target at which the bass fit falls to 0
+SPEED_TOL_OCT = 1.0  # octaves of speed mismatch at which the (gentle) speed fit hits 0
 ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
     "original sound", "original audio", "som original", "sonido original",
     "son original", "suara asli", "orijinal ses", "оригинальный звук",
@@ -679,7 +680,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=8):
+                    edit_label, known_dir=None, handle=None, max_dl=10):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -726,13 +727,26 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # whatever doesn't actually match, so a broad edit-first pool is safe.
     dir_word = (known_dir or "").split()[0] if known_dir else ""
 
+    # the clip's OWN named edit type (from the credit: "jerseyclub", "phonk", ...) so
+    # the exact source upload, which may carry only that word (not bass/slowed), still
+    # ranks for download. Missing this deprioritised TXKUMOON's plain "Moonlight
+    # #jerseyclub" under bass/reverb re-uploads.
+    credit_l = (credit_title or "").lower()
+    credit_toks = [w for w in ("jersey", "phonk", "nightcore", "hardstyle", "hoodtrap",
+                               "remix", "flip", "mashup", "daycore", "8d")
+                   if w in credit_l]
+
     def _dl_priority(c):
         t = c["title"].lower()
         edit_titled = bool(EDIT_WORDS.search(t)) and not OTHER_RENDITION.search(t)
-        dir_match = bool(dir_word and dir_word in t)
+        # any strong edit tag - the clip's speed direction, its credited edit type, OR
+        # bass/reverb - so both a niche "bass boosted" upload (Comethazine) and a plain
+        # "Moonlight #jerseyclub" (TXKUMOON) get downloaded, never buried by plays.
+        edit_char = bool((dir_word and dir_word in t) or "bass" in t or "reverb" in t
+                         or any(tok in t for tok in credit_toks))
         return (-(c["title_hits"] >= 1),   # is this the right song at all
                 -edit_titled,               # a real edit upload before the plain original
-                -dir_match,                 # matches the clip's slow/sped direction
+                -edit_char,                 # a matching edit tag before a plain upload
                 -c.get("plays", 0))         # popularity only breaks ties within a tier
     cands.sort(key=_dl_priority)
 
@@ -753,35 +767,23 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         _download_and_score(more, clip_audio, tmp, n, 5)
         cands += more
 
-    # verify() has already told us, per candidate, whether it is the SAME underlying
-    # recording as the clip (same/vscore, calibrated and EQ/speed-robust) and how it
-    # differs (vspeed, bass_delta). Ranking is now driven by that audio verdict, with
-    # plays demoted to a strict last-resort tiebreak - because edits are niche and a
-    # play-count sort surfaces the ORIGINAL, which is exactly the wrong answer.
-    #
-    # keep = anything that plausibly IS this recording: verify says same-master, OR a
-    # decent audio score, OR title-relevant with a modest score. This blocks a
-    # coincidental popular track (low vscore, e.g. "Aura" for "Island - POST02")
-    # without over-filtering the real low-view edit.
+    # ---- which upload IS the exact audio in the clip ----
+    # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
+    # + EQ-invariant arrangement match), NOT the bass-penalised score. Platforms
+    # loudness-normalise on playback, so the clip we fetch can be many dB thinner than
+    # the real edit - a bass-boosted upload measured ~11 dB bassier than the clip was
+    # THE answer (confirmed by ear). So bass and speed only NUDGE the ranking below; they
+    # never reject a same-recording match. Plays is the last resort (niche edits are few-play).
+    for c in cands:
+        c["not_other"] = not OTHER_RENDITION.search(c["title"])
     keep = [c for c in cands
-            if c.get("same")
-            or c.get("vscore", 0) >= 0.45
-            or (c.get("title_hits", 0) >= 1 and c.get("vscore", 0) >= 0.30)]
-    speed_edit = known_dir is not None
+            if c.get("core", 0) >= CORE_KEEP
+            or (c.get("title_hits", 0) >= 1 and c.get("core", 0) >= CORE_KEEP - 0.15)]
+    # editmatch = a genuine same-recording match that isn't a different rendition
+    # (guitar/cover/instrumental). No speed gate: a heavy bass boost throws verify's
+    # speed off, and gating on speed is exactly what dropped the exact bassy edit.
     for c in keep:
-        not_other = not OTHER_RENDITION.search(c["title"])
-        if speed_edit:
-            # the exact edit sits at the CLIP's speed (verify speed ~1.0 against it);
-            # the far-more-popular original is at a DIFFERENT speed, so it's excluded.
-            # verify's speed is tilt-robust, so this holds even when the edit is ALSO
-            # bass-boosted (The Box) - where the old pitch_ratio was fooled by the EQ.
-            c["editmatch"] = bool(c.get("same") and abs(c.get("vspeed", 1.0) - 1.0) < 0.06
-                                  and not_other)
-        else:
-            # no known speed edit -> same-master IS the edit match. bass/EQ-only
-            # (Comethazine) and rearranged jersey-club edits verify here on the
-            # tilt + EQ-invariant-arrangement paths, where chromaprint alone can't.
-            c["editmatch"] = bool(c.get("same") and not_other)
+        c["editmatch"] = bool(c.get("core", 0) >= CORE_EDIT and c["not_other"])
     ba = (base_artist or "").lower()
 
     def is_official_original(c):
@@ -793,57 +795,50 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             k in up for k in ("vevo", "- topic", "official", "records"))
         return official and not EDIT_WORDS.search(c["title"])
 
-    # BASS is a first-class part of the edit's identity (the "level of detail" a
-    # slowed-vs-slowed+bass-boosted distinction needs). Measure the clip's own tilt
-    # (low minus high band, dB). Platforms loudness-normalise on playback, which can
-    # only REDUCE the bass we measure off the clip - so when the clip is already
-    # bass-boosted, a bassier upload is plausibly the true source, not a wrong one.
+    # clip bass tilt (low-minus-high dB). Unreliable in ABSOLUTE terms (normalised), so
+    # read it RELATIVE to the same-recording family's own bass range.
     try:
         clip_tilt = _verify._tilt_db(_verify._decode(clip_audio))
     except Exception:
         clip_tilt = 0.0
-    bassy = clip_tilt >= BASS_BOOST_TILT   # for the label
-    # Target bass = the level the exact upload should have. The edit FAMILY (same
-    # master, at the clip's speed) shows the real bass range, which beats trusting the
-    # clip's own tilt (platforms normalise it). If the clip is thinner than every real
-    # upload, its bass was cut on playback -> aim for the family's bass end (capped),
-    # which is the "way more bass" version. Otherwise the clip's bass is real -> match
-    # it exactly (so a perfect same-bass upload like TXKUMOON wins). Never plays.
-    fam = [c.get("cand_tilt", 0.0) for c in keep
-           if c.get("editmatch") and c.get("cand_tilt")]
-    if fam and clip_tilt < min(fam) - 1.0:
-        target_tilt = min(max(fam), clip_tilt + BASS_MAX_COMP)
-    else:
-        target_tilt = clip_tilt
+    fam = [c.get("cand_tilt", 0.0) for c in keep if c.get("editmatch") and c.get("cand_tilt")]
+    # target bass: if a same-recording upload is MUCH bassier than the clip, the clip's
+    # bass was cut on playback (or is the boosted edit the person hears) -> aim for the
+    # family's bass end. Otherwise the clip's own bass is trustworthy -> match it (so a
+    # jersey-club clip picks the exact-bass TXKUMOON, not a slightly bassier remix).
+    bassy = bool(fam and (max(fam) - clip_tilt) > BASS_STRIP_GAP)
+    target_tilt = max(fam) if bassy else clip_tilt
 
     def bass_fit(c):
-        ct = c.get("cand_tilt", 0.0)
-        return 1.0 - min(1.0, abs(ct - target_tilt) / BASS_FIT_SPAN)
+        return 1.0 - min(1.0, abs(c.get("cand_tilt", 0.0) - target_tilt) / BASS_FIT_SPAN)
+
+    def speed_fit(c):
+        # gentle: verify's speed can be off under heavy bass, so a mismatch discounts
+        # but never eliminates. Still enough to prefer the clip's own slow level
+        # (a plain "slowed" over an "ultra slowed") when bass doesn't decide.
+        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+        return 1.0 - min(1.0, abs(float(np.log2(v))) / SPEED_TOL_OCT)
 
     for c in keep:
-        # final = bass-independent same-master evidence x how well the bass matches
-        # the target. This is what turns "any slowed upload" into "the slowed +
-        # bass-boosted upload that sounds like the clip".
-        c["final"] = round(c.get("core", c.get("vscore", 0)) * bass_fit(c), 4)
+        # final = same-recording evidence x speed fit x bass fit. Recording identity
+        # dominates; speed and bass refine WHICH member of the edit family it is.
+        c["final"] = round(c.get("core", 0) * speed_fit(c) * bass_fit(c), 4)
 
     def rank_key(c):
-        return (0 if c["editmatch"] else 1,           # the matching edit family
+        return (0 if c["editmatch"] else 1,           # a real same-recording edit first
                 1 if is_official_original(c) else 0,  # plain original after real edits
-                -round(c.get("final", 0), 3),         # best match, bass included
-                -c.get("plays", 0))                   # strict last-resort tiebreak
+                -round(c.get("final", 0), 3),         # recording x speed x bass
+                -c.get("plays", 0))                   # niche edits win on match, not plays
     ranked = sorted(keep, key=rank_key)
-    # decisive = the audio verdict is clear, not a play-count guess: a verified edit
-    # on top with a real match margin over the next verified rival.
+    # decisive = the audio verdict is clear, not a play-count guess: a real edit on top
+    # with a genuine match margin over the next edit rival.
     decisive = False
     if ranked and ranked[0].get("editmatch"):
         rivals = [c for c in ranked[1:] if c.get("editmatch")]
         top = ranked[0].get("final", 0)
-        decisive = (top >= 0.6) and ((not rivals) or (top - rivals[0].get("final", 0) >= 0.10))
-    # only call it bass-boosted when we actually matched an edit to say so about -
-    # never speculatively on a plain track we found nothing for.
-    has_edit = any(c.get("editmatch") for c in keep)
+        decisive = (top >= 0.55) and ((not rivals) or (top - rivals[0].get("final", 0) >= 0.10))
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None,
-                  bass_boosted=bool(bassy and has_edit), clip_tilt=round(clip_tilt, 1),
+                  bass_boosted=bool(bassy), clip_tilt=round(clip_tilt, 1),
                   target_tilt=round(target_tilt, 1))
     return result
 
