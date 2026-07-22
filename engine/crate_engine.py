@@ -470,18 +470,29 @@ def _edit1(a, b):
 
 
 def _hint_backed(title_key, hwords):
-    """Does the crowd's naming support this title? Fuzzy on purpose - people type it by
-    ear, so "Blu - Arc" in the comments is the track called "Ark"."""
+    """Does the crowd's naming support this title? Returns 2 (EXACT word match), 1
+    (fuzzy - people type it by ear, so "Blu - Arc" in the comments can mean the track
+    called "Ark"), or 0 (no support).
+
+    Exact must outrank fuzzy: two different commenters can each name a real, different
+    song with words one edit apart ("Ark" from NCS vs "Arc" by BLU are BOTH real,
+    distinct tracks). Fuzzy-matching them together erased the distinction and let a
+    weaker candidate steal credit for the stronger one's exact, specific hint - the
+    literal fix for "ARK from ncs" (Ship Wrek & Zookeepers' actual NCS release) losing
+    to "Arc - BLU" on a coin-flip tie."""
     if not hwords or not title_key:
-        return False
+        return 0
+    best = 0
     for t in title_key.split():
         if len(t) < 3:
             continue
+        if t in hwords:
+            return 2
         for w in hwords:
             if _edit1(t, w) or (len(t) > 4 and
                                 difflib.SequenceMatcher(None, t, w).ratio() >= 0.85):
-                return True
-    return False
+                best = 1
+    return best
 
 
 def _consensus_id(hits, hints=None):
@@ -568,15 +579,27 @@ async def fingerprint(audio, hints=None):
             return len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])})
 
         hw = _hint_words(hints)
+
+        def _key(k):
+            # _hint_backed is now 2=exact / 1=fuzzy / 0=none, so two DIFFERENT real
+            # songs each named exactly by a different commenter ("ARK from ncs" vs
+            # "Blu - Arc") no longer collapse into one fuzzy bucket and fight over
+            # scraps - each gets full credit for its own exact word.
+            return (_hint_backed(k, hw), nrates(k),
+                    any(not _junk_id(h) for h in groups[k]))
         if groups:
-            best = max(groups, key=lambda k: (_hint_backed(k, hw), nrates(k),
-                                              any(not _junk_id(h) for h in groups[k])))
-            # Override when MORE distinct speeds back it - or when the COMMENTS name it
-            # and don't name the as-posted read. The crowd writing the title under the
-            # video is direct evidence; a lone 1.0x hit on a pitched clip is not.
-            if best != posted and (nrates(best) > nrates(posted)
-                                   or (_hint_backed(best, hw)
-                                       and not _hint_backed(posted, hw))):
+            key_posted = _key(posted)
+            # NEVER use max(groups, key=_key) to find a rival - on a tie it silently
+            # returns whichever key was inserted FIRST, which is always `posted` (it's
+            # built from off0's own hit before the extra probes). That made `best`
+            # collapse to `posted` even when "ark" had an EQUALLY good key, so
+            # `best != posted` was always False and neither branch below could ever
+            # fire - the exact reason "Ark" (4 rates, an actual NCS release matching a
+            # commenter's "ARK from ncs") lost to "Arc" (1 coincidental rate) despite
+            # this code appearing to handle that exact case. Compare rivals explicitly.
+            rivals = [k for k in groups if k != posted]
+            best = max(rivals, key=_key) if rivals else posted
+            if best != posted and _key(best) > key_posted:
                 win = dict(_consensus_id(groups[best], hints) or groups[best][0])
                 win["at"] = off0
                 rest = [h for h in hits
@@ -586,6 +609,29 @@ async def fingerprint(audio, hints=None):
                 primary["songs"] = merged
                 primary["multi"] = len(merged) > 1
                 return primary
+            if best != posted and _key(best) == key_posted:
+                # The 3 cheap probes are GENUINELY TIED between two plausible songs -
+                # this happened between "Ark" (an actual NCS release, matching a
+                # commenter's "ARK from ncs") and "Arc" (matching a vaguer "Blu - Arc"),
+                # each backed by exactly 1 probe rate. 3 probes don't have enough
+                # coverage to break a real ambiguity; the full 13-rate sweep does (Ark
+                # was independently confirmed at 4 rates: 1.15/1.20/1.25/1.30). Escalate
+                # only here, so the common case stays cheap.
+                full = [h for h in await asyncio.gather(
+                    *[probe(off0, r, lbl) for r, lbl in FINE_SWEEP]) if h]
+                pool = full + [h for g in groups.values() for h in g]
+                clean = [h for h in pool if not _junk_id(h)]
+                pick = _consensus_id(clean or pool, hints)
+                pk = _title_key(pick.get("title")) if pick else None
+                if pick and pk and pk != posted:
+                    win = dict(pick); win["at"] = off0
+                    rest = [h for h in hits
+                            if _title_key(h.get("title")) not in (posted, pk)]
+                    merged = [win] + rest
+                    primary = dict(merged[0])
+                    primary["songs"] = merged
+                    primary["multi"] = len(merged) > 1
+                    return primary
 
     # A cover-mill hit is a FALSE POSITIVE, not an ID. Accepting one here is what made
     # the engine stop dead: a Rihanna hoodtrap matched "Fade To Blue (Cover)" by
@@ -1233,9 +1279,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         return 1.0 - min(1.0, abs(float(np.log2(v))) / SPEED_TOL_OCT)
 
     for c in keep:
-        # final = same-recording evidence x speed fit x bass fit. Recording identity
-        # dominates; speed and bass refine WHICH member of the edit family it is.
-        c["final"] = round(c.get("core", 0) * speed_fit(c) * bass_fit(c), 4)
+        # final = ADDITIVE: recording evidence dominates, transform only refines.
+        # This was core x speed_fit x bass_fit, and multiplying let a single weak factor
+        # crush a genuinely better match: a "Young Black Bruce Lee" clip crowned BLACK
+        # BEATLES (core 0.640, 190M plays) over the correct Chief Keef upload, because
+        # the correct one's 0.729 core got multiplied down to 0.087 by an imperfect
+        # speed/bass fit. Fingerprint agreement is far more trustworthy than transform
+        # estimation, so weight it accordingly and let the two only break near-ties.
+        # (Speed still discriminates structurally - `speed_exact` is its own rank tier.)
+        # The transform term is a weighted SUM, not a product: multiplying the two fits
+        # means either one saturating to 0 zeroes the whole term, which collapsed four
+        # different Amigo uploads to an identical 0.850 and handed the pick to play
+        # count. Averaging keeps bass discriminating when speed is already matched.
+        c["final"] = round(0.85 * c.get("core", 0)
+                           + 0.15 * (0.5 * speed_fit(c) + 0.5 * bass_fit(c)), 4)
 
     def rank_key(c):
         f = c.get("final", 0)
