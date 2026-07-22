@@ -14,7 +14,7 @@ Pipeline
                          candidate, and CORRELATE it against the clip audio so we
                          return the real source, not just a same-titled upload.
 """
-import asyncio, json, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+import asyncio, difflib, json, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -431,10 +431,68 @@ def _title_key(t):
     return " ".join(w for w in words if w not in ("the", "a", "an"))
 
 
-def _consensus_id(hits):
+_HINT_STOP = {"music", "song", "sound", "track", "name", "audio", "the", "and", "por",
+              "feat", "remix", "slowed", "reverb", "version", "pls", "please"}
+
+
+def _hint_words(hints):
+    out = set()
+    for h in (hints or []):
+        for w in re.sub(r"[^a-z0-9 ]", " ", (h or "").lower()).split():
+            if len(w) >= 3 and w not in _HINT_STOP:
+                out.add(w)
+    return out
+
+
+def _edit1(a, b):
+    """True if a and b differ by at most one character. People type a title by ear, so
+    the comment "Blu - Arc" is the track "Ark" - one substitution. difflib's ratio is
+    useless at this length (ark/arc scores 0.67), so compare properly."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    i = j = diff = 0
+    while i < la and j < lb:
+        if a[i] == b[j]:
+            i += 1; j += 1; continue
+        diff += 1
+        if diff > 1:
+            return False
+        if la == lb:
+            i += 1; j += 1
+        elif la > lb:
+            i += 1
+        else:
+            j += 1
+    return diff + (la - i) + (lb - j) <= 1
+
+
+def _hint_backed(title_key, hwords):
+    """Does the crowd's naming support this title? Fuzzy on purpose - people type it by
+    ear, so "Blu - Arc" in the comments is the track called "Ark"."""
+    if not hwords or not title_key:
+        return False
+    for t in title_key.split():
+        if len(t) < 3:
+            continue
+        for w in hwords:
+            if _edit1(t, w) or (len(t) > 4 and
+                                difflib.SequenceMatcher(None, t, w).ratio() >= 0.85):
+                return True
+    return False
+
+
+def _consensus_id(hits, hints=None):
     """Pick the song several counter-speeds AGREE on. A real song shows up again and
     again as we sweep past its true rate; junk appears once. Ties break toward a
-    non-mill hit and then the rate closest to as-posted."""
+    non-mill hit and then the rate closest to as-posted.
+
+    A title the COMMENTS name outranks raw speed-agreement: when a clip is pitched,
+    several rates can each return a different plausible song and the vote is close, but
+    the crowd writing "Music : Blu - Arc" under the video is direct evidence."""
+    hwords = _hint_words(hints)
     groups = {}
     for h in hits:
         k = _title_key(h.get("title"))
@@ -447,7 +505,8 @@ def _consensus_id(hits):
         k, g = item
         rates = {h.get("rate", 1.0) for h in g}
         clean = [h for h in g if not _junk_id(h)]
-        return (len(rates), bool(clean), -min(abs((h.get("rate") or 1.0) - 1.0) for h in g))
+        return (_hint_backed(k, hwords), len(rates), bool(clean),
+                -min(abs((h.get("rate") or 1.0) - 1.0) for h in g))
     k, g = max(groups.items(), key=score)
     clean = [h for h in g if not _junk_id(h)]
     pool = clean or g
@@ -455,14 +514,14 @@ def _consensus_id(hits):
     return min(pool, key=lambda h: len(h.get("title") or ""))
 
 
-async def fingerprint(audio):
+async def fingerprint(audio, hints=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
     is a fine counter-speed sweep in concurrent batches for a heavily-edited song."""
     dur = duration_of(audio)
     tmp = tempfile.mkdtemp()
     n = {"i": 0}
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(8)
 
     async def probe(off, rate, label, span=20):
         async with sem:
@@ -508,12 +567,17 @@ async def fingerprint(audio):
         def nrates(k):
             return len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])})
 
+        hw = _hint_words(hints)
         if groups:
-            best = max(groups, key=lambda k: (nrates(k),
+            best = max(groups, key=lambda k: (_hint_backed(k, hw), nrates(k),
                                               any(not _junk_id(h) for h in groups[k])))
-            # override only when strictly MORE distinct speeds back it than back 1.0x
-            if best != posted and nrates(best) > nrates(posted):
-                win = dict(_consensus_id(groups[best]) or groups[best][0])
+            # Override when MORE distinct speeds back it - or when the COMMENTS name it
+            # and don't name the as-posted read. The crowd writing the title under the
+            # video is direct evidence; a lone 1.0x hit on a pitched clip is not.
+            if best != posted and (nrates(best) > nrates(posted)
+                                   or (_hint_backed(best, hw)
+                                       and not _hint_backed(posted, hw))):
+                win = dict(_consensus_id(groups[best], hints) or groups[best][0])
                 win["at"] = off0
                 rest = [h for h in hits
                         if _title_key(h.get("title")) not in (posted, best)]
@@ -532,12 +596,9 @@ async def fingerprint(audio):
 
     async def sweep_at(off):
         """Counter-speed sweep one window and take the consensus song."""
-        swept = []
-        for i in range(0, len(FINE_SWEEP), 5):
-            batch = FINE_SWEEP[i:i + 5]
-            res = await asyncio.gather(*[probe(off, rate, label) for rate, label in batch])
-            swept.extend([h for h in res if h])
-        return _consensus_id([h for h in swept if not _junk_id(h)] or swept)
+        swept = [h for h in await asyncio.gather(
+            *[probe(off, rate, label) for rate, label in FINE_SWEEP]) if h]
+        return _consensus_id([h for h in swept if not _junk_id(h)] or swept, hints)
 
     # A window that ONLY matched cover-mill noise hasn't been identified - it's been
     # mis-identified. Sweep that window's real speed rather than dropping it, or a
@@ -566,12 +627,9 @@ async def fingerprint(audio):
     # back. One junk hit at one speed is noise; the same song surfacing at 0.80x, 0.85x
     # and 1.30x is the answer.
     off0 = windows_for(dur)[0]
-    swept = []
-    for i in range(0, len(FINE_SWEEP), 5):
-        batch = FINE_SWEEP[i:i + 5]
-        res = await asyncio.gather(*[probe(off0, rate, label) for rate, label in batch])
-        swept.extend([h for h in res if h])
-    pick = _consensus_id(swept)
+    swept = [h for h in await asyncio.gather(
+        *[probe(off0, rate, label) for rate, label in FINE_SWEEP]) if h]
+    pick = _consensus_id(swept, hints)
     if pick:
         pick = dict(pick)
         pick["at"] = off0

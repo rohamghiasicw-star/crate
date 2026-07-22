@@ -112,9 +112,22 @@ def _phase1(url, key, t0):
 
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
 
+    # Comments BEFORE the fingerprint. The crowd routinely names the track outright
+    # ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least reliable -
+    # on a pitched clip where several counter-speeds each return a different song. Read
+    # after the fact it can only re-rank a search; read first it can pick the right ID.
+    hint_texts = []
+    if src["platform"] == "tiktok":
+        try:
+            hint_texts = E.comment_song_hints(E.tiktok_comments(url)) or []
+            if hint_texts:
+                res["comment_hints"] = hint_texts
+        except Exception:
+            pass
+
     loop = asyncio.new_event_loop()
     try:
-        fp = loop.run_until_complete(E.fingerprint(src["audio"]))
+        fp = loop.run_until_complete(E.fingerprint(src["audio"], hints=hint_texts))
         base_title = base_artist = None
         edit_label = ""
         if fp:
@@ -150,17 +163,6 @@ def _phase1(url, key, t0):
             speed_label = "%s ~%.2fx" % (mdir, sp)
         res["speed"] = speed_label
         res["edit_certain"] = bool(mdir) or named_edit
-
-        # comments check - people name the edit in the comments, which helps most
-        # when Shazam is blank OR mis-IDs the song (the crowd names the real track).
-        hint_texts = []
-        if src["platform"] == "tiktok":
-            try:
-                hint_texts = E.comment_song_hints(E.tiktok_comments(url)) or []
-                if hint_texts:
-                    res["comment_hints"] = hint_texts
-            except Exception:
-                pass
 
         # Is the Shazam base trustworthy, or a bogus cover / unverifiable ID? When it's
         # untrustworthy we stop seeding search from its (wrong) name and lean on the
