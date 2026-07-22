@@ -204,8 +204,10 @@ def tiktok_comments(full_url, n=60, with_replies=True):
 _C_EDIT = re.compile(r"\b(slowed|sped ?up|spedup|reverb|nightcore|bass ?boost(ed)?|"
                      r"phonk|hardstyle|hoodtrap|mylancore|mashup|daycore|remix|"
                      r"jersey ?club|8d|flip)\b", re.I)
+# must actually be FOLLOWED by something - "song is drain by lieu" names a track,
+# a bare "Song name" (or "what's the song called") names nothing.
 _C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\b[\s:=,-]{0,4}"
-                       r"\b(is|are|called|named?)\b", re.I)
+                       r"\b(is|are|called|named?)\b[\s:=-]*\S+", re.I)
 _C_BY = re.compile(r"\bby\b", re.I)
 # somebody ASKING for the ID. Not a hint itself - it's a signpost that the answer is
 # in the replies, so tiktok_comments() chases those.
@@ -386,6 +388,12 @@ FINE_SWEEP = [
     (1.30, "slowed ~0.77x"), (1.40, "slowed ~0.71x"), (1.50, "slowed ~0.67x"),
 ]
 
+# A cheap spread of counter-speeds used to CORROBORATE an as-posted match. One hit at
+# 1.0x is not evidence when the clip might be pitched - a slowed clip can match a
+# completely different song at 1.0x while several counter-speeds agree on the real one.
+# Three probes, run concurrently, so this costs a couple of seconds, not a full sweep.
+CORROB = [(1.12, "slowed ~0.89x"), (1.20, "slowed ~0.83x"), (0.85, "sped up ~1.18x")]
+
 
 def _scan_windows(dur, span=12, step=6, cap=6):
     """Short windows across the whole clip, so two different songs land in
@@ -479,6 +487,42 @@ async def fingerprint(audio):
             k = (h["title"].strip().lower(), (h["artist"] or "").strip().lower())
             if k not in seen:
                 seen.add(k); h["at"] = off; hits.append(h)
+    # CORROBORATE the as-posted read before trusting it. A single hit at 1.0x is not
+    # evidence when the clip may be pitched: a slowed clip matched a COMPLETELY
+    # different song ("Two rap phones - FulFah") at 1.0x, while 1.10x/1.15x/1.20x all
+    # agreed on the real one ("Not Again" / the cynmixx edit the clip actually used).
+    # _junk_id can't save us there - the wrong answer looked like a perfectly ordinary
+    # track. Agreement across independent speeds is the only thing that separates a
+    # real match from a plausible coincidence, so buy a little of it up front.
+    if hits:
+        off0 = hits[0]["at"]
+        extra = [h for h in await asyncio.gather(
+            *[probe(off0, r, lbl) for r, lbl in CORROB]) if h]
+        groups = {}
+        for h in [x for x in hits if x.get("at") == off0] + extra:
+            k = _title_key(h.get("title"))
+            if k:
+                groups.setdefault(k, []).append(h)
+        posted = _title_key(hits[0].get("title"))
+
+        def nrates(k):
+            return len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])})
+
+        if groups:
+            best = max(groups, key=lambda k: (nrates(k),
+                                              any(not _junk_id(h) for h in groups[k])))
+            # override only when strictly MORE distinct speeds back it than back 1.0x
+            if best != posted and nrates(best) > nrates(posted):
+                win = dict(_consensus_id(groups[best]) or groups[best][0])
+                win["at"] = off0
+                rest = [h for h in hits
+                        if _title_key(h.get("title")) not in (posted, best)]
+                merged = [win] + rest
+                primary = dict(merged[0])
+                primary["songs"] = merged
+                primary["multi"] = len(merged) > 1
+                return primary
+
     # A cover-mill hit is a FALSE POSITIVE, not an ID. Accepting one here is what made
     # the engine stop dead: a Rihanna hoodtrap matched "Fade To Blue (Cover)" by
     # "Mr. Rodger Hane PhD" at 1.0x, Phase 1 returned it, and the counter-speed sweep -
@@ -879,6 +923,32 @@ OTHER_RENDITION = re.compile(
     r"\b(cover|guitar|piano|live|instrumental|acoustic|karaoke|remaster|1 ?hour|hour loop)\b", re.I)
 
 
+_MIXY = re.compile(r"\b(mix|megamix|mashup ?set|dj ?set|live ?set|compilation|playlist|"
+                   r"full album|new ?years?|nye|hour|hours|mixtape|radio ?show)\b", re.I)
+
+
+def _dur_s(c):
+    try:
+        return float(c.get("duration") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_compilation(c):
+    """A DJ mix / megamix / NYE set CONTAINS the track but IS NOT the edit.
+
+    These are the hardest false positives in the whole pipeline because they verify
+    honestly - the song really is in there, so `core` is high and nothing about the
+    audio says "wrong". Only length and naming separate them from the real upload. Two
+    real misses came from this: a 4-song Travis Scott megamix, and the clip creator's
+    own hour-long "Amped New Years Eve 2023" set, which the creator-priority rule
+    (rightly built for Gut Genug) shoved straight to the top."""
+    d = _dur_s(c)
+    if d > 600:                                  # >10 min is never a single edit
+        return True
+    return bool(d > 300 and _MIXY.search(c.get("title") or ""))
+
+
 def _sc_quota(cands, max_dl, min_sc=6):
     """Hold download slots for SoundCloud.
 
@@ -1018,6 +1088,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         edit_char = bool((dir_word and dir_word in t) or "bass" in t or "reverb" in t
                          or genre_hit)
         return (-(c["title_hits"] >= 1),   # is this the right song at all
+                int(_is_compilation(c)),    # a mix CONTAINING the song isn't the edit
                 -creator_hit,               # the credited creator's OWN upload = the source
                 -edit_titled,               # a real edit upload before the plain original
                 -genre_hit,                 # the clip's OWN genre before a generic boost
@@ -1125,6 +1196,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         # separated by 0.014 of nothing; the canonical 1.6M-play one should win).
         fq = round(f / 0.05) * 0.05 if c.get("core", 0) >= CORE_SAME else round(f, 3)
         return (0 if c["editmatch"] else 1,           # a real same-recording edit first
+                1 if _is_compilation(c) else 0,       # a set that CONTAINS it, never above it
                 1 if is_official_original(c) else 0,  # plain original after real edits
                 speed_exact,                          # the upload AT the clip's speed
                 -fq,                                  # recording x speed x bass
@@ -1171,8 +1243,14 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     _PLAIN = re.compile(r"\b(slow(ed)?|sped|speed ?up|nightcore|daycore|bass ?boost(ed)?|"
                         r"reverb|remix|hoodtrap|mylancore|jersey ?club|phonk|8d|hardstyle|"
                         r"flip|mashup|cover|guitar|instrumental)\b", re.I)
+    # SPEED REFERENCES MUST BE THE SAME RECORDING. Filtering on the title alone let the
+    # engine measure the clip against completely unrelated songs and report a confident
+    # "sped up ~1.40x" for a clip whose best candidate only scored core 0.447 - a speed
+    # ratio against a different song is meaningless. If nothing verifies, we have no
+    # reference and must not claim a speed at all.
     ref_paths = [c["path"] for c in cands
-                 if c.get("path") and c.get("title") and not _PLAIN.search(c["title"])][:5]
+                 if c.get("path") and c.get("title") and not _PLAIN.search(c["title"])
+                 and c.get("core", 0) >= CORE_KEEP][:5]
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None,
                   bass_boosted=bool(bassy), clip_tilt=round(clip_tilt, 1),
                   target_tilt=round(target_tilt, 1), tmp=tmp,

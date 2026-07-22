@@ -297,6 +297,13 @@ def _phase2(ctx):
                                 lambda ic: E.dl_clip(ic[1]["url"],
                                                      os.path.join(src["tmp"], "om%d.wav" % ic[0])),
                                 list(enumerate(pick))) if p]
+                        # a "speed" measured against a DIFFERENT song is a made-up
+                        # number - keep only references that verify as this recording.
+                        if got:
+                            cc = E._verify.prepare_clip(src["audio"])
+                            got = [p for p in got
+                                   if E._verify.verify(src["audio"], p, clip_ctx=cc
+                                                       ).get("core", 0) >= E.CORE_KEEP]
                         if got:
                             r = speed_from_master.measure_consensus(src["audio"], got)
                     if r and r.get("confident") and r.get("label") != "as posted":

@@ -362,7 +362,35 @@ def prepare_clip(clip_path, seconds=20):
     if xc.size < SR:
         return None
     return {"s": _avg_logspec(xc), "fp": _fp_raw(clip_path), "spec": _spectrogram(xc),
-            "gate": _midband_gate(xc), "tilt": _tilt_db(xc)}
+            "gate": _midband_gate(xc), "tilt": _tilt_db(xc), "rev": _reverb_amt(xc)}
+
+
+def _reverb_amt(x):
+    """How WET the audio is, 0..1. Dry audio drops to near-silence between transients;
+    reverb sustains and fills those gaps, lifting the valley floor of the energy
+    envelope. Measured as the quiet-percentile over the median, which is level- and
+    EQ-independent, so it survives loudness normalisation and bass boosts.
+
+    DIAGNOSTIC ONLY - deliberately NOT used for ranking. Measured on real audio it does
+    not discriminate: adding heavy aecho moved it +0.046 while merely SLOWING the same
+    file moved it +0.089, so it reads speed more than wetness. Two other formulations
+    were tried and rejected too - onset-decay (60-200ms after each transient) wasn't
+    even monotonic in reverb amount (1.027 dry -> 0.987 wet -> 1.070 wetter), and
+    envelope autocorrelation at 100ms separated by only ~0.066, which content
+    differences between two uploads swamp. Reverb IS the missing axis of the transform
+    signature ("slowed" vs "slowed + reverb" are otherwise identical), but it needs a
+    real estimator (RT60 off the decay tail, or a learned embedding). Feeding this one
+    into the ranking would add noise on top of strong audio evidence - the exact failure
+    mode that caused the title-over-audio bugs."""
+    win = int(0.03 * SR)
+    n = len(x) // win
+    if n < 8:
+        return 0.0
+    e = np.sqrt((x[:n * win].reshape(n, win) ** 2).mean(axis=1) + 1e-12)
+    med = float(np.median(e))
+    if med <= 0:
+        return 0.0
+    return round(min(1.0, float(np.percentile(e, 20)) / med), 4)
 
 
 def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
@@ -442,6 +470,13 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
     out["bass_delta"] = round(bass_delta, 2)
     out["clip_tilt"] = round(clip_tilt, 2)
     out["cand_tilt"] = round(cand_tilt, 2)
+    # wetness on the SPEED-MATCHED candidate, so a slowed edit isn't scored as "wetter"
+    # just because slowing stretches its tails.
+    clip_rev = clip_ctx.get("rev", 0.0)
+    cand_rev = _reverb_amt(xk_sm)
+    out["clip_reverb"] = clip_rev
+    out["cand_reverb"] = cand_rev
+    out["reverb_delta"] = round(cand_rev - clip_rev, 4)
 
     # E. combine. Same-master evidence = the stronger of the two independent paths.
     # This is EQ/bass-INDEPENDENT (fp is gain-invariant, arr removes each band's mean),
