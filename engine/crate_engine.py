@@ -35,6 +35,7 @@ YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
 # --- exact-edit matching thresholds (see find_edit ranking) ---
 CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
 CORE_EDIT = 0.62     # min core to count as a real edit match, not a coincidence
+CORE_SAME = 0.95     # core this high = provably the SAME audio, whatever the title says
 # if a same-recording upload is this many dB bassier than the (normalised) clip, the
 # clip's bass was cut on playback -> treat it as bass-boosted and target the family's
 # bass end (the heavy version the person actually hears). Below the gap, trust the clip.
@@ -140,10 +141,29 @@ def tt_embed_v2(video_id):
             "desc": desc, "creator": mo.get("authorName")}
 
 
-def tiktok_comments(full_url, n=30):
-    """Comments via tikwm (1 req/s). People literally name the edit in the
-    comments ('song is X slowed by Y'), so it's a real signal - especially for
-    original sounds Shazam can't match."""
+def _tt_replies(comment_id, n=12):
+    """Replies under one comment (tikwm, 1 req/s). The ANSWER to 'what's the song?'
+    lives here, never in the question itself."""
+    try:
+        r = _cffi_get("https://www.tikwm.com/api/comment/reply/list/?comment_id=%s&count=%d"
+                      % (urllib.parse.quote(str(comment_id), safe=""), n))
+        d = json.loads(r.text)
+    except Exception:
+        return []
+    if d.get("code") != 0:
+        return []
+    return [(c.get("text") or "").strip()
+            for c in (d.get("data", {}).get("comments") or []) if c.get("text")]
+
+
+def tiktok_comments(full_url, n=60, with_replies=True):
+    """Comments via tikwm (1 req/s). People literally name the edit in the comments
+    ('song is X slowed by Y'), so it's a real signal - especially for original sounds
+    Shazam can't match.
+    Also chases REPLIES on the most-liked "what's the song?" comments: the question is
+    the signpost, the answer is underneath it. Capped at 2 extra requests so a quick
+    check stays quick."""
+    items = []
     for attempt in range(3):
         try:
             r = _cffi_get("https://www.tikwm.com/api/comment/list/?url=%s&count=%d"
@@ -152,43 +172,97 @@ def tiktok_comments(full_url, n=30):
         except Exception:
             return []
         if d.get("code") == 0:
-            return [(c.get("text") or "").strip()
-                    for c in (d.get("data", {}).get("comments") or []) if c.get("text")]
+            items = (d.get("data", {}).get("comments") or [])
+            break
         time.sleep(1.3)
-    return []
+    if not items:
+        return []
+    texts = [(c.get("text") or "").strip() for c in items if c.get("text")]
+    # some responses inline a few replies - take those for free before spending requests
+    for c in items:
+        for rp in (c.get("reply_comment") or []):
+            t = (rp.get("text") or "").strip()
+            if t:
+                texts.append(t)
+    if with_replies:
+        asks = [c for c in items
+                if (c.get("text") or "").strip()
+                and _C_ASK.search(c.get("text") or "")
+                and not (c.get("reply_comment") or [])]
+        asks.sort(key=lambda c: -(c.get("digg_count") or c.get("like_count") or 0))
+        for c in asks[:2]:
+            cid = c.get("id") or c.get("cid") or c.get("comment_id")
+            if not cid:
+                continue
+            texts.extend(_tt_replies(cid))
+            time.sleep(1.1)   # tikwm 1 req/s
+    return texts
 
 
 # song-specific edit words (NOT bare "edit"/"version" - those describe the video
 # on an edit account, and flood the comments as compliments like "fire edit")
 _C_EDIT = re.compile(r"\b(slowed|sped ?up|spedup|reverb|nightcore|bass ?boost(ed)?|"
-                     r"phonk|hardstyle|hoodtrap|mashup|daycore|remix)\b", re.I)
-_C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\s*(is|:|-)\s*\S+", re.I)
+                     r"phonk|hardstyle|hoodtrap|mylancore|mashup|daycore|remix|"
+                     r"jersey ?club|8d|flip)\b", re.I)
+_C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\b[\s:=,-]{0,4}"
+                       r"\b(is|are|called|named?)\b", re.I)
 _C_BY = re.compile(r"\bby\b", re.I)
+# somebody ASKING for the ID. Not a hint itself - it's a signpost that the answer is
+# in the replies, so tiktok_comments() chases those.
+_C_ASK = re.compile(r"(\b(what'?s?|whats|wats|which|name of|anyone know|does anyone|"
+                    r"sauce|song|sound|track)\b[^?]{0,24}\?)|(^\s*song\s*\??\s*$)", re.I)
+# "Artist - Title" / "Artist – Title", the way people actually paste an ID
+_C_DASH = re.compile(r"^[^\-–—]{2,44}\s[-–—]\s[^\-–—]{2,44}$")
+_C_QUOTED = re.compile(r"[\"“'‘]([^\"”'’]{2,50})[\"”'’]")
 # clear opinions only - a comment ABOUT the song ("song is dogshit") isn't NAMING
 # one. Kept narrow so real titles ("Bad Guy", "Good Days") still pass.
 _OPINION = re.compile(r"\b(fire|trash|mid|dog ?shi|dogshi|garbage|goated|so ?bad|"
                       r"straight ?trash|worst|goofy|ahh)\b", re.I)
+_HAS_WORD = re.compile(r"[A-Za-zÀ-ɏ]{2,}")
 
 
 def comment_song_hints(comments):
-    """Comment lines that actually NAME a track (not questions, not opinions)."""
-    hints = []
-    for t in comments:
-        t = (t or "").strip()
-        if not t or len(t) > 90 or t.endswith("?") or _OPINION.search(t):
+    """Comments that might NAME a track, scored rather than gate-kept.
+
+    The old version demanded one of three narrow shapes and hard-rejected anything
+    ending in "?" - which threw away both "Dark Horse hoodtrap?" (names it, just
+    unsure) and "what's the song?" (whose REPLY names it). Comments are cheap and
+    verify() gates the final answer anyway, so a wrong guess here costs a query slot,
+    never a wrong result. Be open: take anything track-shaped, rank by how ID-like it
+    looks, and let the audio decide."""
+    scored = []
+    for raw in comments:
+        t = (raw or "").strip()
+        if not t or len(t) > 120 or not _HAS_WORD.search(t):
             continue
+        low = t.lower()
         words = t.split()
-        edit = _C_EDIT.search(t)                 # a real edit-type word
-        songis = _C_SONGIS.search(t)             # "song is X"
-        titleish = _C_BY.search(t) and len(words) <= 8  # "X by Y"
-        if songis or titleish or (edit and len(words) <= 6):
-            hints.append(t)
+        s = 0
+        if _C_SONGIS.search(t):                     s += 4   # "song is X" / "track called X"
+        if _C_DASH.match(t):                        s += 4   # "Artist - Title"
+        if _C_QUOTED.search(t):                     s += 3   # 'it's "Dark Horse"'
+        if _C_EDIT.search(t):                       s += 3   # names an edit family
+        if _C_BY.search(t) and len(words) <= 10:    s += 3   # "X by Y"
+        if len(words) <= 7:                         s += 1   # short = more likely a name
+        # Title Case multi-word phrase ("Dark Horse", "Push The Feeling On")
+        caps = [w for w in words if w[:1].isupper() and w[1:2].islower()]
+        if len(caps) >= 2:                          s += 2
+        if _OPINION.search(t):                      s -= 4   # "fire", "mid", "trash"
+        # a bare question names nothing on its own - its replies were already pulled in
+        if _C_ASK.search(t) and s <= 2:
+            continue
+        # 4 = at least one REAL song signal. Title Case + short alone is every fan
+        # comment in every language ("Kocham Yamala on jest cudowny") and those become
+        # wasted search queries.
+        if s >= 4:
+            scored.append((s, t))
+    scored.sort(key=lambda x: -x[0])
     seen, out = set(), []
-    for h in hints:
+    for _, h in scored:
         k = h.lower()
         if k not in seen:
             seen.add(k); out.append(h)
-    return out[:5]
+    return out[:8]
 
 
 def tt_tikwm(full_url):
@@ -327,6 +401,52 @@ def _scan_windows(dur, span=12, step=6, cap=6):
     return offs
 
 
+# Cover mills (karaoke/tribute/"PhD" channels) upload thousands of soundalikes, so they
+# carpet Shazam's index and win on heavily-edited audio the real master can't match.
+# A hit on one of these names a DIFFERENT recording - it is not an ID of this clip.
+_MILL = re.compile(r"\b(karaoke|orchestra|tribute|made famous by|backing track|"
+                   r"cover band|ph\.? ?d|originally performed)\b", re.I)
+
+
+def _junk_id(h):
+    """True when a Shazam hit is cover-mill noise rather than a real identification."""
+    t, a = (h.get("title") or ""), (h.get("artist") or "")
+    return bool(_MILL.search(t) or _MILL.search(a) or re.search(r"\bcover\b", t, re.I))
+
+
+def _title_key(t):
+    """Song identity with the qualifiers stripped, so 'Where Have You Been (Hardtech
+    Remix)', 'Where have you been' and 'Where Have You Been (Orchestra)' all collapse
+    to one thing worth voting on."""
+    t = re.sub(r"[\(\[].*?[\)\]]", " ", t or "")
+    words = re.sub(r"[^a-z0-9 ]", " ", t.lower()).split()
+    return " ".join(w for w in words if w not in ("the", "a", "an"))
+
+
+def _consensus_id(hits):
+    """Pick the song several counter-speeds AGREE on. A real song shows up again and
+    again as we sweep past its true rate; junk appears once. Ties break toward a
+    non-mill hit and then the rate closest to as-posted."""
+    groups = {}
+    for h in hits:
+        k = _title_key(h.get("title"))
+        if k:
+            groups.setdefault(k, []).append(h)
+    if not groups:
+        return None
+
+    def score(item):
+        k, g = item
+        rates = {h.get("rate", 1.0) for h in g}
+        clean = [h for h in g if not _junk_id(h)]
+        return (len(rates), bool(clean), -min(abs((h.get("rate") or 1.0) - 1.0) for h in g))
+    k, g = max(groups.items(), key=score)
+    clean = [h for h in g if not _junk_id(h)]
+    pool = clean or g
+    # the least-decorated title in the winning group reads best as the song's name
+    return min(pool, key=lambda h: len(h.get("title") or ""))
+
+
 async def fingerprint(audio):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
@@ -359,25 +479,68 @@ async def fingerprint(audio):
             k = (h["title"].strip().lower(), (h["artist"] or "").strip().lower())
             if k not in seen:
                 seen.add(k); h["at"] = off; hits.append(h)
+    # A cover-mill hit is a FALSE POSITIVE, not an ID. Accepting one here is what made
+    # the engine stop dead: a Rihanna hoodtrap matched "Fade To Blue (Cover)" by
+    # "Mr. Rodger Hane PhD" at 1.0x, Phase 1 returned it, and the counter-speed sweep -
+    # which finds the real song at 0.80x / 0.85x / 1.30x - never ran at all.
+    real = [h for h in hits if not _junk_id(h)]
+    junk_offs = sorted({h["at"] for h in hits if _junk_id(h)})
+
+    async def sweep_at(off):
+        """Counter-speed sweep one window and take the consensus song."""
+        swept = []
+        for i in range(0, len(FINE_SWEEP), 5):
+            batch = FINE_SWEEP[i:i + 5]
+            res = await asyncio.gather(*[probe(off, rate, label) for rate, label in batch])
+            swept.extend([h for h in res if h])
+        return _consensus_id([h for h in swept if not _junk_id(h)] or swept)
+
+    # A window that ONLY matched cover-mill noise hasn't been identified - it's been
+    # mis-identified. Sweep that window's real speed rather than dropping it, or a
+    # two-song clip silently answers with its SECOND song ("Promise Me") while the
+    # actual hook (a slowed Rihanna) goes unnamed.
+    recovered = []
+    for off in junk_offs[:1]:                     # one sweep is plenty; they're slow
+        pick = await sweep_at(off)
+        if pick and not _junk_id(pick):
+            pick = dict(pick); pick["at"] = off
+            recovered.append(pick)
+
+    merged, seen_t = [], set()
+    for h in sorted(recovered + real, key=lambda h: h["at"]):
+        k = _title_key(h.get("title"))
+        if k and k not in seen_t:
+            seen_t.add(k); merged.append(h)
+    if merged:
+        primary = dict(merged[0])
+        primary["songs"] = merged
+        primary["multi"] = len(merged) > 1
+        return primary
+
+    # Phase 2: fine counter-speed sweep. Sweep EVERYTHING and take the CONSENSUS - the
+    # title several independent speeds agree on - instead of the first thing that comes
+    # back. One junk hit at one speed is noise; the same song surfacing at 0.80x, 0.85x
+    # and 1.30x is the answer.
+    off0 = windows_for(dur)[0]
+    swept = []
+    for i in range(0, len(FINE_SWEEP), 5):
+        batch = FINE_SWEEP[i:i + 5]
+        res = await asyncio.gather(*[probe(off0, rate, label) for rate, label in batch])
+        swept.extend([h for h in res if h])
+    pick = _consensus_id(swept)
+    if pick:
+        pick = dict(pick)
+        pick["at"] = off0
+        pick["songs"] = [dict(pick)]
+        pick["multi"] = False
+        return pick
+    # nothing real anywhere - hand back the junk Phase-1 hit so the server's
+    # shazam_untrustworthy check can flag it and answer "uncertain" honestly.
     if hits:
-        hits.sort(key=lambda h: h["at"])          # chronological order
         primary = dict(hits[0])
         primary["songs"] = hits
         primary["multi"] = len(hits) > 1
         return primary
-
-    # Phase 2: fine counter-speed sweep on the tail window, batched, first hit wins
-    off0 = windows_for(dur)[0]
-    for i in range(0, len(FINE_SWEEP), 5):
-        batch = FINE_SWEEP[i:i + 5]
-        res = await asyncio.gather(*[probe(off0, rate, label) for rate, label in batch])
-        got = [h for h in res if h]           # gather preserves order: earliest rate first
-        if got:
-            h = got[0]
-            h["at"] = off0
-            h["songs"] = [dict(h)]
-            h["multi"] = False
-            return h
     return None
 
 
@@ -416,6 +579,13 @@ def _tags_in(*strings):
     text, so we target that exact remix family directly."""
     blob = " ".join(s or "" for s in strings).lower().replace(" ", "")
     return [t for t in EDIT_TAGS if t.replace(" ", "") in blob]
+
+
+# The hoodtrap / mylancore scene runs through a handful of producers - Kryd above all.
+# Searching them BY NAME reaches the actual edit when "<song> hoodtrap" only surfaces
+# re-uploads of it. (Roham: "one of the biggest hoodtrap guys is kryd and artists
+# related to kryd for all hoodtrap things".)
+HOODTRAP_CANON = ("kryd", "mylancore")
 
 
 def build_queries(credit_title, credit_author, base_title, base_artist, edit_label,
@@ -457,11 +627,28 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         base = core if (core and core.lower() != base_title.lower()) else base_title
         add(base_title)                                         # verbatim Shazam title
         add("%s %s" % (base_artist or "", base_title))
+        # The name in an "original sound - X" credit is the person who MADE this edit,
+        # and their own upload is very often the exact answer. It was only ever used
+        # when the credit named a track, so on a bare "original sound" it got thrown
+        # away entirely - which is why the Gut Genug clip (credit "original sound -
+        # anytunz") never found Anytunz's own "Gut Genug (Marimba Ringtone Cover)",
+        # the audio actually in the clip.
+        ca = _clean(credit_author or "")
+        if ca and ca.lower() not in (base_artist or "").lower():
+            add("%s %s" % (ca, base))
+            if edit_word:
+                add("%s %s %s" % (ca, base, edit_word))
         add("%s %s %s" % (base_artist or "", base, edit_word or "edit"))
         add("%s %s" % (base_artist or "", base))
         add("%s tiktok version %s" % (base, edit_word or ""))   # the PIXY/Yoh_dono lever
         add("%s hoodtrap" % base)
         add("%s mylancore" % base)
+        # Hoodtrap/mylancore is a small scene with a canon: Kryd is the name on most of
+        # it ("Cool For The Summer (Kryd Hoodtrap / Mylancore)", "Let The World Burn
+        # (Hoodtrap / Mylancore Remix)"), so searching the producer by name reaches the
+        # real edit when a plain "<song> hoodtrap" search only returns re-uploads.
+        for producer in HOODTRAP_CANON:
+            add("%s %s" % (base, producer))
         for tg in _tags_in(credit_title, base_title):
             add("%s %s" % (base, tg))
         add("%s %s bass boosted" % (base_artist or "", base))
@@ -470,7 +657,7 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         h = re.sub(r"[._]+", " ", handle or "").strip()
         if h and base and not _is_named_credit(credit_title):
             add("%s %s" % (h, base))
-    return q[:14]
+    return q[:16]
 
 
 def _num(s):
@@ -502,12 +689,23 @@ def _run_search(spec):
     return rows
 
 
-def search_edits(queries, per=5):
+def search_edits(queries, per=5, sc_per=None):
     """SoundCloud + YouTube, all queries fired CONCURRENTLY. Carry plays + likes so
-    ranking can surface the popular upload of the matching edit."""
+    ranking can surface the popular upload of the matching edit.
+
+    SoundCloud is searched MUCH deeper than YouTube on purpose: it's where the niche
+    edits actually live, and the exact upload is routinely far past the first page.
+    Depth is nearly free - scsearch100 costs ~1.4s against ~1.0s for 25 - so being
+    shallow here bought nothing.
+    The real Roddy Ricch "The Box" hoodtrap is uploaded as "The Box (Live) in London"
+    by someone who spelled the artist "Roddy Rich". SoundCloud's search is literal, so
+    every artist-qualified query MISSES it at any depth; only the bare title reaches it,
+    at #32. Uploaders misspell and mislabel constantly - depth on the plain title is the
+    only thing that survives that."""
+    sc_per = sc_per or min(60, max(per * 6, 50))
     specs = []
     for q in queries:
-        specs.append(("scsearch%d:" % per, "soundcloud", q))
+        specs.append(("scsearch%d:" % sc_per, "soundcloud", q))
         specs.append(("ytsearch%d:" % per, "youtube", q))
     cands, seen = [], set()
     with ThreadPoolExecutor(max_workers=min(16, len(specs) or 1)) as ex:
@@ -681,6 +879,25 @@ OTHER_RENDITION = re.compile(
     r"\b(cover|guitar|piano|live|instrumental|acoustic|karaoke|remaster|1 ?hour|hour loop)\b", re.I)
 
 
+def _sc_quota(cands, max_dl, min_sc=6):
+    """Hold download slots for SoundCloud.
+
+    Priority order is dominated by high-play YouTube re-uploads, but SoundCloud is where
+    the actual edit usually lives - frequently under a title that scores badly, because
+    uploaders mislabel constantly. The real Roddy Ricch "The Box" hoodtrap is uploaded as
+    "The Box (Live) in London", which reads as a different rendition and gets buried.
+    verify() decides by AUDIO, so spending a few slots on SoundCloud costs nothing but a
+    download and is the difference between finding the edit and never seeing it."""
+    head = cands[:max_dl]
+    have = sum(1 for c in head if c.get("source") == "soundcloud")
+    if have >= min_sc:
+        return head
+    extra = [c for c in cands[max_dl:] if c.get("source") == "soundcloud"][:min_sc - have]
+    if not extra:
+        return head
+    return (head[:max_dl - len(extra)] + extra)
+
+
 def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
     verify() returns a calibrated same-master score that survives speed / pitch /
@@ -713,7 +930,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=12,
+                    edit_label, known_dir=None, handle=None, max_dl=18,
                     hints=None, shazam_reliable=True):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
@@ -762,25 +979,48 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # whatever doesn't actually match, so a broad edit-first pool is safe.
     dir_word = (known_dir or "").split()[0] if known_dir else ""
 
-    # the clip's OWN named edit type (from the credit: "jerseyclub", "phonk", ...) so
-    # the exact source upload, which may carry only that word (not bass/slowed), still
-    # ranks for download. Missing this deprioritised TXKUMOON's plain "Moonlight
-    # #jerseyclub" under bass/reverb re-uploads.
-    credit_l = (credit_title or "").lower()
+    # the clip's OWN named edit type ("jerseyclub", "phonk", "hoodtrap", ...) so the
+    # exact source upload, which may carry only that word (not bass/slowed), still ranks
+    # for download. Missing this deprioritised TXKUMOON's plain "Moonlight #jerseyclub"
+    # under bass/reverb re-uploads.
+    # Read the genre from EVERYTHING the clip told us, not just the credit: Shazam's own
+    # hit titles (a multi-song clip's 2nd hit was literally "Dark Horse Hoodtrap Remix"),
+    # the edit label, and the comment hints. Reading only the credit meant a clip posted
+    # as a bare "original sound" scored NO genre signal, so million-play bass-boosted
+    # re-uploads of the ORIGINAL took all 12 download slots and the real hoodtrap edit
+    # (Kryd's "Dark Horse (Hoodtrap / Mylancore)") was never downloaded at all -> the
+    # engine could only answer "matched to the original recording".
+    genre_src = " ".join([credit_title or "", base_title or "", edit_label or ""]
+                         + [h for h in (hints or []) if h]).lower()
     credit_toks = [w for w in ("jersey", "phonk", "nightcore", "hardstyle", "hoodtrap",
-                               "remix", "flip", "mashup", "daycore", "8d")
-                   if w in credit_l]
+                               "mylancore", "remix", "flip", "mashup", "daycore", "8d")
+                   if w in genre_src]
+
+    # "original sound - anytunz" means anytunz MADE this audio, so an upload by that
+    # same name is the source itself - the strongest provenance we ever get. Without
+    # this, Anytunz's own "Gut Genug (Marimba Ringtone Cover)" lost every download slot
+    # because "cover" zeroes out edit_titled, and the clip got answered with a 0-play
+    # re-upload instead of the creator's original.
+    cred_toks = [w for w in _clean(credit_author or "").lower().split() if len(w) >= 4]
 
     def _dl_priority(c):
         t = c["title"].lower()
+        creator_hit = bool(cred_toks) and any(
+            w in (c.get("uploader") or "").lower() for w in cred_toks)
         edit_titled = bool(EDIT_WORDS.search(t)) and not OTHER_RENDITION.search(t)
-        # any strong edit tag - the clip's speed direction, its credited edit type, OR
+        # the clip's OWN named genre outranks a generic transform: when we know the clip
+        # is a hoodtrap/jerseyclub, that exact family must reach the verifier before
+        # any high-play "(Bass Boosted)" spin of the plain original.
+        genre_hit = bool(credit_toks) and any(tok in t for tok in credit_toks)
+        # any strong edit tag - the clip's speed direction, its named edit type, OR
         # bass/reverb - so both a niche "bass boosted" upload (Comethazine) and a plain
         # "Moonlight #jerseyclub" (TXKUMOON) get downloaded, never buried by plays.
         edit_char = bool((dir_word and dir_word in t) or "bass" in t or "reverb" in t
-                         or any(tok in t for tok in credit_toks))
+                         or genre_hit)
         return (-(c["title_hits"] >= 1),   # is this the right song at all
+                -creator_hit,               # the credited creator's OWN upload = the source
                 -edit_titled,               # a real edit upload before the plain original
+                -genre_hit,                 # the clip's OWN genre before a generic boost
                 -edit_char,                 # a matching edit tag before a plain upload
                 -c.get("plays", 0))         # popularity only breaks ties within a tier
     cands.sort(key=_dl_priority)
@@ -788,7 +1028,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = tempfile.mkdtemp()
-    n = _download_and_score(cands, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
+    n = _download_and_score(_sc_quota(cands, max_dl), clip_audio, tmp, 0, max_dl,
+                            clip_ctx=clip_ctx)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
@@ -818,8 +1059,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # editmatch = a genuine same-recording match that isn't a different rendition
     # (guitar/cover/instrumental). No speed gate: a heavy bass boost throws verify's
     # speed off, and gating on speed is exactly what dropped the exact bassy edit.
+    # A rendition WORD is a prior, not a veto (same lesson as bass/speed: nudge, never
+    # reject). When the audio is provably identical (core >= CORE_SAME) the title is
+    # just how the uploader named it - a real guitar cover is a different performance
+    # and never reaches 0.95 against the clip. Without this, a clip whose actual audio
+    # IS the creator's "(Marimba Ringtone Cover)" could never be crowned at core 1.000,
+    # and the engine settled for a 0-play "slowed + reverb" edit of the wrong recording.
     for c in keep:
-        c["editmatch"] = bool(c.get("core", 0) >= CORE_EDIT and c["not_other"])
+        core = c.get("core", 0)
+        c["editmatch"] = bool(core >= CORE_EDIT and (c["not_other"] or core >= CORE_SAME))
     ba = (base_artist or "").lower()
 
     def is_official_original(c):
@@ -861,9 +1109,25 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         c["final"] = round(c.get("core", 0) * speed_fit(c) * bass_fit(c), 4)
 
     def rank_key(c):
+        f = c.get("final", 0)
+        # An upload that already matches the clip AS-IS (verify needed no speed
+        # correction) IS the edit the clip used. One we had to re-pitch to line up is a
+        # different-speed relative - almost always the plain original. This has to
+        # outrank play count: a slowed edit and its original are the SAME recording, so
+        # both saturate `core`, and without this a 7.4M-play official master ties with
+        # and beats the niche slowed upload the clip actually used ("Do You Mind").
+        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+        speed_exact = 0 if abs(float(np.log2(v))) <= 0.03 else 1     # within ~2%
+        # When several uploads are PROVABLY the same recording (core saturated), the
+        # small gaps between their finals are bass/speed-fit noise, not evidence - the
+        # audio is identical. Quantise those so they tie, and let plays pick the upload
+        # people actually use (Dark Horse: three identical Kryd hoodtrap rips at 1.000,
+        # separated by 0.014 of nothing; the canonical 1.6M-play one should win).
+        fq = round(f / 0.05) * 0.05 if c.get("core", 0) >= CORE_SAME else round(f, 3)
         return (0 if c["editmatch"] else 1,           # a real same-recording edit first
                 1 if is_official_original(c) else 0,  # plain original after real edits
-                -round(c.get("final", 0), 3),         # recording x speed x bass
+                speed_exact,                          # the upload AT the clip's speed
+                -fq,                                  # recording x speed x bass
                 -c.get("plays", 0))                   # niche edits win on match, not plays
     ranked = sorted(keep, key=rank_key)
     # decisive = the audio verdict is clear, not a play-count guess: a real edit on top

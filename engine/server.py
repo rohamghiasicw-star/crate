@@ -43,13 +43,24 @@ def _edit_worthy(src, fp):
     return False
 
 
-def identify(url):
-    t0 = time.time()
-    key = url.split("?")[0]
-    if key in CACHE:
-        c = dict(CACHE[key]); c["cached"] = True
-        return c
+SESSIONS = {}        # key -> the phase-1 context, kept alive between /base and /edits
+SESSION_TTL = 900
 
+
+def _prune_sessions():
+    """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
+    now = time.time()
+    for k, s in list(SESSIONS.items()):
+        if now - s.get("t0", 0) > SESSION_TTL:
+            SESSIONS.pop(k, None)
+            _cleanup((s.get("src") or {}).get("tmp"))
+
+
+def _phase1(url, key, t0):
+    """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
+    Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
+    30-60s: the user shouldn't wait on the edit search to learn what the song is.
+    Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
     try:
         src = E.get_source(url)
     except RuntimeError as e:
@@ -67,7 +78,7 @@ def identify(url):
                 base.update(result="found", from_credit=True,
                             base_song=ct, base_artist=ca, edit_certain=False,
                             speed="as posted", decisive=False, exact=None, candidates=[])
-            return base
+            return base, None
         raise
     res = {
         "result": "pending",
@@ -143,14 +154,55 @@ def identify(url):
             if untrust:
                 res["shazam_suspect"] = why
 
+        # ---- phase 1 ends here: the song is named, hand it straight to the user ----
+        res["result"] = "found" if fp else "no_match"
+        res["exact"] = None
+        res["candidates"] = []
+        res["decisive"] = False
+        res["secs"] = round(time.time() - t0, 1)
+        worth = bool(_edit_worthy(src, fp)
+                     and (base_title or E._is_named_credit(src.get("credit_title"))))
+        res["edits_pending"] = worth
+        # ctx always carries src so the caller can free its temp audio, even when
+        # there's no hunt to run.
+        ctx = {"src": src, "fp": fp, "base_title": base_title, "base_artist": base_artist,
+               "edit_label": edit_label, "mdir": mdir, "hint_texts": hint_texts,
+               "shazam_reliable": shazam_reliable, "t0": t0, "key": key, "url": url,
+               "res": res, "worth": worth}
+        return res, ctx
+    finally:
+        loop.close()
+
+
+def _phase2(ctx):
+    """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
+    on SoundCloud and YouTube and compare each against the clip's actual audio (same
+    recording, speed, bass tilt) to find WHICH upload the clip used."""
+    src, fp = ctx["src"], ctx["fp"]
+    res, key, t0, url = ctx["res"], ctx["key"], ctx["t0"], ctx["url"]
+    base_title, base_artist = ctx["base_title"], ctx["base_artist"]
+    edit_label, mdir = ctx["edit_label"], ctx["mdir"]
+    hint_texts, shazam_reliable = ctx["hint_texts"], ctx["shazam_reliable"]
+    loop = asyncio.new_event_loop()
+    try:
         exact = None
         candidates = []
         res["decisive"] = False
-        if _edit_worthy(src, fp) and (base_title or E._is_named_credit(src.get("credit_title"))):
+        if True:
+            # Shazam's OTHER hits are search signal too. On a multi-song clip the 2nd hit
+            # often names the actual edit family ("Dark Horse Hoodtrap Remix") while the
+            # 1st is just the plain original - feeding those titles in is what lets
+            # find_edit prioritise the hoodtrap family over bass-boosted originals.
+            # Kept separate from res["comment_hints"] so the UI still only shows comments.
+            search_hints = list(hint_texts)
+            for h in (fp.get("songs") or []) if fp else []:
+                t = h.get("title")
+                if t and t != base_title:
+                    search_hints.append(t)
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
-                handle=src.get("handle"), hints=hint_texts,
+                handle=src.get("handle"), hints=search_hints,
                 shazam_reliable=shazam_reliable))
             rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
             # ONLY surface a candidate that actually VERIFIES as the same recording
@@ -255,12 +307,68 @@ def identify(url):
             res["result"] = "uncertain"
         else:
             res["result"] = "no_match"
+        res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         CACHE[key] = res
         return res
     finally:
         loop.close()
         _cleanup(src.get("tmp"))
+
+
+def identify_base(url):
+    """/base - name the song as fast as possible and park the rest."""
+    _prune_sessions()
+    key = url.split("?")[0]
+    if key in CACHE:
+        c = dict(CACHE[key]); c["cached"] = True
+        return c
+    old = SESSIONS.pop(key, None)
+    if old:
+        _cleanup((old.get("src") or {}).get("tmp"))
+    res, ctx = _phase1(url, key, time.time())
+    if ctx and ctx.get("worth"):
+        SESSIONS[key] = ctx              # /edits will finish it and free the audio
+    elif ctx:
+        CACHE[key] = res                 # nothing more to find - this IS the answer
+        _cleanup((ctx.get("src") or {}).get("tmp"))
+    return res
+
+
+def identify_edits(url):
+    """/edits - finish the job for a clip /base already named."""
+    _prune_sessions()
+    key = url.split("?")[0]
+    if key in CACHE:
+        c = dict(CACHE[key]); c["cached"] = True
+        return c
+    ctx = SESSIONS.pop(key, None)
+    if not ctx:                      # no live session (expired / called cold) - do it all
+        return identify(url)
+    try:
+        return _phase2(ctx)
+    finally:
+        _cleanup((ctx.get("src") or {}).get("tmp"))
+
+
+def identify(url):
+    """/find - the whole thing in one shot. Kept for callers that want one response."""
+    _prune_sessions()
+    key = url.split("?")[0]
+    if key in CACHE:
+        c = dict(CACHE[key]); c["cached"] = True
+        return c
+    res, ctx = _phase1(url, key, time.time())
+    if not ctx:                          # rate-limited: no audio was ever fetched
+        return res
+    if not ctx.get("worth"):             # named it, nothing left to hunt for
+        CACHE[key] = res
+        _cleanup((ctx.get("src") or {}).get("tmp"))
+        return res
+    try:
+        return _phase2(ctx)
+    finally:
+        _cleanup((ctx.get("src") or {}).get("tmp"))
 
 
 def _cleanup(d):
@@ -313,14 +421,15 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
-        if u.path != "/find":
+        if u.path not in ("/find", "/base", "/edits"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
         link = (q.get("url") or [""])[0].strip()
         if not link or not any(h in link for h in ("tiktok.com", "instagram.com")):
             return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
+        fn = {"/base": identify_base, "/edits": identify_edits}.get(u.path, identify)
         try:
-            self._send(200, identify(link))
+            self._send(200, fn(link))
         except Exception as e:
             self._send(200, {"result": "error", "error": str(e)[:200]})
 
