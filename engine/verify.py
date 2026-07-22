@@ -481,6 +481,16 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
     # E. combine. Same-master evidence = the stronger of the two independent paths.
     # This is EQ/bass-INDEPENDENT (fp is gain-invariant, arr removes each band's mean),
     # so `core` is the pure "is this the same recording" signal; bass is handled apart.
+    # KNOWN WEAKNESS, not fixed here: for "super slowed"/ambient content (minimal
+    # rhythmic transients), both fp and arr cluster right on their own decision
+    # boundaries for TRUE and FALSE matches alike - "Ark" (the real NCS track) scored
+    # fp=0.535/arr=0.322, "Ark Patrol" (a different artist entirely) scored
+    # fp=0.554/arr=0.457, a hair's-width apart on both signals but on OPPOSITE sides of
+    # true/false. A same-fp-side gate was tried and reverted: it capped the TRUE match's
+    # core at 0.40 while leaving the FALSE one uncapped at 1.000 (its fp landed 0.004
+    # above the cutoff). This needs either better-calibrated thresholds from more
+    # labelled data, or a text-based signal (matching the exact edit name via search)
+    # to disambiguate cases audio similarity alone cannot - not a threshold tweak.
     core = max(_norm(fp, FP_LO, FP_HI), _norm(arr, ARR_LO, ARR_HI))
     if out["spectral"] < SPC_GATE:         # coarse content says junk -> collapse
         core *= 0.3

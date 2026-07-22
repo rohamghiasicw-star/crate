@@ -1090,6 +1090,21 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
                      clip_tilt=0.0, cand_tilt=0.0)
             return
         v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
+        # A near-miss is a SIGNAL, not a rejection: the default 20s decode only looks at
+        # the START of the candidate, so a remix with an extended intro/build-up (e.g. a
+        # dubstep drop that doesn't land until 25s+) gets compared against the wrong
+        # part of the track. "Paparazzi (Alximo's dubstep remix)" scored core 0.476 at
+        # 20s (below CORE_KEEP 0.50, dropped) and 0.640 at 35s (a clean pass) - the
+        # audio was always the right recording, we just weren't looking far enough in.
+        # Retry with more of the track ONLY on a genuine near-miss (below CORE_KEEP but
+        # not hopeless), so this costs nothing on the many candidates that are obviously
+        # right or obviously wrong.
+        if 0.32 <= v["core"] < CORE_KEEP:
+            got2 = dl_clip(c["url"], os.path.join(tmp, "c%dw.wav" % (start + i)), seconds=90)
+            if got2:
+                v2 = _verify.verify(clip_audio, got2, seconds=90, clip_ctx=clip_ctx)
+                if v2["core"] > v["core"]:
+                    v, got = v2, got2
         c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
         c["path"] = got                     # kept so the caller can measure speed vs it
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
@@ -1176,6 +1191,23 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # because "cover" zeroes out edit_titled, and the clip got answered with a 0-play
     # re-upload instead of the creator's original.
     cred_toks = [w for w in _clean(credit_author or "").lower().split() if len(w) >= 4]
+    # The CONFIRMED base artist (from Shazam, already trust-gated) is stronger evidence
+    # than any title-word overlap. Title words alone can't tell "Ship Wrek & Zookeepers -
+    # Ark" from an unrelated "Ark Patrol" - both contain "ark" - and on ambient/slowed
+    # content the audio-similarity score can't reliably tell them apart either (both
+    # landed within 0.02 of each other on fp/arr while sitting on opposite sides of
+    # true/false). Checking whether the confirmed artist's name actually appears is a
+    # cheap, independent signal that doesn't depend on fragile low-level audio scoring.
+    _ARTIST_STOP = {"the", "feat", "featuring", "and", "ft", "with", "vs", "official"}
+    artist_toks = ([w for w in re.sub(r"[^a-z0-9 ]", " ", (base_artist or "").lower()).split()
+                   if len(w) >= 3 and w not in _ARTIST_STOP]
+                  if (shazam_reliable and base_artist) else [])
+
+    def _artist_hit(c):
+        if not artist_toks:
+            return False
+        hay = ((c.get("title") or "") + " " + (c.get("uploader") or "")).lower()
+        return any(w in hay for w in artist_toks)
 
     def _dl_priority(c):
         t = c["title"].lower()
@@ -1192,6 +1224,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         edit_char = bool((dir_word and dir_word in t) or "bass" in t or "reverb" in t
                          or genre_hit)
         return (-(c["title_hits"] >= 1),   # is this the right song at all
+                -_artist_hit(c),            # the CONFIRMED artist's own upload
                 int(_is_compilation(c)),    # a mix CONTAINING the song isn't the edit
                 -creator_hit,               # the credited creator's OWN upload = the source
                 -edit_titled,               # a real edit upload before the plain original
@@ -1228,9 +1261,16 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # never reject a same-recording match. Plays is the last resort (niche edits are few-play).
     for c in cands:
         c["not_other"] = not OTHER_RENDITION.search(c["title"])
+    # A CONFIRMED-artist upload gets rescued from a lower core floor: "Ship Wrek &
+    # Zookeepers - Ark [NCS]" is the genuinely correct upload but only scored core 0.40
+    # on ambient/slowed content where fp+arr both under-read - independent textual
+    # confirmation (the artist we already trust-gated via Shazam) outweighs a fragile
+    # audio score sitting right on its own noise floor, without needing the CORE_KEEP-
+    # 0.15 title-only rescue's weaker bar (title words alone let "Ark Patrol" through too).
     keep = [c for c in cands
             if c.get("core", 0) >= CORE_KEEP
-            or (c.get("title_hits", 0) >= 1 and c.get("core", 0) >= CORE_KEEP - 0.15)]
+            or (c.get("title_hits", 0) >= 1 and c.get("core", 0) >= CORE_KEEP - 0.15)
+            or (_artist_hit(c) and c.get("core", 0) >= 0.30)]
     # editmatch = a genuine same-recording match that isn't a different rendition
     # (guitar/cover/instrumental). No speed gate: a heavy bass boost throws verify's
     # speed off, and gating on speed is exactly what dropped the exact bassy edit.
@@ -1242,7 +1282,12 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # and the engine settled for a 0-play "slowed + reverb" edit of the wrong recording.
     for c in keep:
         core = c.get("core", 0)
-        c["editmatch"] = bool(core >= CORE_EDIT and (c["not_other"] or core >= CORE_SAME))
+        c["editmatch"] = bool(
+            (core >= CORE_EDIT and (c["not_other"] or core >= CORE_SAME))
+            # confirmed-artist rescue: needs its own real audio plausibility (0.38, above
+            # the 0.30 keep floor) plus not_other - we're trusting the artist match to
+            # cover a WEAK score, not a coincidental one.
+            or (_artist_hit(c) and core >= 0.38 and c["not_other"]))
     ba = (base_artist or "").lower()
 
     def is_official_original(c):
@@ -1311,6 +1356,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         # separated by 0.014 of nothing; the canonical 1.6M-play one should win).
         fq = round(f / 0.05) * 0.05 if c.get("core", 0) >= CORE_SAME else round(f, 3)
         return (0 if c["editmatch"] else 1,           # a real same-recording edit first
+                0 if _artist_hit(c) else 1,           # the CONFIRMED artist over an
+                                                       # unconfirmed same-or-higher score -
+                                                       # raw core alone can't out-rank this:
+                                                       # "Ark Patrol" scored core 1.000 next
+                                                       # to the true "Ship Wrek & Zookeepers
+                                                       # - Ark [NCS]" at 0.40, and core is
+                                                       # exactly the fragile signal that
+                                                       # tied on this content in the first
+                                                       # place.
                 1 if _is_compilation(c) else 0,       # a set that CONTAINS it, never above it
                 1 if is_official_original(c) else 0,  # plain original after real edits
                 speed_exact,                          # the upload AT the clip's speed
