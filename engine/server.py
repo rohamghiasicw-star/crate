@@ -47,6 +47,24 @@ SESSIONS = {}        # key -> the phase-1 context, kept alive between /base and 
 SESSION_TTL = 900
 
 
+def _peaks(path, n=96):
+    """The clip's REAL amplitude envelope for the UI. The page was animating a sine wave
+    with random jitter, which is noise pretending to be information - this is the actual
+    audio being analysed, so what the user watches is what the engine is listening to."""
+    try:
+        import numpy as np
+        import verify as V
+        x = V._decode(path, 40)
+        if x.size < n * 4:
+            return []
+        step = x.size // n
+        vals = [float(np.abs(x[i * step:(i + 1) * step]).max()) for i in range(n)]
+        top = max(vals) or 1.0
+        return [round(min(1.0, v / top), 3) for v in vals]
+    except Exception:
+        return []
+
+
 def _prune_sessions():
     """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
     now = time.time()
@@ -91,6 +109,8 @@ def _phase1(url, key, t0):
         "url": key,
         "art": None,
     }
+
+    res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
 
     loop = asyncio.new_event_loop()
     try:

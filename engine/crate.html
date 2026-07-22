@@ -656,6 +656,17 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
   }
   var waveState = "idle";     // idle | scanning | locked
   var bars = new Array(72).fill(0.05);
+  // the clip's REAL envelope, sent by the engine once it has the audio. Until then the
+  // bars idle quietly - we never fake amplitude the engine hasn't actually measured.
+  var realPeaks = [];
+  function setPeaks(p) {
+    if (!p || !p.length) return;
+    realPeaks = [];
+    for (var i = 0; i < bars.length; i++) {          // resample to the bar count
+      var v = p[Math.min(p.length - 1, Math.round(i * (p.length - 1) / (bars.length - 1)))];
+      realPeaks.push(Math.max(0.04, v));
+    }
+  }
   var scanX = 0;
   var waveRAF = null;
 
@@ -678,7 +689,11 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     for (var i = 0; i < n; i++) {
       var target;
       if (waveState === "idle") target = 0.06 + 0.05 * (Math.sin(i * 0.5 + t * 1.6) * 0.5 + 0.5);
-      else if (waveState === "scanning") target = 0.12 + 0.68 * Math.abs(Math.sin(i * 0.7 + t * 6)) * (0.4 + 0.6 * Math.random());
+      else if (waveState === "scanning")
+        // once the engine sends the real envelope, show THAT and sweep a playhead over
+        // it. The old version jittered randomly, which is just motion for its own sake.
+        target = realPeaks.length ? realPeaks[i]
+                                  : 0.10 + 0.09 * (Math.sin(i * 0.6 + t * 1.8) * 0.5 + 0.5);
       else target = bars[i];
       bars[i] += (target - bars[i]) * (waveState === "locked" ? 0.25 : 0.35);
       var amp = bars[i] * (h * 0.30), x = i * gap + gap / 2;
@@ -701,7 +716,9 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
   }
   function setWave(state) {
     waveState = state;
-    if (state === "locked") for (var i = 0; i < bars.length; i++) bars[i] = 0.18 + 0.55 * Math.abs(Math.sin(i * 0.9));
+    if (state === "locked")
+      for (var i = 0; i < bars.length; i++)
+        bars[i] = realPeaks.length ? realPeaks[i] : 0.18 + 0.55 * Math.abs(Math.sin(i * 0.9));
     if (waveRAF) cancelAnimationFrame(waveRAF);
     drawWave(performance.now());     // one guaranteed paint even if rAF is throttled
     if (!reduced && state !== "locked") waveRAF = requestAnimationFrame(drawWave);
@@ -744,6 +761,7 @@ var CATALOGUE = [{"id":"bad","title":"BAD","artist":"ATEEZ","year":2026,"kind":"
     setStatus("Listening", "scanning");
     trace("T02", "listening &middot; naming the song");
     var deep = await tier02Base(parsed.url);
+    if (deep && deep.peaks) { setPeaks(deep.peaks); setWave(waveState); }  // show the real audio
     if (deep && deep.result === "found" && deep.edits_pending) {
       // show the song NOW, then keep working
       trace("T02", "song: <b>" + esc(deep.base_song || "") + "</b>" +

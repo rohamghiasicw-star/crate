@@ -1130,6 +1130,26 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 -fq,                                  # recording x speed x bass
                 -c.get("plays", 0))                   # niche edits win on match, not plays
     ranked = sorted(keep, key=rank_key)
+    # DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
+    # different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
+    # Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
+    # the same edit when the audio is the same recording AND the transform matches:
+    # same speed, same bass tilt. Keep the strongest representative of each cluster so
+    # the shelf offers real alternatives instead of repeats, and so the decisiveness
+    # margin below compares against a genuine rival rather than a copy of the winner.
+    def _edit_sig(c):
+        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+        return (round(float(np.log2(v)) * 50),          # ~1.4% speed buckets
+                round((c.get("cand_tilt") or 0.0) / 2.0))   # 2 dB bass buckets
+    seen_sig, deduped = set(), []
+    for c in ranked:
+        if c.get("core", 0) >= CORE_SAME:      # only collapse provably identical audio
+            sig = _edit_sig(c)
+            if sig in seen_sig:
+                continue
+            seen_sig.add(sig)
+        deduped.append(c)
+    ranked = deduped
     # decisive = the audio verdict is clear, not a play-count guess: a real edit on top
     # with a genuine match margin over the next edit rival.
     decisive = False
