@@ -1072,6 +1072,24 @@ def _sc_quota(cands, max_dl, min_sc=6):
     return (head[:max_dl - len(extra)] + extra)
 
 
+def _web_quota(cands, max_dl, min_web=2):
+    """Hold a couple of download slots for the open-web (DuckDuckGo) search results.
+
+    These come from searching the CONFIRMED name against a general web index, not a
+    platform's own internal search ranking - real confirmation ("Ark" was cracked this
+    way), but generic keyword fan-out can still crowd out the handful of web hits before
+    they ever get downloaded. Capped at only a couple of slots since there are at most
+    5 web results to begin with."""
+    head = cands[:max_dl]
+    have = sum(1 for c in head if c.get("query") == "web")
+    if have >= min_web:
+        return head
+    extra = [c for c in cands[max_dl:] if c.get("query") == "web"][:min_web - have]
+    if not extra:
+        return head
+    return (head[:max_dl - len(extra)] + extra)
+
+
 def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
     verify() returns a calibrated same-master score that survives speed / pitch /
@@ -1128,11 +1146,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     queries = build_queries(credit_title, credit_author, base_title, base_artist,
                             edit_label, handle=handle, hints=hints,
                             shazam_reliable=shazam_reliable)
-    # SC/YT search + open-web search run concurrently. The web (DuckDuckGo) surfaces
-    # the crowd-known edits the way a person googling would find them, not just what
-    # SC/YT's own search ranks - the "search reddit/the web for the edit" logic.
-    web_q = queries[:2] + ([_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
-                           if base_title else [])
+    # SC/YT search + open-web search run concurrently. The web (DuckDuckGo - Google
+    # itself can't be scraped, it hard-gates non-JS clients in an infinite redirect
+    # loop) surfaces the crowd-known edits the way a person googling would find them,
+    # not just what SC/YT's own internal search ranks.
+    # A CLEAN "{artist} {title}" query - no forced "slowed reverb" bias - is what
+    # actually cracked "Ark": searching the plain confirmed name surfaced the correct
+    # "Ship Wrek & Zookeepers - Ark [NCS Release]" on the first page. The old version
+    # only ever searched queries[:2] (comment-hint or credit-based, not necessarily the
+    # confirmed identification) plus one heavily-biased template.
+    web_q = queries[:2]
+    if base_title and shazam_reliable:
+        web_q = [_clean("%s %s" % (base_artist or "", base_title))] + web_q
+    if base_title:
+        web_q += [_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_sc = ex.submit(search_edits, queries, 8)
         f_web = ex.submit(web_search_edits, web_q)
@@ -1236,8 +1263,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = tempfile.mkdtemp()
-    n = _download_and_score(_sc_quota(cands, max_dl), clip_audio, tmp, 0, max_dl,
-                            clip_ctx=clip_ctx)
+    n = _download_and_score(_web_quota(_sc_quota(cands, max_dl), max_dl), clip_audio, tmp, 0,
+                            max_dl, clip_ctx=clip_ctx)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
