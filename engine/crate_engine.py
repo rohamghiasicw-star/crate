@@ -14,7 +14,7 @@ Pipeline
                          candidate, and CORRELATE it against the clip audio so we
                          return the real source, not just a same-titled upload.
 """
-import asyncio, difflib, json, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+import asyncio, concurrent.futures, difflib, json, os, queue, re, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -891,9 +891,138 @@ def _ddg(query):
     return out
 
 
+class _GoogleWorker:
+    """Real Google search via a real (headless) browser, so the crowd-known edit shows
+    up the way it does for a person googling the confirmed name - not a text scraper
+    Google can silently degrade.
+
+    Two separate walls, tested in order: a plain HTTP client (curl_cffi) can't execute
+    the JS Google requires and loops forever through a "click here if not redirected"
+    bounce page. A vanilla headless Chromium DOES execute the JS but gets an explicit
+    "unusual traffic" CAPTCHA wall instead - Google fingerprints automation itself
+    (navigator.webdriver and related tells), independent of whether JS runs. The single
+    flag `--disable-blink-features=AutomationControlled` was enough to clear that wall
+    in testing, with no stealth library needed.
+
+    Playwright's sync API must be driven from the ONE thread that created the browser -
+    the server handles requests concurrently (ThreadingHTTPServer), so this dedicates a
+    single background thread to own the browser and serves every search through a
+    queue+future, which also naturally serialises Google traffic (one query at a time)
+    rather than hammering it from several threads at once."""
+    UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+    def __init__(self):
+        self._q = queue.Queue()
+        self._ready = threading.Event()
+        self._ok = False
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+        self._ready.wait(20)
+
+    def _run(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception:
+            self._ready.set(); return
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True, args=["--disable-blink-features=AutomationControlled"])
+                ctx = browser.new_context(user_agent=self.UA,
+                                          viewport={"width": 1280, "height": 900},
+                                          locale="en-US")
+                self._ok = True
+                self._ready.set()
+                while True:
+                    item = self._q.get()
+                    if item is None:
+                        break
+                    query, fut = item
+                    try:
+                        fut.set_result(self._search(ctx, query))
+                    except Exception as e:
+                        fut.set_exception(e)
+                browser.close()
+        except Exception:
+            self._ready.set()
+
+    def _search(self, ctx, query, num=20):
+        page = ctx.new_page()
+        try:
+            page.goto("https://www.google.com/search?q=%s&num=%d"
+                     % (urllib.parse.quote(query), num), timeout=15000)
+            page.wait_for_timeout(1600)
+            body = page.inner_text("body")
+            if "unusual traffic" in body.lower():
+                return []
+            items = page.eval_on_selector_all(
+                "a[href*='youtube.com/watch'], a[href*='soundcloud.com/']",
+                "els => els.map(e => ({href: e.href, "
+                "h3: e.querySelector('h3') ? e.querySelector('h3').innerText : null}))")
+            # Google repeats the same href 2-3x per result (thumbnail link, title link,
+            # a bare "YouTube" site-name link) - only SOME of those duplicates carry the
+            # h3 title, so keep the best (longest non-empty) title seen for each href
+            # rather than whichever occurrence came first.
+            by_href = {}
+            for it in items:
+                href = it.get("href")
+                if not href or "/search?" in href:
+                    continue
+                h3 = (it.get("h3") or "").strip()
+                if href not in by_href or len(h3) > len(by_href[href]):
+                    by_href[href] = h3
+            out = []
+            for href, title in by_href.items():
+                src = "youtube" if "youtube.com" in href else "soundcloud"
+                out.append({"title": title, "url": href, "source": src,
+                           "uploader": "", "plays": 0, "query": "google"})
+            return out
+        finally:
+            page.close()
+
+    def search(self, query, timeout=20):
+        if not self._ok:
+            return []
+        fut = concurrent.futures.Future()
+        self._q.put((query, fut))
+        try:
+            return fut.result(timeout=timeout)
+        except Exception:
+            return []
+
+
+_google_worker = None
+_google_last_attempt = 0.0
+_google_lock = threading.Lock()
+
+
+def _get_google():
+    """Retry with a cooldown, not once-and-forever: a transient launch failure (e.g.
+    browser-process contention right at server startup) shouldn't silently disable
+    Google for the server's entire lifetime."""
+    global _google_worker, _google_last_attempt
+    with _google_lock:
+        if _google_worker is None or (not _google_worker._ok
+                                      and time.time() - _google_last_attempt > 30):
+            _google_last_attempt = time.time()
+            _google_worker = _GoogleWorker()
+    return _google_worker
+
+
 def web_search_edits(queries):
-    """Run the web searches concurrently, dedup by url. Plays come later (metadata)."""
+    """Google first (real browser, sees what a person searching would see) - DuckDuckGo
+    only as a silent fallback if Playwright/Chromium isn't available on this machine.
+    Dedup by url; plays come later (metadata)."""
     seen, out = set(), []
+    g = _get_google()
+    if g._ok:
+        for q in queries:
+            for r in g.search(q):
+                if r["url"] not in seen:
+                    seen.add(r["url"]); out.append(r)
+        if out:
+            return out
     with ThreadPoolExecutor(max_workers=min(6, len(queries) or 1)) as ex:
         for rows in ex.map(_ddg, queries):
             for r in rows:
@@ -1137,7 +1266,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=18,
+                    edit_label, known_dir=None, handle=None, max_dl=24,
                     hints=None, shazam_reliable=True):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
@@ -1309,8 +1438,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # and the engine settled for a 0-play "slowed + reverb" edit of the wrong recording.
     for c in keep:
         core = c.get("core", 0)
+        c["strong_core"] = core >= CORE_EDIT      # cleared the bar on audio evidence alone
         c["editmatch"] = bool(
-            (core >= CORE_EDIT and (c["not_other"] or core >= CORE_SAME))
+            (c["strong_core"] and (c["not_other"] or core >= CORE_SAME))
             # confirmed-artist rescue: needs its own real audio plausibility (0.38, above
             # the 0.30 keep floor) plus not_other - we're trusting the artist match to
             # cover a WEAK score, not a coincidental one.
@@ -1382,6 +1512,33 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         # people actually use (Dark Horse: three identical Kryd hoodtrap rips at 1.000,
         # separated by 0.014 of nothing; the canonical 1.6M-play one should win).
         fq = round(f / 0.05) * 0.05 if c.get("core", 0) >= CORE_SAME else round(f, 3)
+        # BASS TIER, only among candidates already confirmed as the same recording
+        # (editmatch=True). `final`'s 0.85/0.15 core/transform split was DELIBERATELY
+        # core-dominant (the Bruce Lee fix: a competitor with worse core must never win
+        # via a lucky transform fit) - but that same weighting means bass/speed can NEVER
+        # flip an outcome even where they SHOULD be decisive: choosing which family
+        # member an already-confirmed match is. On a clip that measured "bass boosted",
+        # a 0.997-core "223s (Clean Radio Edit)" (cand_tilt +18.4, nowhere near the
+        # +39.3 target) beat "EXTREME BASS BOOST 223S" (core 0.771, cand_tilt +39.3,
+        # dead on target) purely because a 0.226 core gap * 0.85 weight (0.192) can
+        # never be closed by bass_fit's 0.075-point max swing. Once a candidate is
+        # confirmed the right RECORDING, whether its bass matches what we determined
+        # the clip actually needs is its own tier, not a fraction of one continuous sum.
+        # strong_core (cleared CORE_EDIT on its own audio merit) must rank ABOVE bass_off,
+        # or the artist_hit rescue - built to save a genuinely-correct-but-weak match
+        # like "Ship Wrek & Zookeepers - Ark" at core 0.40 - ALSO rescues anything else
+        # that happens to mention the artist. A mashup titled '"I Just Want To Mog"
+        # Clavicular x ShipWrek and ZooKeepers Ark' got rescued to editmatch at core
+        # 0.607 (mediocre - it samples the same instrumental, it isn't the edit) and then
+        # WON on bass_off alone against the real "Ark [NCS Release] [SLOWED]" at core
+        # 0.768, because bass_off treated every editmatch=True candidate as equally
+        # trustworthy regardless of how weakly it qualified. strong_core must be checked
+        # BEFORE bass_off (a real match beats a rescued one, full stop) but AFTER
+        # artist_hit (an unconfirmed high-core match, "Ark Patrol", must still lose to a
+        # confirmed low-core one - that's the ORIGINAL rescue this can't be allowed to
+        # undo).
+        bass_off = (round(abs((c.get("cand_tilt") or 0.0) - target_tilt) / 4.0)
+                   if (c["editmatch"] and bassy) else 0)
         return (0 if c["editmatch"] else 1,           # a real same-recording edit first
                 0 if _artist_hit(c) else 1,           # the CONFIRMED artist over an
                                                        # unconfirmed same-or-higher score -
@@ -1392,6 +1549,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                                                        # exactly the fragile signal that
                                                        # tied on this content in the first
                                                        # place.
+                0 if c.get("strong_core") else 1,     # a match that earned editmatch on
+                                                       # its OWN audio merit over one that
+                                                       # only got there via the artist-hit
+                                                       # rescue - the rescue admits a
+                                                       # candidate to compete, it doesn't
+                                                       # mean it's as trustworthy as one
+                                                       # that didn't need rescuing
+                bass_off,                              # among equally-trustworthy matches,
+                                                       # the clip's OWN bass family member
                 1 if _is_compilation(c) else 0,       # a set that CONTAINS it, never above it
                 1 if is_official_original(c) else 0,  # plain original after real edits
                 speed_exact,                          # the upload AT the clip's speed
