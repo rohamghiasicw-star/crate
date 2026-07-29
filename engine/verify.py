@@ -192,6 +192,42 @@ def _tilt_db(x):
     return float(low.mean() - high.mean())
 
 
+def _tilt_slope(x, f0=80.0, f1=8000.0):
+    """Spectral tilt as a SLOPE in dB per decade of frequency. Higher = more bass.
+
+    Speed-invariant, which _tilt_db is not. _tilt_db compares two FIXED bands
+    (60-250 vs 2000-6000 Hz), so pitch-shifting a clip - exactly what a TikTok
+    slow/nightcore edit does - moves the music out of those windows and changes the
+    reading even though no bass was added. Measured on synthetic ground truth
+    (testruns/gt): slowing a file 0.8x with NO bass change read +3.32 dB on _tilt_db,
+    against +3.80 dB for a real 14 dB bass shelf - i.e. slowing alone forged almost
+    exactly as much "bass" as a genuine boost, so any bass call on a slowed clip was
+    close to a coin flip. A uniform pitch shift only TRANSLATES the log-frequency
+    spectrum sideways, and translating a line does not change its slope, so the same
+    slow-only case reads -0.22 here (phantom cut ~15x, signal-to-noise ~3x better).
+
+    KNOWN LIMIT, measured not assumed: a real shelf boost moves with the pitch shift,
+    so a boost ON a slowed clip still under-reads (+0.14 where a same-speed boost of
+    the same size gives +0.73). This stops the false positives; it does not reliably
+    catch boosts on slowed clips. Scale is ~5x smaller than _tilt_db, so it is NOT a
+    drop-in for BASS_STRIP_GAP / BASS_FIT_SPAN / the frontend bassAmt without
+    recalibrating all three.
+    """
+    n, hop = 4096, 2048
+    if len(x) < n:
+        x = np.pad(x, (0, n - len(x)))
+    frames = [np.abs(np.fft.rfft(x[i:i + n] * np.hanning(n)))
+              for i in range(0, max(1, len(x) - n), hop)]
+    mag = np.mean(frames, axis=0)
+    freqs = np.fft.rfftfreq(n, 1.0 / SR)
+    m = (freqs >= f0) & (freqs <= f1)
+    if m.sum() < 8:
+        return 0.0
+    lf = np.log10(freqs[m])
+    db = 20.0 * np.log10(mag[m] + 1e-6)
+    return -float(np.polyfit(lf, db, 1)[0])
+
+
 # --------------------------------------------------- chromaprint (same master)
 def _fp_raw(path, length=24):
     try:
@@ -362,7 +398,8 @@ def prepare_clip(clip_path, seconds=20):
     if xc.size < SR:
         return None
     return {"s": _avg_logspec(xc), "fp": _fp_raw(clip_path), "spec": _spectrogram(xc),
-            "gate": _midband_gate(xc), "tilt": _tilt_db(xc), "rev": _reverb_amt(xc)}
+            "gate": _midband_gate(xc), "tilt": _tilt_db(xc), "rev": _reverb_amt(xc),
+            "slope": _tilt_slope(xc)}
 
 
 def _reverb_amt(x):
@@ -477,6 +514,18 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
     out["clip_reverb"] = clip_rev
     out["cand_reverb"] = cand_rev
     out["reverb_delta"] = round(cand_rev - clip_rev, 4)
+    # Speed-invariant bass, measured on the SAME speed-matched candidate as cand_tilt.
+    # DIAGNOSTIC for now: nothing ranks on it until the thresholds are recalibrated
+    # against real clips (its scale is ~5x smaller than tilt's dB).
+    clip_slope = clip_ctx.get("slope", 0.0)
+    # measured on the RAW candidate, NOT xk_sm: the slope is pitch-shift invariant by
+    # construction, so speed-matching buys nothing here - and _resample_by's np.interp
+    # mangles the high end, which is exactly what a slope is most sensitive to
+    # (measured: using xk_sm gave slope_delta -4.8 on a pair whose true delta is -0.22).
+    cand_slope = _tilt_slope(xk)
+    out["clip_slope"] = round(clip_slope, 3)
+    out["cand_slope"] = round(cand_slope, 3)
+    out["slope_delta"] = round(clip_slope - cand_slope, 3)
 
     # E. combine. Same-master evidence = the stronger of the two independent paths.
     # This is EQ/bass-INDEPENDENT (fp is gain-invariant, arr removes each band's mean),

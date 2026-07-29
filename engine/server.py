@@ -43,6 +43,11 @@ def _edit_worthy(src, fp):
     return False
 
 
+# Speed-invariant bass bar for CLAIMING "bass boosted" (verify()'s slope_delta, dB per
+# decade; negative = the candidate carries more bass than the clip). Ground truth in
+# testruns/gt: a real 14 dB shelf reads 0.734, slowing alone reads 0.225 and reverb alone
+# 0.208. 0.40 sits above both confounds and below the real boost.
+SLOPE_BOOST_GAP = 0.40
 SESSIONS = {}        # key -> the phase-1 context, kept alive between /base and /edits
 SESSION_TTL = 900
 
@@ -382,9 +387,29 @@ def _phase2(ctx):
                 # pick overstates certainty the audio evidence doesn't have; when the pick
                 # itself isn't decisive, report the (still trustworthy) base+speed and leave
                 # the extra bass claim off rather than assert it from a toss-up.
+                #
+                # FINAL GATE, and the one that actually settles it: bass_delta is built
+                # on _tilt_db, which compares two FIXED frequency bands and is therefore
+                # NOT speed-invariant. Slowing a clip pitch-shifts the music out of those
+                # bands, so slowing ALONE forges bass. Measured on synthetic ground truth
+                # (testruns/gt, a real track processed by ffmpeg): a 0.8x slow with NO
+                # bass change reads bass_delta -1.52 while a genuine 14 dB bass shelf
+                # reads only +3.80 - barely 2.5:1, which is why slowed clips kept getting
+                # labelled "bass boosted". verify() now also returns `slope_delta`, the
+                # same measurement taken as a slope across log-frequency: a pitch shift
+                # only translates a log-spectrum sideways and translating a line leaves
+                # its slope alone, so the same slow-only case reads -0.225 against +0.734
+                # for the real boost. Require BOTH, so a claim needs agreement from a
+                # speed-contaminated measure AND a speed-invariant one.
+                # Deliberately conservative: a boost ON a slowed clip reads only +0.138
+                # (the shelf moves with the pitch shift), so it falls under this bar and
+                # goes unlabelled. Missing a real boost is the acceptable failure here -
+                # asserting one that isn't there is the bug Roham reported.
                 cand_delta = top.get("bass_delta", 0.0) or 0.0
+                slope_delta = top.get("slope_delta", 0.0) or 0.0
                 if (edit.get("bass_boosted") and edit.get("decisive")
-                        and cand_delta <= -E.BASS_STRIP_GAP):
+                        and cand_delta <= -E.BASS_STRIP_GAP
+                        and slope_delta <= -SLOPE_BOOST_GAP):
                     base = res.get("speed") or "as posted"
                     res["speed"] = ("bass boosted" if base in (None, "as posted")
                                     else base + " + bass boosted")
