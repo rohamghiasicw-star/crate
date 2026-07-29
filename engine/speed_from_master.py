@@ -115,6 +115,69 @@ def _win_speeds(xc, xm, W=12.0, step=4.0, conf_min=0.40):
     return out
 
 
+def confirm_ref(clip_path, ref_path, seconds=25, conf_min=0.45, min_win=3, tol=0.02):
+    """Bass-ROBUST same-recording confirmation of a NORMAL-SPEED reference. verify()'s
+    `core` (chromaprint + arrangement) collapses on a heavily bass-boosted / reverb'd
+    clip - the clean original scores ~0.05 - so gating speed references on core silently
+    drops every real master and forces the engine to measure the clip's speed against a
+    fellow SLOWED edit (a wrong ratio). The high-pass window speed lock does NOT collapse
+    under bass: a genuine same-recording pair produces a tight, confident speed cluster
+    across windows, an unrelated song does not. Returns True iff `ref_path` locks to the
+    clip as the same recording by this bass-independent measure."""
+    try:
+        xc = V._decode(clip_path, seconds)
+        xm = V._decode(ref_path, seconds)
+    except Exception:
+        return False
+    if xc.size < SR or xm.size < SR:
+        return False
+    ws = _win_speeds(xc, xm)
+    if len(ws) < min_win:
+        return False
+    sps = np.array([w[0] for w in ws])
+    cfs = np.array([w[1] for w in ws])
+    med = float(np.median(sps))
+    inl = np.abs(np.log10(sps) - np.log10(med)) <= np.log10(1.0 + tol)   # tight cluster
+    return bool(inl.sum() >= min_win and float(cfs[inl].mean()) >= conf_min)
+
+
+def candidate_speed_lock(clip_path, cand_path, seconds=25, conf_min=0.40, min_win=3, tol=0.02):
+    """Bass-robust measured speed of `cand_path` vs `clip_path` (same DSP + median
+    clustering as confirm_ref, <1 = cand runs slower than the clip), or None when the
+    windowed high-pass lock can't find a confident cluster at all.
+
+    EXISTS because verify()'s single-pass speed field (a candidate's `vspeed` in
+    crate_engine) silently falls back to 1.0 whenever its own correlation confidence
+    is too low to measure - a fabricated "exact speed" that the `speed_exact` rank
+    tier then trusted outright with no corroboration. On the "Safe and Sound
+    (hardtekk)" bug a 177-play "[Ultra Slowed]" reupload (bass_delta -5.08dB,
+    cand_reverb 0.19 vs the clip's 0.63 - exactly the bass/reverb mismatch regime
+    that collapses verify()'s naive correlation) read vspeed=1.0096 from verify() -
+    bogus - and that false "exact" tied it with the genuine 1.9M-play plain original,
+    handing the win to the reupload on raw core. This lock finds 4 of 5 windows
+    confidently clustered at ~1.51x on the same audio, correctly showing the reupload
+    is NOT at the clip's speed. conf_min is lower than confirm_ref's 0.45 (tuned for
+    admitting a reference into speed-consensus arithmetic) because this only needs to
+    catch a naive reading that disagrees with reality, not certify one for math."""
+    try:
+        xc = V._decode(clip_path, seconds)
+        xm = V._decode(cand_path, seconds)
+    except Exception:
+        return None
+    if xc.size < SR or xm.size < SR:
+        return None
+    ws = _win_speeds(xc, xm)
+    if len(ws) < min_win:
+        return None
+    sps = np.array([w[0] for w in ws])
+    cfs = np.array([w[1] for w in ws])
+    med = float(np.median(sps))
+    inl = np.abs(np.log10(sps) - np.log10(med)) <= np.log10(1.0 + tol)   # tight cluster
+    if inl.sum() < min_win or float(cfs[inl].mean()) < conf_min:
+        return None
+    return float(np.sum(sps[inl] * cfs[inl]) / cfs[inl].sum())
+
+
 def measure_consensus(clip_path, ref_paths, DEADBAND=0.045, seconds=25):
     """Clip speed from the CONSENSUS of several plain-master references. Each ref votes a
     conf-weighted speed; keep the refs within 2% of the median (drops a bad re-upload

@@ -23,6 +23,7 @@ from find_song import (resolve, scrape_music, fetch, cut, duration_of,
                        windows_for, shazam, SWEEP)
 import ig
 import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
+import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
 
 try:
     from curl_cffi import requests as creq   # real-browser TLS, beats TikTok's wall
@@ -735,6 +736,99 @@ def _tags_in(*strings):
 # related to kryd for all hoodtrap things".)
 HOODTRAP_CANON = ("kryd", "mylancore")
 
+# "(prod. X)" / "prod by X" / "Prod: X" - a producer credit baked into a title. The
+# exact edit is routinely uploaded to THAT person's own account, not the vocalist's or
+# a re-upload account ("wouldnt believe flipp (prod.kelthraxx)" lives on
+# soundcloud.com/kelthraxx, not on Luhh Dyl's page or any re-upload). \bprod(?:\.|\b)
+# rejects "Produced"/"Producer" (no boundary/dot right after "prod" there) while still
+# matching the no-space "prod.kelthraxx" and the spaced "prod by X" / "Prod: X" forms.
+_PROD_RE = re.compile(r"\bprod(?:\.|\b)\s*(?:by\s*)?:?\s*([A-Za-z0-9][\w.]{1,29})", re.I)
+_PROD_STOP = {"by", "the", "unknown", "me", "him", "her", "this", "that", "prod"}
+
+
+def _extract_prod_handles(titles):
+    """Pull producer/collaborator handles out of '(prod. X)' credits in titles we
+    already fetched (search results, comments). Order-preserving dedup, case-insensitive."""
+    out, seen = [], set()
+    for t in titles:
+        for m in _PROD_RE.finditer(t or ""):
+            h = m.group(1).rstrip(".").strip()
+            k = h.lower()
+            if len(h) < 2 or k in _PROD_STOP or k in seen:
+                continue
+            seen.add(k); out.append(h)
+    return out
+
+
+# a SECOND contributing artist Shazam folds into one "subtitle" string instead of
+# splitting out (shazamio never gives a separate collaborators list) - "Wouldn't
+# Believe (feat. Lil Tony Official)" names Lil Tony right in the base title. Their own
+# channel is worth the same direct-profile chase as a named producer.
+_FEAT_RE = re.compile(r"\b(?:feat\.?|ft\.?|featuring)\s+([A-Za-z0-9][\w .]{1,40}?)"
+                      r"(?=\s*[\)\]]|\s*$|\s*[,;/&])", re.I)
+
+
+def _extract_feat_handles(texts):
+    out, seen = [], set()
+    for t in texts:
+        for m in _FEAT_RE.finditer(t or ""):
+            h = m.group(1).strip()
+            k = h.lower()
+            if len(h) < 2 or k in seen:
+                continue
+            seen.add(k); out.append(h)
+    return out
+
+
+def _producer_search(handles, title, per=6):
+    """Search a named producer/collaborator's OWN SoundCloud/YouTube presence directly,
+    not just a blended keyword query - the real upload is routinely findable only by
+    searching THEM. Feeds the exact same search_edits/web_search_edits paths as every
+    other query, and the results are downloaded + verify()-scored by the ordinary
+    pipeline below - no separate rescue path, this only changes which URLs get found."""
+    if not handles or not title:
+        return []
+    queries, seen_q = [], set()
+    for h in handles:
+        for q in (_clean("%s %s" % (h, title)), _clean("%s %s" % (title, h))):
+            if q and q.lower() not in seen_q:
+                seen_q.add(q.lower()); queries.append(q)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_sc = ex.submit(search_edits, queries, per)
+        web_q = ([_clean("site:soundcloud.com/%s %s" % (h, title)) for h in handles]
+                + [_clean('"%s" "%s"' % (h, title)) for h in handles])
+        f_web = ex.submit(web_search_edits, web_q)
+        found = f_sc.result()
+        seen_u = {c["url"] for c in found}
+        web = [w for w in f_web.result() if w["url"] not in seen_u]
+    if web:
+        with ThreadPoolExecutor(max_workers=min(5, len(web))) as ex:
+            metas = list(ex.map(_meta, [w["url"] for w in web]))
+        for w, (pl, ti, up) in zip(web, metas):
+            w["plays"] = pl
+            if ti: w["title"] = ti
+            if up: w["uploader"] = up
+        found += web
+    for c in found:
+        c["query"] = "producer"
+    return found
+
+
+def _producer_quota(cands, max_dl, min_producer=2):
+    """Hold a couple of download slots for candidates found by chasing a named
+    producer/collaborator's own profile (see _producer_search). These can score badly
+    on the generic title-relevance sort even though they're exactly the source upload -
+    verify() decides by audio, so a couple of reserved slots is the difference between
+    finding the producer's own upload and never downloading it at all."""
+    head = cands[:max_dl]
+    have = sum(1 for c in head if c.get("query") == "producer")
+    if have >= min_producer:
+        return head
+    extra = [c for c in cands[max_dl:] if c.get("query") == "producer"][:min_producer - have]
+    if not extra:
+        return head
+    return (head[:max_dl - len(extra)] + extra)
+
 
 def build_queries(credit_title, credit_author, base_title, base_artist, edit_label,
                   handle=None, hints=None, shazam_reliable=True):
@@ -791,6 +885,21 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         add("%s tiktok version %s" % (base, edit_word or ""))   # the PIXY/Yoh_dono lever
         add("%s hoodtrap" % base)
         add("%s mylancore" % base)
+        # MASHUP - a first-class TikTok edit genre we never searched for at all. A clip
+        # can be a fan mashup that layers a SECOND, unnamed song's vocals over the
+        # Shazam-identified base (the sampled instrumental) - Shazam correctly IDs the
+        # base recording (that's genuinely what's sampled) but nothing in the credit,
+        # handle, or comments ever names the second song, so a plain "<base> <artist>"
+        # search only returns the base's OWN uploads, which score too low against a
+        # mashup's altered vocal content to clear CORE_KEEP. "<title> mashup" and
+        # "<title> x" reach it anyway because uploaders overwhelmingly title mashups
+        # "Song A x Song B (Mashup)" regardless of which two songs are involved - found
+        # via the "Legendary Lovers" (Katy Perry) clip that was really "Legendary Lovers
+        # x Save Me" (a Chief Keef mashup): "Legendary Lovers mashup" and "Legendary
+        # Lovers x" both surfaced the exact core=1.000 upload with zero prior knowledge
+        # of "Chief Keef" or "Save Me".
+        add("%s mashup" % base)
+        add("%s x" % base)
         # Hoodtrap/mylancore is a small scene with a canon: Kryd is the name on most of
         # it ("Cool For The Summer (Kryd Hoodtrap / Mylancore)", "Let The World Burn
         # (Hoodtrap / Mylancore Remix)"), so searching the producer by name reaches the
@@ -800,8 +909,27 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         for tg in _tags_in(credit_title, base_title):
             add("%s %s" % (base, tg))
         add("%s %s bass boosted" % (base_artist or "", base))
-        if edit_word == "slowed":
+        # SLOWED/SPED - UNCONDITIONAL, same lesson as MASHUP above. edit_word only
+        # fires when Shazam's OWN counter-speed sweep already caught the pitch shift -
+        # but Shazam routinely matches a heavily slowed clip straight to the original
+        # recording at rate 1.0 with the sweep in full agreement (edit_label stays
+        # "as posted"); the clip's TRUE speed then only surfaces AFTER this search, from
+        # the separate bass-robust speed_from_master consensus in server.py. Gating
+        # "<song> slowed"/"slowed reverb" behind already knowing edit_word=="slowed"
+        # meant we never searched the single most obvious edit type on a clip we hadn't
+        # yet confirmed is slow - the Trophies clip (Shazam: "as posted" @ rate 1.0,
+        # base confirmed "Trophies (feat. Drake)"; true measured speed: slowed 0.67x)
+        # never generated a "Trophies slowed" query at all, so kilo thrax's "Trophies
+        # (slowed + reverb)" - the exact video the user found in seconds by hand
+        # googling "trophies slowed" - was never searched for. Always try both
+        # directions; the verifier throws out whichever doesn't match the clip.
+        if edit_word != "slowed":
+            add("%s %s slowed" % (base_artist or "", base))
             add("%s %s slowed reverb" % (base_artist or "", base))
+        else:
+            add("%s %s slowed reverb" % (base_artist or "", base))
+        if edit_word != "sped up":
+            add("%s %s sped up" % (base_artist or "", base))
         h = re.sub(r"[._]+", " ", handle or "").strip()
         if h and base and not _is_named_credit(credit_title):
             add("%s %s" % (h, base))
@@ -1306,6 +1434,38 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     if not cands:
         return result
 
+    # PRODUCER/COLLABORATOR CHASE: sometimes the exact edit is uploaded to the
+    # producer's own account, findable only by searching THEM, not the song. Three
+    # sources, in trust order: (1) a "(prod. X)" credit sitting in a title we already
+    # fetched (kelthraxx's own "wouldnt believe flipp (prod.kelthraxx)"); (2) TikTok's
+    # own "original sound - X" credit (the same "ca" identity build_queries already
+    # folds into one generic query, given its own targeted profile search here);
+    # (3) a second contributing artist Shazam only ever hands back folded into one
+    # "subtitle" string ("Wouldn't Believe (feat. Lil Tony Official)"). One or two
+    # handles total, a couple of queries each - reuses search_edits/web_search_edits
+    # and feeds the SAME verify()-scored ranking below, no separate rescue path.
+    prod_title = None
+    if base_title and shazam_reliable:
+        prod_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
+    elif _is_named_credit(credit_title):
+        prod_title = credit_title
+    if prod_title:
+        prod_handles = _extract_prod_handles(
+            [c.get("title") for c in cands] + list(hints or []))
+        seen_h = {h.lower() for h in prod_handles}
+        ca = _clean(credit_author or "")
+        if ca and ca.lower() not in (base_artist or "").lower() and ca.lower() not in seen_h:
+            prod_handles.append(ca); seen_h.add(ca.lower())
+        if base_title and shazam_reliable:
+            for h in _extract_feat_handles([base_title, base_artist]):
+                if h.lower() not in seen_h and h.lower() not in (base_artist or "").lower():
+                    prod_handles.append(h); seen_h.add(h.lower())
+        prod_handles = prod_handles[:2]
+        if prod_handles:
+            existing_urls = {c["url"] for c in cands}
+            cands += [c for c in _producer_search(prod_handles, prod_title)
+                     if c["url"] not in existing_urls]
+
     # key terms = the CORE song identity, NOT the edit qualifiers. Including
     # "instrumental"/"slowed" made instrumental uploads out-title-match the popular
     # vocal version and hog the download slots (the worry bug).
@@ -1392,8 +1552,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = tempfile.mkdtemp()
-    n = _download_and_score(_web_quota(_sc_quota(cands, max_dl), max_dl), clip_audio, tmp, 0,
-                            max_dl, clip_ctx=clip_ctx)
+    n = _download_and_score(_producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl),
+                            clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
@@ -1445,6 +1605,44 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             # the 0.30 keep floor) plus not_other - we're trusting the artist match to
             # cover a WEAK score, not a coincidental one.
             or (_artist_hit(c) and core >= 0.38 and c["not_other"]))
+    # REVERB/SPEED-FAMILY RESCUE - appended, not folded into the block above, so it
+    # can't collide with in-flight edits to the artist_hit/strong_core tiers. Separate
+    # bug from the missing-query one above: even once "<song> slowed"/"slowed reverb"
+    # queries exist and fetch the exact right upload, a genuinely-correct slowed+reverb
+    # edit can still score core=0.000 - not a marginal miss, a full floor-clip on BOTH
+    # signals (fp lands ~0.52-0.59, under FP_LO=0.55; arr ~0.08-0.10, under ARR_LO=0.10)
+    # - confirmed on the real Trophies clip against THREE independent real "slowed +
+    # reverb" uploads (kilo thrax, KEV!, a saint jhn re-credit), all three landing in
+    # that same narrow dead zone regardless of which relative speed verify() tried.
+    # Reverb smears the frame-level transients chromaprint/arr depend on; this is the
+    # same "KNOWN WEAKNESS" verify.py already documents for ambient/low-transient
+    # content, just triggered by an effect instead of a genre. All three also measured
+    # spectral (the coarse, EQ/reverb-tolerant content match) at 0.75-0.80 - miles above
+    # the 0.12 junk floor - so the coarse signal still says "same recording" even when
+    # the fine-grained one collapses. Narrow tolerance, not a global CORE_KEEP/CORE_EDIT
+    # change: only admits a candidate whose TITLE itself claims the same speed-family
+    # transform (slowed/sped/nightcore/daycore - never cover/instrumental/remix, which
+    # verify correctly should reject on weak audio) AND whose title already matched the
+    # confirmed song (title_hits, the existing weaker rescue's own bar) AND whose coarse
+    # spectral match clears a real, well-margined bar. Explicitly NOT granted strong_core
+    # or CORE_SAME status - it ranks (rightly) below any candidate that earned editmatch
+    # on fp/arr merit, same as the artist_hit rescue above it.
+    _SPEED_FAMILY_WORDS = re.compile(
+        r"\b(slowed|slow|sped ?up|speed ?up|nightcore|daycore|super ?slowed)\b", re.I)
+    _rescued_ids = {id(c) for c in keep}
+    for c in cands:
+        if id(c) in _rescued_ids:
+            continue
+        t = c.get("title") or ""
+        if (c.get("title_hits", 0) >= 1
+                and _SPEED_FAMILY_WORDS.search(t)
+                and not OTHER_RENDITION.search(t)
+                and c.get("spectral", -1) >= 0.45):
+            c["strong_core"] = False
+            c["editmatch"] = True
+            c["speed_family_rescue"] = True
+            keep.append(c)
+            _rescued_ids.add(id(c))
     ba = (base_artist or "").lower()
 
     def is_official_original(c):
@@ -1463,12 +1661,52 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     except Exception:
         clip_tilt = 0.0
     fam = [c.get("cand_tilt", 0.0) for c in keep if c.get("editmatch") and c.get("cand_tilt")]
-    # target bass: if a same-recording upload is MUCH bassier than the clip, the clip's
-    # bass was cut on playback (or is the boosted edit the person hears) -> aim for the
-    # family's bass end. Otherwise the clip's own bass is trustworthy -> match it (so a
-    # jersey-club clip picks the exact-bass TXKUMOON, not a slightly bassier remix).
-    bassy = bool(fam and (max(fam) - clip_tilt) > BASS_STRIP_GAP)
+    # BASELINE for the "is the clip missing bass that's really there" gap: the more
+    # trustworthy of (the clip's own tilt, the OFFICIAL master's own tilt), not the
+    # clip alone. The clip's reading can differ from EVERY real upload - even the
+    # plain, unmodified official one - by several dB purely from platform loudness-
+    # normalisation on re-encode; comparing straight against the raw clip flags almost
+    # any bass-heavy song as "bassy" the instant a generic "<song> BASS BOOSTED"
+    # YouTube spam reupload exists in the pool, and those exist for nearly EVERY
+    # popular song regardless of what the specific TikTok clip actually used (found on
+    # Blueface "Respect My Cryppin'": the canonical 6.2M-play official upload itself
+    # measured cand_tilt 18.6 against a clip tilt of 13.9 - a 4.7dB gap, already under
+    # BASS_STRIP_GAP on its own - yet a handful of unrelated "Bass Boosted"-titled farm
+    # channels at cand_tilt up to 25 dragged the family max far enough above the RAW
+    # clip tilt to call the whole family "bassy" and crown one of them). The official
+    # master, when we have one (real, canonical, no edit words, high plays) is a far
+    # steadier zero point than either the clip or whichever random reupload happens to
+    # win a given search. Taking the LARGER of clip_tilt/official_tilt as the baseline
+    # only ever RAISES the bar for calling something bassy - it can't suppress a real,
+    # decisive boost (223s / Comethazine's official masters sit at normal tilt, well
+    # below their real boosted edits, so this baseline is unchanged for those).
+    official_tilts = [c["cand_tilt"] for c in keep
+                      if is_official_original(c) and c.get("core", 0) >= 0.55 and c.get("cand_tilt")]
+    bassy_baseline = max([clip_tilt] + official_tilts)
+    # target bass: if a same-recording upload is MUCH bassier than the baseline, the
+    # clip's bass was cut on playback (or is the boosted edit the person hears) -> aim
+    # for the family's bass end. Otherwise the clip's own bass is trustworthy -> match
+    # it (so a jersey-club clip picks the exact-bass TXKUMOON, not a slightly bassier
+    # remix).
+    bassy = bool(fam and (max(fam) - bassy_baseline) > BASS_STRIP_GAP)
     target_tilt = max(fam) if bassy else clip_tilt
+
+    # SPEED CORROBORATION ("Safe and Sound (hardtekk)" fix): verify()'s naive `vspeed`
+    # silently defaults to 1.0 whenever its own single-pass correlation confidence is
+    # too low to measure at all - a fabricated "exact speed" that both speed_fit below
+    # and the speed_exact rank tier used to trust outright. A 177-play "[Ultra Slowed]"
+    # reupload (bass_delta -5.08dB, far off the clip's own bass) read vspeed=1.0096 this
+    # way: speed_fit scored it a near-perfect 0.986 and it tied the true 1.9M-play plain
+    # original on speed_exact too, winning the pick on raw core alone. Corroborate with
+    # the bass-robust windowed lock (the same DSP as confirm_ref) before trusting an
+    # "exact" read; that lock finds this reupload confidently clustered at 1.51x, not
+    # 1.0x. Only editmatch candidates are worth the extra decode. None = lock
+    # inconclusive -> both speed_fit and speed_exact fall back to the naive vspeed
+    # unchanged (no behaviour change when there's nothing to correct).
+    for c in keep:
+        c["vspeed_locked"] = (
+            _speed_master.candidate_speed_lock(clip_audio, c["path"])
+            if c.get("editmatch") and c.get("path") else None)
 
     def bass_fit(c):
         return 1.0 - min(1.0, abs(c.get("cand_tilt", 0.0) - target_tilt) / BASS_FIT_SPAN)
@@ -1477,7 +1715,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         # gentle: verify's speed can be off under heavy bass, so a mismatch discounts
         # but never eliminates. Still enough to prefer the clip's own slow level
         # (a plain "slowed" over an "ultra slowed") when bass doesn't decide.
-        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+        vlock = c.get("vspeed_locked")
+        v = max(0.25, min(4.0, vlock if vlock is not None else (c.get("vspeed", 1.0) or 1.0)))
         return 1.0 - min(1.0, abs(float(np.log2(v))) / SPEED_TOL_OCT)
 
     for c in keep:
@@ -1496,6 +1735,53 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         c["final"] = round(0.85 * c.get("core", 0)
                            + 0.15 * (0.5 * speed_fit(c) + 0.5 * bass_fit(c)), 4)
 
+    # ARTIST-OWN vs ARTIST-NAMED ("Wouldn't Believe" / Kelthraxx fix): `_artist_hit`
+    # (used for editmatch/keep admission above) is a cheap "does the confirmed artist's
+    # name appear anywhere" check, deliberately loose so it can admit a genuinely-correct
+    # but weak-scoring candidate (Ship Wrek's own core-0.40 "Ark [NCS]"). But that same
+    # looseness makes it fire on a candidate that ISN'T the artist's own recording at all -
+    # a random creator's YouTube freestyle titled over "Luhh Dyl" (the Shazam-confirmed
+    # base artist) still matches the substring check even though the video is someone
+    # ELSE's freestyle, not Kelthraxx's own upload. That freestyle measured a real but
+    # ordinary core of 0.746 (already clears CORE_EDIT on its own - it doesn't need the
+    # rescue) while Kelthraxx's own SoundCloud upload (core 1.000, provably the same
+    # recording) doesn't literally repeat "Luhh Dyl" in ITS title/uploader the way the
+    # freestyle does - so raw `_artist_hit` alone would rank the freestyle's artist-hit
+    # tier ABOVE Kelthraxx's, even though Kelthraxx needs no rescue and has the far
+    # stronger, independently-verified score. Reordering artist_hit vs strong_core in the
+    # tuple below does NOT fix this (both candidates already clear CORE_EDIT and would
+    # just tie at strong_core too, leaving artist_hit to decide the tie either way) - the
+    # actual defect is that `_artist_hit` conflates "the confirmed artist's own upload"
+    # with "any video that name-drops the confirmed artist in passing." Freestyles/type
+    # beats/covers/reactions that merely reference an artist are exactly that: reference,
+    # not the artist's own recording. Excluding those title patterns from the RANKING
+    # priority tier (not from the editmatch/keep admission above, so a genuinely weak but
+    # real rescue - Ship Wrek at core 0.40 - still gets in and still gets ranked on merit)
+    # keeps the Ark Patrol / Clavicular protections intact - neither of those titles
+    # contains a freestyle/type-beat/reaction/cover marker - while letting Kelthraxx's own
+    # upload win on its independently-verified strong_core instead of losing to a
+    # namedrop.
+    _ARTIST_NAMEDROP_ONLY = re.compile(
+        r"\bfreestyle\b|\btype\s*beat\b|\breaction\b|\bcover\b|\bremix\s+by\b|\btribute\b",
+        re.I)
+
+    def _creator_source(c):
+        """The CREDITED creator's own upload, confirmed by audio. `cred_toks` comes from
+        the clip's own "original sound - X" credit, so a title/uploader carrying X is
+        provenance the search can't fake. Requires same=True AND core>=CORE_EDIT, so this
+        is never a text-only rescue - it only reorders candidates the audio already
+        confirmed."""
+        if not cred_toks:
+            return False
+        hay = ((c.get("title") or "") + " " + (c.get("uploader") or "")).lower()
+        if not any(w in hay for w in cred_toks):
+            return False
+        return bool(c.get("same")) and (c.get("core") or 0.0) >= CORE_EDIT
+
+    def _artist_own(c):
+        """The confirmed artist's OWN recording, not a third party merely naming them."""
+        return _artist_hit(c) and not _ARTIST_NAMEDROP_ONLY.search(c.get("title") or "")
+
     def rank_key(c):
         f = c.get("final", 0)
         # An upload that already matches the clip AS-IS (verify needed no speed
@@ -1505,7 +1791,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         # both saturate `core`, and without this a 7.4M-play official master ties with
         # and beats the niche slowed upload the clip actually used ("Do You Mind").
         v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
-        speed_exact = 0 if abs(float(np.log2(v))) <= 0.03 else 1     # within ~2%
+        vlock = c.get("vspeed_locked")
+        vcheck = max(0.25, min(4.0, vlock)) if vlock is not None else v
+        speed_exact = 0 if abs(float(np.log2(vcheck))) <= 0.03 else 1     # within ~2%
         # When several uploads are PROVABLY the same recording (core saturated), the
         # small gaps between their finals are bass/speed-fit noise, not evidence - the
         # audio is identical. Quantise those so they tie, and let plays pick the upload
@@ -1540,15 +1828,39 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         bass_off = (round(abs((c.get("cand_tilt") or 0.0) - target_tilt) / 4.0)
                    if (c["editmatch"] and bassy) else 0)
         return (0 if c["editmatch"] else 1,           # a real same-recording edit first
-                0 if _artist_hit(c) else 1,           # the CONFIRMED artist over an
-                                                       # unconfirmed same-or-higher score -
-                                                       # raw core alone can't out-rank this:
-                                                       # "Ark Patrol" scored core 1.000 next
-                                                       # to the true "Ship Wrek & Zookeepers
-                                                       # - Ark [NCS]" at 0.40, and core is
-                                                       # exactly the fragile signal that
-                                                       # tied on this content in the first
-                                                       # place.
+                0 if _creator_source(c) else 1,       # the CREDITED creator's own upload,
+                                                       # audio-confirmed. "original sound -
+                                                       # kelthraxx" + a title that says
+                                                       # "prod.kelthraxx" + same=True at
+                                                       # core 1.000 IS the source upload.
+                                                       # Without this it lost to a "(432
+                                                       # Hz)" re-upload scoring 0.605
+                                                       # same=False, purely because that
+                                                       # re-upload's title happens to
+                                                       # carry the base artist's name
+                                                       # while the producer's own flip
+                                                       # never names them. Gated on real
+                                                       # audio (same + CORE_EDIT), so it
+                                                       # can't do what artist_hit did and
+                                                       # rescue a wrong recording on text
+                                                       # alone; and it needs credited-
+                                                       # creator provenance, which "Ark
+                                                       # Patrol" has none of, so the Ark
+                                                       # rescue below is untouched.
+                0 if _artist_own(c) else 1,           # the CONFIRMED artist's OWN upload
+                                                       # over an unconfirmed same-or-higher
+                                                       # score - raw core alone can't
+                                                       # out-rank this: "Ark Patrol" scored
+                                                       # core 1.000 next to the true "Ship
+                                                       # Wrek & Zookeepers - Ark [NCS]" at
+                                                       # 0.40, and core is exactly the
+                                                       # fragile signal that tied on this
+                                                       # content in the first place. Uses
+                                                       # _artist_own, not raw _artist_hit -
+                                                       # a third party's freestyle merely
+                                                       # naming the artist doesn't get this
+                                                       # boost over Kelthraxx's own,
+                                                       # independently-stronger upload.
                 0 if c.get("strong_core") else 1,     # a match that earned editmatch on
                                                        # its OWN audio merit over one that
                                                        # only got there via the artist-hit
@@ -1593,10 +1905,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         decisive = (top >= 0.55) and ((not rivals) or (top - rivals[0].get("final", 0) >= 0.10))
     # expose the confirmed ORIGINAL master (for measuring the clip's TRUE speed vs it):
     # prefer the official/original upload, else the strongest same-recording match.
+    # The master MUST be a genuine NORMAL-SPEED original (no edit words in its title):
+    # measuring the clip's speed against a fellow SLOWED/bass upload gives a ratio
+    # relative to THAT edit's own slow, not the true offset vs the song. On a heavily
+    # bass-boosted clip verify()'s core collapses on the clean original (~0.05) so the
+    # only high-core candidates left are the slowed edits themselves - and the old
+    # `core >= 0.7` fallback then picked one, reporting e.g. "slowed ~0.92x" when the
+    # clip is really 0.80x of the original ("drain" by lieu). Never let an edit be the
+    # speed reference; if no clean original is confirmed, leave master None and the
+    # caller measures against freshly-fetched originals (or reports direction only).
     masters = [c for c in keep if is_official_original(c) and c.get("core", 0) >= 0.55
                and c.get("path")]
     if not masters:
-        masters = [c for c in keep if c.get("core", 0) >= 0.7 and c.get("path")]
+        masters = [c for c in keep if c.get("core", 0) >= 0.7 and c.get("path")
+                   and not EDIT_WORDS.search(c.get("title") or "")]
     master = max(masters, key=lambda c: c.get("core", 0)) if masters else None
     # PLAIN (non-edit) uploads we already downloaded = speed REFERENCES. Measuring the
     # clip's speed vs SEVERAL of these and taking the agreeing median (dropping a bad

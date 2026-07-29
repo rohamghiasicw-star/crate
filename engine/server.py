@@ -65,6 +65,48 @@ def _peaks(path, n=96):
         return []
 
 
+def _wave(path, n=96):
+    """Frequency-resolved waveform for the UI: per-bucket amplitude PLUS the low/mid/high
+    energy share, so the canvas can COLOR the waveform by frequency content and make bass
+    energy visible - a flat amplitude envelope makes every edit look identical. ~85ms
+    (vectorised STFT), negligible on the phase-1 budget. The global 'bass boosted' TREATMENT
+    is driven by the confirmed edit label + spectral tilt, NOT re-derived here: a clip's raw
+    low-band SHARE is content-dependent and confounded by platform loudness-normalisation
+    (a plain clip can out-read a boosted one), so these bands are texture/colour, not verdict."""
+    try:
+        import numpy as np
+        import verify as V
+        SR = V.SR
+        x = V._decode(path, 40)
+        if x.size < n * 8:
+            return None
+        win = 1024
+        hop = max(1, (x.size - win) // n)
+        idx = np.clip(np.arange(win)[None, :] + (np.arange(n) * hop)[:, None], 0, x.size - 1)
+        frames = x[idx] * np.hanning(win)
+        mag = np.abs(np.fft.rfft(frames, axis=1))
+        f = np.fft.rfftfreq(win, 1.0 / SR)
+        lo = mag[:, f < 200].sum(1)
+        mid = mag[:, (f >= 200) & (f < 2000)].sum(1)
+        hi = mag[:, f >= 2000].sum(1)
+        amp = np.abs(frames).max(1)
+        tot = lo + mid + hi + 1e-9
+        amp = amp / (amp.max() + 1e-9)
+        # spectral centroid (brightness) normalised over 0-8kHz: low=warm/dark (slowed),
+        # high=bright/cool (sped/nightcore). Biases the whole waveform's warm<->cool tint.
+        centroid = float((f[None, :] * mag).sum() / (mag.sum() + 1e-9)) / 8000.0
+        try:
+            reverb = float(V._reverb_amt(x))     # slowed-edit "smear" cue
+        except Exception:
+            reverb = 0.0
+        r3 = lambda a: [round(float(v), 3) for v in a]
+        return {"amp": r3(amp), "lo": r3(lo / tot), "mid": r3(mid / tot), "hi": r3(hi / tot),
+                "tilt": round(float(V._tilt_db(x)), 1),
+                "centroid": round(min(1.0, centroid), 3), "reverb": round(reverb, 3)}
+    except Exception:
+        return None
+
+
 def _prune_sessions():
     """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
     now = time.time()
@@ -111,6 +153,7 @@ def _phase1(url, key, t0):
     }
 
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
+    res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
 
     # Comments BEFORE the fingerprint. The crowd routinely names the track outright
     # ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least reliable -
@@ -242,78 +285,117 @@ def _phase2(ctx):
             if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
-                # SPEED from the verified edit's OWN title (authoritative - the upload
-                # names itself "slowed"/"sped"), adding a measured ratio only when a
-                # confident master measurement agrees in direction. A genre remix
-                # (jersey-club) has no speed word, so it stays as Shazam had it - never a
-                # spurious "sped up" from comparing a remix to the base song.
-                et = (top.get("title") or "").lower()
-                t_slow = bool(re.search(r"\b(slowed|slow|daycore)\b", et))
-                t_fast = bool(re.search(r"\b(sped|speed ?up|nightcore)\b", et))
-                cur = res.get("speed") or "as posted"
-                cur_slow, cur_fast = "slow" in cur, "sped" in cur
-                if (t_slow and not cur_slow) or (t_fast and not cur_fast):
-                    d = "slowed" if t_slow else "sped up"
-                    ratio = ""
-                    if edit.get("master_path") and edit.get("master_core") is not None:
-                        try:
-                            _, sinfo = speed_from_master.refine_speed_label(
-                                "as posted", src["audio"], edit["master_path"], edit["master_core"])
-                            ms = sinfo.get("speed", 1.0) if sinfo else 1.0
-                            if sinfo and sinfo.get("confident") and ((t_slow and ms < 1) or (t_fast and ms > 1)):
-                                ratio = " ~%.2fx" % ms
-                                res["speed_measured"] = ms
-                        except Exception:
-                            pass
-                    res["speed"] = d + ratio
-            # bass boost is part of the edit's identity - surface it, only on a real edit.
-            if edit.get("bass_boosted") and top:
-                base = res.get("speed") or "as posted"
-                res["speed"] = ("bass boosted" if base in (None, "as posted")
-                                else base + " + bass boosted")
-                res["bass_boosted"] = True
-            # SPEED via multi-reference CONSENSUS. Reuse the plain-master uploads find_edit
-            # already downloaded (ref_paths): measure the clip vs several and take the
-            # agreeing median, dropping any off-speed re-upload. High-pass beats car/crowd
-            # rumble so a slowed clip Shazam matched "straight" (Dark Horse) is caught.
-            # No extra download when refs exist; trusts Shazam's ID; deadband stops false slows.
-            if (fp and shazam_reliable and base_title
-                    and (res.get("speed") in (None, "as posted"))):
+
+            # SPEED. Measure the clip's TRUE speed against GENUINE normal-speed originals
+            # via the bass-robust high-pass consensus - NEVER derive the magnitude from a
+            # fellow edit. On a heavily bass-boosted / reverb'd clip verify()'s core
+            # collapses on the clean master (~0.05), so find_edit's ref_paths comes back
+            # empty and its `master` can only be a slowed edit; measuring the clip against
+            # a slowed upload yields a ratio relative to THAT edit's slow, not the true
+            # offset ("drain" by lieu read "slowed ~0.92x" when it is 0.80x of the
+            # original). Confirm plain "official audio" originals by high-pass speed lock
+            # (speed_from_master.confirm_ref), not by core, then consensus-measure. The
+            # deadband still reports "as posted" for a genuinely straight clip, so this
+            # never fabricates a slow.
+            measured = None
+            if fp and shazam_reliable and base_title:
                 try:
-                    refs = list(edit.get("ref_paths") or [])
-                    r = speed_from_master.measure_consensus(src["audio"], refs) if refs else None
-                    if (not r or not r.get("confident")) and base_artist:
+                    refs = [p for p in (edit.get("ref_paths") or [])
+                            if speed_from_master.confirm_ref(src["audio"], p)]
+                    if len(refs) < 2 and base_artist:
                         core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
                         offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
                                                "%s %s audio" % (base_artist, core_t)], 4)
                         pick = [c for c in offs
                                 if core_t.lower() in (c.get("title") or "").lower()
-                                and "slow" not in (c.get("title") or "").lower()
-                                and "remix" not in (c.get("title") or "").lower()
-                                and "sped" not in (c.get("title") or "").lower()
+                                and not E.EDIT_WORDS.search(c.get("title") or "")
                                 and not E.OTHER_RENDITION.search(c.get("title") or "")][:5]
-                        # download the reference masters CONCURRENTLY (was sequential) - 5
-                        # attempts so a couple of dropped downloads still leave a quorum
                         with ThreadPoolExecutor(max_workers=5) as ex:
                             got = [p for p in ex.map(
                                 lambda ic: E.dl_clip(ic[1]["url"],
                                                      os.path.join(src["tmp"], "om%d.wav" % ic[0])),
                                 list(enumerate(pick))) if p]
-                        # a "speed" measured against a DIFFERENT song is a made-up
-                        # number - keep only references that verify as this recording.
-                        if got:
-                            cc = E._verify.prepare_clip(src["audio"])
-                            got = [p for p in got
-                                   if E._verify.verify(src["audio"], p, clip_ctx=cc
-                                                       ).get("core", 0) >= E.CORE_KEEP]
-                        if got:
-                            r = speed_from_master.measure_consensus(src["audio"], got)
-                    if r and r.get("confident") and r.get("label") != "as posted":
-                        res["speed"] = r["label"]
-                        res["speed_measured"] = r.get("speed")
-                        res["speed_refs"] = r.get("agree")
+                        # a speed measured vs a DIFFERENT song is a made-up number - keep
+                        # only refs that lock to the clip as the same recording. Use the
+                        # bass-robust high-pass lock (verify.core would drop them all here).
+                        refs += [p for p in got
+                                 if speed_from_master.confirm_ref(src["audio"], p)]
+                    if refs:
+                        r = speed_from_master.measure_consensus(src["audio"], refs)
+                        if r and r.get("confident"):
+                            measured = r
                 except Exception:
+                    measured = None
+
+            if top:
+                # the winning upload NAMES its own transform ("slowed"/"sped") - a strong
+                # prior for DIRECTION - but the MAGNITUDE must be measured vs the original,
+                # never invented. A confident measurement is authoritative for both;
+                # otherwise report the title's direction with NO fabricated ratio (doctrine:
+                # don't invent a speed you can't verify).
+                et = (top.get("title") or "").lower()
+                t_slow = bool(re.search(r"\b(slowed|slow|daycore)\b", et))
+                t_fast = bool(re.search(r"\b(sped|speed ?up|nightcore)\b", et))
+                if measured and measured.get("label") != "as posted":
+                    res["speed"] = measured["label"]
+                    res["speed_measured"] = measured.get("speed")
+                    res["speed_refs"] = measured.get("agree")
+                elif measured and measured.get("confident"):
+                    # A CONFIDENT "as posted" is real evidence, not silence - the crowned
+                    # upload's own title must never override it into a fabricated slow/
+                    # sped claim. ("Safe and Sound (hardtekk)": the bass-robust consensus
+                    # measured the clip dead-on the plain original's speed (deadband) while
+                    # the crowned candidate's title said "slowed" - keeping the title's
+                    # word here reported "Slowed" on a clip that measurably wasn't.) Only
+                    # fall through to the title-direction prior when we have NO confident
+                    # reading either way.
                     pass
+                else:
+                    cur = res.get("speed") or "as posted"
+                    cur_slow, cur_fast = "slow" in cur, "sped" in cur
+                    if (t_slow and not cur_slow) or (t_fast and not cur_fast):
+                        res["speed"] = "slowed" if t_slow else "sped up"
+                # bass boost is part of the edit's identity - surface it, only when the
+                # CROWNED candidate itself measures meaningfully bassier than the clip.
+                # `edit["bass_boosted"]` (bassy) is a FAMILY-WIDE flag: True whenever ANY
+                # editmatch candidate anywhere in the whole search pool is >BASS_STRIP_GAP
+                # dB bassier than the clip - even a candidate that ISN'T the one that won.
+                # A hugely popular song (Blueface "Respect My Cryppin'") always has a
+                # handful of generic "<song> BASS BOOSTED" YouTube spam re-uploads
+                # (cand_tilt up to +25dB) that exist for nearly any viral track regardless
+                # of what the TikTok clip actually used; those alone pulled bassy=True
+                # even though the CROWNED upload's own bass_delta was only -4.1dB (clip
+                # 13.9dB vs cand_tilt 18.0dB) - mild, nowhere near the same BASS_STRIP_GAP
+                # (6dB) bar the ranking itself requires to call a family "boosted". The old
+                # code slapped "+ bass boosted" onto the badge from the global flag alone,
+                # so a clip Roham confirmed by ear is "not even bass boosted, just slowed"
+                # still got the bass-boosted label. Check the WINNER's own bass_delta
+                # instead (bass_delta = clip_tilt - cand_tilt; negative = candidate has
+                # more bass than the clip).
+                #
+                # Also require `decisive`: on "Respect My Cryppin'" several near-tied
+                # same-recording candidates (finals within 0.01-0.02 of each other) cluster
+                # right around the family's bass ceiling purely because that's a hugely
+                # popular song with many independent re-uploads at slightly different bass
+                # levels - none of them decisively THE edit (find_edit's own margin check
+                # already says so). Confidently tacking "+ bass boosted" onto a coin-flip
+                # pick overstates certainty the audio evidence doesn't have; when the pick
+                # itself isn't decisive, report the (still trustworthy) base+speed and leave
+                # the extra bass claim off rather than assert it from a toss-up.
+                cand_delta = top.get("bass_delta", 0.0) or 0.0
+                if (edit.get("bass_boosted") and edit.get("decisive")
+                        and cand_delta <= -E.BASS_STRIP_GAP):
+                    base = res.get("speed") or "as posted"
+                    res["speed"] = ("bass boosted" if base in (None, "as posted")
+                                    else base + " + bass boosted")
+                    res["bass_boosted"] = True
+            elif measured and measured.get("label") != "as posted":
+                # no crowned edit, but the clip still measures off-speed vs the original
+                # (Dark Horse: Shazam matched it "straight"). Report the measured label.
+                res["speed"] = measured["label"]
+                res["speed_measured"] = measured.get("speed")
+                res["speed_refs"] = measured.get("agree")
+
             _cleanup(edit.get("tmp"))
 
         # If Shazam's ID is a likely-wrong cover AND nothing recovered the real song,
