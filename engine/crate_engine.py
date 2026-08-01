@@ -14,7 +14,7 @@ Pipeline
                          candidate, and CORRELATE it against the clip audio so we
                          return the real source, not just a same-titled upload.
 """
-import asyncio, concurrent.futures, difflib, json, os, queue, re, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import asyncio, concurrent.futures, difflib, json, os, queue, re, statistics, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -41,6 +41,17 @@ CORE_SAME = 0.95     # core this high = provably the SAME audio, whatever the ti
 # clip's bass was cut on playback -> treat it as bass-boosted and target the family's
 # bass end (the heavy version the person actually hears). Below the gap, trust the clip.
 BASS_STRIP_GAP = 6.0
+# Per-probe ceiling on a single Shazam recognise call. shazamio ships no timeout, and an
+# unbounded one hung the whole lookup (fingerprint never returned; /base answered nothing
+# after 120s+). The sweep fires many probes, so losing a slow one costs a probe, not the
+# request.
+SHAZAM_TIMEOUT = 12.0
+# Deadline (seconds, from when the search pair starts) for the headless-Chromium web
+# search. Measured at 28.6s of a 44.2s hunt when awaited outright.
+WEB_DEADLINE = 10.0
+# Comments-first fast path. FAST_EXIT_CORE is deliberately near-identity: at 1.000 the
+# audio is the same recording beyond argument, so no broad sweep can improve on it.
+FAST_POOL, FAST_EXIT_CORE = 6, 0.95
 BASS_FIT_SPAN = 8.0  # dB from the bass target at which the bass fit falls to 0
 SPEED_TOL_OCT = 1.0  # octaves of speed mismatch at which the (gentle) speed fit hits 0
 ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
@@ -142,28 +153,53 @@ def tt_embed_v2(video_id):
             "desc": desc, "creator": mo.get("authorName")}
 
 
-def _tt_replies(comment_id, n=12):
-    """Replies under one comment (tikwm, 1 req/s). The ANSWER to 'what's the song?'
-    lives here, never in the question itself."""
+def _tt_replies(comment_id, item_id, n=20):
+    """Replies under one comment. The ANSWER to 'what's the song?' lives here, never in
+    the question itself.
+
+    Hits TikTok's OWN reply endpoint. The tikwm path this used to call
+    (/api/comment/reply/list/) is a hard 404 - tikwm never shipped it - so every reply
+    chase in this codebase silently returned [] and the whole question-and-answer
+    signal was dead. Measured on the pucksindeep clip: tikwm 404s, while
+    tiktok.com/api/comment/list/reply/ returns the two real replies
+    ("Faded nightcore", "Thank you!"). No rate-limit sleep needed here: this is
+    tiktok.com direct, not tikwm's 1 req/s free tier.
+    Returns [(text, digg_count)] so the caller can weight likes."""
     try:
-        r = _cffi_get("https://www.tikwm.com/api/comment/reply/list/?comment_id=%s&count=%d"
-                      % (urllib.parse.quote(str(comment_id), safe=""), n))
+        r = _cffi_get("https://www.tiktok.com/api/comment/list/reply/?aid=1988"
+                      "&comment_id=%s&item_id=%s&count=%d&cursor=0"
+                      % (urllib.parse.quote(str(comment_id), safe=""),
+                         urllib.parse.quote(str(item_id), safe=""), n),
+                      timeout=12, referer="https://www.tiktok.com/")
         d = json.loads(r.text)
     except Exception:
         return []
-    if d.get("code") != 0:
-        return []
-    return [(c.get("text") or "").strip()
-            for c in (d.get("data", {}).get("comments") or []) if c.get("text")]
+    out = []
+    for c in (d.get("comments") or []):
+        t = (c.get("text") or "").strip()
+        if t:
+            out.append((t, c.get("digg_count") or 0))
+    return out
+
+
+# "thank you" / "tysm" / "found it" - an ACK under a question means the sibling reply
+# in that same thread was the right answer. Free crowd-verification of a hint.
+_C_THANKS = re.compile(r"\b(thank(s| ?you| ?u)?|tysm|ty\b|tyy|appreciate|"
+                       r"legend|goat|found it|thats it|that'?s it|real one)\b", re.I)
 
 
 def tiktok_comments(full_url, n=60, with_replies=True):
     """Comments via tikwm (1 req/s). People literally name the edit in the comments
     ('song is X slowed by Y'), so it's a real signal - especially for original sounds
     Shazam can't match.
-    Also chases REPLIES on the most-liked "what's the song?" comments: the question is
-    the signpost, the answer is underneath it. Capped at 2 extra requests so a quick
-    check stays quick."""
+    Also chases REPLIES on "what's the song?" comments: the question is the signpost,
+    the answer is underneath it. The pucksindeep clip is the whole case for this - the
+    only text naming the track ("Faded nightcore") is a REPLY, and the top-level scrape
+    sees nothing but the question.
+
+    Returns a mixed list: plain str for top-level comments, (text, meta) tuples for
+    replies, where meta carries {"reply": True, "to_ask": bool, "likes": int,
+    "thanked": bool}. comment_song_hints() normalises both shapes."""
     items = []
     for attempt in range(3):
         try:
@@ -184,19 +220,34 @@ def tiktok_comments(full_url, n=60, with_replies=True):
         for rp in (c.get("reply_comment") or []):
             t = (rp.get("text") or "").strip()
             if t:
-                texts.append(t)
+                texts.append((t, {"reply": True, "to_ask": bool(_C_ASK.search(c.get("text") or "")),
+                                  "likes": rp.get("digg_count") or 0, "thanked": False}))
     if with_replies:
-        asks = [c for c in items
-                if (c.get("text") or "").strip()
-                and _C_ASK.search(c.get("text") or "")
-                and not (c.get("reply_comment") or [])]
-        asks.sort(key=lambda c: -(c.get("digg_count") or c.get("like_count") or 0))
-        for c in asks[:2]:
-            cid = c.get("id") or c.get("cid") or c.get("comment_id")
-            if not cid:
-                continue
-            texts.extend(_tt_replies(cid))
-            time.sleep(1.1)   # tikwm 1 req/s
+        item_id = _tt_id(full_url) or (items[0].get("video_id") if items else None)
+        # Only threads that HAVE replies are worth a request, and tikwm gives us
+        # reply_total for free. Asked-and-answered threads first (the answer to "what
+        # song is this" is the highest-value text on the page), then any other busy
+        # thread - people also answer under an unrelated top comment.
+        def _cid(c):
+            return c.get("id") or c.get("cid") or c.get("comment_id")
+        withreps = [c for c in items if (c.get("reply_total") or 0) > 0 and _cid(c)]
+        asks = [c for c in withreps if _C_ASK.search(c.get("text") or "")]
+        rest = [c for c in withreps if c not in asks]
+        asks.sort(key=lambda c: -(c.get("digg_count") or 0))
+        rest.sort(key=lambda c: -(c.get("digg_count") or 0))
+        pick = (asks + rest)[:4]
+        if item_id and pick:
+            # parallel: these are tiktok.com direct, no 1 req/s wall, so 4 threads cost
+            # about one request of wall time instead of the old 2 x 1.1s of sleeps.
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                got = list(ex.map(lambda c: (c, _tt_replies(_cid(c), item_id)), pick))
+            for c, reps in got:
+                to_ask = bool(_C_ASK.search(c.get("text") or ""))
+                # an ACK anywhere in the thread means a sibling reply was the answer
+                thanked = any(_C_THANKS.search(t) for t, _ in reps)
+                for t, likes in reps:
+                    texts.append((t, {"reply": True, "to_ask": to_ask,
+                                      "likes": likes, "thanked": thanked}))
     return texts
 
 
@@ -235,6 +286,10 @@ def comment_song_hints(comments):
     looks, and let the audio decide."""
     scored = []
     for raw in comments:
+        meta = {}
+        if isinstance(raw, (tuple, list)):           # (text, meta) from a reply thread
+            meta = (raw[1] if len(raw) > 1 else None) or {}
+            raw = raw[0]
         t = (raw or "").strip()
         if not t or len(t) > 120 or not _HAS_WORD.search(t):
             continue
@@ -251,8 +306,31 @@ def comment_song_hints(comments):
         caps = [w for w in words if w[:1].isupper() and w[1:2].islower()]
         if len(caps) >= 2:                          s += 2
         if _OPINION.search(t):                      s -= 4   # "fire", "mid", "trash"
-        # a bare question names nothing on its own - its replies were already pulled in
-        if _C_ASK.search(t) and s <= 2:
+        # "<title> <edit-word>" - the exact shape of a crowd answer ("Faded nightcore",
+        # "Sicko Mode slowed"). Terse, no question mark, an edit family named outright.
+        if (len(words) <= 5 and _C_EDIT.search(t) and "?" not in t
+                and not _C_ASK.search(t)):          s += 2
+        # ANSWERING the ID question is the single most reliable comment on the page.
+        # Nothing here decides anything - it only moves this text up the query list,
+        # and verify()'s audio core still crowns the winner.
+        if meta.get("reply"):
+            if meta.get("to_ask"):                  s += 5   # reply UNDER "what song is this?"
+            if meta.get("thanked"):                 s += 2   # OP said thanks -> crowd-confirmed
+            if (meta.get("likes") or 0) >= 3:       s += 1
+        # A QUESTION names nothing, ever - the answer is in its replies, which we now
+        # actually fetch. "Anyone know what remix this is?" used to clear the bar on
+        # _C_EDIT("remix") + short alone and became a real search query for a title
+        # that does not exist. Require a genuine NAMING signal before a "?" comment
+        # counts ("Dark Horse hoodtrap?" still passes on the quoted/dash/by/songis
+        # shapes, or on the edit-shape bonus above).
+        names = bool(_C_SONGIS.search(t) or _C_DASH.match(t) or _C_QUOTED.search(t)
+                     or (_C_BY.search(t) and len(words) <= 10))
+        if _C_ASK.search(t) and not names:
+            continue
+        # ...and the ACK is not the answer either. "Thank you!" sits in the same thread
+        # and now inherits the to_ask/thanked bonuses, which would otherwise make the
+        # single most useless string on the page a top-ranked search query.
+        if _C_THANKS.search(t) and not names and not _C_EDIT.search(t):
             continue
         # 4 = at least one REAL song signal. Title Case + short alone is every fan
         # comment in every language ("Kocham Yamala on jest cudowny") and those become
@@ -268,6 +346,18 @@ def comment_song_hints(comments):
     return out[:8]
 
 
+_TT_VIDEO_URL = {}   # full_url -> the video mp4 url, cached from whichever call saw it
+
+
+def _remember_video_url(full_url, vu):
+    """Stash a video url so get_source doesn't pay for a second tikwm call. Bounded -
+    the server is long-lived and this would otherwise grow for every clip ever looked
+    up. CDN urls are signed and expire anyway, so a small window is all that's useful."""
+    if len(_TT_VIDEO_URL) > 256:
+        _TT_VIDEO_URL.clear()
+    _TT_VIDEO_URL[full_url] = vu
+
+
 def tt_tikwm(full_url):
     """Third-party resolver: returns the isolated sound mp3 + rich credit. Hard
     1 req/s limit, so it's a fallback, not the front line."""
@@ -280,6 +370,9 @@ def tt_tikwm(full_url):
         if d.get("code") == 0 and d.get("data"):
             data = d["data"]; mi = data.get("music_info") or {}
             au = data.get("music")
+            vu = data.get("play") or data.get("hdplay")
+            if vu:
+                _remember_video_url(full_url, vu)
             if not au:
                 return None
             title = mi.get("title") or ""
@@ -290,6 +383,40 @@ def tt_tikwm(full_url):
                     "creator": (data.get("author") or {}).get("unique_id")}
         time.sleep(1.2)   # 1 req/s free limit
     return None
+
+
+def tt_video_audio(full_url, tmp, seconds=30):
+    """The audio actually IN the video, as opposed to the sound TikTok credits it with.
+    Best effort: returns a wav path, or None, and never raises.
+
+    Needed because those two are NOT always the same recording (see get_source). The
+    mp4 is the only place the real audio exists - the embed blob carries no playAddr
+    and /api/item/detail answers 200 with an empty body, both measured, so the tikwm
+    resolver is the one route to it. Sectioned to `seconds` because every consumer
+    (fingerprint's windows, verify's 20s) reads the head of the clip."""
+    vu = _TT_VIDEO_URL.get(full_url)
+    if not vu:
+        try:
+            r = _cffi_get("https://www.tikwm.com/api/?url=%s&hd=1"
+                          % urllib.parse.quote(full_url, safe=""))
+            d = (json.loads(r.text).get("data") or {})
+            vu = d.get("play") or d.get("hdplay")
+            if vu:
+                _remember_video_url(full_url, vu)
+        except Exception:
+            return None
+    if not vu:
+        return None
+    mp4 = os.path.join(tmp, "v.mp4")
+    wav = os.path.join(tmp, "v.wav")
+    try:
+        open(mp4, "wb").write(_cffi_get(vu, timeout=45).content)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
+                        "-t", str(seconds), "-ac", "1", "-ar", "44100", wav],
+                       check=True, capture_output=True, timeout=30)
+    except Exception:
+        return None
+    return wav if os.path.exists(wav) and os.path.getsize(wav) > 4000 else None
 
 
 def tiktok_fetch(url):
@@ -334,6 +461,107 @@ def tiktok_fetch(url):
     return full, None
 
 
+
+
+_STRONG_ID = re.compile(
+    r"^\s*(?:song|track|audio|sound)\s*[:\-]\s*(.+)$", re.I)
+_ARTIST_TITLE = re.compile(r"^[^\n]{2,40}\s+[-\u2013\u2014]\s+[^\n]{2,40}$")
+
+
+def strong_song_hints(comments, cap=4):
+    """Strict hint extraction for SOUND-PAGE comments.
+
+    The clip's own comment section is on-topic, so the loose reader is fine there. A
+    sound page is not: the same audio gets used by hundreds of unrelated videos, and
+    their comment sections are about THOSE videos. Running the loose reader over 212
+    aggregated comments returned "He sure did not ! Amen!", "Them the Pharisees
+    laughing" and "Amor, imposible que pierda Alana" alongside one real answer - junk
+    that would burn real search queries.
+
+    So here we only accept text that is structurally a song ID: an explicit
+    "song: <x>" / "track - <x>" prefix, or a clean "<artist> - <title>" line. Everything
+    conversational is dropped, even at the cost of missing a bare-title answer.
+    """
+    out, seen = [], set()
+    for c in (comments or []):
+        t = (c[0] if isinstance(c, tuple) else c) or ""
+        t = t.strip()
+        if not t or len(t) > 90 or "\n" in t:
+            continue
+        low = t.lower()
+        if any(w in low for w in ("what song", "song?", "name song", "peak song",
+                                  "whats the song", "what's the song", "song name")):
+            continue                                   # that's the ask, not the answer
+        m = _STRONG_ID.match(t)
+        cand = (m.group(1) if m else (t if _ARTIST_TITLE.match(t) else None))
+        if not cand:
+            continue
+        cand = cand.strip(" .!?\u2019\"'")
+        k = cand.lower()
+        if len(cand) < 4 or k in seen:
+            continue
+        seen.add(k); out.append(cand)
+        if len(out) >= cap:
+            break
+    return out
+
+
+# ---------------------------------------------------------------- viral sound page
+def tt_music_id(full_url):
+    """The sound's own id. Every TikTok audio has a page at tiktok.com/music/... that
+    aggregates every video using it."""
+    try:
+        j = json.loads(_cffi_get("https://tikwm.com/api//?url=%s&hd=0" % full_url,
+                                 timeout=25).text)
+        return ((j.get("data") or {}).get("music_info") or {}).get("id")
+    except Exception:
+        return None
+
+
+def viral_sound_comments(full_url, top=2, per=60):
+    """Comments from the MOST-VIRAL videos using this same sound, not just this clip's.
+
+    Roham's own manual technique, recorded as the `tiktok-sound-id` skill: when a clip is
+    an unnamed "original sound", don't mine the clip you were handed - open the SOUND's
+    page, jump to the biggest video on it, and read THAT comment section, because someone
+    has already asked "song?" there and been answered.
+
+    The size gap is the whole point. Measured on the Embergrass sound: the clip we were
+    given had 277 comments, while the top video on the same sound had 469K likes and
+    5,153 comments. A dead comment section next to one where the answer is near-certain
+    to be sitting. Sorting by likes matters too - the sound page is only roughly ordered,
+    so the first tile is not reliably the biggest.
+
+    Returns comments in the same mixed shape tiktok_comments() gives, so it drops
+    straight into comment_song_hints().
+    """
+    mid = tt_music_id(full_url)
+    if not mid:
+        return []
+    try:
+        j = json.loads(_cffi_get("https://tikwm.com/api/music/posts?music_id=%s&count=12"
+                                 % mid, timeout=30).text)
+        vids = (j.get("data") or {}).get("videos") or []
+    except Exception:
+        return []
+    if not vids:
+        return []
+    # engagement, not position: comment_count is the better signal than likes here,
+    # because it is literally the thing we are about to read.
+    vids.sort(key=lambda v: -((v.get("comment_count") or 0) * 3 + (v.get("digg_count") or 0) // 50))
+    out = []
+    for v in vids[:top]:
+        vid, who = v.get("video_id"), (v.get("author") or {}).get("unique_id")
+        if not (vid and who):
+            continue
+        try:
+            out += tiktok_comments("https://www.tiktok.com/@%s/video/%s" % (who, vid),
+                                   n=per) or []
+        except Exception:
+            continue
+    return out
+
+
 # ---------------------------------------------------------------- sources
 def get_source(url):
     """-> {platform, audio, credit_title, credit_author, is_original, desc, tmp}."""
@@ -363,17 +591,55 @@ def get_source(url):
         e.oembed = oe
         raise e
     audio = os.path.join(tmp, "a.mp3")
-    try:
-        open(audio, "wb").write(_cffi_get(info["playUrl"], timeout=90,
-                                          referer="https://www.tiktok.com/").content)
-    except Exception:
-        open(audio, "wb").write(fetch(info["playUrl"], binary=True, timeout=90))
-    return {"platform": "tiktok", "audio": audio,
-            "credit_title": info.get("sound_title") or oe.get("credit_title"),
-            "credit_author": info.get("sound_author") or oe.get("credit_author"),
-            "is_original": bool(info.get("is_original")), "desc": info.get("desc") or "",
-            "handle": info.get("creator") or oe.get("handle"),
-            "thumb": oe.get("thumb"), "tmp": tmp}
+    # Pull the VIDEO's own audio alongside the credited sound, in parallel, because the
+    # two are not always the same recording. Overlapped, so it costs ~0s of wall time.
+    with ThreadPoolExecutor(max_workers=1) as _ex:
+        _fv = _ex.submit(tt_video_audio, full, tmp)
+        try:
+            open(audio, "wb").write(_cffi_get(info["playUrl"], timeout=90,
+                                              referer="https://www.tiktok.com/").content)
+        except Exception:
+            open(audio, "wb").write(fetch(info["playUrl"], binary=True, timeout=90))
+        try:
+            vid_audio = _fv.result(timeout=45)
+        except Exception:
+            vid_audio = None
+
+    out = {"platform": "tiktok", "audio": audio,
+           "credit_title": info.get("sound_title") or oe.get("credit_title"),
+           "credit_author": info.get("sound_author") or oe.get("credit_author"),
+           "is_original": bool(info.get("is_original")), "desc": info.get("desc") or "",
+           "handle": info.get("creator") or oe.get("handle"),
+           "thumb": oe.get("thumb"), "tmp": tmp}
+
+    # TRUST THE VIDEO, NOT THE CREDIT. TikTok's attributed sound is usually the exact
+    # audio in the video, and it's the cleaner source (no voiceover, no SFX), so it
+    # stays the default. But it is NOT guaranteed: on the @elwho19 Broly edit every one
+    # of TikTok's own routes (embed/v2, tikwm, oEmbed) credits "Embergrass - Kurua"
+    # while the video actually plays a two-part mashup - Broly X Lonely Hardstyle, then
+    # grindgwap's "WAKE UP. (SUPER SLOWED)", which is exactly what the comments said.
+    # Measured verify() of the video audio against the credited sound: 0.110 there,
+    # against 1.000 on four other clips (kelthraxx flipp, kyks, bouch.szn, masonxantal).
+    # That is a ~0.9 gap, so CORE_KEEP separates them with room to spare. Below it the
+    # credited sound is a DIFFERENT recording and everything downstream - Shazam, the
+    # search queries built from the credit, verify()'s reference - is being fed audio
+    # the viewer never heard. The credit goes with it: it names a track that isn't in
+    # the video, so keeping it would only poison build_queries.
+    if vid_audio:
+        core = 0.0
+        try:
+            core = _verify.verify(vid_audio, audio, 20).get("core", 0.0)
+        except Exception:
+            core = 1.0                      # can't measure -> don't second-guess TikTok
+        out["sound_match_core"] = round(float(core), 3)
+        if core < CORE_KEEP:
+            out["audio"] = vid_audio
+            out["sound_mismatch"] = True
+            out["credited_title"] = out["credit_title"]
+            out["credited_author"] = out["credit_author"]
+            out["credit_title"] = out["credit_author"] = None
+            out["is_original"] = True       # platform names nothing we can trust
+    return out
 
 
 # ---------------------------------------------------------------- fingerprint
@@ -526,21 +792,43 @@ def _consensus_id(hits, hints=None):
     return min(pool, key=lambda h: len(h.get("title") or ""))
 
 
-async def fingerprint(audio, hints=None):
+async def _fingerprint_core(audio, hints=None, _scan_out=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
-    is a fine counter-speed sweep in concurrent batches for a heavily-edited song."""
+    is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
+
+    `_scan_out`, when given a list, receives the RAW Phase-1 window results - every
+    window, not the de-duplicated `songs` - because several of the return paths below
+    legitimately collapse rival readings of one window into a single answer, and the
+    mashup pass needs to see the untouched per-window evidence to tell "two rival
+    readings of the same audio" from "two songs in different parts of the clip"."""
     dur = duration_of(audio)
     tmp = tempfile.mkdtemp()
     n = {"i": 0}
-    sem = asyncio.Semaphore(8)
+    # SERIALISE SHAZAM. This was Semaphore(8) and that was the single biggest source of
+    # both slowness and false "no_match". Shazam rate-limits on CONCURRENCY, not volume:
+    # measured back to back, one call returns in 0.4-0.6s and keeps returning in 0.4s
+    # when spaced 2s/5s/10s apart, but firing a burst gets the first answered and every
+    # other one stalled indefinitely. With no timeout on the call (also fixed, see
+    # SHAZAM_TIMEOUT) that hung the ENTIRE lookup forever - /base sat past 120s and
+    # answered nothing on clips as ordinary as "Turn Me On". Serialised, the same sweep
+    # is both faster and actually returns answers.
+    sem = asyncio.Semaphore(1)
 
     async def probe(off, rate, label, span=20):
         async with sem:
             wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
             try:
                 cut(audio, wav, off, rate, span=span)
-                hit = await shazam(wav)
+                # HARD TIMEOUT. shazamio had none, so a single stalled recognise call
+                # hung the ENTIRE request forever: measured get_source 3.8s then
+                # fingerprint never returning at all, and /base sat past 120s and
+                # answered with nothing. One slow probe must cost one probe, not the
+                # whole lookup - the sweep already runs many of these and any single
+                # one is expendable.
+                hit = await asyncio.wait_for(shazam(wav), timeout=SHAZAM_TIMEOUT)
+            except asyncio.TimeoutError:
+                return None
             except Exception:
                 return None
         n["i"] += 1
@@ -555,6 +843,9 @@ async def fingerprint(audio, hints=None):
     hits, seen = [], set()
     for off, h in zip(scan, res):
         if h:
+            if _scan_out is not None:
+                w = dict(h); w["t0"] = off; w["t1"] = off + span; w["span"] = span
+                _scan_out.append(w)
             k = (h["title"].strip().lower(), (h["artist"] or "").strip().lower())
             if k not in seen:
                 seen.add(k); h["at"] = off; hits.append(h)
@@ -693,9 +984,325 @@ async def fingerprint(audio, hints=None):
     return None
 
 
+# ------------------------------------------------------------------ mashup pass
+# TIER 2. Fires ONLY when the 12s Phase-1 scan (which we already paid for) came back
+# with two DIFFERENT songs. On a single-song clip this costs literally nothing: the
+# grouping below runs on results already in hand and returns before any probe.
+#
+# Why 4s windows. On a LAYERED mashup both songs play at once the whole way through,
+# so which one Shazam names depends on window LENGTH, not window position - measured on
+# the Levels x Part Of Me clip, every 3s window from 0-9s returns "Part Of Me" while
+# every 12s window from 2s on returns "Levels", over the very same audio. A short window
+# accumulates less of the loud instrumental loop and lets the buried layer win. So a
+# second, SHORTER pass is the cheapest thing that can see the other song at all.
+MASHUP_SPAN = 4          # tier-2 window length, seconds
+MASHUP_BUDGET = 6        # tier-2 probes. Measured 0.432s each -> +2.59s, mashups only
+# A second song must win this many windows before we believe it. This is the whole
+# anti-false-mashup mechanism: a one-off Shazam mis-ID scores 1 and is thrown away.
+# A false mashup is worse than a missed one - it splits a good answer into two bad ones.
+MASHUP_MIN_SUPPORT = 2
+# HARD WALL-CLOCK CEILING on the whole tier-2 pass. Shazam's per-call latency is not
+# stable: calibrated at 0.432s/probe (12 serialised calls, no stalls), the SAME six
+# probes on the same clip later measured 6.2s each - 37.4s for the pass. A budget priced
+# off a good day is not a budget. Probes fire NEAREST-THE-EVIDENCE FIRST and stop when
+# the clock runs out, so a slow Shazam costs a bounded amount and simply degrades to
+# fewer windows - and fewer windows can only fail the support floor, i.e. fall back to
+# the single-song answer. It can never invent a mashup.
+MASHUP_MAX_S = 9.0       # typical spend is 2.6s; this only binds when Shazam is sick
+MASHUP_TIMEOUT = 6.0     # per probe. Lower than SHAZAM_TIMEOUT - a tier-2 probe is a
+                         # bonus, never the critical path, so it gets less patience.
+# LAYERED vs SEQUENTIAL by TEMPO TREATMENT. A layered mashup has to beatmatch: the
+# producer time-stretches one song onto the other's tempo, so the two songs' timeskews
+# (tempo deviation from Shazam's own master) end up FAR APART. Songs merely played back
+# to back need no beatmatching, and a uniform speed edit over the whole clip shifts both
+# equally and cancels in the difference. Measured medians over the dense grid:
+#   A (layered):    Part Of Me -0.00094 vs Levels -0.03315  ->  gap 0.0322
+#   D (sequential): WAKE UP.   +0.00022 vs Broly  -0.00198  ->  gap 0.0022
+# 14x apart, so 0.01 sits in clean air. This replaces run-counting as the PRIMARY shape
+# test because run-counting is fragile: shifting the 4s windows by 0.2s (grid starts
+# 0/2.11/4.22... vs live 0/2/4...) flipped clip A from 2 runs to 1 and mislabelled a
+# layered clip sequential. Runs are kept as a second, independent vote.
+MASHUP_STRETCH_GAP = 0.01
+
+
+def _key_alias(k, known):
+    """Collapse a title key onto an existing one when either is a word-prefix of the
+    other, so 'blow', 'blow (electro remix)' and 'blow remix (remix)' are ONE song.
+
+    _title_key strips brackets, so "Blow (Electro Remix)" -> "blow" and merges fine,
+    but "Blow Remix (Remix)" -> "blow remix" keeps a bare 'remix' in the stem and does
+    not. Measured on the Kesha clip, that stray key was the ONLY second song available
+    anywhere in 20 windows - i.e. the sole thing that could have been declared a mashup
+    there would have been the same song twice. Prefix-merging kills that whole class of
+    false positive before the support floor ever has to."""
+    kw = (k or "").split()
+    if not kw:
+        return k
+    for o in known:
+        ow = (o or "").split()
+        n = min(len(kw), len(ow))
+        if n and kw[:n] == ow[:n]:
+            return o
+    return k
+
+
+def _mash_runs(seq, target):
+    """How many separate RUNS `target` forms in an ordered label sequence. A window that
+    matched nothing is neutral - it neither extends nor breaks a run.
+
+    Two or more separated runs is the layered signature: no single section boundary can
+    put the same song in two places. One run = the songs are back to back."""
+    runs, inside = 0, False
+    for k in seq:
+        if k is None:
+            continue
+        if k == target:
+            if not inside:
+                runs += 1
+                inside = True
+        else:
+            inside = False
+    return runs
+
+
+async def annotate_mashup(audio, fp, scan, dur=None):
+    """Decide whether this clip holds TWO songs, and if so where. Purely additive: it
+    never changes fp['title'], only appends fp['mashup'] / fp['sections'] and (when the
+    audio backs it) restores a second song the single-answer paths dropped.
+
+    NOTHING here decides the final answer. It is a nudge to discovery - it hands
+    find_edit a paired 'A x B mashup' query and a per-section audio target. verify()
+    still has the only vote on what the clip actually is."""
+    if not fp:
+        return fp
+    t_start = time.time()
+    dur = dur or duration_of(audio)
+
+    # ---- tier 1: the 12s scan fingerprint() ALREADY ran. Zero added cost.
+    groups, order = {}, []
+
+    def _add(w):
+        k = _title_key(w.get("title"))
+        if not k or _junk_id(w):
+            return None
+        k = _key_alias(k, order)
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(w)
+        return k
+
+    for w in (scan or []):
+        _add(w)
+    if len(order) < 2:
+        # Unanimous. Do NOT go hunting for a hidden layer anyway: ablated over 48
+        # parameter combinations on all 7 reference clips, that branch changed zero
+        # verdicts while burning 24 of 36 added probes (2.22s/clip vs 0.74s/clip for
+        # identical answers). The layered clip is caught by this same disagreement test,
+        # because its 0-12s window already dissents from the rest.
+        return fp
+
+    dom = max(order, key=lambda k: (len(groups[k]), -order.index(k)))
+    minor = max([k for k in order if k != dom], key=lambda k: len(groups[k]))
+
+    # ---- tier 2: short windows, packed where the evidence already is.
+    tmp = tempfile.mkdtemp()
+    sem = asyncio.Semaphore(1)   # Shazam rate-limits on CONCURRENCY - never burst.
+
+    async def probe(off, span):
+        async with sem:
+            wav = os.path.join(tmp, "m%.2f_%d.wav" % (off, span))
+            try:
+                cut(audio, wav, off, 1.0, span=span)
+                hit = await asyncio.wait_for(shazam(wav), timeout=MASHUP_TIMEOUT)
+            except Exception:
+                return None
+        if hit:
+            hit.update(t0=off, t1=off + span, span=span)
+        return hit
+
+    aim = min(groups[minor], key=lambda w: w.get("t0", 0.0))
+    centre = (aim.get("t0", 0.0) + aim.get("t1", MASHUP_SPAN)) / 2.0
+    hi = max(0.0, dur - MASHUP_SPAN)
+    grid, t = [], 0.0
+    while t <= hi + 1e-6:
+        grid.append(round(t, 2))
+        t += MASHUP_SPAN / 2.0
+    if not grid:
+        grid = [0.0]
+    # NEAREST THE EVIDENCE FIRST. The minority song was heard in ONE long window; the
+    # short windows overlapping that window are the ones that can confirm or kill it, so
+    # spend the budget there and in that order. If the clock cuts the pass short, what
+    # survives is the most informative half rather than an arbitrary half.
+    order_by_aim = sorted(grid, key=lambda s: abs(s + MASHUP_SPAN / 2.0 - centre))
+    starts = order_by_aim[:MASHUP_BUDGET]
+    t2, fired = [], 0
+    for s in starts:                       # serialised on purpose, see sem above
+        if fired and time.time() - t_start > MASHUP_MAX_S:
+            break                          # bounded cost, see MASHUP_MAX_S
+        fired += 1
+        h = await probe(s, MASHUP_SPAN)
+        if h:
+            t2.append(h)
+    _cleanup_dir(tmp)
+    for h in t2:
+        _add(h)
+
+    dom = max(order, key=lambda k: (len(groups[k]), -order.index(k)))
+    ok2 = [k for k in order if k != dom and len(groups[k]) >= MASHUP_MIN_SUPPORT]
+    rejected = [(k, len(groups[k])) for k in order if k != dom and k not in ok2]
+    if not ok2:
+        # The short windows did NOT back the second song up. One window is a mis-ID,
+        # not a song. Say so in the payload so the cost of the floor stays visible.
+        fp["mashup_rejected"] = rejected
+        fp["mashup_probes"] = len(starts)
+        return fp
+    sec = max(ok2, key=lambda k: len(groups[k]))
+
+    def pick(k):
+        g = [h for h in groups[k] if not _junk_id(h)] or groups[k]
+        return min(g, key=lambda h: len(h.get("title") or ""))
+
+    # ---- shape, primary test: TEMPO TREATMENT (see MASHUP_STRETCH_GAP). Two songs that
+    # sit at visibly different tempo offsets from their own masters were beatmatched,
+    # which only a layered mashup needs.
+    def tskew(k):
+        v = [h.get("timeskew") for h in groups[k] if h.get("timeskew") is not None]
+        return statistics.median(v) if v else None
+
+    ta, tb = tskew(dom), tskew(sec)
+    gap = abs(ta - tb) if (ta is not None and tb is not None) else None
+
+    # ---- shape, second vote: RUN COUNT. Only the MINORITY song's runs are trustworthy.
+    # The dominant can split into two runs on a plainly sequential clip: on the
+    # Broly/WAKE UP. clip the 0-4s window returns "WAKE UP." even though 0-8s is the
+    # Broly intro, because grindgwap's own upload contains that intro - so the dominant
+    # looks interleaved when it is not.
+    seq = []
+    for h in sorted(t2, key=lambda h: h["t0"]):
+        k = _title_key(h.get("title"))
+        seq.append(_key_alias(k, order) if (k and not _junk_id(h)) else None)
+    runs = _mash_runs(seq, sec)
+    layered = (gap is not None and gap >= MASHUP_STRETCH_GAP) or runs >= 2
+
+    def mid(g):
+        return statistics.median([(w.get("t0", 0.0) + w.get("t1", 0.0)) / 2.0 for w in g])
+
+    first, second = (dom, sec) if mid(groups[dom]) <= mid(groups[sec]) else (sec, dom)
+    bound = None
+    if not layered:
+        # Weighted changepoint: every window votes for its own label across its whole
+        # span with weight 1/span, so a 4s window localises 3x harder per second than a
+        # 12s one and windows straddling the seam pull it to where it actually is
+        # instead of snapping to a window edge.
+        F, S = groups[first], groups[second]
+
+        def ov(w, lo, hi_):
+            return (max(0.0, min(w.get("t1", 0.0), hi_) - max(w.get("t0", 0.0), lo))
+                    / float(w.get("span") or 1))
+        best_t, best_s, t = 0.0, -1.0, 0.0
+        while t <= dur + 1e-6:
+            s = sum(ov(w, 0.0, t) for w in F) + sum(ov(w, t, dur) for w in S)
+            if s > best_s:
+                best_s, best_t = s, t
+            t += 0.25
+        bound = round(best_t, 2)
+
+    hA, hB = pick(first), pick(second)
+    if layered:
+        # Both songs run the whole clip, so a "section" is a LAYER, not a time slice.
+        secs = [{"start": 0.0, "end": round(dur, 2), "layered": True,
+                 "song": hA.get("title"), "artist": hA.get("artist"),
+                 "shazam": hA.get("url"), "windows": len(groups[first])},
+                {"start": 0.0, "end": round(dur, 2), "layered": True,
+                 "song": hB.get("title"), "artist": hB.get("artist"),
+                 "shazam": hB.get("url"), "windows": len(groups[second])}]
+    else:
+        secs = [{"start": 0.0, "end": bound, "layered": False,
+                 "song": hA.get("title"), "artist": hA.get("artist"),
+                 "shazam": hA.get("url"), "windows": len(groups[first])},
+                {"start": bound, "end": round(dur, 2), "layered": False,
+                 "song": hB.get("title"), "artist": hB.get("artist"),
+                 "shazam": hB.get("url"), "windows": len(groups[second])}]
+
+    def core_title(t):
+        c = re.sub(r"[\(\[].*?[\)\]]", "", t or "").strip(" .-")
+        return c or (t or "")
+
+    fp["mashup"] = {
+        "shape": "layered" if layered else "sequential",
+        "boundary": bound,
+        "probes": fired,                   # what we ACTUALLY spent, not what we planned
+        "secs": round(time.time() - t_start, 2),
+        "pair": [core_title(hA.get("title")), core_title(hB.get("title"))],
+        "support": [len(groups[first]), len(groups[second])],
+        "rejected": rejected,
+        # why we called the shape we called - so a wrong call is diagnosable from the
+        # payload alone instead of needing a re-run.
+        "stretch_gap": round(gap, 5) if gap is not None else None,
+        "minority_runs": runs,
+        "windows": [{"t0": h["t0"], "song": h.get("title")} for h in
+                    sorted(t2, key=lambda h: h["t0"])],
+    }
+    fp["sections"] = secs
+
+    # Restore a song the single-answer paths dropped. The corroboration branch decides
+    # which reading is the better PRIMARY at one offset and then filters the loser out
+    # of `rest` entirely - on the Broly/WAKE UP. clip that deleted Broly from its own
+    # result and flipped multi to False, even though Phase 1 had identified it at
+    # offset 0. Re-adding it here (and ONLY here) means it has to clear the support
+    # floor first, so the genuine rival-readings case ("Ark" vs "Arc", both from the
+    # same window at different counter-speeds) still collapses to one answer as it must.
+    songs = list(fp.get("songs") or [dict(fp)])
+    have = set()
+    for h in songs:
+        k = _title_key(h.get("title"))
+        if k:
+            have.add(_key_alias(k, order))
+    for k in (first, second):
+        if k not in have:
+            h = dict(pick(k))
+            h["at"] = h.get("t0", 0.0)
+            songs.append(h)
+            have.add(k)
+    songs.sort(key=lambda h: h.get("at", 0.0))
+    fp["songs"] = songs
+    fp["multi"] = len(songs) > 1
+    return fp
+
+
+async def fingerprint(audio, hints=None):
+    """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
+    mashup pass looks at the raw window evidence and decides whether this clip is one
+    song or two. The pass is free on single-song clips - it returns before probing
+    unless the scan already disagreed with itself."""
+    scan = []
+    fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan)
+    if fp:
+        try:
+            await annotate_mashup(audio, fp, scan)
+        except Exception:
+            pass          # a mashup annotation is a bonus, never a reason to fail an ID
+    return fp
+
+
 # ---------------------------------------------------------------- edit search
+def _ascii_fold(t):
+    """Fold stylised unicode to plain ASCII before any keyword test.
+
+    Uploaders routinely title edits in mathematical-alphanumeric fonts, e.g.
+    "\U0001d4d3\U0001d4f8\U0001d4f7 \U0001d4e3\U0001d4f8\U0001d4f5\U0001d4f2\U0001d4ff\U0001d4ee\U0001d4fb - \U0001d4d0\U0001d4e3\U0001d4dc (\U0001d4fc\U0001d4f5\U0001d4f8\U0001d4feed + \U0001d4fb\U0001d4ee\U0001d4ff\U0001d4ee\U0001d4fb\U0001d4ea)". Every edit-word test here is ASCII, so such a
+    title reads as having NO edit words: it is invisible to EDIT_WORDS, to
+    OTHER_RENDITION and to the speed/bass labelling. Found on a Don Toliver "ATM" clip
+    where the only "plain original" candidate was actually a slowed+reverb upload
+    wearing a fancy font. NFKD maps those code points back to their ASCII letters.
+    """
+    import unicodedata
+    return unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode()
+
+
 def _clean(s):
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (s or ""))).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", _ascii_fold(s) or "")).strip()
 
 
 def _is_named_credit(title):
@@ -793,21 +1400,44 @@ def _producer_search(handles, title, per=6):
         for q in (_clean("%s %s" % (h, title)), _clean("%s %s" % (title, h))):
             if q and q.lower() not in seen_q:
                 seen_q.add(q.lower()); queries.append(q)
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    _t_search = time.time()
+    # The producer chase is itself a widener; giving it its OWN headless-Chromium web
+    # search made it a widener inside a widener, and it cost a measured 10.0s of a 34.3s
+    # hunt - all of it the web deadline. SoundCloud/YouTube search by handle is what
+    # actually finds a producer's own upload (kelthraxx's flip came from SC), so the web
+    # leg here is dropped and the SC/YT leg keeps the full depth.
+    # NOT a `with` block: ThreadPoolExecutor.__exit__ calls shutdown(wait=True), which
+    # re-blocks on the very web thread we just set a deadline for - the deadline then
+    # buys nothing (measured: web still cost 24.3s of the hunt). Shut down with
+    # wait=False and let the straggler finish unobserved.
+    ex = ThreadPoolExecutor(max_workers=2)
+    try:
         f_sc = ex.submit(search_edits, queries, per)
         web_q = ([_clean("site:soundcloud.com/%s %s" % (h, title)) for h in handles]
                 + [_clean('"%s" "%s"' % (h, title)) for h in handles])
-        f_web = ex.submit(web_search_edits, web_q)
+    # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
+    # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
+    # hunt, and because the code blocked on .result() it set the floor for the whole
+    # lookup no matter how fast SoundCloud/YouTube came back (8.5s). It is a WIDENER,
+    # not the primary source - SC/YT plus the producer chase already cover most clips -
+    # so it gets a deadline and we take whatever landed by then. Cancelling costs us
+    # nothing on the many clips where SC/YT already found the answer, and on the clips
+    # where the web genuinely cracked it (Ark), the results that matter arrive early.
         found = f_sc.result()
-        seen_u = {c["url"] for c in found}
-        web = [w for w in f_web.result() if w["url"] not in seen_u]
+        web = []
+    finally:
+        ex.shutdown(wait=False)
+    # NO PER-URL METADATA DURING DISCOVERY. _meta() shells out to yt-dlp for every
+    # single web result purely to read a play count and a tidier title, at a MEASURED
+    # 1.4s (SoundCloud) to 2.7s (YouTube) each. Profiling one clip put ~48s of a 90s
+    # lookup in these lookups - more than search and downloading combined. Nothing here
+    # needs them: verify() decides on AUDIO, and plays only ever break ties inside an
+    # already-equal tier. The search result's own title is enough to rank and download
+    # by, so discovery now costs zero extra processes and the ranked winners get
+    # enriched once at the end (see _enrich_top).
     if web:
-        with ThreadPoolExecutor(max_workers=min(5, len(web))) as ex:
-            metas = list(ex.map(_meta, [w["url"] for w in web]))
-        for w, (pl, ti, up) in zip(web, metas):
-            w["plays"] = pl
-            if ti: w["title"] = ti
-            if up: w["uploader"] = up
+        for w in web:
+            w.setdefault("plays", 0)
         found += web
     for c in found:
         c["query"] = "producer"
@@ -830,8 +1460,28 @@ def _producer_quota(cands, max_dl, min_producer=2):
     return (head[:max_dl - len(extra)] + extra)
 
 
+def _pair_queries(pair):
+    """The two-title forms a mashup upload is actually TITLED. Uploaders overwhelmingly
+    write "Song A x Song B (Mashup)" or "Artist VS Artist - A X B", so once we know BOTH
+    songs the literal title is one string away - and build_queries has only ever emitted
+    single-title forms ("%s mashup", "%s x"), so it could never ask for the pair.
+
+    Measured need: on the Levels x Part Of Me clip NO single-song candidate clears the
+    bar - "Part Of Me" original verifies at core 0.496, "Levels" original at 0.000, and
+    the app's current answer (a Makina remix) at 0.427, all same=False. The one upload
+    that explains the audio is "Avicii VS Katy Perry - Levels X Part of me (Axel Arthur
+    - Mashup)" at core 0.975. Nothing but the paired query reaches it."""
+    if not pair or len(pair) < 2:
+        return []
+    a, b = (_clean(pair[0]), _clean(pair[1]))
+    if not a or not b or a.lower() == b.lower():
+        return []
+    return ["%s x %s mashup" % (a, b), "%s x %s" % (a, b),
+            "%s x %s mashup" % (b, a), "%s vs %s mashup" % (a, b)]
+
+
 def build_queries(credit_title, credit_author, base_title, base_artist, edit_label,
-                  handle=None, hints=None, shazam_reliable=True):
+                  handle=None, hints=None, shazam_reliable=True, pair=None):
     """Queries that SURFACE the exact niche edit, not just a same-titled original.
     Trust order: (1) comment hints - the crowd naming the song, the only text signal
     when Shazam mis-IDs a bogus cover over an 'original sound' credit; (2) the named
@@ -845,6 +1495,11 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         if s and len(s) > 1 and s.lower() not in seen:
             seen.add(s.lower()); q.append(s)
     edit_word = "slowed" if "slow" in (edit_label or "") else ("sped up" if "sped" in (edit_label or "") else "")
+
+    # 0) THE PAIR. Only set when the mashup pass proved two songs against the audio, so
+    # it goes first - it is the most specific thing we know and the list is capped.
+    for s in _pair_queries(pair):
+        add(s)
 
     # 1) COMMENT HINTS FIRST - the only reliable text when Shazam mis-IDs the song.
     for h in (hints or [])[:4]:
@@ -1173,18 +1828,67 @@ def _meta(url):
         return 0, "", ""
 
 
-def dl_clip(url, dst, seconds=25):
-    """Grab ~25s of a candidate as wav. SoundCloud takes download-sections; YouTube
-    needs the android player client (web formats need a PO token now)."""
+def _enrich_top(cands, n=6):
+    """Fill in real plays/title/uploader for the few candidates we will SHOW. Discovery
+    deliberately skips this (see the note in find_edit): one yt-dlp spawn per URL cost
+    ~48s of a 90s lookup. Doing it once, at the end, on the ranked top few, is ~6 calls
+    in parallel instead of ~25 sequentially-ish, and it changes no ranking - it runs
+    after rank_key has already decided."""
+    top = [c for c in cands[:n] if c.get("url")]
+    if not top:
+        return
+    try:
+        with ThreadPoolExecutor(max_workers=min(6, len(top))) as ex:
+            for c, (pl, ti, up) in zip(top, ex.map(_meta, [c["url"] for c in top])):
+                if pl:
+                    c["plays"] = pl
+                if ti:
+                    c["title"] = ti
+                if up:
+                    c["uploader"] = up
+    except Exception:
+        pass
+
+
+def _cleanup_dir(d):
+    try:
+        import shutil; shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def dl_clip(url, dst, seconds=20, timeout=15):
+    """Grab ~`seconds` of a candidate as wav. SoundCloud needs the android player client
+    exemption; YouTube needs it too (web formats want a PO token now).
+
+    SECTIONED ON BOTH SIDES. YouTube used to download the WHOLE track while SoundCloud
+    took only the first 25s, even though verify() decodes just 20s - so a 4-minute
+    upload pulled ~24MB to analyse 20 seconds of it. Measured: full 24MB vs sectioned
+    4.2MB. On a fast line the wall time is the same (yt-dlp's startup dominates), so
+    this is mainly a bandwidth win - ~575MB per lookup across 24 candidates down to
+    ~100MB - but it also stops long uploads from burning the whole timeout.
+
+    Now 20s of audio on a 15s timeout. Dropping the timeout to 10s was TRIED and
+    reverted: it cost the Dougie clip its best candidate ("Teach Me How To Dougie x Only
+    Time", 0.98) which fell back to a weaker mashup at 0.969, while saving no measurable
+    wall time. The 20s fetch is kept because it is free. verify() only ever DECODES 20s, so fetching 25
+    was paying for audio nobody read. And the cumulative download time was measured at
+    124-212s across ~14 candidates - averaging ~15s each against a 15s ceiling, i.e.
+    most were running to the wall rather than finishing. A candidate that has not
+    delivered in 10s is dead weight when a dozen others are already in flight.
+    Timeout was 35s, which is where the latency actually went: profiling one clip
+    showed 29 download attempts summing 361.6s with several pinned at the full 35s,
+    against just 4.0s TOTAL for all 25 verifications. The analysis was never slow, the
+    downloads were. A candidate that hasn't delivered in 15s is dead weight when there
+    are 20+ others in flight."""
     is_yt = "youtube.com" in url or "youtu.be" in url
     args = YTDLP + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
-                    "-o", dst.replace(".wav", ".%(ext)s")]
+                    "-o", dst.replace(".wav", ".%(ext)s"),
+                    "--download-sections", "*0-%d" % seconds, "--force-keyframes-at-cuts"]
     if is_yt:
         args += ["--extractor-args", "youtube:player_client=android"]
-    else:
-        args += ["--download-sections", "*0-%d" % seconds, "--force-keyframes-at-cuts"]
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=35, check=True)
+        subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
     except Exception:
         return None
     if not os.path.exists(dst):
@@ -1374,12 +2078,12 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
         # Retry with more of the track ONLY on a genuine near-miss (below CORE_KEEP but
         # not hopeless), so this costs nothing on the many candidates that are obviously
         # right or obviously wrong.
-        if 0.32 <= v["core"] < CORE_KEEP:
-            got2 = dl_clip(c["url"], os.path.join(tmp, "c%dw.wav" % (start + i)), seconds=90)
-            if got2:
-                v2 = _verify.verify(clip_audio, got2, seconds=90, clip_ctx=clip_ctx)
-                if v2["core"] > v["core"]:
-                    v, got = v2, got2
+        # The old near-miss rescue re-downloaded at seconds=90 whenever core landed in
+        # [0.32, CORE_KEEP), on the theory that a long intro pushed the hook outside the
+        # 20s window. Measured on the Faded clip it fired on all three near-misses and
+        # made every one WORSE (0.424->0.218, 0.433->0.297, 0.431->0.387), and all three
+        # were still dropped - so it bought nothing and cost a second full download on a
+        # meaningful share of candidates. Removed: it was pure latency.
         c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
         c["path"] = got                     # kept so the caller can measure speed vs it
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
@@ -1388,21 +2092,66 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
 
     if todo:
-        with ThreadPoolExecutor(max_workers=min(8, len(todo))) as ex:
+        with ThreadPoolExecutor(max_workers=min(16, len(todo))) as ex:
             list(ex.map(work, enumerate(todo)))
     return len(todo)
 
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=24,
-                    hints=None, shazam_reliable=True):
+                    edit_label, known_dir=None, handle=None, max_dl=14,
+                    hints=None, shazam_reliable=True, pair=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
     re-pitched re-upload - that faked slows on plain, normal-speed clips."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist,
                             edit_label, handle=handle, hints=hints,
-                            shazam_reliable=shazam_reliable)
+                            shazam_reliable=shazam_reliable, pair=pair)
+    # ---------------------------------------------------------------- FAST PATH
+    # COMMENTS FIRST. When the crowd has already named the edit in the comments, the
+    # entire broad hunt is wasted work: measured on @kyks.edits7's clip the comment read
+    # costs 1.5s and hands back "Three by cult member ultra slowed", and searching that
+    # one phrase returns two uploads that verify against the clip at core 1.000. The
+    # full sweep spends ~90s to reach the same answer (profiled: SC/YT search 7.4s, open
+    # web 21.3s, download+score 13.2s, and ~48s of per-URL yt-dlp metadata lookups at
+    # 1.4-2.7s each). So: try the named phrase alone, on a small pool, and if the AUDIO
+    # confirms it at near-identity, stop. The hint never decides anything on its own -
+    # it only chooses what to check first, and verify() still has the final say, which
+    # is exactly the "obv u will still have to verify" rule.
+    # The PAIR rides the same fast path. It is exactly the same shape of evidence as a
+    # comment hint - a specific title we have reason to believe - and it is still the
+    # AUDIO that decides: nothing is returned unless it verifies at FAST_EXIT_CORE
+    # (0.95, near-identity). The Levels x Part Of Me mashup measures 0.975 against the
+    # clip, so this turns a ~90s broad sweep into one short check on that clip.
+    if hints or pair:
+        hq, seen_hq = [], set()
+        for q in _pair_queries(pair):
+            if q.lower() not in seen_hq:
+                seen_hq.add(q.lower()); hq.append(q)
+        for h in list(hints or [])[:2]:
+            for q in (_clean(h), _clean("%s %s" % (h, edit_label or ""))):
+                if q and len(q) > 3 and q.lower() not in seen_hq:
+                    seen_hq.add(q.lower()); hq.append(q)
+        if hq:
+            hc = search_edits(hq, 6)[:FAST_POOL]
+            if hc:
+                ftmp = tempfile.mkdtemp()
+                fctx = _verify.prepare_clip(clip_audio)
+                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL, clip_ctx=fctx)
+                good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
+                if good:
+                    for c in good:
+                        c["editmatch"] = True; c["strong_core"] = True
+                        c["final"] = c.get("core")
+                        c["score"] = c.get("core")
+                    good.sort(key=lambda c: (-(c.get("core") or 0), -(c.get("plays") or 0)))
+                    return {"queries": hq, "ranked": good, "decisive": True,
+                            "clip_ok": True, "bass_boosted": False,
+                            "clip_tilt": 0.0, "target_tilt": 0.0,
+                            "tmp": ftmp, "fast_path": True,
+                            "ref_paths": [c["path"] for c in good if c.get("path")][:3]}
+                _cleanup_dir(ftmp)
+
     # SC/YT search + open-web search run concurrently. The web (DuckDuckGo - Google
     # itself can't be scraped, it hard-gates non-JS clients in an infinite redirect
     # loop) surfaces the crowd-known edits the way a person googling would find them,
@@ -1417,18 +2166,40 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         web_q = [_clean("%s %s" % (base_artist or "", base_title))] + web_q
     if base_title:
         web_q += [_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    _t_main = time.time()
+    # see the note at the producer chase: a `with` block would shutdown(wait=True) and
+    # undo the web deadline entirely.
+    ex = ThreadPoolExecutor(max_workers=2)
+    try:
         f_sc = ex.submit(search_edits, queries, 8)
+    # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
+    # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
+    # hunt, and because the code blocked on .result() it set the floor for the whole
+    # lookup no matter how fast SoundCloud/YouTube came back (8.5s). It is a WIDENER,
+    # not the primary source - SC/YT plus the producer chase already cover most clips -
+    # so it gets a deadline and we take whatever landed by then. Cancelling costs us
+    # nothing on the many clips where SC/YT already found the answer, and on the clips
+    # where the web genuinely cracked it (Ark), the results that matter arrive early.
         f_web = ex.submit(web_search_edits, web_q)
         cands = f_sc.result()
-        web = [w for w in f_web.result() if w["url"] not in {c["url"] for c in cands}][:5]
+        try:
+            _w = f_web.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+        except Exception:
+            _w = []
+        web = [w for w in _w if w["url"] not in {c["url"] for c in cands}][:5]
+    finally:
+        ex.shutdown(wait=False)
+    # NO PER-URL METADATA DURING DISCOVERY. _meta() shells out to yt-dlp for every
+    # single web result purely to read a play count and a tidier title, at a MEASURED
+    # 1.4s (SoundCloud) to 2.7s (YouTube) each. Profiling one clip put ~48s of a 90s
+    # lookup in these lookups - more than search and downloading combined. Nothing here
+    # needs them: verify() decides on AUDIO, and plays only ever break ties inside an
+    # already-equal tier. The search result's own title is enough to rank and download
+    # by, so discovery now costs zero extra processes and the ranked winners get
+    # enriched once at the end (see _enrich_top).
     if web:
-        with ThreadPoolExecutor(max_workers=min(5, len(web))) as ex:
-            metas = list(ex.map(_meta, [w["url"] for w in web]))
-        for w, (pl, ti, up) in zip(web, metas):
-            w["plays"] = pl; w["likes"] = 0; w["query"] = "web"
-            if ti: w["title"] = ti
-            if up: w["uploader"] = up
+        for w in web:
+            w["plays"] = w.get("plays") or 0; w["likes"] = 0; w["query"] = "web"
         cands += web
     result = {"queries": queries, "ranked": [], "decisive": False}
     if not cands:
@@ -1472,7 +2243,13 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     core_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title or "").strip()
     key_terms = set(_clean(core_title).lower().split()) | set(_clean(credit_title).lower().split())
     key_terms -= ORIGINAL_WORDS
-    key_terms = {t for t in key_terms if t and not EDIT_WORDS.search(t)}
+    # Drop 1-2 letter words. title_hits is a SUBSTRING test, so "a" matches inside
+    # "hand" and "in" matches "henny in hand" - on a "Broke In A Minute" clip that gave
+    # the unrelated "tory lanez - henny in hand" 2 hits purely from {a, in}, enough to
+    # look song-relevant and get crowned over six real "Broke In A Minute" uploads.
+    # Only words carrying actual identity should count.
+    key_terms = {t for t in key_terms
+                 if t and len(t) >= 3 and not EDIT_WORDS.search(t)}
     for c in cands:
         c["title_hits"] = sum(1 for t in key_terms if t in c["title"].lower())
     # DOWNLOAD PRIORITY - the crux of "edits have fewer plays than originals". Sorting
@@ -1526,7 +2303,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         return any(w in hay for w in artist_toks)
 
     def _dl_priority(c):
-        t = c["title"].lower()
+        t = _ascii_fold(c["title"]).lower()
         creator_hit = bool(cred_toks) and any(
             w in (c.get("uploader") or "").lower() for w in cred_toks)
         edit_titled = bool(EDIT_WORDS.search(t)) and not OTHER_RENDITION.search(t)
@@ -1576,7 +2353,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # THE answer (confirmed by ear). So bass and speed only NUDGE the ranking below; they
     # never reject a same-recording match. Plays is the last resort (niche edits are few-play).
     for c in cands:
-        c["not_other"] = not OTHER_RENDITION.search(c["title"])
+        c["not_other"] = not OTHER_RENDITION.search(_ascii_fold(c["title"]))
     # A CONFIRMED-artist upload gets rescued from a lower core floor: "Ship Wrek &
     # Zookeepers - Ark [NCS]" is the genuinely correct upload but only scored core 0.40
     # on ambient/slowed content where fp+arr both under-read - independent textual
@@ -1782,6 +2559,39 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         """The confirmed artist's OWN recording, not a third party merely naming them."""
         return _artist_hit(c) and not _ARTIST_NAMEDROP_ONLY.search(c.get("title") or "")
 
+    # An instrumental / cover / live cut of the right song fingerprints almost as well
+    # as the real one (same composition, same master in the instrumental's case), so it
+    # can clear CORE_SAME and be crowned even though it is audibly NOT what is playing:
+    # Zelgin Jackson's "Bring Ballers Back" clip got handed the "(Official Instrumental)"
+    # while the vocal upload sat below it. `not_other` already exists but only gates
+    # ENTRY, nothing demotes a rendition once it is in. Demote it only when a real
+    # non-rendition rival is scoring comparably, so the case this must not break still
+    # works: Anytunz's "(Marimba Ringtone Cover)" IS the clip's audio and wins because
+    # nothing non-rendition comes close to it.
+    _best_real = max([c.get("core") or 0 for c in keep if c.get("not_other")] or [0.0])
+
+    def _rendition_loses(c):
+        return (not c.get("not_other")) and _best_real >= (c.get("core") or 0) - 0.05
+
+    # WRONG-SONG-SAME-ARTIST GUARD. The _artist_hit rescue admits a candidate on the
+    # strength of the artist's name alone, which is right when the real match scores
+    # weakly - but when NOTHING clears strong_core, every rescued candidate is weak and
+    # raw core alone picks the winner. That lets a DIFFERENT SONG BY THE SAME ARTIST win:
+    # a Tory Lanez "Broke In A Minute" clip crowned "tory lanez - henny in hand (slowed
+    # and reverb)" at core 0.563 while six genuine "Broke In A Minute" uploads sat at
+    # 0.17-0.28, all of them editmatch=True purely via the artist rescue.
+    # The song title separates them cleanly and was being ignored: title_hits counts how
+    # many of the BASE SONG's own words appear in a candidate's title, and "henny in
+    # hand" scores zero on {broke, minute} while every correct upload scores two.
+    # So among candidates that did NOT earn their place on audio (strong_core False),
+    # one that names the song outranks one that only names the artist. Candidates that
+    # DID clear strong_core are untouched - this only orders the rescued pile, and only
+    # when there is a titled alternative to prefer.
+    _any_titled = any((c.get("title_hits") or 0) >= 1 for c in keep)
+
+    def _weak_untitled(c):
+        return (not c.get("strong_core")) and _any_titled and (c.get("title_hits") or 0) < 1
+
     def rank_key(c):
         f = c.get("final", 0)
         # An upload that already matches the clip AS-IS (verify needed no speed
@@ -1847,6 +2657,12 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                                                        # creator provenance, which "Ark
                                                        # Patrol" has none of, so the Ark
                                                        # rescue below is untouched.
+                1 if _weak_untitled(c) else 0,        # a weak match that doesn't even
+                                                       # name the song loses to one that
+                                                       # does (wrong-song-same-artist)
+                1 if _rendition_loses(c) else 0,      # a cover/instrumental/live cut of
+                                                       # the right song loses to a real
+                                                       # rendition that scores as well
                 0 if _artist_own(c) else 1,           # the CONFIRMED artist's OWN upload
                                                        # over an unconfirmed same-or-higher
                                                        # score - raw core alone can't

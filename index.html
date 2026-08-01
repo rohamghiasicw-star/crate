@@ -130,8 +130,15 @@ a{color:inherit;text-decoration:none}
 .chip .ct{min-width:0}
 .chip .ct b{display:block;font-size:13.5px;font-weight:650}
 .chip .ct span{display:block;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prog{width:100%;height:4px;border-radius:99px;background:var(--raise);overflow:hidden;position:relative}
-.prog i{position:absolute;inset:0;width:34%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2));animation:slide 1.5s ease-in-out infinite}
+.progwrap{display:flex;flex-direction:column;gap:9px}
+.progwrap.dig{margin:2px 0 4px}
+.proghead{display:flex;align-items:baseline;justify-content:space-between;font-size:12.5px;color:var(--muted)}
+.proghead .pct{font-size:15px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.prog{width:100%;height:5px;border-radius:99px;background:var(--raise);overflow:hidden;position:relative}
+.prog i{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  box-shadow:0 0 12px color-mix(in oklab,var(--accent2) 60%,transparent);
+  transition:width .55s cubic-bezier(.25,.9,.3,1)}
 
 .live{display:flex;align-items:center;justify-content:center;gap:9px;font-size:13.5px;color:var(--muted);
   text-align:center;transition:opacity .2s}
@@ -179,6 +186,62 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 
 /* ---------- playlist rows ---------- */
 .plat{display:flex;flex-direction:column;gap:7px;margin-top:8px}
+/* SAVE CARD. Green, deliberately not the purple accent: green universally reads "done",
+   and this is the one moment in the flow that should feel effortless. The save already
+   happened - this confirms it, it does not ask. */
+.savecard{display:flex;align-items:center;gap:12px;margin-top:18px;padding:14px 15px;border-radius:16px;
+  background:color-mix(in oklab,var(--good) 14%,transparent);
+  border:1px solid color-mix(in oklab,var(--good) 42%,transparent)}
+.savecard .tick{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--good);color:#04231A}
+.savecard b{display:block;font-size:14.5px;font-weight:650;color:var(--good)}
+.savecard span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+/* Auto-save off: nothing was written, so the card must not look like a confirmation.
+   Neutral until tapped, then it flips to the same green saved state. */
+button.savecard{width:100%;text-align:left;font:inherit;transition:filter .15s}
+button.savecard:hover{filter:brightness(1.09)}
+button.savecard[disabled]{pointer-events:none}
+.savecard.off{background:var(--raise2);border-color:var(--line2)}
+.savecard.off b{color:var(--text)}
+.savecard.off .tick{background:var(--raise);color:var(--muted)}
+/* Secondary row: the main job already happened before the user did anything. */
+.secrow{display:flex;gap:7px;margin-top:8px}
+.secbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 6px;border-radius:14px;
+  background:var(--raise2);font-size:12px;color:var(--muted);transition:transform .12s,filter .15s}
+.secbtn:hover{transform:translateY(-1px);filter:brightness(1.09)}
+.secbtn svg{color:var(--text)}
+.secbtn.on{color:var(--good)} .secbtn.on svg{color:var(--good)}
+.secbtn.dim{opacity:.45;pointer-events:none}
+.secbtn span{text-align:center;line-height:1.2}
+.autonote{text-align:center;font-size:11.5px;color:var(--faint);margin-top:10px}
+.autonote button{color:var(--accent2);font-weight:600}
+.sheet{position:fixed;inset:0;background:rgba(8,4,26,.66);display:grid;place-items:end center;z-index:50;
+  padding:16px;animation:fade .25s var(--spring) both}
+.sheet[hidden]{display:none}
+.sheetcard{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
+  border-radius:26px;padding:16px 16px 20px;display:flex;flex-direction:column;gap:12px;
+  max-height:calc(100vh - 32px);overflow-y:auto;animation:rise .3s var(--spring) both}
+.sheetcard .hd{grid-template-columns:36px 1fr 36px}
+.sheetcard .hd .ttl{grid-column:2}
+.setrow{display:flex;align-items:center;gap:12px;background:var(--raise);border-radius:15px;padding:13px 14px}
+.setrow div{flex:1;min-width:0}
+.setrow .go{white-space:nowrap}
+.setrow b{display:block;font-size:14.5px;font-weight:640}
+.setrow span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.tog{width:46px;height:27px;border-radius:99px;background:var(--raise2);position:relative;flex:none;transition:background .18s}
+.tog i{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:left .18s}
+.tog.on{background:var(--good)} .tog.on i{left:22px}
+.setfield{display:flex;flex-direction:column;gap:7px;background:var(--raise);border-radius:15px;padding:13px 14px}
+.setfield label{font-size:12px;font-weight:650;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.setfield input{background:var(--raise2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;
+  font-size:13.5px;color:var(--text);outline:none}
+.setfield input:focus{border-color:var(--accent2)}
+.hint2{font-size:11.5px;color:var(--faint);line-height:1.6}
+.hint2 code{display:inline-block;margin-top:5px;background:var(--raise2);padding:3px 7px;border-radius:6px;
+  color:var(--accent2);font-size:11px;overflow-wrap:anywhere;max-width:100%}
+.setfield input{min-width:0}
+.otherwrap{margin-top:14px}
+.otherwrap[hidden]{display:none}
 .prow{display:flex;align-items:center;gap:11px;background:var(--raise2);border-radius:14px;padding:12px 13px;
   transition:transform .12s,background .15s}
 .prow:hover{transform:translateY(-1px);background:var(--raise2);filter:brightness(1.08)}
@@ -251,7 +314,7 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 
     <div class="finds">
       <div class="fh">
-        <b>Recent finds</b>
+        <b>Found with Addify</b>
         <div class="acts"><button id="export">Export</button><button id="clear">Clear</button></div>
       </div>
       <div id="cratebody"></div>
@@ -273,7 +336,10 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
       <div class="listening" id="listening">Listening…</div>
       <div class="sub" id="live">Checking against edits and remixes</div>
     </div>
-    <div class="prog"><i></i></div>
+    <div class="progwrap">
+      <div class="proghead"><span id="progtxt">Reading the clip</span><span class="pct" id="progpct">0%</span></div>
+      <div class="prog"><i id="progbar"></i></div>
+    </div>
   </section>
 
   <!-- ============ MATCH ============ -->
@@ -289,6 +355,29 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
   <canvas id="wave" hidden></canvas>
 </div>
 
+<!-- Settings sheet lives OUTSIDE .app on purpose. .app carries a filled `rise` animation,
+     which leaves a transform on it, and a transformed ancestor becomes the containing block
+     for position:fixed - so in there the sheet was sized to the card and clipped by its
+     overflow:hidden instead of covering the viewport. -->
+<div class="sheet" id="sheet" hidden>
+    <div class="sheetcard" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="hd"><button class="ib plain" id="sheetx" title="Close" aria-label="Close settings"></button><div class="ttl">Settings</div></div>
+      <div class="setrow">
+        <div><b>Auto-save</b><span>Every match goes to your playlist</span></div>
+        <button class="tog" id="togauto"><i></i></button>
+      </div>
+      <div class="setrow">
+        <div><b id="splabel">Spotify</b><span id="spsub">Not connected</span></div>
+        <button class="go" id="spbtn">Connect</button>
+      </div>
+      <div class="setfield">
+        <label for="spid">Spotify Client ID</label>
+        <input id="spid" type="text" placeholder="paste from developer.spotify.com" spellcheck="false">
+        <span class="hint2">Create an app at developer.spotify.com/dashboard and add this exact redirect URI:<br><code id="rdu"></code></span>
+      </div>
+    </div>
+</div>
+
 <script>
 /* ---------- icons ---------- */
 var IC={
@@ -298,6 +387,9 @@ var IC={
   scan:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13c2.4 0 2.4-7 4.8-7s2.4 12 4.8 12 2.4-9 4.8-9S19.8 13 21 13"/></svg>',
   play:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6l11-6.8z"/></svg>',
   open:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16 16 8M9.5 8H16v6.5"/></svg>',
+  tick:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg>',
+  heart:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7.5-4.7-7.5-9.6A4.4 4.4 0 0 1 12 7.6a4.4 4.4 0 0 1 7.5 2.8C19.5 15.3 12 20 12 20z"/></svg>',
+  heartfill:'<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.3s-7.9-4.9-7.9-10.1A4.7 4.7 0 0 1 12 7.3a4.7 4.7 0 0 1 7.9 2.9c0 5.2-7.9 10.1-7.9 10.1z"/></svg>',
   plus:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg>',
   save:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.5-4-6.5 4V5a1 1 0 0 1 1-1z"/></svg>',
   savefill:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 3.5h11a1.5 1.5 0 0 1 1.5 1.5v15.6L12 16.3 5 20.6V5a1.5 1.5 0 0 1 1.5-1.5z"/></svg>',
@@ -310,11 +402,11 @@ var IC={
   quote:'<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M9.5 6.5C6.9 7.8 5.3 10 5.3 12.6c0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2zm8.2 0c-2.6 1.3-4.2 3.5-4.2 6.1 0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2z"/></svg>',
   ig:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9"><rect x="3.6" y="3.6" width="16.8" height="16.8" rx="5"/><circle cx="12" cy="12" r="3.9"/><circle cx="17.2" cy="6.8" r="1.1" fill="#fff" stroke="none"/></svg>',
   tt:'<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M16.3 3c.4 2.3 1.8 3.7 4 3.9v2.6c-1.3.1-2.5-.2-3.9-1v5.9c0 4.5-4.4 6.9-8 4.8-2.3-1.4-3-4.6-1.6-7 1.2-2 3.4-2.9 5.7-2.5v2.8c-.4-.1-.8-.2-1.2-.2-1.4 0-2.5 1.1-2.5 2.5s1.1 2.5 2.5 2.5c1.5 0 2.4-1 2.4-2.6V3z"/></svg>',
-  spotify:'<svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5" fill="#1DB954"/><g stroke="#0b2b17" stroke-width="1.9" stroke-linecap="round" fill="none"><path d="M6.8 9.1c3.4-1 7-.7 10.1.9"/><path d="M7.6 12.3c2.9-.8 5.9-.5 8.5.8"/><path d="M8.4 15.3c2.3-.6 4.7-.4 6.8.7"/></g></svg>',
-  apple:'<svg width="22" height="22" viewBox="0 0 24 24"><rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="#FA243C"/><path d="M15.6 6.1 10.2 7.4a.7.7 0 0 0-.55.7v6.15a2 2 0 1 0 1.3 1.87V9.5l4.1-1v3.6a2 2 0 1 0 1.3 1.87V6.78a.7.7 0 0 0-.85-.68z" fill="#fff"/></svg>',
-  soundcloud:'<svg width="22" height="22" viewBox="0 0 24 24"><g fill="#FF5500"><rect x="2" y="12" width="1.6" height="6" rx=".8"/><rect x="5" y="9.5" width="1.6" height="8.5" rx=".8"/><rect x="8" y="8" width="1.6" height="10" rx=".8"/><rect x="11" y="6.5" width="1.6" height="11.5" rx=".8"/><path d="M14.4 6.2c.5-.4 1.2-.6 1.9-.6a3.6 3.6 0 0 1 3.5 3 2.9 2.9 0 0 1-.6 5.7h-4.8a.6.6 0 0 1-.6-.6V6.7c0-.2.1-.4.2-.5z"/></g></svg>',
-  youtube:'<svg width="22" height="22" viewBox="0 0 24 24"><rect x="1.5" y="4.5" width="21" height="15" rx="4.6" fill="#FF0033"/><path d="M10 8.6v6.8l5.8-3.4z" fill="#fff"/></svg>',
-  shazam:'<svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5" fill="#0088FF"/><g stroke="#fff" stroke-width="1.7" stroke-linecap="round" fill="none"><path d="M9.8 9.4c1.6-1.1 3.3-.9 4.4.6"/><path d="M14.2 14.6c-1.6 1.1-3.3.9-4.4-.6"/></g></svg>'
+  spotify:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#1ED760"/><path d="M17.9 10.9c-3.2-1.9-8.5-2.1-11.6-1.2a.94.94 0 1 1-.54-1.8c3.56-1.08 9.41-.87 13.1 1.32a.94.94 0 0 1-.96 1.62zm-.1 2.85a.78.78 0 0 1-1.08.26c-2.67-1.64-6.73-2.11-9.88-1.16a.78.78 0 1 1-.46-1.5c3.6-1.09 8.08-.56 11.15 1.32.37.23.49.71.27 1.08zm-1.24 2.74a.63.63 0 0 1-.86.21c-2.33-1.43-5.27-1.75-8.73-.96a.63.63 0 0 1-.28-1.22c3.79-.87 7.04-.5 9.66 1.1.29.18.39.57.21.87z" fill="#000"/></svg>',
+  apple:'<svg width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="amg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FB5C74"/><stop offset="1" stop-color="#FA233B"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.2" fill="url(#amg)"/><path d="M16.9 5.6 10.3 7.1a.8.8 0 0 0-.63.79v6.55a2.35 2.35 0 1 0 1.35 2.12V9.53l5.3-1.2v4.32a2.35 2.35 0 1 0 1.35 2.12V6.38a.8.8 0 0 0-.97-.78z" fill="#fff"/></svg>',
+  soundcloud:'<svg width="24" height="24" viewBox="0 0 24 24"><g fill="#FF5500"><rect x="1.2" y="12.6" width="1.5" height="5.2" rx=".75"/><rect x="4" y="10.6" width="1.5" height="7.2" rx=".75"/><rect x="6.8" y="9" width="1.5" height="8.8" rx=".75"/><rect x="9.6" y="7.2" width="1.5" height="10.6" rx=".75"/><path d="M13 6.9c.72-.6 1.63-.95 2.63-.95a4.2 4.2 0 0 1 4.16 3.72A3.1 3.1 0 0 1 19.2 17.8h-6.1a.6.6 0 0 1-.6-.6V7.4c0-.2.09-.38.24-.5z"/></g></svg>',
+  youtube:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.6 7.2a2.9 2.9 0 0 0-2.03-2.05C18.77 4.66 12 4.66 12 4.66s-6.77 0-8.57.49A2.9 2.9 0 0 0 1.4 7.2C.92 9 .92 12 .92 12s0 3 .48 4.8a2.9 2.9 0 0 0 2.03 2.05c1.8.49 8.57.49 8.57.49s6.77 0 8.57-.49a2.9 2.9 0 0 0 2.03-2.05c.48-1.8.48-4.8.48-4.8s0-3-.48-4.8z" fill="#FF0000"/><path d="M9.8 15.3 15.4 12 9.8 8.7z" fill="#fff"/></svg>',
+  shazam:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#0088FF"/><g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M9.4 15.4c-1.5-1.1-1.8-3.2-.7-4.7l2.2-3c1.1-1.5 3.2-1.8 4.7-.7"/><path d="M14.6 8.6c1.5 1.1 1.8 3.2.7 4.7l-2.2 3c-1.1 1.5-3.2 1.8-4.7.7"/></g></svg>',
 };
 /* the wave squiggle inside the orb */
 function orbGlyph(){return '<svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13c2.4 0 2.4-7 4.8-7s2.4 12 4.8 12 2.4-9 4.8-9S19.8 13 21 13"/></svg>';}
@@ -420,6 +512,26 @@ var live=document.getElementById('live'), scanbox=document.getElementById('scanb
 function say(html){live.style.opacity=0; setTimeout(function(){live.innerHTML=html; live.style.opacity=1;},90);}
 function saying(txt){say(txt);}
 function headline(t){document.getElementById('listening').textContent=t;}
+/* Progress reflects REAL milestones, not a timer: fetch -> song named -> edit hunt ->
+   done. Between milestones it creeps slowly toward the next one and stops there, so it
+   keeps moving without ever claiming progress the engine has not actually made. */
+var pgNow=0, pgCap=0, pgTimer=null;
+function pgPaint(){
+  var v=pgNow.toFixed(0)+'%';
+  ['progbar','progbar2'].forEach(function(id){var b=document.getElementById(id); if(b) b.style.width=v;});
+  ['progpct','progpct2'].forEach(function(id){var t=document.getElementById(id); if(t) t.textContent=v;});
+}
+function setProg(pct, cap, label){
+  pgNow=Math.max(pgNow,pct); pgCap=cap;
+  if(label){['progtxt','progtxt2'].forEach(function(id){var l=document.getElementById(id); if(l) l.textContent=label;});}
+  pgPaint();
+  clearInterval(pgTimer);
+  pgTimer=setInterval(function(){
+    if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.15,(pgCap-pgNow)*0.045); pgPaint(); }
+  }, 400);
+}
+function pgReset(){clearInterval(pgTimer); pgNow=0; pgCap=0; pgPaint();}
+function pgDone(){clearInterval(pgTimer); pgNow=100; pgPaint();}
 function showChip(p,sub){
   scanbox.innerHTML='<div class="chip"><span class="ci">'+(p==='instagram'?IC.ig:IC.tt)+'</span>'+
     '<span class="ct"><b>Shared from '+(p==='instagram'?'Instagram':'TikTok')+'</b><span>'+esc(sub||'')+'</span></span></div>';}
@@ -467,25 +579,237 @@ function renderResult(d,partial){
   if(ex){shelf='<div class="sect">The exact version playing</div><div class="list">'+trackRow(ex,true)+'</div>';
     var others=cands.filter(function(c){return c.url!==ex.url;});
     if(others.length) shelf+='<div class="sect">Other versions</div><div class="list">'+others.slice(0,5).map(function(c){return trackRow(c,false);}).join('')+'</div>';}
-  else if(partial){shelf='<div class="sect">Digging for the exact version…</div>';}
+  else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
+    '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
+    '<span class="pct" id="progpct2">0%</span></div>'+
+    '<div class="prog"><i id="progbar2"></i></div></div>';}
   else{shelf='<div class="sect">No separate edit found. This looks like the track played straight.</div>';}
-  var plat='<div class="sect">Add to playlist</div><div class="plat">'+
-    prow('Spotify',d.base_song,d.base_artist,'spotify')+
-    prow('Apple Music',d.base_song,d.base_artist,'apple')+
-    prow('SoundCloud',d.base_song,d.base_artist,'soundcloud')+
-    prow('YouTube',d.base_song,d.base_artist,'youtube')+
-    (d.shazam?'<a class="prow" href="'+esc(d.shazam)+'" target="_blank" rel="noopener"><span class="pi">'+IC.shazam+'</span><span class="pn">Shazam</span><span class="pp">'+IC.open+'</span></a>':'')+
-    '<button class="prow save" id="save"><span class="pi">'+IC.save+'</span><span class="pn">Save to library</span></button></div>';
+  // AUTO-PLAYLIST. Scan = saved. The screen CONFIRMS the save rather than asking for it,
+  // so "add to other playlists" becomes the optional extra tap instead of the required
+  // one. Honest wording when only the original exists: some edits live solely as IG
+  // audio or an unofficial SoundCloud upload and cannot be written to a music service,
+  // so we say plainly that the exact version was identified and the original was saved.
+  var exactSavable = !!(ex && (ex.source||'').toLowerCase()!=='soundcloud');
+  var savedLine = (ex && !exactSavable)
+      ? 'Exact version identified, original saved'
+      : 'Your playlist';
+  // If the user turned auto-save off, nothing was written - so the card must not claim
+  // it was. It becomes a neutral one-tap Save instead of a green confirmation.
+  var on = autoOn();
+  var card = on
+    ? '<div class="savecard"><span class="tick">'+IC.tick+'</span><div>'+
+        '<b>Saved to Found with Addify</b>'+
+        '<span id="savesub">'+esc(savedLine)+' · '+songs(loadCrate().length)+'</span></div></div>'
+    : '<button class="savecard off" id="savebtn"><span class="tick">'+IC.plus+'</span><div>'+
+        '<b>Save to Found with Addify</b>'+
+        '<span id="savesub">Auto-save is off</span></div></button>';
+  var pv = (ex&&ex.url) || d.shazam || '';
+  var plat=card+
+    '<div class="secrow">'+
+      (pv ? '<a class="secbtn" id="prevbtn" href="'+esc(pv)+'" target="_blank" rel="noopener">'+IC.play+'<span>Preview</span></a>'
+          : '<span class="secbtn dim">'+IC.play+'<span>No preview</span></span>')+
+      '<button class="secbtn" id="otherbtn">'+IC.plus+'<span>Other playlist</span></button>'+
+      '<button class="secbtn" id="likebtn">'+IC.heart+'<span>Like</span></button>'+
+    '</div>'+
+    '<div class="otherwrap" id="otherwrap" hidden><div class="sect">Add to another playlist</div><div class="plat">'+
+      prow('Spotify',d.base_song,d.base_artist,'spotify')+
+      prow('Apple Music',d.base_song,d.base_artist,'apple')+
+      prow('SoundCloud',d.base_song,d.base_artist,'soundcloud')+
+      prow('YouTube',d.base_song,d.base_artist,'youtube')+
+    '</div></div>'+
+    '<div class="autonote">Auto-save is '+(on?'on':'off')+' · <button id="autobtn">change in settings</button></div>';
   var hints=(d.comment_hints||[]).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
   result.innerHTML='<div class="card">'+head+clip+hero+'<canvas class="reccanvas" id="reccanvas"></canvas>'+shelf+plat+quotes+'</div>';
   paintRecCanvas();
-  var sv=document.getElementById('save'); if(sv) sv.onclick=function(){saveToCrate(d,sv);};
+  autoSave(d);                                   // scan = saved, no tap required
+  var ob=document.getElementById('otherbtn');
+  if(ob) ob.onclick=function(){var w=document.getElementById('otherwrap'); w.hidden=!w.hidden;
+    ob.classList.toggle('on', !w.hidden);};
+  var lb=document.getElementById('likebtn');
+  if(lb) lb.onclick=function(){lb.classList.toggle('on');
+    lb.innerHTML=(lb.classList.contains('on')?IC.heartfill:IC.heart)+'<span>Like</span>';};
+  var ab=document.getElementById('autobtn');
+  if(ab) ab.onclick=function(){
+    openSheet();};
+  // Auto-save off: one tap saves this match without turning the setting back on.
+  var sb=document.getElementById('savebtn');
+  if(sb) sb.onclick=function(){
+    saveOne(d);
+    sb.classList.remove('off');
+    sb.querySelector('.tick').innerHTML=IC.tick;
+    sb.querySelector('b').textContent='Saved to Found with Addify';
+    sb.querySelector('#savesub').textContent=savedLine+' · '+songs(loadCrate().length);
+    sb.disabled=true;};
 }
+function songs(n){return n+(n===1?' song':' songs');}
 function paintRecCanvas(){var c=document.getElementById('reccanvas'); if(!c||!W.amp.length) return;
   var dpr=Math.min(devicePixelRatio||1,2), w=c.clientWidth, h=c.clientHeight||86;
   c.width=w*dpr; c.height=h*dpr; var g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
   ribbon(g,w,h,W.amp,W.lo,W.hi,W.centroid,bassAmt,0.96);}
+
+/* ==================== SPOTIFY: sign in + write the playlist ====================
+   Authorization Code with PKCE. No client secret is used or stored: a secret in a page
+   anyone can View Source on is not a secret, and PKCE is exactly the flow Spotify
+   documents for public clients. The verifier is generated per attempt, the challenge is
+   its SHA-256, and only the verifier can redeem the code - so intercepting the redirect
+   alone is useless.
+
+   SETUP (one time, needs Roham's own Spotify account - I cannot create the app for him):
+     1. developer.spotify.com/dashboard -> Create app
+     2. Add redirect URIs, exactly, including the trailing slash:
+          http://127.0.0.1:8788/       and, for the TV,  http://192.168.0.13:8788/
+        Spotify permits plain http ONLY for loopback/private addresses like these.
+     3. Copy the Client ID into Addify's settings. That is all that is needed.
+   Scopes: playlist-modify-private/public to write, playlist-read-private to find an
+   existing "Found with Addify" instead of making duplicates, ugc-image-upload for the
+   branded cover. */
+var SP = (function(){
+  var LS={id:'addify-sp-id', tok:'addify-sp-tok', ref:'addify-sp-ref',
+          exp:'addify-sp-exp', ver:'addify-sp-ver', pl:'addify-sp-playlist'};
+  var SCOPES='playlist-modify-private playlist-modify-public playlist-read-private ugc-image-upload';
+  function g(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+  function set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
+  // Addify's own Spotify app (dashboard: developer.spotify.com/dashboard). This is a
+  // PUBLIC identifier, not a credential - the PKCE flow exists precisely so a browser
+  // client needs no secret, and Spotify shows this ID to anyone who starts a login. The
+  // settings field can still override it, which is what you want for testing against a
+  // different app.
+  var DEFAULT_CLIENT_ID='41320c87000f433394ec8a500c153301';
+  function clientId(){return g(LS.id)||DEFAULT_CLIENT_ID;}
+  function redirect(){return location.origin+'/';}
+  function connected(){return !!g(LS.tok);}
+
+  function rand(n){var a=new Uint8Array(n); crypto.getRandomValues(a);
+    return Array.from(a).map(function(x){return ('0'+(x%36).toString(36)).slice(-1);}).join('');}
+  function b64url(buf){var b=String.fromCharCode.apply(null,new Uint8Array(buf));
+    return btoa(b).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+
+  function login(){
+    var id=clientId();
+    if(!id){alert('Add your Spotify Client ID in settings first.');return;}
+    var v=rand(64); set(LS.ver,v);
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)).then(function(h){
+      location.href='https://accounts.spotify.com/authorize?'+new URLSearchParams({
+        client_id:id, response_type:'code', redirect_uri:redirect(),
+        code_challenge_method:'S256', code_challenge:b64url(h), scope:SCOPES}).toString();
+    });
+  }
+  function logout(){[LS.tok,LS.ref,LS.exp,LS.pl].forEach(function(k){set(k,null);});}
+
+  function token(body){
+    return fetch('https://accounts.spotify.com/api/token',{method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams(body).toString()}).then(function(r){return r.json();})
+      .then(function(j){
+        if(!j.access_token) throw new Error(j.error_description||j.error||'token failed');
+        set(LS.tok,j.access_token);
+        if(j.refresh_token) set(LS.ref,j.refresh_token);
+        set(LS.exp, String(Date.now()+((j.expires_in||3600)-60)*1000));
+        return j.access_token;});
+  }
+  /* Runs on page load: Spotify sends the user back here with ?code=. */
+  function finishLogin(){
+    var q=new URLSearchParams(location.search), code=q.get('code');
+    if(!code) return Promise.resolve(false);
+    history.replaceState({},'',location.pathname);
+    return token({client_id:clientId(), grant_type:'authorization_code', code:code,
+                  redirect_uri:redirect(), code_verifier:g(LS.ver)||''})
+      .then(function(){return true;})
+      .catch(function(e){console.warn('spotify login failed',e); return false;});
+  }
+  function fresh(){
+    if(!g(LS.tok)) return Promise.reject(new Error('not connected'));
+    if(Date.now() < +(g(LS.exp)||0)) return Promise.resolve(g(LS.tok));
+    if(!g(LS.ref)) return Promise.reject(new Error('expired'));
+    return token({client_id:clientId(), grant_type:'refresh_token', refresh_token:g(LS.ref)});
+  }
+  function api(path, opt){
+    return fresh().then(function(t){
+      opt=opt||{}; opt.headers=Object.assign({Authorization:'Bearer '+t,
+        'Content-Type':'application/json'}, opt.headers||{});
+      return fetch('https://api.spotify.com/v1'+path, opt);})
+      .then(function(r){
+        if(r.status===204) return null;
+        if(!r.ok) return r.json().then(function(j){throw new Error((j.error&&j.error.message)||r.status);});
+        return r.json();});
+  }
+  /* Reuse an existing "Found with Addify" if the user already has one - re-running
+     onboarding should not litter their library with duplicates. */
+  function playlist(){
+    var known=g(LS.pl); if(known) return Promise.resolve(known);
+    return api('/me/playlists?limit=50').then(function(j){
+      var hit=(j.items||[]).filter(function(p){return p.name==='Found with Addify';})[0];
+      if(hit){set(LS.pl,hit.id); return hit.id;}
+      return api('/me').then(function(me){
+        return api('/users/'+me.id+'/playlists',{method:'POST',body:JSON.stringify({
+          name:'Found with Addify',
+          description:'Every song I found while scrolling · made with Addify',
+          public:false})});
+      }).then(function(p){set(LS.pl,p.id); return p.id;});
+    });
+  }
+  /* Find the track on Spotify. The EXACT edit usually is not there (it lives on
+     SoundCloud/YouTube), so we search the base song and are honest in the UI that the
+     original is what got saved. */
+  function findTrack(song,artist){
+    var q=encodeURIComponent((song||'')+(artist?' artist:'+artist:''));
+    return api('/search?type=track&limit=1&q='+q).then(function(j){
+      var t=((j.tracks||{}).items||[])[0]; return t?t.uri:null;});
+  }
+  function add(song,artist){
+    return playlist().then(function(pid){
+      return findTrack(song,artist).then(function(uri){
+        if(!uri) throw new Error('not on Spotify');
+        return api('/playlists/'+pid+'/tracks',{method:'POST',
+          body:JSON.stringify({uris:[uri]})}).then(function(){return true;});});});
+  }
+  function count(){
+    var pid=g(LS.pl); if(!pid) return Promise.resolve(null);
+    return api('/playlists/'+pid+'?fields=tracks(total)')
+      .then(function(j){return (j.tracks||{}).total;}).catch(function(){return null;});
+  }
+  return {login:login, logout:logout, connected:connected, finishLogin:finishLogin,
+          add:add, count:count, clientId:clientId,
+          setClientId:function(v){set(LS.id,(v||'').trim());}};
+})();
+
+/* Writes the match straight into the local "Found with Addify" list. Respects the
+   visible opt-out: people are protective of their library, so the toggle is real. */
+/* The local write, on its own so the manual Save button can reuse it.
+   Returns true when this match was actually new. */
+function saveOne(d){
+  if(!d || !d.base_song) return false;
+  var a=loadCrate();
+  var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
+            url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||''};
+  if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return false;
+  a.unshift(item); storeCrate(a); return true;
+}
+function autoSave(d){
+  if(!d || !d.base_song) return;
+  if(!autoOn()) return;
+  var isNew=saveOne(d), a=loadCrate();
+  var sub=document.getElementById('savesub');
+  if(sub) sub.textContent=sub.textContent.replace(/\d+ songs?/, songs(a.length));
+  if(!SP.connected() || !isNew) return;
+  // Write into the user's real Spotify playlist. The EXACT edit usually is not on
+  // Spotify at all (it lives on SoundCloud/YouTube), so what lands there is the base
+  // track - and the card says so rather than implying the edit was saved.
+  SP.add(d.base_song, d.base_artist).then(function(){
+    return SP.count();
+  }).then(function(n){
+    var sub=document.getElementById('savesub'); if(!sub) return;
+    var head=document.querySelector('.savecard b');
+    if(head) head.textContent='Saved to Found with Addify';
+    sub.textContent='Your playlist on Spotify · '+songs(n==null?a.length:n);
+  }).catch(function(e){
+    var sub=document.getElementById('savesub'); if(!sub) return;
+    sub.textContent=(String(e.message||e).indexOf('not on Spotify')>=0)
+      ? 'Saved here · not available on Spotify'
+      : 'Saved here · Spotify sync failed';
+  });
+}
 
 /* ---------- recent finds ---------- */
 var SQ=['linear-gradient(140deg,#FF6B8B,#F9407B)','linear-gradient(140deg,#4BE8B0,#12A594)','linear-gradient(140deg,#FFBE5C,#FF8A3D)','linear-gradient(140deg,#7B6BFF,#5B4BE8)'];
@@ -532,24 +856,47 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   busy=true; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,44));
   headline('Listening…'); saying('Reading the clip');
+  pgReset(); setProg(6, 30, 'Reading the clip');
   call('/base',p.url).then(function(d){
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
     if(d&&d.result==='found'&&d.base_song){
       setSpeedFromLabel(d.speed);
       if(d.handle) showChip(p.host,'@'+d.handle+(d.secs?' · '+d.secs+'s':''));
       headline(d.base_song); saying('Checking against edits and remixes');
+      setProg(45, 58, 'Song identified');
       renderResult(d, d.edits_pending);
       if(d.edits_pending){setState('scanning'); saying('Checking against edits and remixes');
+        setProg(60, 94, 'Hunting the exact version');
         return call('/edits',p.url).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
 }
-function finish(d){stopClock(); busy=false;
+function finish(d){stopClock(); busy=false; pgDone();
   document.getElementById('gobtn').removeAttribute('disabled');
   hideChip();
   if(d&&d.base_song){setState('locked'); paintRecCanvas();}
   else {setState('locked'); document.getElementById('matchttl').textContent='No match';}}
+
+/* ---------- settings ---------- */
+function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
+function paintSheet(){
+  document.getElementById('togauto').classList.toggle('on', autoOn());
+  document.getElementById('spid').value=SP.clientId();
+  document.getElementById('rdu').textContent=location.origin+'/';
+  var on=SP.connected();
+  document.getElementById('spsub').textContent=on?'Connected · saving to Found with Addify':'Not connected';
+  document.getElementById('spbtn').textContent=on?'Disconnect':'Connect';
+}
+function openSheet(){document.getElementById('sheet').hidden=false; paintSheet();}
+document.getElementById('sheetx').innerHTML=IC.x;
+document.getElementById('sheetx').onclick=function(){document.getElementById('sheet').hidden=true;};
+document.getElementById('sheet').onclick=function(e){if(e.target.id==='sheet') e.target.hidden=true;};
+document.getElementById('togauto').onclick=function(){
+  try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} paintSheet();};
+document.getElementById('spid').onchange=function(){SP.setClientId(this.value); paintSheet();};
+document.getElementById('spbtn').onclick=function(){
+  if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
 function goHome(){setState('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
@@ -563,6 +910,7 @@ document.getElementById('share').onclick=function(){
 
 /* ---------- boot ---------- */
 renderCrate(); setState('idle');
+SP.finishLogin().then(function(ok){ if(ok){ openSheet(); } });
 </script>
 </body>
 </html>

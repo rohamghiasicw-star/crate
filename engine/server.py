@@ -15,7 +15,7 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, re, time
+import asyncio, json, os, re, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -148,7 +148,12 @@ def _phase1(url, key, t0):
     res = {
         "result": "pending",
         "platform": src["platform"],
-        "credit": "%s - %s" % (src.get("credit_title"), src.get("credit_author")),
+        # a dropped credit must not render as the literal string "None - None": it is
+        # dropped precisely when TikTok credited a sound that isn't in the video
+        # (see get_source's sound_mismatch), and on Instagram it's simply absent.
+        "credit": ("%s - %s" % (src.get("credit_title"), src.get("credit_author"))
+                   if src.get("credit_title") or src.get("credit_author")
+                   else "original sound"),
         "is_original": src["is_original"],
         "desc": (src.get("desc") or "")[:120],
         "handle": src.get("handle"),
@@ -156,6 +161,17 @@ def _phase1(url, key, t0):
         "url": key,
         "art": None,
     }
+
+    # how well TikTok's credited sound matches the audio actually in the video. Always
+    # carried, not just on a mismatch, so the healthy 1.000 case is visible too.
+    if src.get("sound_match_core") is not None:
+        res["sound_match_core"] = src.get("sound_match_core")
+    if src.get("sound_mismatch"):
+        # the answer came from the video's own audio, not the sound TikTok credits -
+        # worth carrying so a surprising result is explainable rather than mysterious.
+        res["sound_mismatch"] = True
+        res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
+                                             src.get("credited_author"))
 
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
     res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
@@ -172,6 +188,21 @@ def _phase1(url, key, t0):
                 res["comment_hints"] = hint_texts
         except Exception:
             pass
+        # THE SOUND PAGE. If this clip's own comments named nothing, go where the answer
+        # actually is. Roham's manual technique (captured as the tiktok-sound-id skill):
+        # an "original sound" aggregates every video that used it, and the biggest of
+        # those has already been asked "song?" and answered. The clip we are handed is
+        # often tiny - measured 277 comments against 5,153 on the top video of the same
+        # sound. Only runs when the clip's own comments came up empty, so it costs
+        # nothing on clips that already answered themselves.
+        if not hint_texts and src.get("is_original"):
+            try:
+                hint_texts = E.strong_song_hints(E.viral_sound_comments(url)) or []
+                if hint_texts:
+                    res["comment_hints"] = hint_texts
+                    res["hints_from_sound_page"] = True
+            except Exception:
+                pass
 
     loop = asyncio.new_event_loop()
     try:
@@ -190,6 +221,15 @@ def _phase1(url, key, t0):
                 res["songs"] = [{"song": h["title"], "artist": h["artist"],
                                  "at": round(h.get("at", 0)), "shazam": h.get("url"),
                                  "art": h.get("art")} for h in fp["songs"]]
+            # TWO SONGS, NOT ONE. Carried in phase 1 so the UI can say "A x B" in the
+            # fast half - the section hunt in phase 2 only fills in WHICH upload each
+            # section came from. `shape` is layered (both songs play at once, so the
+            # whole clip is one mashup recording) or sequential (back to back, with a
+            # boundary). Nothing here is an answer on its own; verify() still decides.
+            if fp.get("mashup"):
+                res["mashup"] = fp["mashup"]
+                res["sections"] = [dict(s, exact=None, candidates=[]) for s in
+                                   (fp.get("sections") or [])]
 
         named_edit = E.names_an_edit(src.get("credit_title"), src.get("credit_author"))
         # RELIABLE speed only: the counter-speed sweep (Shazam couldn't match
@@ -244,6 +284,79 @@ def _phase1(url, key, t0):
         loop.close()
 
 
+# Section-hunt budget. A section hunt is a real search, so it is capped harder than the
+# whole-clip one (max_dl 14) and never runs on a single-song clip.
+SECTION_MAX_DL = 8
+SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
+
+
+def _cands_of(edit, n=6):
+    """The verified candidates of a find_edit result, in the shape the UI already eats."""
+    out = []
+    for c in [c for c in edit.get("ranked", []) if c.get("editmatch")][:n]:
+        out.append({"title": c.get("title", ""), "uploader": c.get("uploader", ""),
+                    "source": c.get("source", ""), "url": c.get("url", ""),
+                    "score": round(c.get("final", c.get("score", 0)), 3),
+                    "plays": c.get("plays", 0),
+                    "bass": round(c.get("bass_delta", 0.0), 1)})
+    return out
+
+
+def _hunt_sections(loop, ctx, whole_exact, whole_cands):
+    """Hunt EACH section against its OWN audio.
+
+    This is the thing that cracked the Kesha "Blow" clip: whole-clip verification had
+    failed outright, and searching the FIRST SECTION alone returned the real hoodtrap
+    flip at core 1.000. On a two-song clip a whole-clip verify is comparing against
+    audio that is half a different record, so a genuine match for one half scores like a
+    near-miss and gets dropped at CORE_KEEP. Cutting the section out removes the
+    interference.
+
+    Still a nudge, never a bypass - each section's candidates go through the SAME
+    find_edit -> verify() path, and only c["editmatch"] candidates are surfaced."""
+    src, fp = ctx["src"], ctx["fp"]
+    rows, tmp = [], tempfile.mkdtemp()
+    try:
+        for s in (fp.get("sections") or []):
+            row = dict(s, exact=None, candidates=[])
+            if s.get("layered"):
+                # Layered means both songs play at once for the whole clip, so the clip
+                # IS one continuous mashup recording and the section's own audio is the
+                # whole clip - already hunted above, with the paired "A x B mashup"
+                # query. Cutting it up would only destroy evidence and pay twice.
+                row.update(exact=whole_exact, candidates=whole_cands,
+                           hunted="whole clip (layered - one recording)")
+                rows.append(row); continue
+            a = float(s.get("start") or 0.0)
+            b = float(s.get("end") or 0.0)
+            if b - a < SECTION_MIN_SECS:
+                row["hunted"] = "skipped (%.1fs of audio)" % (b - a)
+                rows.append(row); continue
+            t = time.time()
+            wav = os.path.join(tmp, "sec_%.2f.wav" % a)
+            try:
+                E.cut(src["audio"], wav, a, 1.0, span=b - a)
+                e = loop.run_until_complete(E.find_edit(
+                    wav, src.get("credit_title"), src.get("credit_author"),
+                    s.get("song"), s.get("artist"), ctx["edit_label"],
+                    known_dir=ctx["mdir"], handle=src.get("handle"),
+                    max_dl=SECTION_MAX_DL, hints=[s.get("song")] if s.get("song") else None,
+                    shazam_reliable=ctx["shazam_reliable"]))
+            except Exception as ex:
+                row["hunted"] = "failed (%s)" % type(ex).__name__
+                rows.append(row); continue
+            cands = _cands_of(e)
+            row.update(candidates=cands, exact=(cands[0] if cands else None),
+                       decisive=bool(e.get("decisive")),
+                       hunted="own audio %.1f-%.1fs" % (a, b),
+                       secs=round(time.time() - t, 1))
+            _cleanup(e.get("tmp"))
+            rows.append(row)
+    finally:
+        _cleanup(tmp)
+    return rows
+
+
 def _phase2(ctx):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
     on SoundCloud and YouTube and compare each against the clip's actual audio (same
@@ -269,11 +382,13 @@ def _phase2(ctx):
                 t = h.get("title")
                 if t and t != base_title:
                     search_hints.append(t)
+            mash = fp.get("mashup") if fp else None
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
                 handle=src.get("handle"), hints=search_hints,
-                shazam_reliable=shazam_reliable))
+                shazam_reliable=shazam_reliable,
+                pair=(mash or {}).get("pair")))
             rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
             # ONLY surface a candidate that actually VERIFIES as the same recording
             # (editmatch). A plain track then correctly reports no edit instead of a
@@ -290,6 +405,11 @@ def _phase2(ctx):
             if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
+
+            # PER-SECTION HUNT. Only ever runs on a clip the mashup pass proved holds
+            # two songs, so a single-song lookup pays nothing for this.
+            if mash:
+                res["sections"] = _hunt_sections(loop, ctx, exact, candidates)
 
             # SPEED. Measure the clip's TRUE speed against GENUINE normal-speed originals
             # via the bass-robust high-pass consensus - NEVER derive the magnitude from a
@@ -574,6 +694,10 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("crate engine on http://127.0.0.1:%d  (tiktok + instagram + soundcloud + youtube)" % PORT)
+    print("addify engine on http://%s:%d  (tiktok + instagram + soundcloud + youtube)" % (os.environ.get("BIND","127.0.0.1"), PORT))
     print("  GET /find?url=<tiktok or instagram link>")
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    # BIND defaults to loopback. Set BIND=0.0.0.0 to reach it from another device on
+    # the same wifi (phone, TV) at http://<this-mac-LAN-IP>:PORT. Only do that on a
+    # network you trust: there is no auth on this server.
+    HOST = os.environ.get("BIND", "127.0.0.1")
+    ThreadingHTTPServer((HOST, PORT), H).serve_forever()
