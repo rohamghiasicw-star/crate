@@ -1857,6 +1857,126 @@ def _cleanup_dir(d):
         pass
 
 
+
+# ------------------------------------------------- direct candidate fetch (no subprocess)
+# Every candidate used to spawn its own yt-dlp process purely to pull 20s of audio, and
+# that process START alone is ~2s before a byte moves. Measured over 16 concurrent tasks:
+# subprocess 11.31s wall / 123.9s cumulative thread time, direct fetch 3.03s / 37.5s.
+# Same work, 8.3s off the download stage. Accuracy held in the prototype: both true
+# matches scored 1.0000 on old and new paths, the largest drift anywhere was 0.047 on a
+# pair already at 0.19, and every produced file decoded to exactly 20.0s.
+#
+# Resolve in-process, HTTP-Range only the head of the file, one ffmpeg to wav. ANY
+# failure falls through to the original subprocess, which is preserved verbatim - this
+# is a fast path, not a replacement, because a candidate we fail to fetch is a candidate
+# we silently score 0 and drop.
+_YDL_INPROC = {}
+_SC_CID = {}
+
+
+def _ydl_inproc(is_yt):
+    key = "yt" if is_yt else "sc"
+    if key not in _YDL_INPROC:
+        import yt_dlp
+        o = {"quiet": True, "no_warnings": True, "skip_download": True,
+             "noplaylist": True, "cachedir": False}
+        if is_yt:
+            o["extractor_args"] = {"youtube": {"player_client": ["android"]}}
+        _YDL_INPROC[key] = yt_dlp.YoutubeDL(o)
+    return _YDL_INPROC[key]
+
+
+def _sc_client_id(timeout=12):
+    if "id" in _SC_CID:
+        return _SC_CID["id"]
+    html = _cffi_get("https://soundcloud.com/discover", timeout=timeout).text
+    for js in reversed(re.findall(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)):
+        try:
+            t = _cffi_get(js, timeout=timeout).text
+        except Exception:
+            continue
+        m = re.search(r'client_id\s*[:=]\s*"([A-Za-z0-9]{20,})"', t)
+        if m:
+            _SC_CID["id"] = m.group(1)
+            return m.group(1)
+    raise RuntimeError("no soundcloud client_id")
+
+
+def _sc_media_url(track_url, timeout=12):
+    """SoundCloud api-v2 -> (progressive media url, kbps, duration_s)."""
+    cid = _sc_client_id()
+    api = ("https://api-v2.soundcloud.com/resolve?url=%s&client_id=%s"
+           % (urllib.parse.quote(track_url, safe=""), cid))
+    j = json.loads(_cffi_get(api, timeout=timeout).text)
+    trans = (j.get("media") or {}).get("transcodings") or []
+    prog = [t for t in trans if (t.get("format") or {}).get("protocol") == "progressive"]
+    if not prog:
+        raise RuntimeError("no progressive transcoding")
+    j2 = json.loads(_cffi_get(prog[0]["url"] + "?client_id=" + cid, timeout=timeout).text)
+    return j2["url"], 128, (j.get("duration") or 0) / 1000.0
+
+
+def _range_to_wav(media_url, dst, kbps, seconds, budget):
+    """Range-pull roughly `seconds` worth of bytes, decode to wav, verify the LENGTH.
+
+    Sizing from bitrate rather than a fixed byte count: a hardcoded range happened to
+    decode to a full 20s on the four prototype candidates, but a short decode is the
+    failure mode that quietly moves scores, so the produced file is checked and a short
+    one is rejected (the caller then falls back to the subprocess)."""
+    want = int((kbps or 128) * 1000 / 8 * (seconds + 4))
+    want = max(400_000, min(want, 2_000_000))
+    import curl_cffi.requests as creq
+    r = creq.get(media_url, headers={"Range": "bytes=0-%d" % (want - 1)},
+                 impersonate="chrome", timeout=budget)
+    if r.status_code not in (200, 206) or len(r.content) < 20_000:
+        raise RuntimeError("range %s / %d bytes" % (r.status_code, len(r.content)))
+    part = dst + ".part"
+    with open(part, "wb") as f:
+        f.write(r.content)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-t", str(seconds),
+                        "-i", part, "-vn", "-ac", "1", dst],
+                       capture_output=True, timeout=budget, check=True)
+    finally:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+    if not os.path.exists(dst) or os.path.getsize(dst) < 20_000:
+        raise RuntimeError("decode too small")
+    got = duration_of(dst) or 0
+    if got < seconds * 0.9:                       # short decode -> do not trust it
+        raise RuntimeError("short decode %.1fs < %ds" % (got, seconds))
+    return dst
+
+
+def _dl_direct(url, dst, seconds, budget):
+    """Fast path. Raises on any problem so the caller can fall back."""
+    t0 = time.time()
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    if "soundcloud.com" in url:
+        media, kbps, _dur = _sc_media_url(track_url=url)
+    else:
+        info = _ydl_inproc(is_yt).extract_info(url, download=False)
+        fmts = [f for f in (info.get("formats") or []) if f.get("url")]
+        aud = [f for f in fmts
+               if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")]
+        pool = aud or fmts
+        if not pool:
+            raise RuntimeError("no formats")
+        pool.sort(key=lambda f: (f.get("abr") or f.get("tbr") or 0))
+        best = pool[-1]
+        if (best.get("protocol") or "").startswith("m3u8"):
+            raise RuntimeError("hls, not range-able")   # subprocess handles these
+        media, kbps = best["url"], (best.get("abr") or best.get("tbr") or 128)
+    left = budget - (time.time() - t0)
+    if left < 2:
+        raise RuntimeError("resolve ate the budget")
+    # NOTE: a resolved googlevideo url carries an expiry, so resolve and fetch must stay
+    # in the same call - never cache a resolved media url between lookups.
+    return _range_to_wav(media, dst, kbps, seconds, left)
+
+
 def dl_clip(url, dst, seconds=20, timeout=15):
     """Grab ~`seconds` of a candidate as wav. SoundCloud needs the android player client
     exemption; YouTube needs it too (web formats want a PO token now).
@@ -1881,6 +2001,10 @@ def dl_clip(url, dst, seconds=20, timeout=15):
     against just 4.0s TOTAL for all 25 verifications. The analysis was never slow, the
     downloads were. A candidate that hasn't delivered in 15s is dead weight when there
     are 20+ others in flight."""
+    try:
+        return _dl_direct(url, dst, seconds, timeout)
+    except Exception:
+        pass                                     # fall through to the proven subprocess
     is_yt = "youtube.com" in url or "youtu.be" in url
     args = YTDLP + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
                     "-o", dst.replace(".wav", ".%(ext)s"),
@@ -2250,8 +2374,19 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # Only words carrying actual identity should count.
     key_terms = {t for t in key_terms
                  if t and len(t) >= 3 and not EDIT_WORDS.search(t)}
+    # SONG-TITLE COVERAGE, separate from title_hits. title_hits pools the song title AND
+    # the credit, so a single shared word can look like a title match: a Lil Baby "Dead
+    # Fresh" clip crowned Pharrell's "Fresh Ash (Extended Version)" at core 0.743 on the
+    # strength of the one word "fresh". What matters is what FRACTION of the song's own
+    # words a candidate carries - "Fresh Ash" has 1 of {dead, fresh}, a real upload has
+    # both - so score coverage, not presence.
+    song_terms = {t for t in _clean(core_title).lower().split()
+                  if len(t) >= 3 and t not in ORIGINAL_WORDS and not EDIT_WORDS.search(t)}
     for c in cands:
-        c["title_hits"] = sum(1 for t in key_terms if t in c["title"].lower())
+        low = c["title"].lower()
+        c["title_hits"] = sum(1 for t in key_terms if t in low)
+        c["song_cov"] = ((sum(1 for t in song_terms if t in low) / float(len(song_terms)))
+                         if song_terms else 1.0)
     # DOWNLOAD PRIORITY - the crux of "edits have fewer plays than originals". Sorting
     # by plays here downloads the popular ORIGINAL and its popular guitar/cover spins,
     # so the niche exact edit (tens-to-thousands of views) never reaches the verifier.
@@ -2437,7 +2572,16 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         clip_tilt = _verify._tilt_db(_verify._decode(clip_audio))
     except Exception:
         clip_tilt = 0.0
-    fam = [c.get("cand_tilt", 0.0) for c in keep if c.get("editmatch") and c.get("cand_tilt")]
+    # THE BASS FAMILY MUST BE THE RIGHT SONG. target_tilt is max(fam), so any candidate
+    # in fam can define the bass target - and then win bass_off for matching the target
+    # IT SET. On a Lil Baby "Dead Fresh" clip that handed the crown to Pharrell's "Fresh
+    # Ash" (core 0.698, half the title, cand_tilt 29.22 == target 29.2) over THREE
+    # correct uploads at core 1.000 and full title coverage sitting at 20.8-24.0dB.
+    # Restrict the family to candidates that actually carry the song's title; fall back
+    # to the old behaviour when none qualify, so this can only ever narrow the family.
+    _fam_src = [c for c in keep if c.get("editmatch") and c.get("cand_tilt")]
+    _titled_fam = [c for c in _fam_src if (c.get("song_cov") or 0) >= 0.6]
+    fam = [c.get("cand_tilt", 0.0) for c in (_titled_fam or _fam_src)]
     # BASELINE for the "is the clip missing bass that's really there" gap: the more
     # trustworthy of (the clip's own tilt, the OFFICIAL master's own tilt), not the
     # clip alone. The clip's reading can differ from EVERY real upload - even the
@@ -2587,10 +2731,12 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # one that names the song outranks one that only names the artist. Candidates that
     # DID clear strong_core are untouched - this only orders the rescued pile, and only
     # when there is a titled alternative to prefer.
-    _any_titled = any((c.get("title_hits") or 0) >= 1 for c in keep)
+    # "names the song" means CARRYING MOST OF ITS TITLE, not sharing one word with it.
+    _COV = 0.6
+    _any_titled = any((c.get("song_cov") or 0) >= _COV for c in keep)
 
     def _weak_untitled(c):
-        return (not c.get("strong_core")) and _any_titled and (c.get("title_hits") or 0) < 1
+        return (not c.get("strong_core")) and _any_titled and (c.get("song_cov") or 0) < _COV
 
     def rank_key(c):
         f = c.get("final", 0)

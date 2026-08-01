@@ -38,7 +38,12 @@ def _edit_worthy(src, fp):
         return True
     if fp and fp.get("rate", 1.0) != 1.0:
         return True
-    if E._is_named_credit(src.get("credit_title")):
+    # A credit that NAMES AN EDIT ("... (slowed + reverb)", "hoodtrap remix") is worth
+    # hunting. A credit that merely names a real licensed track is NOT: Shazam already
+    # gave the exact answer, and hunting it anyway is how a plain "Crave You - Flight
+    # Facilities" clip marked "as posted" came back crowned with a slowed+reverb upload
+    # it never used. This used to fire on ANY named credit, which is most of them.
+    if E.names_an_edit(src.get("credit_title"), src.get("credit_author")):
         return True
     return False
 
@@ -401,7 +406,19 @@ def _phase2(ctx):
                                    "score": round(c.get("final", c.get("score", 0)), 3),
                                    "plays": c.get("plays", 0),
                                    "bass": round(c.get("bass_delta", 0.0), 1)})
+            # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted
+            # by a rescue rather than earned on audio, and when every candidate is weak
+            # the least-bad one was still being displayed as "the exact version playing".
+            # Measured on a fresh 15-clip feed run: a Medasin clip crowned a 0.326 match
+            # and a Weeknd clip crowned FRANK SINATRA at 0.324 - both far under
+            # CORE_KEEP (0.50), i.e. the audio said "no match" and the UI said "found it".
+            # A confident wrong answer is worse than an honest miss, so below the bar we
+            # report the song and no exact version.
             top = verified[0] if verified else None
+            if top and (top.get("core") or 0) < E.CORE_KEEP:
+                res["weak_exact"] = round(top.get("core") or 0, 3)
+                top = None
+                candidates = []
             if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
