@@ -2738,6 +2738,10 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     def _weak_untitled(c):
         return (not c.get("strong_core")) and _any_titled and (c.get("song_cov") or 0) < _COV
 
+    # Did the AUDIO say this clip is transformed? edit_label is the caller's reliable
+    # speed call (Shazam counter-speed sweep / frequencyskew), not a title guess.
+    _clip_is_edit = bool(edit_label and edit_label.strip().lower() != "as posted")
+
     def rank_key(c):
         f = c.get("final", 0)
         # An upload that already matches the clip AS-IS (verify needed no speed
@@ -2830,11 +2834,35 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                                                        # candidate to compete, it doesn't
                                                        # mean it's as trustworthy as one
                                                        # that didn't need rescuing
+                speed_exact,                          # SPEED BEFORE BASS. Both answer
+                                                       # "which member of this family",
+                                                       # but speed is measured by the
+                                                       # bass-robust windowed lock while
+                                                       # bass_off rides on spectral tilt,
+                                                       # which slowing itself corrupts
+                                                       # (a 0.8x slow forges as much
+                                                       # apparent bass as a real 14dB
+                                                       # boost). Ranking bass first cost
+                                                       # three separate clips tonight:
+                                                       # Dougie crowned core 0.662 over
+                                                       # 1.000, Lil Baby 0.698 over three
+                                                       # 1.000s, and a STRUCT clip took
+                                                       # "(Dreamy + Extra Slowed)" over
+                                                       # two candidates sitting at
+                                                       # EXACTLY the clip's speed, all
+                                                       # three at core 1.000.
                 bass_off,                              # among equally-trustworthy matches,
                                                        # the clip's OWN bass family member
                 1 if _is_compilation(c) else 0,       # a set that CONTAINS it, never above it
-                1 if is_official_original(c) else 0,  # plain original after real edits
-                speed_exact,                          # the upload AT the clip's speed
+                # PLAIN-ORIGINAL PREFERENCE FLIPS WITH THE CLIP. Demoting the official
+                # original exists so an EDITED clip gets the edit, not the untouched
+                # master. On a clip the speed lock measured "as posted" that is exactly
+                # backwards, and it is why a plain Pooh Shiesty "FDO" clip was handed a
+                # 121-play "(1950s Inspired Soul Gospel Version)" and a plain "Meant To
+                # Be" clip was handed a slowed upload. If the clip is not an edit, the
+                # plain original is the answer, so prefer it instead of penalising it.
+                ((1 if is_official_original(c) else 0) if _clip_is_edit
+                 else (0 if is_official_original(c) else 1)),
                 -fq,                                  # recording x speed x bass
                 -c.get("plays", 0))                   # niche edits win on match, not plays
     ranked = sorted(keep, key=rank_key)
