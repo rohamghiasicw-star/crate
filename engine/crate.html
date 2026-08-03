@@ -13,6 +13,7 @@
   --text:#FFFFFF; --muted:#CFC4F5; --faint:#A294DC;
   --accent:#5B4BE8; --accent2:#8172FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
   --signal:#A855F7; --cool:#2DD4BF; --good:#2ED8A7;
+  --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
   --r-card:26px; --r-mid:18px; --r-pill:999px;
   --spring:cubic-bezier(.2,.9,.25,1.15);
   --shadow:0 24px 60px rgba(8,4,30,.55);
@@ -24,6 +25,7 @@
   --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
   --accent:#5B4BE8; --accent2:#7360FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
   --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E;
+  --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
   --shadow:0 20px 50px rgba(60,40,140,.16);
 }
 @media (prefers-color-scheme:light){
@@ -32,6 +34,7 @@
     --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
     --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
     --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E;
+    --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
     --shadow:0 20px 50px rgba(60,40,140,.16);
   }
 }
@@ -59,7 +62,9 @@ a{color:inherit;text-decoration:none}
   border:1px solid var(--line); box-shadow:var(--shadow);
   padding:20px 18px 24px; min-height:660px; display:flex; flex-direction:column;
   animation:rise .5s var(--spring) both; overflow:hidden;
+  transition:background-color .45s ease;
 }
+.app[data-state="scanning"]{background:var(--scan)}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -117,19 +122,83 @@ a{color:inherit;text-decoration:none}
 .subacts button{color:var(--accent2);font-weight:600}
 .subacts button:hover{text-decoration:underline}
 
-/* ---------- scanning ---------- */
+/* ---------- scanning ----------
+   The scan is a takeover, not a state of the home screen: the card drops to a darker
+   ground for the duration so the dial is the brightest thing on the phone. */
 #s-scan{align-items:stretch;justify-content:flex-start}
-#s-scan .mid{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:auto;margin-bottom:auto}
-.listening{font-size:21px;font-weight:700;letter-spacing:-.01em;margin-top:22px}
-.sub{font-size:13.5px;color:var(--muted);text-align:center}
-/* ---------- source chip + progress (scanning) ---------- */
-.chip{display:flex;align-items:center;gap:10px;width:100%;background:var(--raise);border-radius:var(--r-mid);
-  padding:11px 13px;border:1px solid var(--line);animation:pop .3s var(--spring) both}
-.chip .ci{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;
+#s-scan .ttl{text-transform:uppercase;letter-spacing:.17em;font-size:11px;font-weight:750;color:var(--faint)}
+/* The dial group centres in the slack but sits a little above true centre - on a tall
+   phone a dead-centre ring leaves the status text stranded in the middle of nothing. */
+#s-scan .mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:0;padding:0 0 4vh}
+.listening{font-size:20px;font-weight:720;letter-spacing:-.02em;margin-top:20px;text-align:center;
+  line-height:1.25;text-wrap:balance;transition:color .3s}
+.listening.ok{color:var(--good)}
+.sub{font-size:13px;color:var(--muted);text-align:center;line-height:1.45;margin-top:5px;min-height:19px;
+  transition:opacity .2s}
+
+/* ---------- source card ----------
+   The green "audio" tick is the one piece of state worth surfacing here: pulling the
+   audio off the link is the step most likely to fail, so confirming it succeeded is
+   real information, not decoration. It stays grey until the server actually returns
+   waveform data. */
+.chip{display:flex;align-items:center;gap:11px;width:100%;background:var(--raise);border-radius:16px;
+  padding:10px 11px;border:1px solid var(--line);animation:pop .3s var(--spring) both}
+.chip .th{width:42px;height:42px;border-radius:11px;flex:none;object-fit:cover;display:block;
+  background:linear-gradient(150deg,var(--raise2),var(--card))}
+.chip .ct{min-width:0;flex:1}
+.chip .ct b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:650}
+.chip .ct b .ci{flex:none;display:grid;place-items:center;width:16px;height:16px;border-radius:5px;
   background:linear-gradient(140deg,#F9407B,#B043E8)}
-.chip .ct{min-width:0}
-.chip .ct b{display:block;font-size:13.5px;font-weight:650}
-.chip .ct span{display:block;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip .ct b .ci svg{width:11px;height:11px}
+.chip .ct span{display:block;font-size:12px;color:var(--muted);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.abadge{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+  padding:4px 8px;border-radius:8px;background:var(--raise2);color:var(--faint);transition:.25s}
+.abadge.on{background:color-mix(in oklab,var(--good) 18%,transparent);color:var(--good);
+  animation:pop .3s var(--spring) both}
+.abadge svg{width:11px;height:11px}
+
+/* ---------- the dial ---------- */
+.dial{position:relative;width:206px;height:206px;display:grid;place-items:center;margin:0 auto}
+.dial svg.rings{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.dtrack{fill:none;stroke:var(--dialtrack);stroke-width:9}
+.dfill{fill:none;stroke:url(#dialgrad);stroke-width:9;stroke-linecap:round;
+  stroke-dasharray:540.35;stroke-dashoffset:540.35;
+  transition:stroke-dashoffset .55s cubic-bezier(.25,.9,.3,1),stroke .35s,filter .35s;
+  filter:drop-shadow(0 0 9px color-mix(in oklab,var(--accent2) 60%,transparent))}
+.dial.done .dfill{stroke:var(--good);
+  filter:drop-shadow(0 0 12px color-mix(in oklab,var(--good) 65%,transparent))}
+.dinner{display:flex;flex-direction:column;align-items:center;gap:12px;z-index:1}
+.dnum{display:flex;align-items:baseline;font-size:49px;font-weight:750;letter-spacing:-.045em;line-height:1;
+  font-variant-numeric:tabular-nums}
+.dnum i{font-style:normal;font-size:25px;font-weight:700;letter-spacing:-.02em;margin-left:1px}
+/* Equalizer bars, driven by the clip's own amplitude envelope once the server sends it
+   (W.amp). Before that they idle low - they never invent motion for audio we don't have. */
+.eq{display:flex;align-items:flex-end;gap:3.5px;height:17px}
+.eq b{width:3.5px;height:100%;border-radius:2px;background:var(--accent2);opacity:.9;
+  transform:scaleY(.3);transform-origin:50% 100%}
+.dial.done .eq{opacity:0;transition:opacity .25s}
+
+/* ---------- clip timeline ----------
+   Real slice, not a flourish: the sweep fires short windows across the clip and exactly
+   one of them answers. `win` from the server is where the song was actually found. */
+.tl{display:flex;flex-direction:column;gap:6px}
+.tlhead{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;
+  color:var(--faint);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.tlhead .win{color:var(--accent2);font-weight:650;letter-spacing:.01em;transition:color .3s}
+.tl.done .tlhead .win{color:var(--good)}
+canvas#tlwave{width:100%;height:36px;display:block}
+
+/* ---------- rotating tip ----------
+   One sells the version matching, one teaches the auto-playlist, one teaches the share
+   sheet. Onboarding that costs no extra screen. */
+.tip{display:flex;align-items:center;gap:9px;margin-top:12px;padding:11px 13px;border-radius:14px;
+  background:var(--raise);border:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.4;
+  transition:opacity .28s}
+.tip.swap{opacity:0}
+.tip .ts{flex:none;color:var(--accent2);display:grid;place-items:center}
+.cancelhint{text-align:center;font-size:11px;color:var(--faint);margin-top:11px}
 .progwrap{display:flex;flex-direction:column;gap:9px}
 .progwrap.dig{margin:2px 0 4px}
 .proghead{display:flex;align-items:baseline;justify-content:space-between;font-size:12.5px;color:var(--muted)}
@@ -329,17 +398,30 @@ button.savecard[disabled]{pointer-events:none}
     </div>
     <div id="scanbox"></div>
     <div class="mid">
-      <div class="orbwrap">
-        <span class="rg"></span><span class="rg"></span><span class="rg"></span>
-        <div class="orb" id="orb2"></div>
+      <div class="dial" id="dial">
+        <svg class="rings" viewBox="0 0 200 200" aria-hidden="true">
+          <defs><linearGradient id="dialgrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="var(--accent2)"/><stop offset="100%" stop-color="var(--accent)"/>
+          </linearGradient></defs>
+          <circle class="dtrack" cx="100" cy="100" r="86"/>
+          <circle class="dfill" id="dfill" cx="100" cy="100" r="86"/>
+        </svg>
+        <div class="dinner">
+          <div class="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+               id="dnum"><span id="dpct">0</span><i>%</i></div>
+          <div class="eq" id="eq"><b></b><b></b><b></b><b></b><b></b></div>
+        </div>
       </div>
-      <div class="listening" id="listening">Listening…</div>
-      <div class="sub" id="live">Checking against edits and remixes</div>
+      <div class="listening" id="listening">Finding song</div>
+      <div class="sub" id="live">Reading the clip</div>
     </div>
-    <div class="progwrap">
-      <div class="proghead"><span id="progtxt">Reading the clip</span><span class="pct" id="progpct">0%</span></div>
-      <div class="prog"><i id="progbar"></i></div>
+    <div class="tl" id="tl">
+      <div class="tlhead"><span id="tl0">0:00</span><span class="win" id="tlwin">reading audio</span>
+        <span id="tl1">--:--</span></div>
+      <canvas id="tlwave"></canvas>
     </div>
+    <div class="tip" id="tip"><span class="ts"></span><span id="tiptxt"></span></div>
+    <div class="cancelhint">Tap &times; to cancel</div>
   </section>
 
   <!-- ============ MATCH ============ -->
@@ -388,6 +470,7 @@ var IC={
   play:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6l11-6.8z"/></svg>',
   open:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16 16 8M9.5 8H16v6.5"/></svg>',
   tick:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg>',
+  spark:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.4l1.8 5.3a3 3 0 0 0 1.9 1.9l5.3 1.8-5.3 1.8a3 3 0 0 0-1.9 1.9L12 20.4l-1.8-5.3a3 3 0 0 0-1.9-1.9L3 11.4l5.3-1.8a3 3 0 0 0 1.9-1.9z"/><path d="M19.2 2.2l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>',
   heart:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7.5-4.7-7.5-9.6A4.4 4.4 0 0 1 12 7.6a4.4 4.4 0 0 1 7.5 2.8C19.5 15.3 12 20 12 20z"/></svg>',
   heartfill:'<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.3s-7.9-4.9-7.9-10.1A4.7 4.7 0 0 1 12 7.3a4.7 4.7 0 0 1 7.9 2.9c0 5.2-7.9 10.1-7.9 10.1z"/></svg>',
   plus:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg>',
@@ -424,7 +507,7 @@ themeBtn.onclick=function(){var n=curTheme()==='dark'?'light':'dark'; root.setAt
   try{localStorage.setItem('crate-theme',n);}catch(e){} paintTheme(); pal=readPal(); renderCrate(); paintRecCanvas();};
 document.getElementById('mark').innerHTML=markGlyph();
 document.getElementById('go').innerHTML=orbGlyph();
-document.getElementById('orb2').innerHTML=orbGlyph();
+document.querySelector('#tip .ts').innerHTML=IC.spark;
 document.getElementById('ico-link').innerHTML=IC.link;
 document.getElementById('cancel').innerHTML=IC.x;
 document.getElementById('back').innerHTML=IC.chev;
@@ -516,10 +599,15 @@ function headline(t){document.getElementById('listening').textContent=t;}
    done. Between milestones it creeps slowly toward the next one and stops there, so it
    keeps moving without ever claiming progress the engine has not actually made. */
 var pgNow=0, pgCap=0, pgTimer=null;
+var DASH=2*Math.PI*86;          // r=86 inside the dial's 200x200 viewBox
 function pgPaint(){
-  var v=pgNow.toFixed(0)+'%';
+  var n=Math.round(pgNow), v=n+'%';
   ['progbar','progbar2'].forEach(function(id){var b=document.getElementById(id); if(b) b.style.width=v;});
   ['progpct','progpct2'].forEach(function(id){var t=document.getElementById(id); if(t) t.textContent=v;});
+  var f=document.getElementById('dfill');
+  if(f) f.style.strokeDashoffset=(DASH*(1-Math.min(100,n)/100)).toFixed(2);
+  var p=document.getElementById('dpct'); if(p) p.textContent=n;
+  var d=document.getElementById('dnum'); if(d) d.setAttribute('aria-valuenow',n);
 }
 function setProg(pct, cap, label){
   pgNow=Math.max(pgNow,pct); pgCap=cap;
@@ -532,10 +620,121 @@ function setProg(pct, cap, label){
 }
 function pgReset(){clearInterval(pgTimer); pgNow=0; pgCap=0; pgPaint();}
 function pgDone(){clearInterval(pgTimer); pgNow=100; pgPaint();}
-function showChip(p,sub){
-  scanbox.innerHTML='<div class="chip"><span class="ci">'+(p==='instagram'?IC.ig:IC.tt)+'</span>'+
-    '<span class="ct"><b>Shared from '+(p==='instagram'?'Instagram':'TikTok')+'</b><span>'+esc(sub||'')+'</span></span></div>';}
-function hideChip(){scanbox.innerHTML='';}
+/* Source card. Repainted in place as facts arrive (thumbnail, handle, audio confirmed),
+   so pass null for anything you are not changing. The audio tick only goes green once
+   the server has actually handed back waveform data - it reports the one step in the
+   chain most likely to fail, so it must never light up on hope. */
+var chipState={host:'',sub:'',thumb:'',audio:false};
+function showChip(host,sub,thumb,audio){
+  if(host!=null) chipState.host=host;
+  if(sub!=null) chipState.sub=sub;
+  if(thumb) chipState.thumb=thumb;
+  if(audio!=null) chipState.audio=audio;
+  var s=chipState, ig=s.host==='instagram';
+  scanbox.innerHTML='<div class="chip">'+
+    (s.thumb?'<img class="th" src="'+esc(s.thumb)+'" alt="" onerror="this.removeAttribute(\'src\')">'
+            :'<span class="th"></span>')+
+    '<span class="ct"><b><span class="ci">'+(ig?IC.ig:IC.tt)+'</span>Shared from '+
+      (ig?'Instagram':'TikTok')+'</b><span>'+esc(s.sub||'')+'</span></span>'+
+    '<span class="abadge'+(s.audio?' on':'')+'">audio'+(s.audio?IC.tick:'')+'</span></div>';}
+function hideChip(){scanbox.innerHTML=''; chipState={host:'',sub:'',thumb:'',audio:false};}
+
+/* ---------- scanning screen: equalizer + clip timeline ----------
+   Both read the SAME array the result waveform uses - W.amp, the server's real amplitude
+   envelope for this clip. Until /base returns it there is no audio to draw, so the bars
+   idle low and the timeline shows an empty track. Nothing here invents a signal. */
+var tlc=document.getElementById('tlwave'), scanRaf=null, scanT0=0, WIN=null, clipSecs=0;
+var eqBars=[].slice.call(document.getElementById('eq').children);
+var eqLvl=eqBars.map(function(){return .12;});
+var tlPal={hot:'#8172FF',dim:'#A294DC',ok:'#2ED8A7'};
+function readTlPal(){var c=getComputedStyle(document.documentElement);
+  tlPal={hot:c.getPropertyValue('--accent2').trim()||'#8172FF',
+         dim:c.getPropertyValue('--faint').trim()||'#A294DC',
+         ok:c.getPropertyValue('--good').trim()||'#2ED8A7'};}
+function mmss(s){s=Math.max(0,Math.round(s||0)); return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);}
+// roundRect is recent enough that an older WebView would throw here every frame.
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    r=Math.min(r,w/2,h/2); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r);
+    this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath();};}
+
+/* The sweep fires short windows across the clip and exactly one of them answers, so
+   `win` is a measurement of where the song was found - not a decorative highlight. */
+function setWindow(win,secs){
+  if(secs) clipSecs=secs;
+  WIN=(win&&win.length===2&&clipSecs)?win:null;
+  document.getElementById('tl1').textContent=clipSecs?mmss(clipSecs):'--:--';
+  document.getElementById('tlwin').textContent=
+    WIN ? ('matched '+mmss(WIN[0])+' - '+mmss(WIN[1]))
+        : (W.amp.length ? 'analyzing the whole clip' : 'reading audio');
+  paintTl(0);}   // paint on data change, never only from the rAF loop - see scanAnimOn
+
+function paintTl(t){
+  if(!tlc||!tlc.clientWidth) return;
+  var dpr=Math.min(devicePixelRatio||1,2), w=tlc.clientWidth, h=tlc.clientHeight;
+  if(tlc.width!==w*dpr||tlc.height!==h*dpr){tlc.width=w*dpr; tlc.height=h*dpr;}
+  var g=tlc.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  var have=W.amp.length>0, bw=2.6, N=Math.max(20,Math.floor((w+2)/(bw+1.9)));
+  var step=(w-bw)/(N-1), mid=h/2, done=document.getElementById('dial').classList.contains('done');
+  var a0=WIN?WIN[0]/clipSecs:0, a1=WIN?WIN[1]/clipSecs:1;
+  // No window yet: a travelling highlight, because the engine genuinely is sweeping the
+  // whole clip. It deliberately carries no position claim - we are not told which window
+  // is in flight, so the band is a shimmer, never a pointer.
+  var band=((t||0)/1250)%1.4-0.2;
+  for(var i=0;i<N;i++){
+    var f=i/(N-1), x=i*step;
+    var v=have?W.amp[Math.min(W.amp.length-1,Math.round(f*(W.amp.length-1)))]:0.3;
+    var bh=Math.max(2.5,v*(h-3)), inWin=WIN?(f>=a0&&f<=a1):false;
+    g.globalAlpha=WIN?(inWin?1:.24):(.2+.55*Math.max(0,1-Math.abs(f-band)/.15));
+    g.fillStyle=WIN?(inWin?(done?tlPal.ok:tlPal.hot):tlPal.dim):tlPal.dim;
+    g.beginPath(); g.roundRect(x,mid-bh/2,bw,bh,bw/2); g.fill();
+  }
+  if(WIN){                                       // bracket the matched slice
+    var x0=Math.max(0,a0*(w-bw)-4), x1=Math.min(w,a1*(w-bw)+bw+4);
+    g.globalAlpha=.32; g.lineWidth=1; g.strokeStyle=done?tlPal.ok:tlPal.hot;
+    g.beginPath(); g.roundRect(x0+.5,.5,Math.max(6,x1-x0-1),h-1,6); g.stroke();
+  }
+  g.globalAlpha=1;}
+
+function paintEq(t){
+  var have=W.amp.length>0, n=eqBars.length;
+  for(var i=0;i<n;i++){
+    var target;
+    if(have){                                    // scrub the clip's own envelope in real time
+      var pos=((t/1000)/(clipSecs||10))%1, L=W.amp.length;
+      var idx=Math.floor(pos*(L-1))+Math.round((i-(n-1)/2)*3);
+      target=W.amp[Math.max(0,Math.min(L-1,idx))];
+    } else target=.26+.26*(Math.sin(t/440+i*.9)*.5+.5);   // idle: waiting, not hearing
+    eqLvl[i]+=(Math.max(.12,Math.min(1,target))-eqLvl[i])*.22;
+    eqBars[i].style.transform='scaleY('+eqLvl[i].toFixed(3)+')';}}
+
+function scanLoop(ts){if(!scanT0)scanT0=ts; var t=ts-scanT0; paintEq(t); paintTl(t);
+  scanRaf=requestAnimationFrame(scanLoop);}
+/* rAF is not a reliable paint clock here: it pauses in a background tab and we honour
+   reduced-motion. The loop only ever ADDS motion - every state that matters (the matched
+   window, the finished dial) is also painted directly by whoever changed it. */
+function scanAnimOn(){readTlPal();
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches){
+    eqBars.forEach(function(b){b.style.transform='scaleY(.45)';}); paintTl(0); return;}
+  if(scanRaf) return; scanT0=0; scanRaf=requestAnimationFrame(scanLoop);}
+function scanAnimOff(){if(scanRaf)cancelAnimationFrame(scanRaf); scanRaf=null;}
+
+/* Rotating tips. One sells the version matching, one teaches the auto-playlist, one
+   teaches the share sheet - onboarding paid for with time the user is already spending. */
+var TIPS=[
+  'Addify names the exact version. Slowed, sped up, remix or original.',
+  'Every match is auto-saved to your Found with Addify playlist.',
+  'Pin Addify in your share sheet to make it the first icon.'];
+function tipText(i){return (i===1&&!autoOn())
+  ? 'Auto-save is off. Turn it on in settings to build a playlist as you scan.' : TIPS[i];}
+var tipI=0, tipT=null;
+function tipsOn(){tipI=0; var b=document.getElementById('tip');
+  document.getElementById('tiptxt').textContent=tipText(0); b.classList.remove('swap');
+  clearInterval(tipT);
+  tipT=setInterval(function(){tipI=(tipI+1)%TIPS.length; b.classList.add('swap');
+    setTimeout(function(){document.getElementById('tiptxt').textContent=tipText(tipI);
+      b.classList.remove('swap');},280);},4600);}
+function tipsOff(){clearInterval(tipT); tipT=null;}
 
 /* ---------- render ---------- */
 var result=document.getElementById('result'), lastResult=null;
@@ -850,33 +1049,61 @@ document.getElementById('go').onclick=function(){
   if(urlEl.value.trim()) run(urlEl.value); else fromClipboard();};
 document.getElementById('paste').onclick=fromClipboard;
 document.getElementById('example').onclick=function(){var ex='https://www.tiktok.com/@vision_hockey/video/7640595887873477909'; urlEl.value=ex; run(ex);};
+var phaseT=null, finishT=null;
+function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
+  WIN=null; clipSecs=0;
+  document.getElementById('dial').classList.remove('done');
+  document.getElementById('tl').classList.remove('done');
+  document.getElementById('listening').classList.remove('ok');}
 function run(raw){if(busy) return; var p=parseLink(raw);
-  result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock();
+  result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset();
   if(!p.host){setState('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
   busy=true; document.getElementById('gobtn').setAttribute('disabled','');
-  setState('scanning'); showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,44));
-  headline('Listening…'); saying('Reading the clip');
+  setState('scanning'); hideChip();
+  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
+  document.getElementById('tl1').textContent='--:--';
+  document.getElementById('tlwin').textContent='reading audio';
+  headline('Finding song'); say('Reading the clip');
   pgReset(); setProg(6, 30, 'Reading the clip');
+  tipsOn(); scanAnimOn();
+  // Fetch and fingerprint happen inside ONE awaited call, so there is no server event at
+  // the boundary between them. This timer only advances the WORDING; the bar itself still
+  // moves on real milestones, and it backs off if the answer already landed.
+  phaseT=setTimeout(function(){if(busy&&pgNow<40){headline('Listening'); say('Building the audio fingerprint');}},2400);
   call('/base',p.url).then(function(d){
+    clearTimeout(phaseT);
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
+    setWindow(d&&d.win, d&&d.clip_secs);
+    if(W.amp.length) showChip(null,null,d&&d.thumb,true);
     if(d&&d.result==='found'&&d.base_song){
       setSpeedFromLabel(d.speed);
-      if(d.handle) showChip(p.host,'@'+d.handle+(d.secs?' · '+d.secs+'s':''));
-      headline(d.base_song); saying('Checking against edits and remixes');
+      if(d.handle) showChip(null,(p.host==='instagram'?'reel by @':'clip by @')+d.handle,d.thumb,true);
+      headline(d.base_song);
+      say('Matching versions &middot; slowed &middot; sped up &middot; remix &middot; original');
       setProg(45, 58, 'Song identified');
       renderResult(d, d.edits_pending);
-      if(d.edits_pending){setState('scanning'); saying('Checking against edits and remixes');
+      if(d.edits_pending){setState('scanning'); say('Locking in the exact version');
         setProg(60, 94, 'Hunting the exact version');
-        return call('/edits',p.url).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
+        return call('/edits',p.url).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); if(full.win)setWindow(full.win,full.clip_secs); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
 }
-function finish(d){stopClock(); busy=false; pgDone();
+function finish(d){stopClock(); busy=false; pgDone(); clearTimeout(phaseT);
   document.getElementById('gobtn').removeAttribute('disabled');
-  hideChip();
-  if(d&&d.base_song){setState('locked'); paintRecCanvas();}
-  else {setState('locked'); document.getElementById('matchttl').textContent='No match';}}
+  if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
+    setState('locked'); document.getElementById('matchttl').textContent='No match'; return;}
+  // Land on a full ring before handing over. The jump to the result is the payoff, and
+  // arriving there straight off a spinning 94% reads as interrupted rather than finished.
+  document.getElementById('dial').classList.add('done');
+  document.getElementById('tl').classList.add('done');
+  var hl=document.getElementById('listening'); hl.classList.add('ok');
+  hl.innerHTML='Match found '+IC.tick;
+  say(esc(d.base_song)+' &middot; '+esc(d.speed&&d.speed!=='as posted'?d.speed:'original'));
+  tipsOff(); paintTl(0);
+  // setState BEFORE hideChip, or the card blinks out a frame early on the screen it is
+  // still sitting on.
+  finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},1000);}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
@@ -899,7 +1126,7 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){setState('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
+function goHome(){scanReset(); setState('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
 document.getElementById('back').onclick=goHome;
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('share').onclick=function(){

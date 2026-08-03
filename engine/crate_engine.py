@@ -833,7 +833,11 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
                 return None
         n["i"] += 1
         if hit:
-            hit.update(edit_label=label, rate=rate, offset=off, probes=n["i"])
+            # span rides along with offset so the caller can report the ACTUAL slice
+            # this answer came from. The UI draws that window on the clip's waveform,
+            # and it has to be the measured one, not a plausible-looking guess.
+            hit.update(edit_label=label, rate=rate, offset=off, span=span,
+                       probes=n["i"])
         return hit
 
     # Phase 1: all windows at once -> distinct songs

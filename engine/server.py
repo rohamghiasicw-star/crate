@@ -180,6 +180,13 @@ def _phase1(url, key, t0):
 
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
     res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
+    # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
+    # not the length of the source video. The scanning timeline is scaled to this, so it
+    # has to describe the same thing the window offsets below are measured against.
+    try:
+        res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
+    except Exception:
+        res["clip_secs"] = None
 
     # Comments BEFORE the fingerprint. The crowd routinely names the track outright
     # ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least reliable -
@@ -268,6 +275,17 @@ def _phase1(url, key, t0):
             shazam_reliable = not untrust
             if untrust:
                 res["shazam_suspect"] = why
+
+        # The exact slice the winning probe matched on. The sweep fires short windows
+        # across the clip and only one of them answers, so this is a real measurement of
+        # where the song was found - the UI highlights it on the waveform.
+        if fp and fp.get("offset") is not None:
+            _o = float(fp["offset"])
+            _s = float(fp.get("span") or 20)
+            _end = _o + _s
+            if res.get("clip_secs"):
+                _end = min(_end, res["clip_secs"])
+            res["win"] = [round(_o, 1), round(_end, 1)]
 
         # ---- phase 1 ends here: the song is named, hand it straight to the user ----
         res["result"] = "found" if fp else "no_match"
