@@ -117,6 +117,29 @@ def _wave(path, n=96):
         return None
 
 
+_SONG_LEAD = re.compile(r'^\s*(?:song|track|audio|music|sound)\s*(?:name)?\s*[:\-–]\s*', re.I)
+
+def _parse_named_song(text):
+    """"SONG: Luh Germ - Bin Laden P. @truett2x_" -> ("Luh Germ", "Bin Laden P.").
+
+    Captions name tracks in a small number of shapes. Strip the lead-in, drop the
+    @credits and hashtags that ride along, then split the first " - " into artist and
+    title. Returns (artist_or_None, title_or_None); the caller treats it as a CLAIM, so
+    being wrong costs a search, not a wrong answer."""
+    t = (text or "").strip()
+    if not t:
+        return None, None
+    t = _SONG_LEAD.sub("", t)
+    t = re.sub(r'[@#]\S+', ' ', t)                    # @credits, #tags
+    t = re.sub(r'\s{2,}', ' ', t).strip(' -–—.,|')
+    if not t:
+        return None, None
+    m = re.split(r'\s+[-–—]\s+', t, maxsplit=1)
+    if len(m) == 2 and m[0].strip() and m[1].strip():
+        return m[0].strip(), m[1].strip()
+    return None, t
+
+
 def _prune_sessions():
     """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
     now = time.time()
@@ -200,6 +223,22 @@ def _phase1(url, key, t0):
     # fetch itself (tikwm comments + the sound-page chase, measured 1-8s) no longer
     # runs back to back with the Shazam scan: comments hit tikwm/tiktok, probes hit
     # Shazam, so the two overlap for free. Same hints, same decisions, earlier probes.
+    # THE CAPTION, BOTH PLATFORMS, FIRST. An uploader captioning their own post
+    # "SONG: Luh Germ - Bin Laden P." is the single most reliable hint that exists -
+    # stronger than any comment, because it is the person who made the video telling you
+    # what is in it. This was being thrown away: hints only ever came from TikTok
+    # comments, so an Instagram reel whose caption literally named the track came back
+    # "No song here" whenever Shazam didn't know the artist. Free (already in hand, no
+    # fetch), so it runs on every clip on both platforms.
+    caption_hints = []
+    try:
+        caption_hints = E.comment_song_hints(
+            [ln for ln in (src.get("desc") or "").splitlines() if ln.strip()]) or []
+    except Exception:
+        caption_hints = []
+    if caption_hints:
+        res["caption_hints"] = caption_hints
+
     hint_texts = []
     _hints_ex = None
     _hints_fut = None
@@ -232,23 +271,28 @@ def _phase1(url, key, t0):
     def _join_hints():
         """Blocking hint join - idempotent, safe from any thread."""
         nonlocal hint_texts
+        got, from_sound_page = [], False
         if _hints_fut is not None:
             try:
                 got, from_sound_page = _hints_fut.result()
             except Exception:
                 got, from_sound_page = [], False
-            hint_texts = got
             if got:
                 res["comment_hints"] = got
                 if from_sound_page:
                     res["hints_from_sound_page"] = True
+        # Caption leads: the uploader outranks the crowd. Deduped, order preserved.
+        hint_texts = caption_hints + [g for g in got if g not in caption_hints]
         return hint_texts
 
     loop = asyncio.new_event_loop()
     try:
         _t = time.time()
+        # Always hand the fingerprint a hint source now - caption hints exist on both
+        # platforms, so Instagram was previously running the whole sweep blind.
         fp = loop.run_until_complete(E.fingerprint(
-            src["audio"], hints_fn=(_join_hints if _hints_fut is not None else None)))
+            src["audio"],
+            hints_fn=(_join_hints if (_hints_fut is not None or caption_hints) else None)))
         _join_hints()                      # no-op if fingerprint already joined
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
@@ -322,14 +366,31 @@ def _phase1(url, key, t0):
                 _end = min(_end, res["clip_secs"])
             res["win"] = [round(_o, 1), round(_end, 1)]
 
+        # SHAZAM NOT KNOWING A SONG IS NOT THE SAME AS THERE BEING NO SONG.
+        # Its catalogue is commercial releases; a local rapper's loosie is simply absent
+        # from it. When the fingerprint comes back empty but the uploader's own caption
+        # names a track, "no_match" is a false negative with the answer sitting in plain
+        # text. Take the caption as the claim, mark it unverified, and let the edit hunt
+        # go find it - verify() still decides against the real audio, so a wrong caption
+        # costs a search, never a wrong crown.
+        if not fp and hint_texts:
+            c_artist, c_title = _parse_named_song(hint_texts[0])
+            if c_title:
+                base_title, base_artist = c_title, c_artist
+                res["base_song"] = c_title
+                res["base_artist"] = c_artist
+                res["from_caption"] = True          # named by the uploader, not fingerprinted
+                res["unverified_base"] = True
+                res["speed"] = None
+
         # ---- phase 1 ends here: the song is named, hand it straight to the user ----
-        res["result"] = "found" if fp else "no_match"
+        res["result"] = "found" if (fp or base_title) else "no_match"
         res["exact"] = None
         res["candidates"] = []
         res["decisive"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("phase1_done", time.time() - t0)
-        worth = bool(_edit_worthy(src, fp)
+        worth = bool((_edit_worthy(src, fp) or res.get("from_caption"))
                      and (base_title or E._is_named_credit(src.get("credit_title"))))
         res["edits_pending"] = worth
         # ctx always carries src so the caller can free its temp audio, even when
@@ -463,6 +524,9 @@ def _phase2(ctx):
                                    "uploader": c.get("uploader", ""),
                                    "source": c.get("source", ""), "url": c.get("url", ""),
                                    "score": round(c.get("final", c.get("score", 0)), 3),
+                                   # the audio evidence itself - carried so a result can be
+                                   # audited without re-running the hunt
+                                   "core": round(c.get("core"), 3) if c.get("core") is not None else None,
                                    "plays": c.get("plays", 0),
                                    "bass": round(c.get("bass_delta", 0.0), 1)})
             # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted

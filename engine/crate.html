@@ -1128,6 +1128,12 @@ function tipsOff(){clearInterval(tipT); tipT=null;}
 var result=document.getElementById('result'), lastResult=null;
 function editBadge(d){
   var sp=d.speed, who=(d.exact&&d.exact.uploader)?d.exact.uploader:'';
+  // Named by the uploader's own caption rather than fingerprinted - say so. Shazam's
+  // catalogue is commercial releases, so a local artist's track is simply absent from it;
+  // the caption is a strong claim but it is a claim, and the badge should not dress it up
+  // as a fingerprint match. The exact version underneath IS still audio-verified.
+  if(d.from_caption && (!sp || sp==='as posted'))
+    return '<span class="badge orig">From the caption'+(who?' · '+esc(who):'')+'</span>';
   if(!sp||sp==='as posted'){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);
