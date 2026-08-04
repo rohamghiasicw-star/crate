@@ -584,6 +584,7 @@ def _phase2(ctx):
         if res.get("shazam_suspect") and not exact:
             res["base_uncertain"] = True
             res["base_song_guess"] = res.get("base_song")
+            res["base_artist_guess"] = res.get("base_artist")
             res["base_song"] = None
             res["base_artist"] = None
             res["speed"] = None
@@ -673,6 +674,97 @@ def _cleanup(d):
         except Exception: pass
 
 
+def identify_mic(blob, kind):
+    """/listen - name whatever the mic heard. No link, no comments, no edit hunt:
+    the answer is the base song plus the measured speed, Shazam-style. The blob is
+    whatever MediaRecorder produced (webm/ogg/mp4) - ffmpeg reads all of them, and
+    everything downstream of the engine already goes through ffmpeg's cut()."""
+    t0 = time.time()
+    tmp = tempfile.mkdtemp(prefix="listen_")
+    raw = os.path.join(tmp, "mic." + kind)
+    try:
+        with open(raw, "wb") as f:
+            f.write(blob)
+        loop = asyncio.new_event_loop()
+        try:
+            fp = loop.run_until_complete(E.fingerprint(raw))
+        finally:
+            loop.close()
+        if not fp:
+            return {"result": "no_match", "listen": True,
+                    "secs": round(time.time() - t0, 1)}
+        res = {"result": "found", "listen": True, "platform": "mic",
+               "base_song": fp["title"], "base_artist": fp["artist"],
+               "shazam": fp.get("url"), "art": fp.get("art"),
+               "exact": None, "candidates": [], "decisive": False,
+               "edits_pending": False, "secs": round(time.time() - t0, 1)}
+        # same speed rules as /base: the counter-speed sweep, or frequencyskew in the
+        # trustworthy 4-6% band. Below that is noise, above it the sweep catches it.
+        rate = fp.get("rate", 1.0)
+        skew = fp.get("freqskew")
+        if rate != 1.0:
+            res["speed"] = fp.get("edit_label")
+        elif skew is not None and 0.04 <= abs(skew) <= 0.06:
+            sp = 1.0 + skew
+            res["speed"] = "%s ~%.2fx" % ("slowed" if sp < 1 else "sped up", sp)
+        else:
+            res["speed"] = "as posted"
+        res["peaks"] = _peaks(raw)
+        res["wave"] = _wave(raw)
+        return res
+    finally:
+        _cleanup(tmp)
+
+
+_TREND = {"ts": 0, "rows": []}
+
+def trending_sounds():
+    """/trending - REAL trending audio, not an invention: SoundCloud's New & Hot chart
+    (all-music), where the slowed/sped/edit uploads actually chart. Cached 6h; play
+    counts are SoundCloud's own numbers. Falls back to the last good pull on error."""
+    if time.time() - _TREND["ts"] < 6 * 3600 and _TREND["rows"]:
+        return {"rows": _TREND["rows"], "cached": True}
+    import urllib.request
+    cid = E._sc_client_id()
+    u = ("https://api-v2.soundcloud.com/charts?kind=trending"
+         "&genre=soundcloud%%3Agenres%%3Aall-music&client_id=%s&limit=20" % cid)
+    req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+    data = json.load(urllib.request.urlopen(req, timeout=15))
+    rows = []
+    for c in (data.get("collection") or [])[:20]:
+        t = c.get("track") or {}
+        title = t.get("title") or ""
+        if not title:
+            continue
+        label = ""
+        try:
+            m = E.EDIT_WORDS.search(title.lower())
+            label = m.group(0) if m else ""
+        except Exception:
+            pass
+        rows.append({"title": title,
+                     "by": (t.get("user") or {}).get("username") or "",
+                     "plays": t.get("playback_count") or 0,
+                     "url": t.get("permalink_url") or "",
+                     "art": (t.get("artwork_url") or "").replace("-large", "-t120x120"),
+                     "kind": label})
+    if rows:
+        _TREND["ts"], _TREND["rows"] = time.time(), rows
+    return {"rows": rows or _TREND["rows"]}
+
+
+FEEDBACK = os.path.join(HERE, "feedback.jsonl")
+
+def record_feedback(obj):
+    """/feedback - the no-match screen's "Yes - it's an edit" / "Not it" taps. This is
+    training data for the edit database: every confirm links a clip to its base song.
+    Append-only jsonl, one tap per line."""
+    row = dict(obj); row["ts"] = int(time.time())
+    with open(FEEDBACK, "a") as f:
+        f.write(json.dumps(row) + "\n")
+    return {"ok": True}
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -712,6 +804,11 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
+        if u.path == "/trending":
+            try:
+                return self._send(200, trending_sounds())
+            except Exception as e:
+                return self._send(200, {"rows": [], "error": str(e)[:120]})
         if u.path not in ("/find", "/base", "/edits"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
@@ -723,6 +820,23 @@ class H(BaseHTTPRequestHandler):
             self._send(200, fn(link))
         except Exception as e:
             self._send(200, {"result": "error", "error": str(e)[:200]})
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > 32 * 1024 * 1024:
+            return self._send(400, {"error": "bad body size"})
+        body = self.rfile.read(n)
+        try:
+            if u.path == "/listen":
+                ct = (self.headers.get("Content-Type") or "").lower()
+                kind = ("mp4" if "mp4" in ct else "ogg" if "ogg" in ct else "webm")
+                return self._send(200, identify_mic(body, kind))
+            if u.path == "/feedback":
+                return self._send(200, record_feedback(json.loads(body.decode())))
+            return self._send(404, {"error": "not found"})
+        except Exception as e:
+            return self._send(200, {"result": "error", "error": str(e)[:200]})
 
     def log_message(self, *a):
         pass

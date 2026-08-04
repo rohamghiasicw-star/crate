@@ -190,6 +190,276 @@ a{color:inherit;text-decoration:none}
 .tl.done .tlhead .win{color:var(--good)}
 canvas#tlwave{width:100%;height:36px;display:block}
 
+/* ---------- tab bar ----------
+   Four tabs, no more: Home, Trending, Library, Profile. It only exists on the four tab
+   states - a scan is a takeover and the result screen has its own header. */
+.tabbar{display:none;align-items:stretch;gap:2px;margin:14px -6px -10px;padding-top:10px;
+  border-top:1px solid var(--line)}
+.app[data-state="idle"] .tabbar,.app[data-state="trending"] .tabbar,
+.app[data-state="library"] .tabbar,.app[data-state="profile"] .tabbar{display:flex}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0 4px;
+  font-size:10px;font-weight:650;color:var(--faint);border-radius:12px;transition:color .15s}
+.tab svg{width:19px;height:19px}
+.tab.on{color:var(--text)}
+.tab.on svg{color:var(--accent2)}
+.app[data-state="trending"] #s-trend,.app[data-state="library"] #s-lib,
+.app[data-state="profile"] #s-prof,.app[data-state="listening"] #s-listen{display:flex}
+
+/* tab pages scroll inside the card */
+#s-home,#s-trend,#s-lib,#s-prof{overflow-y:auto;scrollbar-width:none;margin:0 -4px;padding:0 4px}
+#s-home::-webkit-scrollbar,#s-trend::-webkit-scrollbar,#s-lib::-webkit-scrollbar,
+#s-prof::-webkit-scrollbar{display:none}
+
+/* ---------- home (brief layout) ---------- */
+.pill{font-size:11px;font-weight:700;color:var(--accent2);background:var(--raise);
+  border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 11px;white-space:nowrap;
+  justify-self:end}
+.scanword{font-size:11px;font-weight:800;letter-spacing:.24em;color:#fff;opacity:.94}
+/* the home orb is flex, not grid: the wave and the SCAN word sit as one centred stack */
+#s-home .orb{width:148px;height:148px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:6px}
+#s-home .orbwrap{width:164px;height:164px}
+#s-home .tap{font-size:14px;max-width:320px;text-wrap:balance;line-height:1.45}
+#s-home .miccopy{margin-top:-4px}
+#s-home .form{margin-top:4px}
+.miccopy{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--faint)}
+.miccopy svg{width:12px;height:12px;flex:none}
+
+/* playlist card - the retention story made visible */
+.plcard{display:flex;align-items:center;gap:12px;width:100%;margin-top:16px;padding:12px 13px;
+  border-radius:var(--r-mid);background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 32%,var(--raise)),var(--raise));
+  border:1px solid var(--line2);text-align:left;transition:filter .15s}
+button.plcard:hover{filter:brightness(1.07)}
+.plcard .pic{width:42px;height:42px;border-radius:11px;flex:none;display:grid;place-items:center;
+  background:linear-gradient(150deg,var(--accent2),var(--accent));color:#fff}
+.plcard .pt{flex:1;min-width:0}
+.plcard .pt b{display:block;font-size:14px;font-weight:680}
+.plcard .pt span{display:block;font-size:12px;color:var(--muted);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plcard .pgo{width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--good);color:#04231A}
+
+/* section head: label left, action right */
+.secthd{display:flex;align-items:baseline;justify-content:space-between;margin:20px 0 9px}
+.secthd .sect{margin:0}
+.secthd button,.secthd a{font-size:12px;font-weight:650;color:var(--accent2)}
+.secthd button:hover,.secthd a:hover{text-decoration:underline}
+
+/* trending rows */
+.trow{display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:14px;
+  background:var(--raise);border:1px solid transparent;transition:border-color .15s;width:100%;text-align:left}
+.trow:hover{border-color:var(--line2)}
+.trow .rk{width:16px;font-size:13px;font-weight:750;color:var(--faint);text-align:center;flex:none;
+  font-variant-numeric:tabular-nums}
+.trow .rk.hot{color:#FF8A4C}
+.trow .sq{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;flex:none}
+.trow .tt{flex:1;min-width:0}
+.trow .tt b{display:block;font-size:13px;font-weight:650;line-height:1.3;overflow:hidden;
+  white-space:nowrap;text-overflow:ellipsis}
+.trow .tt span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.trow .up{color:var(--good);font-weight:700}
+.trow .addp{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
+  color:var(--accent2);background:var(--card);transition:background .15s,color .15s}
+.trow .addp:hover{background:var(--accent);color:#fff}
+.trow .addp.did{color:var(--good);background:transparent}
+
+/* library rows reuse .trow minus the rank; search + chips */
+.search{display:flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--line);
+  border-radius:12px;padding:9px 12px;margin:2px 0 10px}
+.search svg{color:var(--faint);flex:none}
+.search input{flex:1;min-width:0;background:none;border:0;outline:none;font-size:13px;color:var(--text)}
+.search input::placeholder{color:var(--faint)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chipf{font-size:11.5px;font-weight:650;padding:6px 11px;border-radius:var(--r-pill);
+  color:var(--muted);background:var(--raise);border:1px solid transparent;transition:.15s}
+.chipf.on{background:var(--accent);color:#fff}
+.daylbl{font-size:10.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--faint);margin:14px 0 7px}
+.unm{border:1px solid color-mix(in oklab,#FF8A4C 35%,transparent);
+  background:color-mix(in oklab,#FF8A4C 8%,var(--raise))}
+.unm .sq{background:color-mix(in oklab,#FF8A4C 25%,transparent);color:#FF8A4C}
+.unm .retry{font-size:11.5px;font-weight:700;color:#FF8A4C;padding:6px 10px;border-radius:9px;
+  background:color-mix(in oklab,#FF8A4C 14%,transparent)}
+
+/* empty dashed card (empty home / empty tabs) */
+.dashcard{border:1.5px dashed var(--line2);border-radius:var(--r-mid);padding:18px 14px;
+  text-align:center;margin-top:16px}
+.dashcard b{display:block;font-size:13.5px;font-weight:650}
+.dashcard span{display:block;font-size:12px;color:var(--faint);margin-top:3px;line-height:1.45}
+
+/* ---------- profile ---------- */
+.avarow{display:flex;align-items:center;gap:12px;margin:4px 0 14px}
+.ava{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;flex:none;
+  background:linear-gradient(150deg,var(--accent2),var(--accent));color:#fff;font-size:19px;font-weight:750}
+.avarow b{display:block;font-size:16px;font-weight:700}
+.avarow span{display:block;font-size:12px;color:var(--muted);margin-top:1px}
+.upcard{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:var(--r-mid);
+  border:1px solid color-mix(in oklab,var(--accent2) 45%,transparent);
+  background:color-mix(in oklab,var(--accent) 14%,transparent);margin-bottom:6px}
+.upcard .ut{flex:1}
+.upcard b{display:block;font-size:14px;font-weight:680}
+.upcard span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.upbtn{background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;padding:8px 14px;
+  border-radius:var(--r-pill)}
+.setrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 12px;
+  border-radius:13px;background:var(--raise);font-size:13.5px;font-weight:600}
+.setrow+.setrow{margin-top:7px}
+.setrow .si{width:20px;display:grid;place-items:center;color:var(--muted);flex:none}
+.setrow .st{flex:1;min-width:0}
+.setrow .sv{font-size:12px;color:var(--faint);font-weight:600}
+.setrow .sv.ok{color:var(--good)}
+.setrow.danger{color:#FF7A7A}
+.setrow .go2{color:var(--faint)}
+.setlist{display:flex;flex-direction:column}
+/* iOS-style switch, reused for every toggle */
+.sw{width:40px;height:24px;border-radius:99px;background:var(--raise2);position:relative;flex:none;
+  transition:background .18s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:left .18s}
+.sw.on{background:var(--accent)}
+.sw.on::after{left:19px}
+
+/* ---------- error cards (brief spec) ---------- */
+.note .bigq{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;margin:0 auto 4px;
+  font-size:22px;font-weight:750}
+.bigq.warn{background:color-mix(in oklab,#FF8A4C 18%,transparent);color:#FF8A4C}
+.bigq.lock{background:var(--raise2)}
+.guessrow{display:flex;align-items:center;gap:11px;width:100%;background:var(--raise);
+  border-radius:13px;padding:11px 12px;margin-top:12px;text-align:left}
+.guessrow .sq{width:36px;height:36px;border-radius:9px;flex:none;display:grid;place-items:center;color:#fff}
+.guessrow .tt{flex:1;min-width:0}
+.guessrow b{display:block;font-size:13.5px;font-weight:650}
+.guessrow span{display:block;font-size:11.5px;color:var(--muted)}
+.vrow{display:flex;gap:8px;margin-top:12px}
+.vbtn{flex:1;padding:11px 0;border-radius:12px;font-size:13px;font-weight:700;transition:filter .15s}
+.vbtn:hover{filter:brightness(1.1)}
+.vbtn.yes{background:var(--accent);color:#fff}
+.vbtn.no{background:var(--raise2);color:var(--text)}
+.trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
+.cta{display:block;width:100%;margin-top:14px;padding:13px 0;border-radius:13px;text-align:center;
+  background:var(--accent);color:#fff;font-size:14px;font-weight:700;transition:filter .15s}
+.cta:hover{filter:brightness(1.1)}
+.cta.mic svg{vertical-align:-2px;margin-right:6px}
+
+/* ---------- playlist picker sheet ---------- */
+.picker{position:fixed;inset:0;background:rgba(8,4,26,.6);display:flex;align-items:flex-end;
+  justify-content:center;z-index:60;backdrop-filter:blur(3px)}
+.picker[hidden]{display:none}
+.pkcard{width:100%;max-width:400px;background:var(--card);border-radius:24px 24px 0 0;
+  border:1px solid var(--line);border-bottom:0;padding:10px 16px 26px;max-height:72vh;overflow-y:auto;
+  animation:sheetup .3s var(--spring) both}
+@keyframes sheetup{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.pkgrip{width:38px;height:4px;border-radius:99px;background:var(--line2);margin:2px auto 12px}
+.pkh{font-size:15px;font-weight:700;margin-bottom:11px}
+.pkrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:10px 11px;
+  border-radius:13px;background:var(--raise);transition:filter .15s}
+.pkrow:hover{filter:brightness(1.08)}
+.pkrow+.pkrow{margin-top:7px}
+.pkrow.def{border:1px solid var(--accent2);
+  background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 30%,var(--raise)),var(--raise))}
+.pkrow .sq{width:36px;height:36px;border-radius:9px;flex:none;display:grid;place-items:center;color:#fff;
+  overflow:hidden}
+.pkrow .sq img{width:100%;height:100%;object-fit:cover}
+.pkrow .tt{flex:1;min-width:0}
+.pkrow b{display:block;font-size:13.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pkrow span{display:block;font-size:11.5px;color:var(--muted)}
+.pkrow .pp{color:var(--accent2);flex:none}
+.pkrow .pp.did{color:var(--good)}
+.pkrow.new{border:1.5px dashed var(--line2);background:none}
+.pknote{font-size:11px;color:var(--faint);text-align:center;margin-top:10px}
+
+/* ---------- splash ---------- */
+.splash{position:fixed;inset:0;z-index:90;background:var(--bg);display:grid;place-items:center;
+  align-content:center;gap:14px;transition:opacity .4s}
+.splash[hidden]{display:none}
+.go2{color:var(--faint);display:grid;place-items:center;flex:none}
+.splash.bye{opacity:0;pointer-events:none}
+.spmark{width:84px;height:84px;border-radius:24px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(150deg,var(--accent2),var(--accent));
+  box-shadow:0 0 70px color-mix(in oklab,var(--accent) 65%,transparent);animation:pop .5s var(--spring) both}
+.spmark svg{width:44px;height:44px}
+.spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--spring) both}
+
+/* ---------- onboarding ---------- */
+.onb{position:fixed;inset:0;z-index:80;background:rgba(8,4,26,.65);backdrop-filter:blur(4px);
+  display:grid;place-items:center;padding:18px}
+.onb[hidden]{display:none}
+.onbcard{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);
+  border-radius:28px;padding:18px 20px 22px;box-shadow:var(--shadow);animation:pop .35s var(--spring) both;
+  max-height:92vh;overflow-y:auto;scrollbar-width:none}
+.onbcard::-webkit-scrollbar{display:none}
+.dots{display:flex;gap:6px;justify-content:center;margin-bottom:16px}
+.dots i{width:6px;height:6px;border-radius:99px;background:var(--raise2);transition:.25s}
+.dots i.on{width:20px;background:var(--accent2)}
+.onbbody{display:flex;flex-direction:column;animation:fade .3s var(--spring) both}
+.obmark{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;color:#fff;margin:26px auto 22px;
+  background:linear-gradient(150deg,var(--accent2),var(--accent));
+  box-shadow:0 14px 40px color-mix(in oklab,var(--accent) 45%,transparent)}
+.obmark svg{width:38px;height:38px}
+.obh{font-size:22px;font-weight:750;letter-spacing:-.02em;text-align:center;line-height:1.25;text-wrap:balance}
+.obs{font-size:13.5px;color:var(--muted);text-align:center;line-height:1.5;margin:10px auto 0;max-width:260px}
+.obcta{display:block;width:100%;margin-top:24px;padding:14px 0;border-radius:14px;text-align:center;
+  background:var(--accent);color:#fff;font-size:14.5px;font-weight:700;transition:filter .15s}
+.obcta:hover{filter:brightness(1.1)}
+.oblater{display:block;width:100%;text-align:center;font-size:12.5px;color:var(--faint);margin-top:12px}
+.oblater:hover{color:var(--muted)}
+/* connect rows */
+.obrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 13px;
+  border-radius:14px;background:var(--raise);border:1px solid transparent;font-size:13.5px;font-weight:650;
+  transition:border-color .15s,filter .15s}
+.obrow:hover{filter:brightness(1.07)}
+.obrow+.obrow{margin-top:8px}
+.obrow.done{border-color:color-mix(in oklab,var(--good) 55%,transparent)}
+.obrow .oi{width:24px;display:grid;place-items:center;flex:none}
+.obrow .ov{margin-left:auto;font-size:12px;color:var(--faint);font-weight:600;flex:none}
+.obrow .ov.ok{color:var(--good)}
+.obrow[disabled]{opacity:.55;pointer-events:none}
+.locknote{display:flex;gap:9px;align-items:flex-start;background:var(--raise);border-radius:12px;
+  padding:11px 12px;font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:12px}
+/* three-taps demo steps */
+.tstep{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:14px;background:var(--raise);
+  border:1px solid transparent;opacity:.42;transition:opacity .4s,border-color .4s,background .4s}
+.tstep.on{opacity:1;border-color:var(--accent2);
+  background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 24%,var(--raise)),var(--raise))}
+.tstep.done{opacity:1;border-color:color-mix(in oklab,var(--good) 45%,transparent)}
+.tstep .tn{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none;color:#fff}
+.tstep b{display:block;font-size:13.5px;font-weight:650}
+.tstep span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.tstep .tchk{margin-left:auto;color:var(--good);flex:none;opacity:0;transition:opacity .3s}
+.tstep.done .tchk{opacity:1}
+.tsteps{display:flex;flex-direction:column;gap:9px;margin-top:20px}
+/* pin tutorial share-row mock */
+.pinmock{display:flex;gap:10px;justify-content:center;background:var(--raise);border-radius:14px;
+  padding:14px 12px;margin-top:18px}
+.pinmock .pic2{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
+.pinmock .ap{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;color:#fff;position:relative}
+.pinmock .ap.addify{background:linear-gradient(150deg,var(--accent2),var(--accent));
+  box-shadow:0 0 0 2px var(--accent2),0 6px 18px color-mix(in oklab,var(--accent) 45%,transparent)}
+.pinmock .ap .n1{position:absolute;top:-6px;right:-6px;background:var(--accent2);color:#fff;
+  font-size:9px;font-weight:800;width:16px;height:16px;border-radius:50%;display:grid;place-items:center}
+.pinsteps{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.pinsteps .ps{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--muted);line-height:1.4}
+.pinsteps .ps i{width:18px;height:18px;border-radius:50%;background:var(--raise2);color:var(--text);
+  font-size:10.5px;font-weight:750;font-style:normal;display:grid;place-items:center;flex:none;margin-top:1px}
+/* momentum finish */
+.okring{width:74px;height:74px;border-radius:50%;margin:24px auto 20px;display:grid;place-items:center;
+  border:2.5px solid var(--good);color:var(--good);
+  box-shadow:0 0 40px color-mix(in oklab,var(--good) 35%,transparent);animation:pop .4s var(--spring) both}
+.okring svg{width:30px;height:30px}
+.obtag{margin:16px auto 0;font-size:11.5px;color:var(--good);font-weight:650;text-align:center;
+  background:color-mix(in oklab,var(--good) 12%,transparent);border-radius:99px;padding:7px 14px;width:fit-content}
+
+/* ---------- listen mode ---------- */
+#s-listen .ttl{text-transform:uppercase;letter-spacing:.17em;font-size:11px;font-weight:750;color:var(--faint)}
+#s-listen .mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:0;padding:0 0 4vh}
+.app[data-state="listening"] .rg{animation:ring 2.4s ease-out infinite}
+.app[data-state="listening"] .rg:nth-child(2){animation-delay:.8s}
+.app[data-state="listening"] .rg:nth-child(3){animation-delay:1.6s}
+.miceq{display:flex;align-items:flex-end;gap:4px;height:26px;margin-top:22px}
+.miceq b{width:4px;height:100%;border-radius:2px;background:var(--accent2);transform:scaleY(.15);
+  transform-origin:50% 100%}
+
 /* ---------- rotating tip ----------
    One sells the version matching, one teaches the auto-playlist, one teaches the share
    sheet. Onboarding that costs no extra screen. */
@@ -360,34 +630,81 @@ button.savecard[disabled]{pointer-events:none}
   <section class="screen" id="s-home">
     <div class="hd">
       <div class="brand"><span id="mark"></span> Addify</div>
-      <button class="ib" id="theme" title="Switch theme" aria-label="Switch theme"></button>
+      <span class="pill" id="scanpill">5 free scans</span>
     </div>
 
-    <div class="mid">
+    <div class="mid" style="padding:10px 0 4px;gap:10px">
       <div class="orbwrap">
-        <button class="orb" id="go" title="Scan" aria-label="Scan"></button>
+        <span class="rg"></span><span class="rg"></span><span class="rg"></span>
+        <button class="orb" id="go" title="Scan" aria-label="Scan">
+          <span id="orbmark"></span><span class="scanword">SCAN</span>
+        </button>
       </div>
-      <p class="tap">Paste a TikTok or Instagram link, or tap the orb to use your clipboard.</p>
+      <p class="tap"><b>Share a reel into Addify</b> - or tap to listen</p>
+      <div class="miccopy" id="miccopy"><span id="ico-mic"></span>Listen mode works on anything playing out loud</div>
       <form class="form" id="form" autocomplete="off">
         <span class="lk" id="ico-link"></span>
-        <input id="url" type="text" placeholder="https://www.tiktok.com/..." aria-label="Clip link" spellcheck="false">
-        <button class="go" type="submit" id="gobtn">Identify</button>
+        <input id="url" type="text" placeholder="Paste a TikTok or Instagram link" aria-label="Clip link" spellcheck="false">
+        <button class="go" type="submit" id="gobtn">Find it</button>
       </form>
-      <div class="subacts">
-        <button id="paste" type="button">Paste from clipboard</button>
-        <span>·</span>
-        <button id="example" type="button">Try an example</button>
-      </div>
       <div class="err" id="err" hidden></div>
     </div>
 
-    <div class="finds">
-      <div class="fh">
-        <b>Found with Addify</b>
-        <div class="acts"><button id="export">Export</button><button id="clear">Clear</button></div>
-      </div>
-      <div id="cratebody"></div>
+    <button class="plcard" id="plcard">
+      <span class="pic" id="plpic"></span>
+      <span class="pt"><b>Found with Addify</b><span id="plsub">0 songs</span></span>
+      <span class="pgo" id="plgo"></span>
+    </button>
+
+    <div id="trendteaser"></div>
+    <div id="recentbox"></div>
+  </section>
+
+  <!-- ============ TRENDING ============ -->
+  <section class="screen" id="s-trend">
+    <div class="hd"><div class="brand" style="font-size:17px">Trending edits</div></div>
+    <p class="sub" style="text-align:left;margin:-2px 0 12px">What's charting right now · live from SoundCloud</p>
+    <div class="chips" id="trendchips"></div>
+    <div id="trendbody"></div>
+  </section>
+
+  <!-- ============ LIBRARY ============ -->
+  <section class="screen" id="s-lib">
+    <div class="hd">
+      <div class="brand" style="font-size:17px">Your finds</div>
+      <button class="ib plain" id="export" title="Export" aria-label="Export"></button>
     </div>
+    <div class="search"><span id="ico-search"></span>
+      <input id="libq" type="text" placeholder='"that song from the gym reel..."' aria-label="Search your finds"></div>
+    <div class="chips" id="libchips"></div>
+    <div id="libbody"></div>
+  </section>
+
+  <!-- ============ PROFILE ============ -->
+  <section class="screen" id="s-prof">
+    <div class="hd"><div class="brand" style="font-size:17px">Profile</div>
+      <button class="ib" id="theme" title="Switch theme" aria-label="Switch theme"></button>
+    </div>
+    <div id="profbody"></div>
+  </section>
+
+  <!-- ============ LISTEN MODE ============ -->
+  <section class="screen" id="s-listen">
+    <div class="hd">
+      <button class="ib plain" id="lcancel" title="Cancel" aria-label="Cancel"></button>
+      <div class="ttl">Listening</div>
+    </div>
+    <div class="mid">
+      <div class="orbwrap">
+        <span class="rg"></span><span class="rg"></span><span class="rg"></span>
+        <div class="orb" id="micorb"></div>
+      </div>
+      <div class="miceq" id="miceq"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></div>
+      <div class="listening" id="lstate">Play the sound out loud</div>
+      <div class="sub">Works on reels, TikToks, the radio - anything with a speaker</div>
+    </div>
+    <div class="tip"><span class="ts" id="ltipico"></span><span>Hold your phone near the speaker for the fastest match</span></div>
+    <div class="cancelhint">Tap &times; to cancel</div>
   </section>
 
   <!-- ============ SCANNING ============ -->
@@ -435,6 +752,14 @@ button.savecard[disabled]{pointer-events:none}
   </section>
 
   <canvas id="wave" hidden></canvas>
+
+  <!-- four tabs, no more - settings and accounts live under Profile so the bar stays clean -->
+  <nav class="tabbar" id="tabbar" aria-label="Tabs">
+    <button class="tab on" data-tab="idle" id="tb-home"><span class="ticon"></span>Home</button>
+    <button class="tab" data-tab="trending" id="tb-trend"><span class="ticon"></span>Trending</button>
+    <button class="tab" data-tab="library" id="tb-lib"><span class="ticon"></span>Library</button>
+    <button class="tab" data-tab="profile" id="tb-prof"><span class="ticon"></span>Profile</button>
+  </nav>
 </div>
 
 <!-- Settings sheet lives OUTSIDE .app on purpose. .app carries a filled `rise` animation,
@@ -458,6 +783,29 @@ button.savecard[disabled]{pointer-events:none}
         <span class="hint2">Create an app at developer.spotify.com/dashboard and add this exact redirect URI:<br><code id="rdu"></code></span>
       </div>
     </div>
+</div>
+
+<!-- Playlist picker - also outside .app (same position:fixed containing-block trap as #sheet). -->
+<div class="picker" id="picker" hidden>
+  <div class="pkcard" role="dialog" aria-modal="true" aria-label="Add to playlist">
+    <div class="pkgrip"></div>
+    <div class="pkh">Add to playlist</div>
+    <div id="pkbody"></div>
+  </div>
+</div>
+
+<!-- Splash - one second on screen: logo, glow, done. -->
+<div class="splash" id="splash" hidden>
+  <div class="spmark" id="spmark"></div>
+  <div class="spname">Addify</div>
+</div>
+
+<!-- Onboarding - four screens, only the first is mandatory. -->
+<div class="onb" id="onb" hidden>
+  <div class="onbcard" role="dialog" aria-modal="true" aria-label="Welcome to Addify">
+    <div class="dots" id="onbdots"></div>
+    <div class="onbbody" id="onbbody"></div>
+  </div>
 </div>
 
 <script>
@@ -490,10 +838,30 @@ var IC={
   soundcloud:'<svg width="24" height="24" viewBox="0 0 24 24"><g fill="#FF5500"><rect x="1.2" y="12.6" width="1.5" height="5.2" rx=".75"/><rect x="4" y="10.6" width="1.5" height="7.2" rx=".75"/><rect x="6.8" y="9" width="1.5" height="8.8" rx=".75"/><rect x="9.6" y="7.2" width="1.5" height="10.6" rx=".75"/><path d="M13 6.9c.72-.6 1.63-.95 2.63-.95a4.2 4.2 0 0 1 4.16 3.72A3.1 3.1 0 0 1 19.2 17.8h-6.1a.6.6 0 0 1-.6-.6V7.4c0-.2.09-.38.24-.5z"/></g></svg>',
   youtube:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.6 7.2a2.9 2.9 0 0 0-2.03-2.05C18.77 4.66 12 4.66 12 4.66s-6.77 0-8.57.49A2.9 2.9 0 0 0 1.4 7.2C.92 9 .92 12 .92 12s0 3 .48 4.8a2.9 2.9 0 0 0 2.03 2.05c1.8.49 8.57.49 8.57.49s6.77 0 8.57-.49a2.9 2.9 0 0 0 2.03-2.05c.48-1.8.48-4.8.48-4.8s0-3-.48-4.8z" fill="#FF0000"/><path d="M9.8 15.3 15.4 12 9.8 8.7z" fill="#fff"/></svg>',
   shazam:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#0088FF"/><g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M9.4 15.4c-1.5-1.1-1.8-3.2-.7-4.7l2.2-3c1.1-1.5 3.2-1.8 4.7-.7"/><path d="M14.6 8.6c1.5 1.1 1.8 3.2.7 4.7l-2.2 3c-1.1 1.5-3.2 1.8-4.7.7"/></g></svg>',
+  home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.4 12 3.8l8 6.6V20a1 1 0 0 1-1 1h-4.6v-6h-4.8v6H5a1 1 0 0 1-1-1z"/></svg>',
+  flame:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5c3.9 0 6.5-2.5 6.5-6.1 0-2.5-1.4-4.4-2.8-6-.5 1-1.3 1.9-2.2 2.3.3-2.9-1-6.4-3.6-8.2.1 2.3-.7 4-2 5.6-1.3 1.7-2.4 3.6-2.4 6.3 0 3.6 2.6 6.1 6.5 6.1z"/></svg>',
+  rows:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h9.5"/></svg>',
+  user:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.7"/><path d="M4.8 20.2c1.1-3.4 3.9-5.1 7.2-5.1s6.1 1.7 7.2 5.1"/></svg>',
+  mic:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.8" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.2"/></svg>',
+  mic2:'<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.8" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.2"/></svg>',
+  search:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.6"/><path d="m16 16 4.4 4.4"/></svg>',
+  down:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>',
+  gear:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19 12c0-.6.5-1.2 1.1-1.6l-1-2.8c-.7.2-1.5 0-2-.5s-.7-1.3-.5-2l-2.8-1c-.4.6-1 1.1-1.8 1.1s-1.4-.5-1.8-1.1l-2.8 1c.2.7 0 1.5-.5 2s-1.3.7-2 .5l-1 2.8c.6.4 1.1 1 1.1 1.6s-.5 1.2-1.1 1.6l1 2.8c.7-.2 1.5 0 2 .5s.7 1.3.5 2l2.8 1c.4-.6 1-1.1 1.8-1.1s1.4.5 1.8 1.1l2.8-1c-.2-.7 0-1.5.5-2s1.3-.7 2-.5l1-2.8c-.6-.4-1.1-1-1.1-1.6z"/></svg>',
+  sat:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7 17 3l4 4-4 4M10 10l4 4M7 13l-4 4 4 4 4-4M14.5 20a5.5 5.5 0 0 0-11-11"/></svg>',
+  lock:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></svg>',
+  bolt:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.8 2.2 4.6 13.4h5.3L10.2 21.8l8.2-11.2h-5.3z"/></svg>',
 };
 /* the wave squiggle inside the orb */
-function orbGlyph(){return '<svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13c2.4 0 2.4-7 4.8-7s2.4 12 4.8 12 2.4-9 4.8-9S19.8 13 21 13"/></svg>';}
-function markGlyph(){return '<svg width="26" height="26" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="url(#mg)"/><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><path d="M6 13c1.8 0 1.8-5 3.6-5s1.8 8.6 3.6 8.6 1.8-6.4 3.6-6.4S19.2 13 20 13" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';}
+/* THE WAVE. One glyph everywhere - the app mark, the scan button, the splash, the
+   playlist art - every touchpoint reinforces it (brief: "the same mark used on the scan
+   button, the share sheet, and the playlist cover"). A smooth double-hump sine, not the
+   jagged scan squiggle it replaced. */
+function waveGlyph(w){w=w||24;
+  // THE squirrely - the App Store icon's wave: one and a half fat periods, deep
+  // amplitude, round caps. Same mark at 60px on a home screen or 20px in a row.
+  return '<svg width="'+w+'" height="'+Math.round(w*20/30)+'" viewBox="0 0 30 20" fill="none" stroke="currentColor" stroke-width="3.1" stroke-linecap="round"><path d="M3.4 10c2.2-8.6 5.5-8.6 7.7 0s5.5 8.6 7.7 0 5.5-8.6 7.7 0"/></svg>';}
+function orbGlyph(){return '<span style="color:#fff">'+waveGlyph(72)+'</span>';}
+function markGlyph(){return '<svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>';}
 function discIll(){return '<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".55"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><circle cx="12" cy="12" r=".9" fill="currentColor"/></svg>';}
 
 /* ---------- theme ---------- */
@@ -504,14 +872,25 @@ function paintTheme(){themeBtn.innerHTML=curTheme()==='dark'?IC.moon:IC.sun;
 try{var st=localStorage.getItem('crate-theme'); if(st) root.setAttribute('data-theme',st);}catch(e){}
 paintTheme();
 themeBtn.onclick=function(){var n=curTheme()==='dark'?'light':'dark'; root.setAttribute('data-theme',n);
-  try{localStorage.setItem('crate-theme',n);}catch(e){} paintTheme(); pal=readPal(); renderCrate(); paintRecCanvas();};
+  try{localStorage.setItem('crate-theme',n);}catch(e){} paintTheme(); pal=readPal(); paintHome(); paintRecCanvas();};
 document.getElementById('mark').innerHTML=markGlyph();
-document.getElementById('go').innerHTML=orbGlyph();
+document.getElementById('orbmark').innerHTML=waveGlyph(66);
+document.getElementById('micorb').innerHTML='<span style="color:#fff">'+IC.mic2+'</span>';
 document.querySelector('#tip .ts').innerHTML=IC.spark;
+document.getElementById('ltipico').innerHTML=IC.spark;
 document.getElementById('ico-link').innerHTML=IC.link;
+document.getElementById('ico-mic').innerHTML=IC.mic;
+document.getElementById('ico-search').innerHTML=IC.search;
 document.getElementById('cancel').innerHTML=IC.x;
+document.getElementById('lcancel').innerHTML=IC.x;
 document.getElementById('back').innerHTML=IC.chev;
 document.getElementById('share').innerHTML=IC.share;
+document.getElementById('export').innerHTML=IC.down;
+document.getElementById('plpic').innerHTML=waveGlyph(22);
+document.getElementById('plgo').innerHTML=IC.play;
+document.getElementById('spmark').innerHTML=waveGlyph(44);
+(function(){var t={ 'tb-home':IC.home,'tb-trend':IC.flame,'tb-lib':IC.rows,'tb-prof':IC.user };
+  Object.keys(t).forEach(function(id){document.querySelector('#'+id+' .ticon').innerHTML=t[id];});})();
 
 function readPal(){var s=getComputedStyle(root); return {signal:s.getPropertyValue('--signal').trim(), cool:s.getPropertyValue('--cool').trim(),
   line:s.getPropertyValue('--line').trim(), faint:s.getPropertyValue('--faint').trim(), good:s.getPropertyValue('--good').trim()};}
@@ -759,13 +1138,62 @@ function prow(label,song,artist,kind){var q=encodeURIComponent((artist?artist+' 
           'https://www.youtube.com/results?search_query='+q;
   return '<a class="prow" href="'+url+'" target="_blank" rel="noopener"><span class="pi">'+IC[kind]+'</span>'+
     '<span class="pn">'+esc(label)+'</span><span class="pp">'+IC.plus+'</span></a>';}
+/* Error screens per the brief: name what happened in plain words, never blame the user,
+   always leave one obvious way forward. */
+function errCard(icon,head,sub,extra){
+  return '<div class="card"><div class="note"><div class="bigq '+(icon==='lock'?'lock':'warn')+'">'+
+    (icon==='lock'?IC.lock:icon==='sat'?IC.sat:'?')+'</div><b>'+esc(head)+'</b><span>'+sub+'</span>'+(extra||'')+'</div></div>';}
+function sendFeedback(obj){
+  return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(obj)}).catch(function(){});}
 function renderResult(d,partial){
   lastResult=d;
-  if(d.result==='rate_limited'){result.innerHTML=noteCard('TikTok is busy','Too many pulls from this network. Wait a moment and try again.'); return;}
-  if(d.result==='engine_down'){result.innerHTML=noteCard('Engine offline','Start Addify on your Mac, then paste again.'); return;}
-  if(d.result==='error'){result.innerHTML=noteCard('Something broke',d.error||'Try again.'); return;}
-  if(d.result==='uncertain'||d.base_uncertain){result.innerHTML=noteCard("Couldn't name this one", d.note||'The clip may be muted, private, or too transformed to match.'); return;}
-  if(d.result==='no_match'){result.innerHTML=noteCard('No song here','Listened through the whole clip. This one is most likely genuine original audio, not a track.'); return;}
+  if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
+  if(d.result==='engine_down'){
+    result.innerHTML=errCard('sat',"You're offline",'No stress - we kept your scan.<br>It’ll run the second you’re back.',
+      (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted)">⏱ 1 scan queued'+
+        '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
+    var rb=document.getElementById('retrybtn');
+    if(rb) rb.onclick=function(){engineUp=null; var u=curURL; lsSet('addify-queue',[]); goHome(); if(u) run(u);};
+    return;}
+  if(d.result==='error'){
+    /* most often a private or unreadable link - a dead end converted into the listen-mode teach */
+    result.innerHTML=errCard('lock',"Couldn't read that link",
+      'It may be private or region-locked - but the mic can hear anything.',
+      (micOK()?'<button class="cta mic" id="golisten">'+IC.mic+'Use listen mode instead</button>'+
+        '<div class="trainnote">Play the reel out loud and we’ll catch it</div>'
+       :'<div class="trainnote">'+esc(d.error||'Try again in a moment.')+'</div>'));
+    var gl=document.getElementById('golisten');
+    if(gl) gl.onclick=function(){goHome(); startListen();};
+    return;}
+  if(d.result==='uncertain'||d.base_uncertain||d.result==='no_match'){
+    /* the crown jewel (brief): the worst moment builds the edit database. When the engine
+       has a base guess, one tap turns a failure into training data via /feedback. */
+    var guess=d.base_song_guess||null;
+    if(guess){
+      result.innerHTML=errCard('?','Couldn’t nail this one',
+        'But we got close - is this the base song?',
+        '<div class="guessrow"><span class="sq" style="background:'+SQ[0]+'">'+IC.note+'</span>'+
+          '<span class="tt"><b>'+esc(guess)+'</b><span>'+esc(d.base_artist_guess||d.base_artist||'')+' · original</span></span></div>'+
+        '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes - it’s an edit</button>'+
+          '<button class="vbtn no" id="fbno">Not it</button></div>'+
+        '<div class="trainnote" id="fbnote">Confirming helps Addify learn this edit for everyone</div>');
+      var done=function(v){
+        sendFeedback({url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||'',verdict:v});
+        if(v==='yes'){saveOne({base_song:guess,base_artist:d.base_artist_guess||d.base_artist||'',handle:d.handle}); dropUnmatched(curURL);}
+        var n=document.getElementById('fbnote');
+        if(n) n.textContent=v==='yes'?'Logged - and saved to your finds':'Logged - this trains the edit database';
+        ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});};
+      var y=document.getElementById('fbyes'), no=document.getElementById('fbno');
+      if(y) y.onclick=function(){done('yes');};
+      if(no) no.onclick=function(){done('no');};
+      return;}
+    result.innerHTML=errCard('?', d.result==='no_match'?'No song here':'Couldn’t nail this one',
+      d.result==='no_match'
+        ? 'Listened through the whole clip. This one is most likely genuine original audio, not a track.'
+        : (d.note||'The clip may be muted, private, or too transformed to match.'),
+      '<div class="trainnote">Saved as pending - we’ll retry as the edit database grows</div>');
+    return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
   var art=d.art? '<img class="art" src="'+esc(d.art)+'" alt="Cover art">' : '<div class="art ph">'+IC.bignote+'</div>';
@@ -823,7 +1251,11 @@ function renderResult(d,partial){
   paintRecCanvas();
   autoSave(d);                                   // scan = saved, no tap required
   var ob=document.getElementById('otherbtn');
-  if(ob) ob.onclick=function(){var w=document.getElementById('otherwrap'); w.hidden=!w.hidden;
+  if(ob) ob.onclick=function(){
+    // Connected: the real picker - their own playlists, add anywhere, create new.
+    // Not connected: the search-link fallback rows.
+    if(SP.connected()) return openPicker(d);
+    var w=document.getElementById('otherwrap'); w.hidden=!w.hidden;
     ob.classList.toggle('on', !w.hidden);};
   var lb=document.getElementById('likebtn');
   if(lb) lb.onclick=function(){lb.classList.toggle('on');
@@ -933,19 +1365,28 @@ var SP = (function(){
         if(!r.ok) return r.json().then(function(j){throw new Error((j.error&&j.error.message)||r.status);});
         return r.json();});
   }
-  /* Reuse an existing "Found with Addify" if the user already has one - re-running
-     onboarding should not litter their library with duplicates. */
+  /* Reuse an existing playlist by name if the user already has one - re-running
+     onboarding should not litter their library with duplicates. Monthly mode names it
+     "Addify · August 2026" (time-capsule playlists, brief's variation) - the toggle
+     clears the cached id so the next save resolves the current month's list. */
+  function plName(){
+    var monthly=false; try{monthly=localStorage.getItem('addify-monthly')==='on';}catch(e){}
+    if(!monthly) return 'Found with Addify';
+    var M=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    var d=new Date(); return 'Addify · '+M[d.getMonth()]+' '+d.getFullYear();
+  }
   function playlist(){
-    var known=g(LS.pl); if(known) return Promise.resolve(known);
+    var name=plName(), known=g(LS.pl);
+    if(known && g('addify-sp-plname')===name) return Promise.resolve(known);
     return api('/me/playlists?limit=50').then(function(j){
-      var hit=(j.items||[]).filter(function(p){return p.name==='Found with Addify';})[0];
-      if(hit){set(LS.pl,hit.id); return hit.id;}
+      var hit=(j.items||[]).filter(function(p){return p.name===name;})[0];
+      if(hit){set(LS.pl,hit.id); set('addify-sp-plname',name); return hit.id;}
       return api('/me').then(function(me){
         return api('/users/'+me.id+'/playlists',{method:'POST',body:JSON.stringify({
-          name:'Found with Addify',
+          name:name,
           description:'Every song I found while scrolling · made with Addify',
           public:false})});
-      }).then(function(p){set(LS.pl,p.id); return p.id;});
+      }).then(function(p){set(LS.pl,p.id); set('addify-sp-plname',name); return p.id;});
     });
   }
   /* Find the track on Spotify. The EXACT edit usually is not there (it lives on
@@ -968,8 +1409,29 @@ var SP = (function(){
     return api('/playlists/'+pid+'?fields=tracks(total)')
       .then(function(j){return (j.tracks||{}).total;}).catch(function(){return null;});
   }
+  /* display name for the Profile tab - fetched once after connect, cached */
+  function who(){return g('addify-sp-name')||null;}
+  function fetchWho(){return api('/me').then(function(me){
+    set('addify-sp-name',me.display_name||me.id||''); return me.display_name;}).catch(function(){return null;});}
+  function playlistUrl(){var pid=g(LS.pl);
+    return pid?'https://open.spotify.com/playlist/'+pid:null;}
+  /* the real picker: the user's own playlists, add-to-any, create-new */
+  function lists(){return api('/me/playlists?limit=30').then(function(j){
+    return (j.items||[]).map(function(p){return {id:p.id,name:p.name,
+      n:(p.tracks||{}).total||0, img:((p.images||[])[0]||{}).url||''};});});}
+  function addTo(pid,song,artist){return findTrack(song,artist).then(function(uri){
+    if(!uri) throw new Error('not on Spotify');
+    return api('/playlists/'+pid+'/tracks',{method:'POST',body:JSON.stringify({uris:[uri]})});});}
+  function create(name){return api('/me').then(function(me){
+    return api('/users/'+me.id+'/playlists',{method:'POST',
+      body:JSON.stringify({name:name,public:false,description:'made with Addify'})});})
+    .then(function(p){return {id:p.id,name:p.name,n:0,img:''};});}
   return {login:login, logout:logout, connected:connected, finishLogin:finishLogin,
           add:add, count:count, clientId:clientId,
+          who:who, fetchWho:fetchWho, playlistUrl:playlistUrl,
+          lists:lists, addTo:addTo, create:create,
+          forgetPlaylist:function(){set(LS.pl,null); set('addify-sp-plname',null);},
+          defaultId:function(){return g(LS.pl);},
           setClientId:function(v){set(LS.id,(v||'').trim());}};
 })();
 
@@ -981,7 +1443,8 @@ function saveOne(d){
   if(!d || !d.base_song) return false;
   var a=loadCrate();
   var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
-            url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||''};
+            url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||'',
+            handle:d.handle||'',ts:Date.now(),listen:!!d.listen};
   if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return false;
   a.unshift(item); storeCrate(a); return true;
 }
@@ -1010,26 +1473,251 @@ function autoSave(d){
   });
 }
 
-/* ---------- recent finds ---------- */
+/* ============================================================
+   DATA LAYER - finds, the scan log, unmatched scans, free scans
+   ============================================================ */
 var SQ=['linear-gradient(140deg,#FF6B8B,#F9407B)','linear-gradient(140deg,#4BE8B0,#12A594)','linear-gradient(140deg,#FFBE5C,#FF8A3D)','linear-gradient(140deg,#7B6BFF,#5B4BE8)'];
-function loadCrate(){try{return JSON.parse(localStorage.getItem('crate-saved')||'[]');}catch(e){return [];}}
-function storeCrate(a){try{localStorage.setItem('crate-saved',JSON.stringify(a));}catch(e){} renderCrate();}
-function saveToCrate(d,btn){var a=loadCrate(); var item={song:d.base_song,artist:d.base_artist,art:d.art||'',url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||''};
-  if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return; a.unshift(item); storeCrate(a);
-  btn.classList.add('on'); btn.innerHTML='<span class="pi">'+IC.savefill+'</span><span class="pn">Saved</span>';}
-function renderCrate(){var a=loadCrate(), b=document.getElementById('cratebody');
-  if(!a.length){b.innerHTML='<div class="empty">'+discIll()+'<b>Nothing here yet</b><span>Songs you dig up land here.</span></div>'; return;}
-  b.innerHTML='<div class="finds">'+a.map(function(x,i){
-    var ic='<div class="sq" style="background:'+SQ[i%SQ.length]+'">'+IC.note+'</div>';
-    return '<div class="saved">'+ic+
-    '<div class="tt"><div class="nm">'+esc(x.song)+'</div><div class="mt">'+esc(x.artist||'')+(x.speed&&x.speed!=='as posted'?' · '+esc(x.speed):' · original')+'</div></div>'+
-    '<button class="rm" data-i="'+i+'" title="Remove">'+IC.x+'</button>'+
-    (x.url?'<a class="rm" href="'+esc(x.url)+'" target="_blank" rel="noopener" title="Open">'+IC.rchev+'</a>':'')+'</div>';}).join('')+'</div>';
-  Array.prototype.forEach.call(b.querySelectorAll('button.rm'),function(btn){btn.onclick=function(){var a=loadCrate(); a.splice(+btn.getAttribute('data-i'),1); storeCrate(a);};});}
-document.getElementById('clear').onclick=function(){if(confirm('Clear your saved library?')) storeCrate([]);};
-document.getElementById('export').onclick=function(){var a=loadCrate(); if(!a.length) return;
+function lsGet(k,fb){try{return JSON.parse(localStorage.getItem(k)||fb);}catch(e){return JSON.parse(fb);}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+function loadCrate(){return lsGet('crate-saved','[]');}
+function storeCrate(a){lsSet('crate-saved',a); paintHome(); renderLib(); renderTrend();}
+/* every SCAN (including repeats of the same song) - this is what trending measures */
+function scanLog(){return lsGet('addify-scanlog','[]');}
+function logScan(d){var a=scanLog();
+  a.unshift({song:d.base_song,artist:d.base_artist,speed:d.speed||'',ts:Date.now(),
+             handle:d.handle||'',listen:!!d.listen});
+  lsSet('addify-scanlog',a.slice(0,500));}
+/* failed scans wait here - the Library shows them as pending, not lost */
+function unmatched(){return lsGet('addify-unmatched','[]');}
+function logUnmatched(url,handle){var a=unmatched();
+  if(a.some(function(x){return x.url===url;})) return;
+  a.unshift({url:url,handle:handle||'',ts:Date.now()}); lsSet('addify-unmatched',a.slice(0,50));}
+function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url;}));}
+/* free scans - a real monthly counter, not a prop. The pill does paywall work all day:
+   users always know where they stand (brief). No payment rail on the prototype, so at
+   zero it says so instead of ambushing anyone. */
+var FREE_SCANS=5;
+function scanKey(){var d=new Date(); return 'addify-scans-'+d.getFullYear()+'-'+(d.getMonth()+1);}
+function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
+function useScan(){try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
+function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed());
+  document.getElementById('scanpill').textContent = left>0 ? left+' free scan'+(left===1?'':'s')
+    : 'demo · unlimited';}
+function speedKind(sp){sp=(sp||'').toLowerCase();
+  if(!sp||sp==='as posted') return 'original';
+  if(sp.indexOf('slow')>=0) return 'slowed';
+  if(sp.indexOf('sped')>=0||sp.indexOf('night')>=0) return 'sped up';
+  if(sp.indexOf('bass')>=0) return 'bass boosted';
+  return 'remix';}
+function speedLabel(x){return (x.speed&&x.speed!=='as posted')?x.speed:'original';}
+function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
+  if(m<1) return 'just now'; if(m<60) return Math.floor(m)+' min ago';
+  if(m<60*24) return Math.floor(m/60)+(m<120?' hour ago':' hours ago');
+  return Math.floor(m/1440)+(m<2880?' day ago':' days ago');}
+function dayOf(ts){if(!ts) return 'Earlier'; var d=new Date(ts), n=new Date();
+  var d0=new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime();
+  if(ts>=d0) return 'Today'; if(ts>=d0-864e5) return 'Yesterday'; return 'Earlier';}
+function exportFinds(){var a=loadCrate(); if(!a.length) return;
   var txt=a.map(function(x){return x.song+' - '+(x.artist||'')+(x.url?'  '+x.url:'');}).join('\n');
-  var u=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); var el=document.createElement('a'); el.href=u; el.download='addify.txt'; el.click(); URL.revokeObjectURL(u);};
+  var u=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); var el=document.createElement('a');
+  el.href=u; el.download='addify.txt'; el.click(); URL.revokeObjectURL(u);}
+document.getElementById('export').onclick=exportFinds;
+
+/* ============================================================
+   TABS + the four tab pages
+   ============================================================ */
+var TABS=['idle','trending','library','profile'];
+function nav(state){setState(state);
+  var map={idle:'tb-home',trending:'tb-trend',library:'tb-lib',profile:'tb-prof'};
+  TABS.forEach(function(s){document.getElementById(map[s]).classList.toggle('on',s===state);});
+  if(state==='idle') paintHome();
+  if(state==='trending') renderTrend();
+  if(state==='library') renderLib();
+  if(state==='profile') renderProf();}
+Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
+  b.onclick=function(){nav(b.getAttribute('data-tab'));};});
+
+/* ---------- home: playlist card + trending teaser + recent finds ---------- */
+function paintHome(){
+  var a=loadCrate();
+  var sub=songs(a.length)+(SP.connected()?' · synced to Spotify':' · saved on this device');
+  document.getElementById('plsub').textContent=sub;
+  paintPill();
+  /* trending teaser: two rows off the REAL chart (see fetchTrending) */
+  var tt=document.getElementById('trendteaser');
+  var top=(TREND.rows||[]).slice(0,2);
+  if(top.length){
+    tt.innerHTML='<div class="secthd"><div class="sect">Trending edits this week</div>'+
+      '<button id="seeall">See all</button></div>'+
+      top.map(function(r,i){return trowHTML(r,i+1);}).join('');
+    document.getElementById('seeall').onclick=function(){nav('trending');};
+    wireTrows(tt);
+  } else if(!a.length){
+    tt.innerHTML='<div class="dashcard"><b>Your finds will land here</b>'+
+      '<span>Every scan also saves to your playlist automatically</span></div>';
+  } else tt.innerHTML='';
+  /* recent finds: the latest one, with its own See-all into Library */
+  var rb=document.getElementById('recentbox');
+  if(a.length){
+    var x=a[0];
+    rb.innerHTML='<div class="secthd"><div class="sect">Your recent finds</div>'+
+      '<button id="tolib">Library</button></div>'+
+      '<button class="trow" id="recentrow"><span class="sq" style="background:'+SQ[0]+'">'+IC.note+'</span>'+
+      '<span class="tt"><b>'+esc(x.song)+' - '+esc(speedLabel(x))+'</b>'+
+      '<span>'+(x.ts?ago(x.ts)+' · ':'')+'saved '+'✓'+'</span></span>'+
+      '<span class="go2">'+IC.rchev+'</span></button>';
+    document.getElementById('tolib').onclick=function(){nav('library');};
+    document.getElementById('recentrow').onclick=function(){nav('library');};
+  } else rb.innerHTML='';
+}
+document.getElementById('plcard').onclick=function(){
+  var u=SP.playlistUrl(); if(u) window.open(u,'_blank'); else nav('library');};
+
+/* ---------- trending: the REAL chart - SoundCloud's New & Hot, where the
+   slowed/sped/edit uploads actually live. Play counts are the platform's own. ---------- */
+var TREND={rows:[],ts:0};
+function fetchTrending(){
+  return fetch(ENGINE+'/trending').then(function(r){return r.json();})
+    .then(function(j){TREND.rows=j.rows||[]; TREND.ts=Date.now();
+      renderTrend(); paintHome(); return TREND.rows;})
+    .catch(function(){return [];});}
+function trendTag(r){
+  var t=(r.kind||'').toLowerCase(), full=(r.title||'').toLowerCase();
+  if(t.indexOf('slow')>=0||full.indexOf('slowed')>=0) return 'slowed';
+  if(t.indexOf('sped')>=0||t.indexOf('night')>=0||full.indexOf('sped')>=0) return 'sped up';
+  if(t.indexOf('remix')>=0||full.indexOf('remix')>=0||full.indexOf('edit')>=0||full.indexOf('flip')>=0) return 'remix';
+  return '';}
+function trowHTML(r,rank){
+  var tag=trendTag(r);
+  return '<button class="trow" data-i="'+(rank-1)+'">'+
+    '<span class="rk'+(rank<=3?' hot':'')+'">'+rank+'</span>'+
+    '<span class="sq" style="background:'+SQ[rank%SQ.length]+'">'+
+      (r.art?'<img src="'+esc(r.art)+'" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:9px" onerror="this.remove()">':IC.note)+'</span>'+
+    '<span class="tt"><b>'+esc(r.title)+'</b>'+
+    '<span>'+(tag?'<i class="up" style="font-style:normal">'+esc(tag)+'</i> · ':'')+
+      esc(r.by||'')+(r.plays?' · '+plays(r.plays)+' plays':'')+'</span></span>'+
+    '<span class="addp" title="Save to playlist">'+IC.plus+'</span></button>';}
+function wireTrows(box){
+  Array.prototype.forEach.call(box.querySelectorAll('.trow[data-i]'),function(row){
+    var r=TREND.rows[+row.getAttribute('data-i')]; if(!r) return;
+    var add=row.querySelector('.addp');
+    row.onclick=function(){if(r.url) window.open(r.url,'_blank');};
+    if(add) add.onclick=function(ev){ev.stopPropagation();
+      if(add.classList.contains('did')) return;
+      saveOne({base_song:r.title,base_artist:r.by,shazam:r.url});
+      if(SP.connected()) SP.add(r.title.replace(/[\(\[].*$/,'').trim(), '').catch(function(){});
+      add.classList.add('did'); add.innerHTML=IC.tick;};});}
+var trendFilter='All';
+function renderTrend(){
+  var kinds=['All','Slowed','Sped up','Remix'];
+  document.getElementById('trendchips').innerHTML=kinds.map(function(k){
+    return '<button class="chipf'+(trendFilter===k?' on':'')+'" data-k="'+k+'">'+k+'</button>';}).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('#trendchips .chipf'),function(c){
+    c.onclick=function(){trendFilter=c.getAttribute('data-k'); renderTrend();};});
+  var b=document.getElementById('trendbody');
+  if(!TREND.rows.length){
+    b.innerHTML='<div class="dashcard"><b>Loading the chart…</b>'+
+      '<span>Live from SoundCloud\'s New &amp; Hot - where the edits chart.</span></div>';
+    if(!TREND.ts) fetchTrending();
+    return;}
+  var f=TREND.rows.map(function(r,i){return {r:r,i:i};})
+    .filter(function(x){return trendFilter==='All'||trendTag(x.r)===trendFilter.toLowerCase();});
+  if(!f.length){b.innerHTML='<div class="dashcard"><b>No '+esc(trendFilter.toLowerCase())+' sounds right now</b><span>Check the other filters.</span></div>'; return;}
+  b.innerHTML='<div class="list">'+f.slice(0,15).map(function(x){return trowHTML(x.r,x.i+1);}).join('')+'</div>';
+  wireTrows(b);}
+
+/* ---------- library ---------- */
+var libFilter='All', libQ='';
+function renderLib(){
+  var a=loadCrate(), un=unmatched();
+  var chips=[['All',a.length],['Edits',a.filter(function(x){return x.speed&&x.speed!=='as posted';}).length],
+             ['Unmatched',un.length]];
+  document.getElementById('libchips').innerHTML=chips.map(function(c){
+    return '<button class="chipf'+(libFilter===c[0]?' on':'')+'" data-k="'+c[0]+'">'+c[0]+
+      (c[1]?' · '+c[1]:'')+'</button>';}).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('#libchips .chipf'),function(c){
+    c.onclick=function(){libFilter=c.getAttribute('data-k'); renderLib();};});
+  var b=document.getElementById('libbody'), q=libQ.toLowerCase(), html='';
+  function match(x){if(!q) return true;
+    return [x.song,x.artist,x.handle,x.speed].join(' ').toLowerCase().indexOf(q)>=0;}
+  if(libFilter!=='Unmatched'){
+    var list=a.filter(function(x){return match(x)&&(libFilter!=='Edits'||(x.speed&&x.speed!=='as posted'));});
+    var groups={};
+    list.forEach(function(x){var g=dayOf(x.ts); (groups[g]=groups[g]||[]).push(x);});
+    ['Today','Yesterday','Earlier'].forEach(function(g){
+      if(!groups[g]) return;
+      html+='<div class="daylbl">'+g+'</div>'+groups[g].map(function(x){
+        var i=a.indexOf(x);
+        var srcline=x.listen?'listen mode':(x.handle?'from @'+esc(x.handle):(x.src||''));
+        return '<button class="trow" data-i="'+i+'"><span class="sq" style="background:'+SQ[i%SQ.length]+'">'+IC.note+'</span>'+
+          '<span class="tt"><b>'+esc(x.song)+' - '+esc(speedLabel(x))+'</b>'+
+          '<span>'+(srcline?srcline+' · ':'')+'saved ✓</span></span>'+
+          (x.url?'<span class="addp" title="Open">'+IC.play+'</span>':'')+
+          '<span class="addp rmx" title="Remove">'+IC.x+'</span></button>';}).join('');});
+    /* unmatched teaser rides along under All */
+    if(libFilter==='All'&&un.length&&!q)
+      html+='<div class="daylbl">Pending</div>'+un.map(unRow).join('');
+  } else html=un.length?un.map(unRow).join(''):'';
+  if(!html) html='<div class="dashcard"><b>'+(q?'No matches for that search':'Nothing here yet')+'</b>'+
+    '<span>'+(q?'Try the song name, the creator, or "slowed".':'Songs you dig up land here.')+'</span></div>';
+  b.innerHTML=html;
+  Array.prototype.forEach.call(b.querySelectorAll('.trow[data-i]'),function(row){
+    var i=+row.getAttribute('data-i'), x=loadCrate()[i]; if(!x) return;
+    row.onclick=function(){if(x.url) window.open(x.url,'_blank');};
+    var rm=row.querySelector('.rmx');
+    if(rm) rm.onclick=function(ev){ev.stopPropagation(); var a2=loadCrate(); a2.splice(i,1); storeCrate(a2);};});
+  Array.prototype.forEach.call(b.querySelectorAll('.trow[data-url]'),function(row){
+    var u=row.getAttribute('data-url');
+    row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); dropUnmatched(u); run(u);};});}
+function unRow(x){return '<div class="trow unm" data-url="'+esc(x.url)+'"><span class="sq">?</span>'+
+  '<span class="tt"><b>Unmatched scan'+(x.handle?' · @'+esc(x.handle):'')+'</b>'+
+  '<span>We’ll retry as our edit database grows</span></span>'+
+  '<button class="retry">Retry</button></div>';}
+document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();};
+
+/* ---------- profile ---------- */
+function monthlyOn(){try{return localStorage.getItem('addify-monthly')==='on';}catch(e){return false;}}
+function renderProf(){
+  var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
+  var name=SP.who()||'You';
+  b.innerHTML=
+    '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
+      '<div><b>'+esc(name)+'</b><span>Free · '+left+' scan'+(left===1?'':'s')+' left this month</span></div></div>'+
+    '<div class="upcard"><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
+      '<button class="upbtn" id="upbtn">Upgrade</button></div>'+
+    '<div class="sect">Connected accounts</div><div class="setlist">'+
+      '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
+        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected ✓':'Connect')+'</button></div>'+
+      '<div class="setrow" style="opacity:.55"><span class="si">'+IC.apple+'</span><span class="st">Apple Music</span>'+
+        '<span class="sv">iOS app</span></div></div>'+
+    '<div class="sect">Scanning</div><div class="setlist">'+
+      '<div class="setrow"><span class="st">Auto-save to playlist</span><button class="sw'+(autoOn()?' on':'')+'" id="pfauto" role="switch" aria-checked="'+autoOn()+'" aria-label="Auto-save to playlist"></button></div>'+
+      '<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>'+
+      '<div class="setrow" style="opacity:.55"><span class="st">Notifications</span><span class="sv">iOS app</span></div></div>'+
+    '<div class="sect">Manage</div><div class="setlist">'+
+      '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
+      '<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>'+
+      '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
+      (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
+      '<button class="setrow danger" id="pfdel"><span class="st">Delete account</span></button></div>';
+  document.getElementById('upbtn').onclick=function(){this.textContent='With the iOS app'; };
+  document.getElementById('pfsp').onclick=function(){
+    if(!SP.connected()){SP.login();} else nav('profile');};
+  document.getElementById('pfauto').onclick=function(){
+    try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} renderProf();};
+  document.getElementById('pfmon').onclick=function(){
+    try{localStorage.setItem('addify-monthly', monthlyOn()?'off':'on');}catch(e){}
+    SP.forgetPlaylist(); renderProf();};
+  document.getElementById('pfexp').onclick=exportFinds;
+  document.getElementById('pfdev').onclick=openSheet;
+  document.getElementById('pfclear').onclick=function(){
+    if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
+  var so=document.getElementById('pfout');
+  if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
+  document.getElementById('pfdel').onclick=function(){
+    if(confirm('Wipe everything Addify stored in this browser?')){
+      try{localStorage.clear();}catch(e){} location.reload();}};
+}
 
 /* ---------- run ---------- */
 var busy=false, urlEl=document.getElementById('url');
@@ -1038,26 +1726,26 @@ urlEl.addEventListener('focus',function(){document.getElementById('form').classL
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
 function showErr(m){var e=document.getElementById('err'); e.hidden=false; e.textContent=m;
   clearTimeout(showErr._t); showErr._t=setTimeout(function(){e.hidden=true;},4500);}
-function fromClipboard(){
-  if(!(navigator.clipboard&&navigator.clipboard.readText)){
-    showErr('Clipboard is blocked here. Paste the link into the box.'); urlEl.focus(); return;}
-  navigator.clipboard.readText().then(function(t){
-    if(parseLink(t).host){urlEl.value=t; run(t);}
-    else {showErr('No TikTok or Instagram link on your clipboard.'); urlEl.focus();}
-  }).catch(function(){showErr('Clipboard access was blocked. Paste the link into the box.'); urlEl.focus();});}
+/* One button, both paths (brief): a link on the clipboard scans it - that IS the web
+   share path - and no link means they want to hear the room, so the same tap opens
+   listen mode instead of erroring. */
 document.getElementById('go').onclick=function(){
-  if(urlEl.value.trim()) run(urlEl.value); else fromClipboard();};
-document.getElementById('paste').onclick=fromClipboard;
-document.getElementById('example').onclick=function(){var ex='https://www.tiktok.com/@vision_hockey/video/7640595887873477909'; urlEl.value=ex; run(ex);};
+  if(urlEl.value.trim()) return run(urlEl.value);
+  if(!(navigator.clipboard&&navigator.clipboard.readText)) return startListen();
+  navigator.clipboard.readText().then(function(t){
+    if(parseLink(t).host){urlEl.value=t; run(t);} else startListen();
+  }).catch(startListen);};
 var phaseT=null, finishT=null;
 function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
   WIN=null; clipSecs=0;
   document.getElementById('dial').classList.remove('done');
   document.getElementById('tl').classList.remove('done');
   document.getElementById('listening').classList.remove('ok');}
+var curURL='';
 function run(raw){if(busy) return; var p=parseLink(raw);
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset();
-  if(!p.host){setState('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
+  if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
+  curURL=p.url;
   busy=true; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
   showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
@@ -1091,8 +1779,16 @@ function run(raw){if(busy) return; var p=parseLink(raw);
 }
 function finish(d){stopClock(); busy=false; pgDone(); clearTimeout(phaseT);
   document.getElementById('gobtn').removeAttribute('disabled');
+  if(d&&d.result==='engine_down'&&curURL){
+    // the scan is queued, not lost - boot retries it the moment the engine answers
+    var q=lsGet('addify-queue','[]');
+    if(q.indexOf(curURL)<0){q.push(curURL); lsSet('addify-queue',q);}}
   if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
+    if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
+      logUnmatched(curURL, d.handle);
     setState('locked'); document.getElementById('matchttl').textContent='No match'; return;}
+  if(!d.cached) useScan();
+  logScan(d);
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
   document.getElementById('dial').classList.add('done');
@@ -1126,18 +1822,233 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){scanReset(); setState('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
+function goHome(){scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
 document.getElementById('back').onclick=goHome;
 document.getElementById('cancel').onclick=goHome;
+document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
   var d=lastResult; if(!d) return; var u=(d.exact&&d.exact.url)||d.shazam||''; if(!u) return;
   var sh=document.getElementById('share');
   if(navigator.clipboard) navigator.clipboard.writeText(u).then(function(){
     sh.innerHTML=IC.savefill; setTimeout(function(){sh.innerHTML=IC.share;},1400);});};
 
+/* ============================================================
+   LISTEN MODE - the mic is real: WebAudio levels on screen, the
+   recording goes to the engine's own Shazam sweep via /listen.
+   ============================================================ */
+var lRec=null, lStream=null, lRaf=null, lTimer=null;
+function micOK(){return !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);}
+function startListen(){
+  if(!micOK()){
+    showErr(location.protocol==='http:'&&location.hostname!=='127.0.0.1'&&location.hostname!=='localhost'
+      ? 'Listen mode needs the https link on this network. Paste the clip link instead.'
+      : 'No microphone here. Paste the clip link instead.');
+    return;}
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    lStream=stream; nav0('listening');
+    document.getElementById('lstate').textContent='Play the sound out loud';
+    /* real levels - the bars move because the mic hears, not because a loop runs */
+    var ac=new (window.AudioContext||window.webkitAudioContext)();
+    var an=ac.createAnalyser(); an.fftSize=64;
+    ac.createMediaStreamSource(stream).connect(an);
+    var buf=new Uint8Array(an.frequencyBinCount);
+    var bars=[].slice.call(document.getElementById('miceq').children);
+    (function lv(){an.getByteFrequencyData(buf);
+      bars.forEach(function(b,i){var v=buf[Math.floor(i*buf.length/bars.length)]/255;
+        b.style.transform='scaleY('+Math.max(.15,v).toFixed(2)+')';});
+      lRaf=requestAnimationFrame(lv);})();
+    startListen._ac=ac;
+    var mime=MediaRecorder.isTypeSupported('audio/webm')?'audio/webm'
+            :MediaRecorder.isTypeSupported('audio/mp4')?'audio/mp4':'';
+    lRec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+    var chunks=[];
+    lRec.ondataavailable=function(e){if(e.data&&e.data.size) chunks.push(e.data);};
+    lRec.onstop=function(){
+      var blob=new Blob(chunks,{type:lRec.mimeType||'audio/webm'});
+      cleanupListen();
+      if(blob.size<8000){goHome(); showErr('Heard nothing - hold the phone near the speaker.'); return;}
+      sendListen(blob);};
+    lRec.start();
+    /* 12 seconds of room audio is what the engine's own probes use */
+    document.getElementById('lstate').textContent='Listening…';
+    lTimer=setTimeout(function(){if(lRec&&lRec.state==='recording') lRec.stop();},12000);
+  }).catch(function(){showErr('Microphone was blocked. Allow the mic, or paste the link.');});}
+function cleanupListen(){
+  if(lRaf) cancelAnimationFrame(lRaf); lRaf=null;
+  clearTimeout(lTimer); lTimer=null;
+  if(startListen._ac){try{startListen._ac.close();}catch(e){} startListen._ac=null;}
+  if(lStream){lStream.getTracks().forEach(function(t){t.stop();}); lStream=null;}}
+function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
+function sendListen(blob){
+  curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
+  busy=true; setState('scanning'); hideChip();
+  showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
+  headline('Finding song'); say('Building the audio fingerprint');
+  pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
+  fetch(ENGINE+'/listen',{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
+    .then(function(r){return r.json();}).catch(function(){return {result:'engine_down'};})
+    .then(function(d){
+      if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
+      setWindow(null, d&&d.clip_secs);
+      renderResult(d,false); finish(d||{result:'error'});});}
+
+/* mic chip variant: reuse the source card, but honest about the source */
+var _showChip=showChip;
+showChip=function(host,sub,thumb,audio){
+  if(host==='mic'){
+    if(sub!=null) chipState.sub=sub; chipState.host='mic'; chipState.audio=!!audio;
+    scanbox.innerHTML='<div class="chip"><span class="th" style="display:grid;place-items:center;color:var(--accent2)">'+IC.mic+'</span>'+
+      '<span class="ct"><b>Listen mode</b><span>'+esc(chipState.sub||'')+'</span></span>'+
+      '<span class="abadge'+(chipState.audio?' on':'')+'">audio'+(chipState.audio?IC.tick:'')+'</span></div>';
+    return;}
+  _showChip(host,sub,thumb,audio);};
+
+/* nav0: like nav() but never repaints - used mid-flow where state is a takeover */
+function nav0(s){setState(s);}
+
+/* ============================================================
+   PLAYLIST PICKER - the user's real Spotify playlists. Default
+   marked "already saved"; adding elsewhere is a bonus, not a chore.
+   ============================================================ */
+function openPicker(d){
+  var pk=document.getElementById('picker'), body=document.getElementById('pkbody');
+  pk.hidden=false;
+  body.innerHTML='<div class="pknote">Loading your playlists…</div>';
+  SP.lists().then(function(ls){
+    var defId=SP.defaultId();
+    ls.sort(function(a,b){return (b.id===defId)-(a.id===defId);});
+    body.innerHTML=ls.map(function(p){
+      var isDef=p.id===defId;
+      return '<button class="pkrow'+(isDef?' def':'')+'" data-id="'+esc(p.id)+'">'+
+        '<span class="sq" style="background:'+SQ[1]+'">'+(p.img?'<img src="'+esc(p.img)+'" alt="">':IC.note)+'</span>'+
+        '<span class="tt"><b>'+esc(p.name)+'</b><span>'+(isDef?'Default · already saved ✓':songs(p.n))+'</span></span>'+
+        '<span class="pp'+(isDef?' did':'')+'">'+(isDef?IC.tick:IC.plus)+'</span></button>';}).join('')+
+      '<button class="pkrow new" id="pknew"><span class="sq" style="background:none;border:1.5px dashed var(--line2);color:var(--faint)">'+IC.plus+'</span>'+
+      '<span class="tt"><b>New playlist</b></span></button>';
+    Array.prototype.forEach.call(body.querySelectorAll('.pkrow[data-id]'),function(row){
+      var pid=row.getAttribute('data-id'), pp=row.querySelector('.pp');
+      if(pp.classList.contains('did')) return;
+      row.onclick=function(){
+        pp.innerHTML='…';
+        SP.addTo(pid,d.base_song,d.base_artist).then(function(){
+          pp.classList.add('did'); pp.innerHTML=IC.tick;
+          row.querySelector('.tt span').textContent='Added ✓';
+        }).catch(function(e){
+          pp.innerHTML=IC.plus;
+          row.querySelector('.tt span').textContent=
+            String(e.message||e).indexOf('not on Spotify')>=0?'Not on Spotify':'Failed - tap to retry';});};});
+    var nw=document.getElementById('pknew');
+    nw.onclick=function(){
+      var name=prompt('Playlist name'); if(!name) return;
+      nw.querySelector('b').textContent='Creating…';
+      SP.create(name).then(function(p){
+        return SP.addTo(p.id,d.base_song,d.base_artist).then(function(){
+          nw.querySelector('b').textContent=p.name+' · added ✓';});
+      }).catch(function(){nw.querySelector('b').textContent='Failed - tap to retry';});};
+  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists - reconnect Spotify in Profile.</div>';});}
+document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
+
+/* ============================================================
+   SPLASH + ONBOARDING - four screens, only the pitch is mandatory
+   ============================================================ */
+function splash(){
+  var el=document.getElementById('splash');
+  el.hidden=false;
+  setTimeout(function(){el.classList.add('bye');},900);
+  setTimeout(function(){el.hidden=true;},1400);}
+var onbStep=0;
+function onbSeen(){try{return localStorage.getItem('addify-onboarded')==='1';}catch(e){return false;}}
+function onbDone(){try{localStorage.setItem('addify-onboarded','1');}catch(e){}
+  document.getElementById('onb').hidden=true; paintHome();}
+function openOnb(step){onbStep=step||0; document.getElementById('onb').hidden=false; paintOnb();}
+function paintOnb(){
+  var dots=document.getElementById('onbdots');
+  dots.innerHTML=[0,1,2,3,4].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
+  var b=document.getElementById('onbbody'), h='';
+  if(onbStep===0){                                     /* 1 · the pitch - seven words */
+    h='<div class="obmark">'+waveGlyph(36)+'</div>'+
+      '<div class="obh">Heard it on a reel?<br>Keep it forever.</div>'+
+      '<div class="obs">Addify finds the exact song - even slowed + reverb edits - and saves it to your playlist.</div>'+
+      '<button class="obcta" id="ob-next">Continue</button>';
+  } else if(onbStep===1){                              /* 1.5 · three taps demo */
+    h='<div class="obh" style="margin-top:14px">Three taps. That\'s it.</div>'+
+      '<div class="obs">Watch how it works</div>'+
+      '<div class="tsteps">'+
+        '<div class="tstep" id="ts0"><span class="tn" style="background:linear-gradient(140deg,#F9407B,#B043E8)">'+IC.ig+'</span><div><b>Share the reel</b><span>Hit share → tap Addify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+        '<div class="tstep" id="ts1"><span class="tn" style="background:linear-gradient(150deg,var(--accent2),var(--accent))">'+waveGlyph(18)+'</span><div><b>We find the exact version</b><span>Slowed · sped up · remix · original</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+        '<div class="tstep" id="ts2"><span class="tn" style="background:color-mix(in oklab,var(--good) 30%,var(--raise2))">'+IC.savefill+'</span><div><b>Saved to your playlist</b><span>Automatically, in your Spotify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+      '</div>'+
+      '<button class="obcta" id="ob-next">Let\'s set it up</button>';
+  } else if(onbStep===2){                              /* 2 · connect - the highest-stakes screen */
+    var on=SP.connected();
+    h='<div class="obh" style="margin-top:14px">Where does your music live?</div>'+
+      '<div class="obs">We\'ll create your <b>Found with Addify</b> playlist there. Every scan saves automatically.</div>'+
+      '<div style="margin-top:18px">'+
+        '<button class="obrow'+(on?' done':'')+'" id="ob-sp"><span class="oi">'+IC.spotify+'</span>Connect Spotify'+
+          '<span class="ov'+(on?' ok':'')+'">'+(on?'Connected ✓':'›')+'</span></button>'+
+        '<button class="obrow" disabled><span class="oi">'+IC.apple+'</span>Connect Apple Music<span class="ov">iOS app</span></button>'+
+        '<button class="obrow" disabled><span class="oi">'+IC.soundcloud+'</span>Connect SoundCloud<span class="ov">soon</span></button>'+
+      '</div>'+
+      '<div class="locknote">'+IC.lock+'<span>Addify can only create playlists and add songs. We never see your password or change anything else.</span></div>'+
+      '<button class="obcta" id="ob-next">Continue</button>'+
+      '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
+  } else if(onbStep===3){                              /* 3 · the pin - prize first, then steps */
+    h='<div class="obh" style="margin-top:14px">Put Addify one tap away</div>'+
+      '<div class="obs">Pin it in your share sheet once - then it\'s the first icon every time you share a reel.</div>'+
+      '<div class="pinmock">'+
+        '<span class="pic2"><span class="ap addify">'+waveGlyph(22)+'<span class="n1">1</span></span>Addify</span>'+
+        '<span class="pic2"><span class="ap" style="background:#3F9B43">💬</span>Messages</span>'+
+        '<span class="pic2"><span class="ap" style="background:#2A6BD8">✉️</span>Mail</span>'+
+      '</div>'+
+      '<div class="pinsteps">'+
+        '<div class="ps"><i>1</i>Share any reel → scroll the app row to the end</div>'+
+        '<div class="ps"><i>2</i>Tap More → Edit → add Addify to Favorites</div>'+
+        '<div class="ps"><i>3</i>Drag it to the front - done forever</div>'+
+      '</div>'+
+      '<button class="obcta" id="ob-next">Got it</button>'+
+      '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
+  } else {                                             /* 4 · momentum - the gift, not a limit */
+    var left=Math.max(0,FREE_SCANS-scansUsed());
+    h='<div class="okring">'+IC.tick+'</div>'+
+      '<div class="obh">You\'re set.</div>'+
+      '<div class="obs">'+left+' free scans on us.<br>Go find that song.</div>'+
+      (SP.connected()?'<div class="obtag">✓ Spotify connected · playlist ready</div>':'')+
+      '<button class="obcta" id="ob-next">Start scanning</button>';
+  }
+  b.innerHTML=h;
+  document.getElementById('ob-next').onclick=function(){
+    if(onbStep>=4){onbDone(); return;}
+    onbStep++; paintOnb();};
+  var sk=document.getElementById('ob-skip');
+  if(sk) sk.onclick=function(){onbStep++; paintOnb();};
+  var sp=document.getElementById('ob-sp');
+  if(sp) sp.onclick=function(){if(!SP.connected()){try{localStorage.setItem('addify-onb-return','2');}catch(e){} SP.login();}};
+  if(onbStep===1){ /* animate the three steps in sequence, skippable by the button */
+    [0,1,2].forEach(function(i){
+      setTimeout(function(){var el=document.getElementById('ts'+i); if(el) el.classList.add('on');},400+i*900);
+      setTimeout(function(){var el=document.getElementById('ts'+i); if(el){el.classList.remove('on'); el.classList.add('done');}},1150+i*900);});}
+}
+
 /* ---------- boot ---------- */
-renderCrate(); setState('idle');
-SP.finishLogin().then(function(ok){ if(ok){ openSheet(); } });
+paintHome(); renderLib(); nav('idle');
+fetchTrending();
+splash();
+SP.finishLogin().then(function(ok){
+  if(ok) SP.fetchWho().then(function(){paintHome();});
+  var back=null; try{back=localStorage.getItem('addify-onb-return'); localStorage.removeItem('addify-onb-return');}catch(e){}
+  if(ok&&back!=null){openOnb(+back); return;}          // finish onboarding where they left
+  if(ok){nav('profile'); return;}                      // connected outside onboarding → show it stuck
+  if(!onbSeen()){openOnb(0);}
+});
+document.getElementById('onb').addEventListener('click',function(e){
+  if(e.target.id==='onb'&&onbStep>=4) onbDone();});
+(function(){var q=lsGet('addify-queue','[]');          // offline queue: run the second we're back
+  if(!q.length) return;
+  checkEngine().then(function(up){if(!up) return;
+    lsSet('addify-queue',[]); run(q[0]);});})();
+window.addEventListener('keydown',function(e){if(e.key==='Escape'){
+  var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
+  var sh=document.getElementById('sheet'); if(!sh.hidden){sh.hidden=true; return;}}});
 </script>
 </body>
 </html>
