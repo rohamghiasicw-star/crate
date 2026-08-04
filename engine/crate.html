@@ -899,11 +899,20 @@ var pal=readPal();
 /* ---------- engine ---------- */
 var ENGINE=(function(){try{var q=new URLSearchParams(location.search).get('engine'); if(q) return q.replace(/\/+$/,'');}catch(e){}
   if(location.protocol==='http:'||location.protocol==='https:') return ''; return 'http://127.0.0.1:8788';})();
+/* ONLY THE POSITIVE IS CACHED. A failed health check must never be sticky: the engine
+   restarts often (any .py edit needs one), and a page that was open across a restart used
+   to latch to engine_down forever and answer every later scan offline WITHOUT contacting
+   the server at all. From the user's side the app is dead while the server is fine, and
+   only a reload fixes it. So a failure leaves the flag null and the next attempt re-checks. */
 var engineUp=null;
-function checkEngine(){if(engineUp!==null) return Promise.resolve(engineUp);
-  return fetch(ENGINE+'/health').then(function(r){return r.ok;}).then(function(o){engineUp=o;return o;}).catch(function(){engineUp=false;return false;});}
+function checkEngine(){if(engineUp===true) return Promise.resolve(true);
+  return fetch(ENGINE+'/health').then(function(r){return r.ok;})
+    .then(function(o){engineUp=o?true:null; return !!o;})
+    .catch(function(){engineUp=null; return false;});}
 function call(path,url){return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
   return fetch(ENGINE+path+'?url='+encodeURIComponent(url)).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};});});}
+// Coming back to the tab is the moment to forget a stale failure, so the next tap just works.
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&engineUp!==true) engineUp=null;});
 
 /* ---------- helpers ---------- */
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
