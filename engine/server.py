@@ -719,35 +719,25 @@ def identify_mic(blob, kind):
 _TREND = {"ts": 0, "rows": []}
 
 def trending_sounds():
-    """/trending - REAL trending audio, not an invention: SoundCloud's New & Hot chart
-    (all-music), where the slowed/sped/edit uploads actually chart. Cached 6h; play
-    counts are SoundCloud's own numbers. Falls back to the last good pull on error."""
+    """/trending - REAL TikTok trending sounds: tokchart's live TikTok sound chart
+    (videos-made-with-sound counts, tiktok.com/music links) topped up from the
+    actively-maintained Apple Music "TikTok Songs 2026" playlist. TikTok killed its own
+    Creative Center music chart (endpoint answers "deprecated" even with valid signing -
+    see trending_tiktok_NOTES.md), so this is the closest real feed that exists.
+    Cached 6h; falls back to the last good pull on error."""
     if time.time() - _TREND["ts"] < 6 * 3600 and _TREND["rows"]:
         return {"rows": _TREND["rows"], "cached": True}
-    import urllib.request
-    cid = E._sc_client_id()
-    u = ("https://api-v2.soundcloud.com/charts?kind=trending"
-         "&genre=soundcloud%%3Agenres%%3Aall-music&client_id=%s&limit=20" % cid)
-    req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-    data = json.load(urllib.request.urlopen(req, timeout=15))
+    import trending_tiktok
     rows = []
-    for c in (data.get("collection") or [])[:20]:
-        t = c.get("track") or {}
-        title = t.get("title") or ""
-        if not title:
-            continue
-        label = ""
-        try:
-            m = E.EDIT_WORDS.search(title.lower())
-            label = m.group(0) if m else ""
-        except Exception:
-            pass
-        rows.append({"title": title,
-                     "by": (t.get("user") or {}).get("username") or "",
-                     "plays": t.get("playback_count") or 0,
-                     "url": t.get("permalink_url") or "",
-                     "art": (t.get("artwork_url") or "").replace("-large", "-t120x120"),
-                     "kind": label})
+    for r in trending_tiktok.fetch(limit=20):
+        rows.append({"title": r.get("title") or "",
+                     "by": r.get("by") or "",
+                     "uses": r.get("plays_or_uses"),      # videos made with the sound
+                     "url": r.get("url") or "",
+                     "art": r.get("art") or "",
+                     "kind": r.get("kind") or "",
+                     "src": r.get("src") or ""})
+    rows = [r for r in rows if r["title"]]
     if rows:
         _TREND["ts"], _TREND["rows"] = time.time(), rows
     return {"rows": rows or _TREND["rows"]}

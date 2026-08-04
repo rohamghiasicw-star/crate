@@ -663,7 +663,7 @@ button.savecard[disabled]{pointer-events:none}
   <!-- ============ TRENDING ============ -->
   <section class="screen" id="s-trend">
     <div class="hd"><div class="brand" style="font-size:17px">Trending edits</div></div>
-    <p class="sub" style="text-align:left;margin:-2px 0 12px">What's charting right now · live from SoundCloud</p>
+    <p class="sub" style="text-align:left;margin:-2px 0 12px">What everyone's using right now · live from TikTok</p>
     <div class="chips" id="trendchips"></div>
     <div id="trendbody"></div>
   </section>
@@ -1595,7 +1595,7 @@ function trowHTML(r,rank){
       (r.art?'<img src="'+esc(r.art)+'" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:9px" onerror="this.remove()">':IC.note)+'</span>'+
     '<span class="tt"><b>'+esc(r.title)+'</b>'+
     '<span>'+(tag?'<i class="up" style="font-style:normal">'+esc(tag)+'</i> · ':'')+
-      esc(r.by||'')+(r.plays?' · '+plays(r.plays)+' plays':'')+'</span></span>'+
+      esc(r.by||'')+(r.uses?' · '+plays(r.uses)+' videos':'')+'</span></span>'+
     '<span class="addp" title="Save to playlist">'+IC.plus+'</span></button>';}
 function wireTrows(box){
   Array.prototype.forEach.call(box.querySelectorAll('.trow[data-i]'),function(row){
@@ -1617,7 +1617,7 @@ function renderTrend(){
   var b=document.getElementById('trendbody');
   if(!TREND.rows.length){
     b.innerHTML='<div class="dashcard"><b>Loading the chart…</b>'+
-      '<span>Live from SoundCloud\'s New &amp; Hot - where the edits chart.</span></div>';
+      '<span>Live TikTok sounds - ranked by videos made with them.</span></div>';
     if(!TREND.ts) fetchTrending();
     return;}
   var f=TREND.rows.map(function(r,i){return {r:r,i:i};})
