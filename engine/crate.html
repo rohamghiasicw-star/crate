@@ -339,7 +339,10 @@ button.plcard:hover{filter:brightness(1.07)}
 .cta{display:block;width:100%;margin-top:14px;padding:13px 0;border-radius:13px;text-align:center;
   background:var(--accent);color:#fff;font-size:14px;font-weight:700;transition:filter .15s}
 .cta:hover{filter:brightness(1.1)}
-.cta.mic svg{vertical-align:-2px;margin-right:6px}
+/* IC.mic carries no width/height (it is sized by its container elsewhere), so without an
+   explicit size here it expanded to fill the whole CTA button. */
+.cta.mic svg{width:17px;height:17px;vertical-align:-3px;margin-right:7px}
+.miccopy svg,.setrow .si svg{width:14px;height:14px}
 
 /* ---------- playlist picker sheet ---------- */
 .picker{position:fixed;inset:0;background:rgba(8,4,26,.6);display:flex;align-items:flex-end;

@@ -651,19 +651,28 @@ def get_source(url):
     tmp = tempfile.mkdtemp()
     if "instagram.com" in url:
         r = ig.fetch_reel(url)
-        if not r.get("video_url"):
-            raise RuntimeError("instagram gave no media url (private or removed)")
-        mp4 = os.path.join(tmp, "v.mp4")
-        open(mp4, "wb").write(fetch(r["video_url"], binary=True, timeout=90))
         audio = os.path.join(tmp, "a.wav")
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
-                        "-ac", "1", "-ar", "44100", audio], check=True)
+        if r.get("video_url"):
+            mp4 = os.path.join(tmp, "v.mp4")
+            open(mp4, "wb").write(fetch(r["video_url"], binary=True, timeout=90))
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
+                            "-ac", "1", "-ar", "44100", audio], check=True)
+        elif r.get("audio_url"):
+            # A PHOTO POST OR SLIDESHOW. There is no video to strip audio from, but the
+            # attached track has its own downloadable asset - so these are identifiable
+            # exactly like a reel, and used to fail as "no media url".
+            src_a = os.path.join(tmp, "a.src")
+            open(src_a, "wb").write(fetch(r["audio_url"], binary=True, timeout=90))
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src_a,
+                            "-ac", "1", "-ar", "44100", audio], check=True)
+        else:
+            raise RuntimeError("instagram gave no media url (private or removed)")
         mus = r.get("music") or {}
         return {"platform": "instagram", "audio": audio,
                 "credit_title": mus.get("title"), "credit_author": mus.get("artist"),
                 "is_original": bool(mus.get("is_original")),
                 "desc": r.get("caption") or "", "handle": r.get("owner"),
-                "thumb": r.get("thumbnail"), "tmp": tmp}
+                "thumb": r.get("art") or r.get("thumbnail"), "tmp": tmp}
     # tiktok. The VIDEO-audio fetch (tikwm resolve + mp4 download + ffmpeg, the
     # slowest independent leg - measured 6.3s of an 11s get_source on a long clip) and
     # the oEmbed credit call only need the RESOLVED url, so start both the moment the

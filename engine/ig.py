@@ -151,17 +151,30 @@ def _cookie_reel(url):
     img = (item.get("image_versions2") or {}).get("candidates") or []
     if img:
         out["thumbnail"] = img[0].get("url")
+    # PHOTO POSTS AND SLIDESHOWS CARRY MUSIC TOO.
+    # Reels put it in clips_metadata; a carousel or single photo (media_type 8/1) has no
+    # clips_metadata at all and puts the same structure under music_metadata instead.
+    # Only reels were being read, so a slideshow with a licensed track attached looked
+    # like it had no audio whatsoever - and with no video_url there was nothing to
+    # fingerprint either. music_metadata gives BOTH the naming and a downloadable asset.
     clips = item.get("clips_metadata") or {}
-    mus = clips.get("music_info")
+    mm = item.get("music_metadata") or {}
+    mus = clips.get("music_info") or mm.get("music_info")
     if mus:
         a = mus.get("music_asset_info") or {}
         out["music"] = {"title": a.get("title"), "artist": a.get("display_artist"),
                         "is_original": False, "id": a.get("audio_cluster_id")}
+        # the track's own audio, when the post has no video to pull from
+        out["audio_url"] = (a.get("progressive_download_url")
+                            or a.get("fast_start_progressive_download_url"))
+        if a.get("cover_artwork_uri"):
+            out["art"] = a.get("cover_artwork_uri")
     else:
-        osi = clips.get("original_sound_info") or {}
+        osi = clips.get("original_sound_info") or mm.get("original_sound_info") or {}
         out["music"] = {"title": osi.get("original_audio_title") or "Original audio",
                         "artist": (osi.get("ig_artist") or {}).get("username"),
                         "is_original": True, "id": osi.get("audio_asset_id")}
+        out["audio_url"] = osi.get("progressive_download_url")
     return out
 
 
