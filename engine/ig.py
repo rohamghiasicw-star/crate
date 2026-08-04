@@ -173,10 +173,12 @@ def fetch_reel(url):
     r = _embed_reel(code)
     if r and r.get("video_url"):
         return r
-    try:
-        return _cookie_reel(url)
-    except Exception:
-        raise RuntimeError("instagram reel is private, region-locked, or unavailable")
+    # PUBLIC PATH ONLY. The logged-in fallback (_cookie_reel, below) is deliberately not
+    # wired in: Meta's platform-terms wins have all been logged-in fact patterns, their
+    # one loss was logged-out-only, and a served app has no user session to borrow
+    # anyway. A private reel is a dead end here - the UI turns it into the listen-mode
+    # offer instead, which is the honest way to read a reel we are not allowed to fetch.
+    raise RuntimeError("instagram reel is private, region-locked, or unavailable")
 
 
 if __name__ == "__main__":
