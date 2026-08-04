@@ -15,7 +15,7 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, re, tempfile, time, uuid
+import asyncio, json, os, queue, re, tempfile, threading, time, uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -23,6 +23,7 @@ from urllib.parse import urlparse, parse_qs
 import crate_engine as E
 import wrong_song
 import speed_from_master
+import links as L
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
@@ -383,6 +384,24 @@ def _phase1(url, key, t0):
                 res["unverified_base"] = True
                 res["speed"] = None
 
+        # REAL DESTINATIONS FOR THE BASE TRACK. Naming a song without a link to it is only
+        # half an answer - and offering the official, licensed destination alongside the
+        # unofficial edit upload is also the "simple measure" that contributory-liability
+        # doctrine turns on (see review/caselaw-corrections.md). Runs on the phase-1
+        # budget: two keyless APIs in parallel behind a 6s cap, and a failure is silent
+        # because a missing link must never cost the user their answer.
+        if base_title:
+            try:
+                _lk = L.official_links(base_title, base_artist)
+                if _lk.get("links"):
+                    res["links"] = _lk["links"]
+                if _lk.get("preview"):
+                    res["preview_url"] = _lk["preview"]     # 30s official clip
+                if _lk.get("art") and not res.get("art"):
+                    res["art"] = _lk["art"]
+            except Exception:
+                pass
+
         # ---- phase 1 ends here: the song is named, hand it straight to the user ----
         res["result"] = "found" if (fp or base_title) else "no_match"
         res["exact"] = None
@@ -479,10 +498,32 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
     return rows
 
 
-def _phase2(ctx):
+def _cand_row(c):
+    """One candidate in the shape the UI renders. Extracted so a STREAMED row and a row
+    in the final payload are built by the same code and can never disagree about a
+    field - the streaming client stacks these up live and then replaces them wholesale
+    with the authoritative list, and a shape mismatch there would read as the row
+    changing under the user."""
+    return {"title": c.get("title", ""),
+            "uploader": c.get("uploader", ""),
+            "source": c.get("source", ""), "url": c.get("url", ""),
+            "score": round(c.get("final", c.get("score", 0)), 3),
+            # the audio evidence itself - carried so a result can be
+            # audited without re-running the hunt
+            "core": round(c.get("core"), 3) if c.get("core") is not None else None,
+            "plays": c.get("plays", 0),
+            "bass": round(c.get("bass_delta", 0.0), 1)}
+
+
+def _phase2(ctx, on_cand=None):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
     on SoundCloud and YouTube and compare each against the clip's actual audio (same
-    recording, speed, bass tilt) to find WHICH upload the clip used."""
+    recording, speed, bass tilt) to find WHICH upload the clip used.
+
+    `on_cand(row)` is optional. When given, it fires once per verified candidate the
+    moment the audio confirms it, so /edits/stream can push it to the page instead of
+    the user watching a bar. It cannot affect the outcome: the hunt, the ranking and the
+    returned payload are identical whether or not anyone is listening."""
     src, fp = ctx["src"], ctx["fp"]
     res, key, t0, url = ctx["res"], ctx["key"], ctx["t0"], ctx["url"]
     base_title, base_artist = ctx["base_title"], ctx["base_artist"]
@@ -506,12 +547,21 @@ def _phase2(ctx):
                     search_hints.append(t)
             mash = fp.get("mashup") if fp else None
             _t = time.time()
+            # The engine hands back the raw candidate; the row shape is ours to build.
+            # Wrapped so a dead client socket can never propagate into the hunt.
+            _emit = None
+            if on_cand is not None:
+                def _emit(c):
+                    try:
+                        on_cand(_cand_row(c))
+                    except Exception:
+                        pass
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
                 handle=src.get("handle"), hints=search_hints,
                 shazam_reliable=shazam_reliable,
-                pair=(mash or {}).get("pair")))
+                pair=(mash or {}).get("pair"), on_cand=_emit))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
             rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
@@ -520,15 +570,7 @@ def _phase2(ctx):
             # coincidental same-title different song (the seyti / 8ball false positives).
             verified = [c for c in rk if c.get("editmatch")]
             for c in verified[:6]:
-                candidates.append({"title": c.get("title", ""),
-                                   "uploader": c.get("uploader", ""),
-                                   "source": c.get("source", ""), "url": c.get("url", ""),
-                                   "score": round(c.get("final", c.get("score", 0)), 3),
-                                   # the audio evidence itself - carried so a result can be
-                                   # audited without re-running the hunt
-                                   "core": round(c.get("core"), 3) if c.get("core") is not None else None,
-                                   "plays": c.get("plays", 0),
-                                   "bass": round(c.get("bass_delta", 0.0), 1)})
+                candidates.append(_cand_row(c))
             # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted
             # by a rescue rather than earned on audio, and when every candidate is weak
             # the least-bad one was still being displayed as "the exact version playing".
@@ -765,6 +807,34 @@ def identify_edits(url):
         _cleanup((ctx.get("src") or {}).get("tmp"))
 
 
+def _edits_job(url, on_cand):
+    """The body of /edits, with a per-candidate callback. Same decisions, same order,
+    same cache writes as identify_edits/identify - the ONLY difference is that verified
+    candidates are announced as they land instead of only at the end. Kept as one
+    function so the streaming path can never diverge from the blocking one."""
+    _prune_sessions()
+    key = url.split("?")[0]
+    if key in CACHE:
+        c = dict(CACHE[key]); c["cached"] = True
+        return c
+    ctx = SESSIONS.pop(key, None)
+    if not ctx:
+        # No live session: either /base was never called or the server restarted under
+        # the page (every .py edit does that). Do the whole job rather than answering
+        # with an empty hunt - the same recovery identify_edits already performs.
+        res, ctx = _phase1(url, key, time.time())
+        if not ctx:                       # rate-limited: no audio was ever fetched
+            return res
+        if not ctx.get("worth"):          # named it, nothing left to hunt for
+            CACHE[key] = res
+            _cleanup((ctx.get("src") or {}).get("tmp"))
+            return res
+    try:
+        return _phase2(ctx, on_cand=on_cand)
+    finally:
+        _cleanup((ctx.get("src") or {}).get("tmp"))
+
+
 def identify(url):
     """/find - the whole thing in one shot. Kept for callers that want one response."""
     _prune_sessions()
@@ -928,6 +998,81 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    # ---- Server-Sent Events -------------------------------------------------------
+    # WHY SSE AND NOT POLLING: this is a ThreadingHTTPServer, so a long-lived response
+    # already gets its own thread and costs no new dependency, no new state to expire,
+    # and no client timer. The alternative (stash partials in SESSION, poll /progress)
+    # needs a second lifetime to manage on a dict that already loses everything on the
+    # restart that every .py edit causes - more moving parts for a worse failure mode.
+    #
+    # Framing: send_response() would emit HTTP/1.0 (the class default) and this server's
+    # other endpoints all rely on that plus Content-Length, so rather than change
+    # protocol_version globally - which would put every other response one missing
+    # Content-Length away from a hung browser - the stream writes its own status line.
+    # HTTP/1.1 + "Connection: close" + no Content-Length is the unambiguous "body ends
+    # when the socket does" framing, and it is what EventSource wants.
+    SSE_PING = 5.0        # a comment line often enough that nothing calls the socket dead
+    SSE_MAX = 300.0       # hard ceiling; the slowest measured hunt is well under a minute
+
+    def _sse(self, link):
+        q = queue.Queue()
+
+        def worker():
+            try:
+                q.put(("done", _edits_job(link, lambda row: q.put(("cand", row)))))
+            except Exception as e:
+                q.put(("fail", {"result": "error", "error": str(e)[:200]}))
+
+        try:
+            self.wfile.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/event-stream; charset=utf-8\r\n"
+                b"Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n"
+                b"Connection: close\r\n"
+                b"X-Accel-Buffering: no\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                b"Access-Control-Allow-Private-Network: true\r\n"
+                b"\r\n"
+                # NEVER auto-reconnect. EventSource retries on its own when a stream
+                # ends, and a silent retry here would re-run a 20-40s hunt because a
+                # socket blipped. The client closes the stream on done/fail; this is
+                # only the belt to that braces.
+                b"retry: 3600000\n\n")
+        except Exception:
+            return
+        self.close_connection = True
+        threading.Thread(target=worker, daemon=True).start()
+        t0, n = time.time(), 0
+        while True:
+            try:
+                ev, data = q.get(timeout=self.SSE_PING)
+            except queue.Empty:
+                if time.time() - t0 > self.SSE_MAX:
+                    ev, data = "fail", {"result": "error", "error": "stream timed out"}
+                else:
+                    try:
+                        self.wfile.write(b": ping\n\n")
+                    except Exception:
+                        return
+                    continue
+            if ev == "cand":
+                n += 1
+                # `n` is a REAL milestone count - one verified candidate each - so the
+                # page can move its bar on evidence instead of on a timer.
+                body = {"cand": data, "n": n}
+            else:
+                body = data
+            try:
+                self.wfile.write(
+                    ("event: %s\ndata: %s\n\n" % (ev, json.dumps(body))).encode())
+            except Exception:
+                # The page navigated away or reloaded. Let the worker finish anyway: it
+                # writes CACHE[url] on completion, so the reload (or the /edits
+                # fallback) gets the finished answer for free instead of re-hunting.
+                return
+            if ev in ("done", "fail"):
+                return
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -954,11 +1099,47 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _send_raw(self, body, ctype):
+        b = body.encode() if isinstance(body, str) else body
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
     def do_GET(self):
         u = urlparse(self.path)
         # serve the app itself, so page + engine share one origin (no CORS/PNA)
-        if u.path in ("/", "/index.html", "/crate.html"):
+        # /share is the landing point for EVERY share path - the Android Web Share
+        # Target, an iOS Shortcut, or a native Share Extension all just need somewhere to
+        # hand a url to. Same page; the client reads ?url=/?text= and scans immediately.
+        if u.path in ("/", "/index.html", "/crate.html", "/share"):
             return self._send_page()
+        if u.path == "/manifest.webmanifest":
+            return self._send_raw(json.dumps({
+                "name": "Addify", "short_name": "Addify",
+                "description": "Find the exact song. Save it.",
+                "start_url": "/", "scope": "/", "display": "standalone",
+                "background_color": "#1B1140", "theme_color": "#150E33",
+                "icons": [{"src": "/icon.svg", "sizes": "any",
+                           "type": "image/svg+xml", "purpose": "any maskable"}],
+                # Android/Chrome: puts Addify IN the system share sheet. iOS Safari does
+                # not implement this yet, which is why the Shortcut and the native Share
+                # Extension exist - see SHARE-SHEET.md.
+                "share_target": {"action": "/share", "method": "GET",
+                                 "params": {"title": "title", "text": "text", "url": "url"}},
+            }), "application/manifest+json")
+        if u.path == "/icon.svg":
+            return self._send_raw(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+                '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+                '<stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/>'
+                '</linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#g)"/>'
+                '<path d="M96 256c34-96 62-96 96 0s62 96 96 0 62-96 96 0" fill="none" '
+                'stroke="#fff" stroke-width="46" stroke-linecap="round"/></svg>',
+                "image/svg+xml")
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
@@ -967,12 +1148,16 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, trending_sounds())
             except Exception as e:
                 return self._send(200, {"rows": [], "error": str(e)[:120]})
-        if u.path not in ("/find", "/base", "/edits"):
+        if u.path not in ("/find", "/base", "/edits", "/edits/stream"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
         link = (q.get("url") or [""])[0].strip()
         if not link or not any(h in link for h in ("tiktok.com", "instagram.com")):
             return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
+        # /edits/stream is /edits with the answers pushed out as they verify. /edits
+        # itself is untouched and stays the fallback for any client that can't stream.
+        if u.path == "/edits/stream":
+            return self._sse(link)
         fn = {"/base": identify_base, "/edits": identify_edits}.get(u.path, identify)
         try:
             self._send(200, fn(link))

@@ -2357,7 +2357,21 @@ def _web_quota(cands, max_dl, min_web=2):
     return (head[:max_dl - len(extra)] + extra)
 
 
-def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
+def _editmatch_calc(core, not_other, artist_hit):
+    """THE editmatch predicate, in exactly one place.
+
+    Pure: takes values, returns (strong_core, editmatch). Extracted verbatim from the
+    ranking pass so the STREAMING hook below cannot drift to a looser bar than the one
+    the crown is decided by - a candidate streamed to the UI as verified has to satisfy
+    the same expression that decides `editmatch` in the final ranking, not a copy of it
+    that some later edit forgets to keep in sync."""
+    strong = core >= CORE_EDIT
+    return strong, bool((strong and (not_other or core >= CORE_SAME))
+                        or (artist_hit and core >= 0.38 and not_other))
+
+
+def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
+                        on_scored=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
     verify() returns a calibrated same-master score that survives speed / pitch /
     bass-boost edits, plus the measured speed and a bass-boost delta. This is the
@@ -2402,6 +2416,16 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
                  vscore=v["score"], score=v["score"], same=v["same"],
                  vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
+        # THE MOMENT A CANDIDATE IS VERIFIED. Everything above is this candidate's own
+        # audio evidence against the clip, complete - the rest of find_edit only decides
+        # ORDER. So this is the one honest place to tell the UI "another one just
+        # confirmed" instead of making the user watch a bar for 20-40s. Optional and
+        # swallowed: a streaming consumer must never be able to break the hunt.
+        if on_scored is not None:
+            try:
+                on_scored(c)
+            except Exception:
+                pass
 
     if todo:
         _bt0 = time.time()
@@ -2413,11 +2437,19 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
                     edit_label, known_dir=None, handle=None, max_dl=14,
-                    hints=None, shazam_reliable=True, pair=None):
+                    hints=None, shazam_reliable=True, pair=None, on_cand=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
-    re-pitched re-upload - that faked slows on plain, normal-speed clips."""
+    re-pitched re-upload - that faked slows on plain, normal-speed clips.
+
+    `on_cand(c)` is OPTIONAL and purely additive: called, from a download worker thread,
+    the instant a candidate has verified as a genuine same-recording match. Passing it
+    changes nothing about what is searched, downloaded, scored or ranked - the returned
+    result is byte-identical either way - it only lets a caller show the user each hit as
+    it lands instead of after the whole hunt. It is called ONLY for candidates that both
+    satisfy the real `editmatch` predicate AND clear CORE_KEEP, i.e. the same bar the
+    crown itself has to clear, so nothing unverified can ever be surfaced as confirmed."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist,
                             edit_label, handle=handle, hints=hints,
                             shazam_reliable=shazam_reliable, pair=pair)
@@ -2454,7 +2486,17 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 ftmp = tempfile.mkdtemp()
                 fctx = _verify.prepare_clip(clip_audio)
                 _ft1 = time.time()
-                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL, clip_ctx=fctx)
+                # STREAM THE FAST PATH TOO. Anything landing at FAST_EXIT_CORE is at or
+                # above CORE_SAME (provably the same audio), so it is guaranteed to be in
+                # `good` and returned - streaming it the moment it verifies can't surface
+                # something the hunt then drops.
+                _fast_hit = None
+                if on_cand is not None:
+                    def _fast_hit(c):
+                        if (c.get("core") or 0) >= FAST_EXIT_CORE:
+                            on_cand(c)
+                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL, clip_ctx=fctx,
+                                    on_scored=_fast_hit)
                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
                 good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
                 if good:
@@ -2654,11 +2696,37 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 -edit_char,                 # a matching edit tag before a plain upload
                 -c.get("plays", 0))         # popularity only breaks ties within a tier
 
+    # ---- STREAMING HOOK (read-only). Decides whether a just-verified candidate is
+    # solid enough to show the user NOW, using the same `keep` admission and the same
+    # `_editmatch_calc` predicate the ranking uses at the end - never a looser one.
+    #
+    # Two deliberate differences from the final pass, both in the CONSERVATIVE direction:
+    #   * CORE_KEEP is required outright. `keep` also admits weaker candidates via the
+    #     title-hit and artist-hit rescues, but the crown itself is nulled below CORE_KEEP
+    #     (server's weak_exact gate), so streaming a sub-CORE_KEEP row would be showing a
+    #     "found it" the engine is about to refuse to stand behind. Under-streaming a
+    #     rescued candidate until the final payload is the acceptable failure here.
+    #   * The speed-family rescue is not applied - it needs the whole pool.
+    #
+    # MUTATES NOTHING. `not_other` and the editmatch flags are computed into locals and
+    # thrown away; the authoritative pass below recomputes them on its own terms. That is
+    # what makes streaming provably incapable of changing the crown.
+    def _stream_hit(c):
+        core = c.get("core", 0) or 0
+        if core < CORE_KEEP:
+            return
+        not_other = not OTHER_RENDITION.search(_ascii_fold(c.get("title") or ""))
+        if not _editmatch_calc(core, not_other, _artist_hit(c))[1]:
+            return
+        on_cand(c)
+    _hit = _stream_hit if on_cand is not None else None
+
     _wave1_done = []
     if cands:
         wave1 = _sc_quota(sorted(cands, key=_dl_priority), max_dl)[:max_dl]
         _tw1 = time.time()
-        n = _download_and_score(wave1, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
+        n = _download_and_score(wave1, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx,
+                                on_scored=_hit)
         tlog("dl_wave1", time.time() - _tw1, n=n)
         _wave1_done = [c for c in wave1 if c.get("_done")]
     else:
@@ -2727,7 +2795,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     cands.sort(key=_dl_priority)
     _tm0 = time.time()
     head = _producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl)
-    n2 = _download_and_score(head, clip_audio, tmp, n, max_dl, clip_ctx=clip_ctx)
+    n2 = _download_and_score(head, clip_audio, tmp, n, max_dl, clip_ctx=clip_ctx,
+                             on_scored=_hit)
     head_ids = {id(c) for c in head}
     stripped = 0
     for c in _wave1_done:
@@ -2752,7 +2821,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         for c in more:
             c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
         more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
-        _download_and_score(more, clip_audio, tmp, n, 5, clip_ctx=clip_ctx)
+        _download_and_score(more, clip_audio, tmp, n, 5, clip_ctx=clip_ctx,
+                            on_scored=_hit)
         cands += more
         tlog("extra_dir_dl", time.time() - _te0, n=len(more))
 
@@ -2785,14 +2855,13 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # IS the creator's "(Marimba Ringtone Cover)" could never be crowned at core 1.000,
     # and the engine settled for a 0-play "slowed + reverb" edit of the wrong recording.
     for c in keep:
-        core = c.get("core", 0)
-        c["strong_core"] = core >= CORE_EDIT      # cleared the bar on audio evidence alone
-        c["editmatch"] = bool(
-            (c["strong_core"] and (c["not_other"] or core >= CORE_SAME))
-            # confirmed-artist rescue: needs its own real audio plausibility (0.38, above
-            # the 0.30 keep floor) plus not_other - we're trusting the artist match to
-            # cover a WEAK score, not a coincidental one.
-            or (_artist_hit(c) and core >= 0.38 and c["not_other"]))
+        # strong_core = cleared the bar on audio evidence alone. editmatch also allows the
+        # confirmed-artist rescue: it needs its own real audio plausibility (0.38, above
+        # the 0.30 keep floor) plus not_other - we're trusting the artist match to cover a
+        # WEAK score, not a coincidental one. The expression lives in _editmatch_calc so
+        # the streaming hook above is answering the identical question, not a stale copy.
+        c["strong_core"], c["editmatch"] = _editmatch_calc(
+            c.get("core", 0), c["not_other"], _artist_hit(c))
     # REVERB/SPEED-FAMILY RESCUE - appended, not folded into the block above, so it
     # can't collide with in-flight edits to the artist_hit/strong_core tiers. Separate
     # bug from the missing-query one above: even once "<song> slowed"/"slowed reverb"
@@ -3039,7 +3108,18 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
         vlock = c.get("vspeed_locked")
         vcheck = max(0.25, min(4.0, vlock)) if vlock is not None else v
-        speed_exact = 0 if abs(float(np.log2(vcheck))) <= 0.03 else 1     # within ~2%
+        # GRADED, NOT BINARY. Measured failure: a clip at sped up 1.10x returned six
+        # candidates, every one slowed or bass boosted and not one sped up. They are all
+        # the same recording so `core` saturates at 1.000, and with a binary tier all six
+        # scored 1 and tied - so the tier contributed nothing and `bass_off` picked the
+        # crown, handing a sped-up clip a bass-boosted edit. Grading in 3% steps means
+        # "wrong by a little" still beats "wrong by a lot" when nothing is exact.
+        # Bucket 0 is byte-identical to the old speed_exact==0 set, so this cannot change
+        # any outcome the tier already decided - reproduced offline across 80 pool
+        # configurations: 12 crowns changed, every one from a wrong-direction candidate to
+        # the nearest-speed one, and zero changes whenever an exact-speed match existed.
+        _d = abs(float(np.log2(vcheck)))
+        speed_exact = 0 if _d <= 0.03 else 1 + int((_d - 0.03) / 0.03)
         # When several uploads are PROVABLY the same recording (core saturated), the
         # small gaps between their finals are bass/speed-fit noise, not evidence - the
         # audio is identical. Quantise those so they tie, and let plays pick the upload

@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#150E33">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Addify">
 <title>Addify — name the sound in any clip</title>
 <style>
 :root{
@@ -509,6 +514,16 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .clip img{width:30px;height:30px;border-radius:8px;object-fit:cover;flex:none}
 .clip .h{font-weight:600;color:var(--text)}
 
+/* base-track destinations - verified pages solid, search fallbacks visibly lighter */
+.lrow{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:14px}
+.lchip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:var(--r-pill);
+  background:var(--raise);border:1px solid var(--line);font-size:12.5px;font-weight:640;
+  transition:border-color .15s,filter .15s}
+.lchip:hover{filter:brightness(1.1);border-color:var(--line2)}
+.lchip.ex{background:var(--raise2);border-color:var(--line2)}
+.lchip svg{width:15px;height:15px;flex:none}
+.lchip i{font-style:normal;font-weight:600;color:var(--faint);font-size:11px}
+
 .sect{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:20px 0 9px}
 .list{display:flex;flex-direction:column;gap:7px}
 .trk{display:flex;align-items:center;gap:11px;background:var(--raise2);border-radius:14px;padding:11px 12px;
@@ -525,6 +540,16 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .src.soundcloud{background:rgba(255,85,0,.2);color:#FF8A4C}
 .src.youtube{background:rgba(255,60,60,.2);color:#FF7A7A}
 .trk .op{font-size:12px;color:var(--faint);display:flex;align-items:center;gap:4px;flex:none}
+/* live edit hunt: each row lands the moment that candidate's audio verifies, so the
+   arrival has to be visible or the whole point is lost. Killed by the global
+   prefers-reduced-motion rule at the top of this sheet. */
+.trk.fresh{animation:trkin .34s cubic-bezier(.22,1,.36,1) both}
+@keyframes trkin{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}
+/* "Best so far" - the top VERIFIED match while the hunt is still running. Green because
+   it is confirmed audio, not because it has won: the crown is decided at the end on the
+   whole pool, and this row is deliberately not called "the exact version". */
+.lvtag{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 7px;border-radius:6px;
+  background:color-mix(in oklab,var(--good) 20%,transparent);color:var(--good)}
 
 /* ---------- playlist rows ---------- */
 .plat{display:flex;flex-direction:column;gap:7px;margin-top:8px}
@@ -853,6 +878,7 @@ var IC={
   sat:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7 17 3l4 4-4 4M10 10l4 4M7 13l-4 4 4 4 4-4M14.5 20a5.5 5.5 0 0 0-11-11"/></svg>',
   lock:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></svg>',
   bolt:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.8 2.2 4.6 13.4h5.3L10.2 21.8l8.2-11.2h-5.3z"/></svg>',
+  deezer:'<svg viewBox="0 0 24 24"><g fill="#A238FF"><rect x="15.6" y="4" width="7.4" height="2.6" rx=".5"/><rect x="15.6" y="8" width="7.4" height="2.6" rx=".5"/><rect x="8" y="8" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x="15.6" y="12" width="7.4" height="2.6" rx=".5"/><rect x="8" y="12" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x=".4" y="12" width="7.4" height="2.6" rx=".5" opacity=".3"/><rect x="15.6" y="16" width="7.4" height="2.6" rx=".5"/><rect x="8" y="16" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x=".4" y="16" width="7.4" height="2.6" rx=".5" opacity=".3"/></g></svg>',
 };
 /* the wave squiggle inside the orb */
 /* THE WAVE. One glyph everywhere - the app mark, the scan button, the splash, the
@@ -914,6 +940,35 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
     .catch(function(){engineUp=null; return false;});}
 function call(path,url){return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
   return fetch(ENGINE+path+'?url='+encodeURIComponent(url)).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};});});}
+/* THE EDIT HUNT, STREAMED. /edits/stream pushes one event per candidate the moment its
+   audio verifies, then a final event carrying exactly what /edits returns. We resolve on
+   that final event and nothing else, so the authoritative payload is always what gets
+   rendered - the rows that appeared on the way are a preview of it, never a substitute.
+   Any stumble (no EventSource, a dead socket, a fail event, a stall) drops straight back
+   to the plain blocking /edits, which is untouched. That fallback is cheap even mid-hunt:
+   the server finishes the job and caches it even if the page stopped listening, so the
+   retry usually answers out of cache instead of hunting twice. */
+function huntEdits(url,onCand){
+  if(!window.EventSource) return call('/edits',url);
+  return new Promise(function(resolve){
+    var es=null, settled=false, watchdog=null;
+    var stop=function(){if(watchdog) clearTimeout(watchdog); try{if(es) es.close();}catch(e){}};
+    var giveUp=function(){if(settled) return; settled=true; stop(); call('/edits',url).then(resolve);};
+    try{es=new EventSource(ENGINE+'/edits/stream?url='+encodeURIComponent(url));}
+    catch(e){return call('/edits',url).then(resolve);}
+    // last-resort guard against a half-open socket that never fires onerror: the whole
+    // complaint being fixed here is a progress bar that sits there forever.
+    watchdog=setTimeout(giveUp,180000);
+    es.addEventListener('cand',function(m){
+      var d=null; try{d=JSON.parse(m.data);}catch(e){return;}
+      if(d&&d.cand&&onCand) onCand(d.cand,d.n||0);});
+    es.addEventListener('done',function(m){
+      if(settled) return;
+      var d=null; try{d=JSON.parse(m.data);}catch(e){}
+      if(!d) return giveUp();
+      settled=true; stop(); resolve(d);});
+    es.addEventListener('fail',giveUp);
+    es.onerror=giveUp;});}
 // Coming back to the tab is the moment to forget a stale failure, so the next tap just works.
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&engineUp!==true) engineUp=null;});
 
@@ -1141,13 +1196,40 @@ function editBadge(d){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);
   return '<span class="badge">'+esc(s)+(who?' · edit by @'+esc(who):'')+'</span>';}
-function trackRow(c,top){var src=(c.source||'').toLowerCase();
-  return '<a class="trk'+(top?' top':'')+'" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
+/* `tag` and `fresh` are only used by the live hunt list; the finished result calls this
+   with two arguments exactly as before, so the shelf renders byte-for-byte the same. One
+   row builder for both, so a streamed row and a final row can never drift apart. */
+function trackRow(c,top,tag,fresh){var src=(c.source||'').toLowerCase();
+  return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+'" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
     '<span class="pl">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
     '<div class="mt">'+(src?'<span class="src '+src+'">'+(src==='soundcloud'?'SoundCloud':'YouTube')+'</span>':'')+
-      (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+'</div></span>'+
+      (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
+      (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div></span>'+
     '<span class="op">Open'+IC.open+'</span></a>';}
+/* ---------- live edit hunt ----------
+   The hunt used to be one blocking request: a bar crawling to 100% with nothing under
+   it, and if it was slow, died, or the server had restarted under the page (every .py
+   edit does that), the user was left staring at a full bar. Now every candidate is shown
+   the instant its audio verifies and they stack up.
+   Honest by construction: the server only streams a candidate that already passes the
+   same editmatch test AND the same CORE_KEEP floor the crown itself has to clear. The
+   ORDER here is provisional - the winner is decided at the end against the full pool -
+   so the top row says "Best so far", never "the exact version playing". */
+var LIVE=[];
+function liveReset(){LIVE=[]; var b=document.getElementById('livelist'); if(b) b.innerHTML='';}
+function liveAdd(c){
+  if(!c||!c.url) return;
+  for(var i=0;i<LIVE.length;i++) if(LIVE[i].url===c.url) return;   // never list one twice
+  LIVE.push(c);
+  LIVE.sort(function(a,b){return (b.core||0)-(a.core||0)||(b.plays||0)-(a.plays||0);});
+  livePaint(c.url);}
+function livePaint(freshURL){
+  var box=document.getElementById('livelist'); if(!box) return;
+  box.innerHTML=LIVE.slice(0,6).map(function(c,i){
+    return trackRow(c,i===0,i===0?'Best so far':'',c.url===freshURL);}).join('');
+  var t=document.getElementById('progtxt2');
+  if(t&&LIVE.length) t.textContent=LIVE.length===1?'1 version verified':LIVE.length+' versions verified';}
 function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<b>'+esc(title)+'</b><span>'+esc(body)+'</span></div></div>';}
 function prow(label,song,artist,kind){var q=encodeURIComponent((artist?artist+' ':'')+song);
   var url=kind==='spotify'?'https://open.spotify.com/search/'+q:
@@ -1227,8 +1309,46 @@ function renderResult(d,partial){
   var clip = d.handle ? '<div class="clip">'+(d.thumb?'<img src="'+esc(d.thumb)+'" alt="" onerror="this.remove()">':'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
+  // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
+  // pages come back marked exact and get the solid treatment; the keyless-lookup gap
+  // (Spotify and YouTube need auth) falls back to search and is labelled as a search, so
+  // a tap never lies about where it lands.
+  var lk=(d.links||[]);
+  var linkrow = lk.length ? '<div class="lrow">'+lk.map(function(l){
+      return '<a class="lchip'+(l.exact?' ex':'')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener">'+
+        (IC[l.kind]||'')+'<span>'+esc(l.name)+(l.exact?'':' <i>search</i>')+'</span></a>';}).join('')+'</div>' : '';
+  // The badge is a VERDICT ("Original" / "Slowed ~0.71x + bass boosted"), and while the
+  // hunt is still running there isn't one yet - /base's speed call is provisional and the
+  // crowned edit can change it. Now that this card is on screen DURING the hunt (versions
+  // land in the list below it), asserting "Original" over a list of bass-boosted matches
+  // would be showing a measurement we have not finished making. Hold the slot, don't fill
+  // it: same shape, no layout jump when the real badge arrives.
+  var badge = partial ? '<span class="badge orig">Checking versions</span>' : editBadge(d);
   var hero='<div class="hero">'+art+'<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
-    '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+editBadge(d)+'</div>';
+    '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+linkrow+'</div>';
+  // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
+  // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of
+  // it was ever rendered, so a two-song clip displayed as one song and looked like a
+  // straight miss. Showing the parts is the honest answer, and it is already paid for.
+  var secs=(d.sections||[]), alt=(d.songs||[]);
+  var mash='';
+  if(secs.length>1 || alt.length>1){
+    var parts = secs.length>1 ? secs.map(function(s){
+        return {song:s.song, artist:s.artist, at:s.start, to:s.end, ex:s.exact, sz:s.shazam};})
+      : alt.map(function(s){return {song:s.song, artist:s.artist, at:s.at, sz:s.shazam};});
+    mash='<div class="sect">'+(d.mashup&&d.mashup.shape==='layered'
+            ? 'Two songs layered' : parts.length+' songs in this clip')+'</div>'+
+      '<div class="list">'+parts.map(function(p,i){
+        var when=mmss(p.at||0)+(p.to?' - '+mmss(p.to):'');
+        var link=(p.ex&&p.ex.url)||p.sz||'';
+        var inner='<span class="rk">'+(i+1)+'</span>'+
+          '<span class="tt"><div class="nm">'+esc(p.song||'Unknown')+'</div>'+
+          '<div class="mt"><span class="mono">'+when+'</span>'+
+            (p.artist?' · '+esc(p.artist):'')+'</div></span>'+
+          (link?'<span class="op">Open'+IC.open+'</span>':'');
+        return link ? '<a class="trk" href="'+esc(link)+'" target="_blank" rel="noopener">'+inner+'</a>'
+                    : '<div class="trk">'+inner+'</div>';}).join('')+'</div>';
+  }
   var shelf='';
   if(ex){shelf='<div class="sect">The exact version playing</div><div class="list">'+trackRow(ex,true)+'</div>';
     var others=cands.filter(function(c){return c.url!==ex.url;});
@@ -1236,7 +1356,9 @@ function renderResult(d,partial){
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
     '<span class="pct" id="progpct2">0%</span></div>'+
-    '<div class="prog"><i id="progbar2"></i></div></div>';}
+    '<div class="prog"><i id="progbar2"></i></div></div>'+
+    // verified candidates stack up in here while the hunt runs
+    '<div class="list" id="livelist" style="margin-top:11px"></div>';}
   else{shelf='<div class="sect">No separate edit found. This looks like the track played straight.</div>';}
   // AUTO-PLAYLIST. Scan = saved. The screen CONFIRMS the save rather than asking for it,
   // so "add to other playlists" becomes the optional extra tap instead of the required
@@ -1274,7 +1396,9 @@ function renderResult(d,partial){
     '<div class="autonote">Auto-save is '+(on?'on':'off')+' · <button id="autobtn">change in settings</button></div>';
   var hints=(d.comment_hints||[]).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
-  result.innerHTML='<div class="card">'+head+clip+hero+'<canvas class="reccanvas" id="reccanvas"></canvas>'+shelf+plat+quotes+'</div>';
+  result.innerHTML='<div class="card">'+head+clip+hero+'<canvas class="reccanvas" id="reccanvas"></canvas>'+mash+shelf+plat+quotes+'</div>';
+  // the card was just rebuilt, so anything the hunt already verified has to be put back
+  if(partial) livePaint();
   paintRecCanvas();
   autoSave(d);                                   // scan = saved, no tap required
   var ob=document.getElementById('otherbtn');
@@ -1771,7 +1895,7 @@ function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); sca
   document.getElementById('listening').classList.remove('ok');}
 var curURL='';
 function run(raw){if(busy) return; var p=parseLink(raw);
-  result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset();
+  result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
   curURL=p.url;
   busy=true; document.getElementById('gobtn').setAttribute('disabled','');
@@ -1800,7 +1924,20 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       renderResult(d, d.edits_pending);
       if(d.edits_pending){setState('scanning'); say('Locking in the exact version');
         setProg(60, 94, 'Hunting the exact version');
-        return call('/edits',p.url).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); if(full.win)setWindow(full.win,full.clip_secs); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
+        return huntEdits(p.url,function(c,n){
+          liveAdd(c);
+          // a REAL milestone - one more candidate whose audio verified - so the bar
+          // steps on evidence instead of on a timer.
+          setProg(Math.min(90,62+n*5), 94);
+          say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
+          // HAND THE SCREEN OVER on the first real hit. The scan takeover is right while
+          // there is genuinely nothing to show, but the partial result card - already
+          // rendered above, just on the screen behind - is where the list lives, and the
+          // whole point is that the user watches it fill instead of watching a bar.
+          // Only from 'scanning': if they walked off to Trending or Library, leave them.
+          if(n===1&&document.getElementById('app').getAttribute('data-state')==='scanning')
+            setState('locked');
+        }).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); if(full.win)setWindow(full.win,full.clip_secs); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
@@ -1827,7 +1964,12 @@ function finish(d){stopClock(); busy=false; pgDone(); clearTimeout(phaseT);
   tipsOff(); paintTl(0);
   // setState BEFORE hideChip, or the card blinks out a frame early on the screen it is
   // still sitting on.
-  finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},1000);}
+  // The 1s pause is the scan's payoff - landing on a full green ring before handing
+  // over. When the live hunt already handed over (the user has been watching versions
+  // land on the result card), there is no ring to land on and no reason to make them
+  // wait a beat for the crown.
+  var handed=document.getElementById('app').getAttribute('data-state')==='locked';
+  finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},handed?0:1000);}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
@@ -2057,10 +2199,30 @@ function paintOnb(){
       setTimeout(function(){var el=document.getElementById('ts'+i); if(el){el.classList.remove('on'); el.classList.add('done');}},1150+i*900);});}
 }
 
+/* ---------- shared-in link ----------
+   Every share path lands here: Android's Web Share Target posts to /share, an iOS
+   Shortcut opens /share?url=..., and a native Share Extension will do the same. The
+   share sheet hands over either a clean url or a blob of text with one inside, so accept
+   both. Scan immediately - a share is already the user saying "this one", and making
+   them tap again is the whole friction the share sheet exists to remove. */
+function sharedLink(){
+  var q; try{q=new URLSearchParams(location.search);}catch(e){return null;}
+  if(q.get('code')) return null;                 // Spotify OAuth return, not a share
+  var raw=q.get('url')||q.get('text')||q.get('title')||'';
+  var m=String(raw).match(/https?:\/\/[^\s]+/);
+  var cand=m?m[0]:raw;
+  return (cand && parseLink(cand).host) ? cand : null;
+}
+
 /* ---------- boot ---------- */
 paintHome(); renderLib(); nav('idle');
 fetchTrending();
-splash();
+var _shared=sharedLink();
+if(_shared){
+  history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
+  urlEl.value=_shared;
+  setTimeout(function(){run(_shared);},350);      // let the splash start first
+} else splash();
 SP.finishLogin().then(function(ok){
   if(ok) SP.fetchWho().then(function(){paintHome();});
   var back=null; try{back=localStorage.getItem('addify-onb-return'); localStorage.removeItem('addify-onb-return');}catch(e){}

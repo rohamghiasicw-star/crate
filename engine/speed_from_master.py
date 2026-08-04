@@ -172,9 +172,15 @@ def confirm_ref(clip_path, ref_path, seconds=25, conf_min=0.45, min_win=3, tol=0
 
 
 def candidate_speed_lock(clip_path, cand_path, seconds=25, conf_min=0.40, min_win=3, tol=0.02):
-    """Bass-robust measured speed of `cand_path` vs `clip_path` (same DSP + median
-    clustering as confirm_ref, <1 = cand runs slower than the clip), or None when the
-    windowed high-pass lock can't find a confident cluster at all.
+    """Bass-robust measured speed ratio between the clip and the candidate (same DSP +
+    median clustering as confirm_ref), or None when the windowed high-pass lock can't
+    find a confident cluster at all.
+
+    DIRECTION: the value is CLIP relative to CANDIDATE, not the other way round. Every
+    current caller compares |log2(v)| so the sign has never mattered, but the previous
+    wording said the opposite and would mislead the first person to add a directional
+    tier (e.g. "prefer sped-up candidates for a sped-up clip"). Absolute candidate speed
+    is clip_abs / vcheck.
 
     EXISTS because verify()'s single-pass speed field (a candidate's `vspeed` in
     crate_engine) silently falls back to 1.0 whenever its own correlation confidence
