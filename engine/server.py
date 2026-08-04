@@ -880,6 +880,12 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
+        # NEVER let a browser cache the app. The whole UI is this one file, it changes
+        # constantly during development, and a stale copy is indistinguishable from a
+        # broken engine from the user's side - a fixed bug appears unfixed because the
+        # old JS is still running. An ordinary reload must always fetch current code.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
