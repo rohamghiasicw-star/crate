@@ -2,10 +2,40 @@
 """SPEED MISS fix: measure a clip's TRUE speed vs the CONFIRMED base master.
 Drop-in module; integrates with server.py after the exact edit is confirmed.
 Reuses verify.py's exact DSP so speed numbers agree with the engine."""
+import os
+import threading
+
 import numpy as np
 import verify as V
 
 SR = V.SR
+
+# ------------------------------------------------------------- decode cache
+# confirm_ref / candidate_speed_lock / measure_consensus each re-decode the SAME clip
+# via ffmpeg for every reference/candidate they are asked about - during one lookup the
+# clip file never changes, so that is pure repeated work (measured ~0.1-0.2s per decode,
+# and a lookup makes 5-15 of these calls). Key includes mtime+size so a rewritten path
+# can never serve stale audio. Bounded FIFO because the server is long-lived.
+_DEC_CACHE = {}
+_DEC_LOCK = threading.Lock()
+_DEC_MAX = 12
+
+
+def _decode_cached(path, seconds):
+    try:
+        st = os.stat(path)
+        key = (path, seconds, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return V._decode(path, seconds)
+    with _DEC_LOCK:
+        if key in _DEC_CACHE:
+            return _DEC_CACHE[key]
+    x = V._decode(path, seconds)
+    with _DEC_LOCK:
+        if len(_DEC_CACHE) >= _DEC_MAX:
+            _DEC_CACHE.pop(next(iter(_DEC_CACHE)))
+        _DEC_CACHE[key] = x
+    return x
 
 
 def _hp(x, hz=220):
@@ -125,7 +155,7 @@ def confirm_ref(clip_path, ref_path, seconds=25, conf_min=0.45, min_win=3, tol=0
     across windows, an unrelated song does not. Returns True iff `ref_path` locks to the
     clip as the same recording by this bass-independent measure."""
     try:
-        xc = V._decode(clip_path, seconds)
+        xc = _decode_cached(clip_path, seconds)
         xm = V._decode(ref_path, seconds)
     except Exception:
         return False
@@ -160,7 +190,7 @@ def candidate_speed_lock(clip_path, cand_path, seconds=25, conf_min=0.40, min_wi
     admitting a reference into speed-consensus arithmetic) because this only needs to
     catch a naive reading that disagrees with reality, not certify one for math."""
     try:
-        xc = V._decode(clip_path, seconds)
+        xc = _decode_cached(clip_path, seconds)
         xm = V._decode(cand_path, seconds)
     except Exception:
         return None
@@ -187,7 +217,7 @@ def measure_consensus(clip_path, ref_paths, DEADBAND=0.045, seconds=25):
     out = {"speed": 1.0, "label": "as posted", "confident": False, "nrefs": 0,
            "agree": 0, "spread": 0.0, "reason": ""}
     try:
-        xc = V._decode(clip_path, seconds)
+        xc = _decode_cached(clip_path, seconds)
     except Exception:
         out["reason"] = "clip decode failed"; return out
     if xc.size < SR:

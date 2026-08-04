@@ -131,8 +131,11 @@ def _phase1(url, key, t0):
     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
     30-60s: the user shouldn't wait on the edit search to learn what the song is.
     Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
+    E.tlog("request_start", 0.0, url=key)
+    _p0 = time.time()
     try:
         src = E.get_source(url)
+        E.tlog("get_source", time.time() - _p0)
     except RuntimeError as e:
         if str(e) == "tiktok_rate_limited":
             oe = getattr(e, "oembed", {}) or {}
@@ -178,8 +181,10 @@ def _phase1(url, key, t0):
         res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
                                              src.get("credited_author"))
 
+    _t = time.time()
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
     res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
+    E.tlog("peaks_wave", time.time() - _t)
     # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
     # not the length of the source video. The scanning timeline is scaled to this, so it
     # has to describe the same thing the window offsets below are measured against.
@@ -188,37 +193,67 @@ def _phase1(url, key, t0):
     except Exception:
         res["clip_secs"] = None
 
-    # Comments BEFORE the fingerprint. The crowd routinely names the track outright
-    # ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least reliable -
-    # on a pitched clip where several counter-speeds each return a different song. Read
-    # after the fact it can only re-rank a search; read first it can pick the right ID.
+    # Comments OVERLAPPED WITH the fingerprint. The crowd routinely names the track
+    # outright ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least
+    # reliable - so the hints still land BEFORE any consensus decision (fingerprint
+    # joins this thread right after its first probe wave, before it votes). But the
+    # fetch itself (tikwm comments + the sound-page chase, measured 1-8s) no longer
+    # runs back to back with the Shazam scan: comments hit tikwm/tiktok, probes hit
+    # Shazam, so the two overlap for free. Same hints, same decisions, earlier probes.
     hint_texts = []
+    _hints_ex = None
+    _hints_fut = None
     if src["platform"] == "tiktok":
-        try:
-            hint_texts = E.comment_song_hints(E.tiktok_comments(url)) or []
-            if hint_texts:
-                res["comment_hints"] = hint_texts
-        except Exception:
-            pass
-        # THE SOUND PAGE. If this clip's own comments named nothing, go where the answer
-        # actually is. Roham's manual technique (captured as the tiktok-sound-id skill):
-        # an "original sound" aggregates every video that used it, and the biggest of
-        # those has already been asked "song?" and answered. The clip we are handed is
-        # often tiny - measured 277 comments against 5,153 on the top video of the same
-        # sound. Only runs when the clip's own comments came up empty, so it costs
-        # nothing on clips that already answered themselves.
-        if not hint_texts and src.get("is_original"):
+        def _fetch_hints():
+            got, from_sound_page = [], False
+            _t = time.time()
             try:
-                hint_texts = E.strong_song_hints(E.viral_sound_comments(url)) or []
-                if hint_texts:
-                    res["comment_hints"] = hint_texts
-                    res["hints_from_sound_page"] = True
+                got = E.comment_song_hints(E.tiktok_comments(url)) or []
             except Exception:
-                pass
+                got = []
+            E.tlog("comments", time.time() - _t, hints=len(got))
+            # THE SOUND PAGE. If this clip's own comments named nothing, go where the
+            # answer actually is. Roham's manual technique (captured as the
+            # tiktok-sound-id skill): an "original sound" aggregates every video that
+            # used it, and the biggest of those has already been asked "song?" and
+            # answered. Only runs when the clip's own comments came up empty.
+            if not got and src.get("is_original"):
+                _t = time.time()
+                try:
+                    got = E.strong_song_hints(E.viral_sound_comments(url)) or []
+                    from_sound_page = bool(got)
+                except Exception:
+                    got = []
+                E.tlog("sound_page_comments", time.time() - _t, hints=len(got))
+            return got, from_sound_page
+        _hints_ex = ThreadPoolExecutor(max_workers=1)
+        _hints_fut = _hints_ex.submit(_fetch_hints)
+
+    def _join_hints():
+        """Blocking hint join - idempotent, safe from any thread."""
+        nonlocal hint_texts
+        if _hints_fut is not None:
+            try:
+                got, from_sound_page = _hints_fut.result()
+            except Exception:
+                got, from_sound_page = [], False
+            hint_texts = got
+            if got:
+                res["comment_hints"] = got
+                if from_sound_page:
+                    res["hints_from_sound_page"] = True
+        return hint_texts
 
     loop = asyncio.new_event_loop()
     try:
-        fp = loop.run_until_complete(E.fingerprint(src["audio"], hints=hint_texts))
+        _t = time.time()
+        fp = loop.run_until_complete(E.fingerprint(
+            src["audio"], hints_fn=(_join_hints if _hints_fut is not None else None)))
+        _join_hints()                      # no-op if fingerprint already joined
+        if _hints_ex is not None:
+            _hints_ex.shutdown(wait=False)
+        E.tlog("fingerprint", time.time() - _t,
+               probes=(fp or {}).get("probes"), rate=(fp or {}).get("rate"))
         base_title = base_artist = None
         edit_label = ""
         if fp:
@@ -293,6 +328,7 @@ def _phase1(url, key, t0):
         res["candidates"] = []
         res["decisive"] = False
         res["secs"] = round(time.time() - t0, 1)
+        E.tlog("phase1_done", time.time() - t0)
         worth = bool(_edit_worthy(src, fp)
                      and (base_title or E._is_named_credit(src.get("credit_title"))))
         res["edits_pending"] = worth
@@ -305,6 +341,8 @@ def _phase1(url, key, t0):
         return res, ctx
     finally:
         loop.close()
+        if _hints_ex is not None:
+            _hints_ex.shutdown(wait=False)
 
 
 # Section-hunt budget. A section hunt is a real search, so it is capped harder than the
@@ -406,12 +444,15 @@ def _phase2(ctx):
                 if t and t != base_title:
                     search_hints.append(t)
             mash = fp.get("mashup") if fp else None
+            _t = time.time()
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
                 handle=src.get("handle"), hints=search_hints,
                 shazam_reliable=shazam_reliable,
                 pair=(mash or {}).get("pair")))
+            E.tlog("find_edit", time.time() - _t,
+                   fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
             rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
             # ONLY surface a candidate that actually VERIFIES as the same recording
             # (editmatch). A plain track then correctly reports no edit instead of a
@@ -444,7 +485,9 @@ def _phase2(ctx):
             # PER-SECTION HUNT. Only ever runs on a clip the mashup pass proved holds
             # two songs, so a single-song lookup pays nothing for this.
             if mash:
+                _t = time.time()
                 res["sections"] = _hunt_sections(loop, ctx, exact, candidates)
+                E.tlog("hunt_sections", time.time() - _t)
 
             # SPEED. Measure the clip's TRUE speed against GENUINE normal-speed originals
             # via the bass-robust high-pass consensus - NEVER derive the magnitude from a
@@ -458,10 +501,19 @@ def _phase2(ctx):
             # deadband still reports "as posted" for a genuinely straight clip, so this
             # never fabricates a slow.
             measured = None
+            _tsm = time.time()
             if fp and shazam_reliable and base_title:
                 try:
-                    refs = [p for p in (edit.get("ref_paths") or [])
-                            if speed_from_master.confirm_ref(src["audio"], p)]
+                    # parallel confirm_ref, order preserved - each call is an
+                    # independent pure check and the serial loop paid them in sequence.
+                    _rp = list(edit.get("ref_paths") or [])
+                    if _rp:
+                        with ThreadPoolExecutor(max_workers=min(5, len(_rp))) as _cex:
+                            _ok = list(_cex.map(
+                                lambda p: speed_from_master.confirm_ref(src["audio"], p), _rp))
+                        refs = [p for p, o in zip(_rp, _ok) if o]
+                    else:
+                        refs = []
                     if len(refs) < 2 and base_artist:
                         core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
                         offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
@@ -478,14 +530,19 @@ def _phase2(ctx):
                         # a speed measured vs a DIFFERENT song is a made-up number - keep
                         # only refs that lock to the clip as the same recording. Use the
                         # bass-robust high-pass lock (verify.core would drop them all here).
-                        refs += [p for p in got
-                                 if speed_from_master.confirm_ref(src["audio"], p)]
+                        if got:
+                            with ThreadPoolExecutor(max_workers=min(5, len(got))) as _cex:
+                                _ok2 = list(_cex.map(
+                                    lambda p: speed_from_master.confirm_ref(src["audio"], p),
+                                    got))
+                            refs += [p for p, o in zip(got, _ok2) if o]
                     if refs:
                         r = speed_from_master.measure_consensus(src["audio"], refs)
                         if r and r.get("confident"):
                             measured = r
                 except Exception:
                     measured = None
+                E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured))
 
             if top:
                 # the winning upload NAMES its own transform ("slowed"/"sped") - a strong
@@ -601,6 +658,7 @@ def _phase2(ctx):
             res["result"] = "no_match"
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
+        E.tlog("request_done", time.time() - t0, url=key)
         CACHE[key] = res
         return res
     finally:
@@ -664,6 +722,16 @@ def identify(url):
 
 
 def _cleanup(d):
+    # The decode cache exists to stop one lookup re-decoding the same clip 5-15 times.
+    # It is scoped to the lookup on purpose: this runs wherever the temp audio is
+    # deleted, so the decoded copy in RAM dies with the file it came from. A long-lived
+    # server must not keep audio around after the request that fetched it - transient
+    # processing is a materially different posture from a retained audio cache, and the
+    # speed win is entirely intra-request anyway.
+    try:
+        speed_from_master._DEC_CACHE.clear()
+    except Exception:
+        pass
     if not d or not os.path.isdir(d):
         return
     for root, _, files in os.walk(d, topdown=False):
@@ -872,4 +940,5 @@ if __name__ == "__main__":
     # the same wifi (phone, TV) at http://<this-mac-LAN-IP>:PORT. Only do that on a
     # network you trust: there is no auth on this server.
     HOST = os.environ.get("BIND", "127.0.0.1")
+    E.prewarm()          # warm shazamio / yt-dlp / SC client_id / the Google worker
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

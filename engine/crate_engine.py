@@ -45,7 +45,11 @@ BASS_STRIP_GAP = 6.0
 # unbounded one hung the whole lookup (fingerprint never returned; /base answered nothing
 # after 120s+). The sweep fires many probes, so losing a slow one costs a probe, not the
 # request.
-SHAZAM_TIMEOUT = 12.0
+# 12 -> 6: measured across full regression runs, every probe that answers does so in
+# 0.4-2.4s (max observed hit 2.38s); when Shazam stalls it stalls the connection outright
+# and the probe never answers at all. Two back-to-back stalls at 12s each cost the mason
+# clip 24s of its 73s lookup. 6s is still 2.5x the slowest observed real answer.
+SHAZAM_TIMEOUT = 6.0
 # Deadline (seconds, from when the search pair starts) for the headless-Chromium web
 # search. Measured at 28.6s of a 44.2s hunt when awaited outright.
 WEB_DEADLINE = 10.0
@@ -60,6 +64,25 @@ ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
     "audio original", "originalljud", "původní zvuk", "originele audio",
     "オリジナル楽曲", "オリジナル音源", "原声", "原聲", "original", "sound",
 }
+
+# ---------------------------------------------------------------- timing log (lab)
+# Set CRATE_TIMING=/path/to/file.jsonl to append one JSON row per instrumented stage.
+# Zero-cost when the env var is unset. Purely observational - never changes behaviour.
+_TLOG_PATH = os.environ.get("CRATE_TIMING")
+_TLOG_LOCK = threading.Lock()
+
+
+def tlog(stage, secs, **kw):
+    if not _TLOG_PATH:
+        return
+    row = {"t": round(time.time(), 3), "stage": stage, "secs": round(float(secs), 3)}
+    row.update(kw)
+    try:
+        with _TLOG_LOCK:
+            with open(_TLOG_PATH, "a") as f:
+                f.write(json.dumps(row, default=str) + "\n")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- tiktok fetch
@@ -349,13 +372,15 @@ def comment_song_hints(comments):
 _TT_VIDEO_URL = {}   # full_url -> the video mp4 url, cached from whichever call saw it
 
 
-def _remember_video_url(full_url, vu):
-    """Stash a video url so get_source doesn't pay for a second tikwm call. Bounded -
-    the server is long-lived and this would otherwise grow for every clip ever looked
-    up. CDN urls are signed and expire anyway, so a small window is all that's useful."""
+def _remember_video_url(full_url, vu, dur=None, size=None):
+    """Stash a video url (+ its duration/size when the tikwm payload carried them, so
+    the ranged head-fetch still works off a cache hit) so get_source doesn't pay for a
+    second tikwm call. Bounded - the server is long-lived and this would otherwise grow
+    for every clip ever looked up. CDN urls are signed and expire anyway, so a small
+    window is all that's useful."""
     if len(_TT_VIDEO_URL) > 256:
         _TT_VIDEO_URL.clear()
-    _TT_VIDEO_URL[full_url] = vu
+    _TT_VIDEO_URL[full_url] = (vu, dur, size)
 
 
 def tt_tikwm(full_url):
@@ -372,7 +397,12 @@ def tt_tikwm(full_url):
             au = data.get("music")
             vu = data.get("play") or data.get("hdplay")
             if vu:
-                _remember_video_url(full_url, vu)
+                try:
+                    _remember_video_url(full_url, vu,
+                                        float(data.get("duration") or 0) or None,
+                                        int(data.get("size") or 0) or None)
+                except (TypeError, ValueError):
+                    _remember_video_url(full_url, vu)
             if not au:
                 return None
             title = mi.get("title") or ""
@@ -394,35 +424,88 @@ def tt_video_audio(full_url, tmp, seconds=30):
     and /api/item/detail answers 200 with an empty body, both measured, so the tikwm
     resolver is the one route to it. Sectioned to `seconds` because every consumer
     (fingerprint's windows, verify's 20s) reads the head of the clip."""
-    vu = _TT_VIDEO_URL.get(full_url)
+    _cached = _TT_VIDEO_URL.get(full_url)
+    vu, vdur, vsize = _cached if _cached else (None, None, None)
     if not vu:
-        try:
-            r = _cffi_get("https://www.tikwm.com/api/?url=%s&hd=1"
-                          % urllib.parse.quote(full_url, safe=""))
-            d = (json.loads(r.text).get("data") or {})
-            vu = d.get("play") or d.get("hdplay")
+        # two attempts: this now runs concurrently with the credit chain, and if that
+        # chain's own tikwm fallback fires at the same moment, tikwm's 1 req/s wall can
+        # bounce exactly one of them - a single spaced retry absorbs that.
+        for attempt in range(2):
+            try:
+                r = _cffi_get("https://www.tikwm.com/api/?url=%s&hd=1"
+                              % urllib.parse.quote(full_url, safe=""))
+                d = (json.loads(r.text).get("data") or {})
+                vu = d.get("play") or d.get("hdplay")
+                try:
+                    vdur = float(d.get("duration") or 0) or None
+                    vsize = int(d.get("size") or 0) or None
+                except (TypeError, ValueError):
+                    vdur = vsize = None
+            except Exception:
+                return None
             if vu:
-                _remember_video_url(full_url, vu)
-        except Exception:
-            return None
+                _remember_video_url(full_url, vu, vdur, vsize)
+                break
+            time.sleep(1.3)
     if not vu:
         return None
     mp4 = os.path.join(tmp, "v.mp4")
     wav = os.path.join(tmp, "v.wav")
+
+    def _decode_ok():
+        try:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
+                            "-t", str(seconds), "-ac", "1", "-ar", "44100", wav],
+                           check=True, capture_output=True, timeout=30)
+        except Exception:
+            return False
+        return os.path.exists(wav) and os.path.getsize(wav) > 4000
+
+    # LONG VIDEOS: fetch only the head. Every consumer reads at most `seconds` (30s) of
+    # this audio, yet the whole mp4 was downloaded - on a 160s clip that pull ran
+    # CONCURRENTLY with the credit chain and the sound download and measurably slowed
+    # both (get_source 15.4s vs 10.6s baseline on the same clip). TikTok serves
+    # faststart mp4s (moov up front - they stream), so the head decodes cleanly; sizing
+    # comes from tikwm's own duration+size for THIS file, never a guessed bitrate.
+    # STRICTLY fallback-guarded: any short/failed decode falls through to the full
+    # download below, so the worst case is the old behaviour plus one aborted head.
+    if vdur and vsize and vdur > 45:
+        want = min(vsize, int(vsize * (seconds + 6) / vdur) + 262_144)
+        want = max(want, 1_500_000)
+        try:
+            if HAVE_CFFI:
+                rr = creq.get(vu, impersonate="chrome", timeout=30,
+                              headers={"Range": "bytes=0-%d" % (want - 1)})
+                ok = rr.status_code in (200, 206)
+                body = rr.content if ok else b""
+            else:
+                req = urllib.request.Request(vu, headers={"Range": "bytes=0-%d" % (want - 1)})
+                with urllib.request.urlopen(req, timeout=30) as r2:
+                    body = r2.read()
+                ok = True
+            if ok and len(body) > 200_000:
+                open(mp4, "wb").write(body)
+                if _decode_ok():
+                    got = duration_of(wav) or 0
+                    if got >= min(seconds, vdur) - 0.5:
+                        tlog("tt_vid_ranged", 0.0, bytes=len(body), dur=round(got, 1))
+                        return wav
+        except Exception:
+            pass                                  # any trouble -> proven full fetch
+
     try:
         open(mp4, "wb").write(_cffi_get(vu, timeout=45).content)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
-                        "-t", str(seconds), "-ac", "1", "-ar", "44100", wav],
-                       check=True, capture_output=True, timeout=30)
     except Exception:
         return None
-    return wav if os.path.exists(wav) and os.path.getsize(wav) > 4000 else None
+    return wav if _decode_ok() else None
 
 
-def tiktok_fetch(url):
+def tiktok_fetch(url, _full=None):
     """(full_url, info-or-None). Chain (all tested to survive an IP soft-wall in
-    order): embed/v2 -> tikwm -> item-detail API -> HTML scrape."""
-    full = resolve(url)
+    order): embed/v2 -> tikwm -> item-detail API -> HTML scrape.
+    `_full` lets a caller that already resolved the short link skip the second
+    resolve (get_source resolves first so the video-audio fetch can start early)."""
+    full = _full or resolve(url)
     iid = _tt_id(full)
     if iid:
         try:
@@ -581,29 +664,49 @@ def get_source(url):
                 "is_original": bool(mus.get("is_original")),
                 "desc": r.get("caption") or "", "handle": r.get("owner"),
                 "thumb": r.get("thumbnail"), "tmp": tmp}
-    # tiktok
-    full, info = tiktok_fetch(url)
-    oe = tiktok_oembed(full) or {}
-    if not info or not info.get("playUrl"):
-        # couldn't get the audio (TikTok throttling this IP). Still hand back the
-        # credit from oEmbed so the caller can answer if it names a real track.
-        e = RuntimeError("tiktok_rate_limited")
-        e.oembed = oe
-        raise e
-    audio = os.path.join(tmp, "a.mp3")
-    # Pull the VIDEO's own audio alongside the credited sound, in parallel, because the
-    # two are not always the same recording. Overlapped, so it costs ~0s of wall time.
-    with ThreadPoolExecutor(max_workers=1) as _ex:
+    # tiktok. The VIDEO-audio fetch (tikwm resolve + mp4 download + ffmpeg, the
+    # slowest independent leg - measured 6.3s of an 11s get_source on a long clip) and
+    # the oEmbed credit call only need the RESOLVED url, so start both the moment the
+    # short link resolves and run the whole credit chain (embed/v2 etc.) alongside
+    # them, instead of only overlapping the video leg with the final audio download.
+    _gt0 = time.time()
+    try:
+        full = resolve(url)
+    except Exception:
+        full = url
+    _ex = ThreadPoolExecutor(max_workers=2)
+    try:
         _fv = _ex.submit(tt_video_audio, full, tmp)
+        _fo = _ex.submit(tiktok_oembed, full)
+        full, info = tiktok_fetch(url, _full=full)
+        _gt1 = time.time()
+        try:
+            oe = _fo.result(timeout=20) or {}
+        except Exception:
+            oe = {}
+        tlog("tt_fetch", _gt1 - _gt0, oembed=round(time.time() - _gt1, 3))
+        if not info or not info.get("playUrl"):
+            # couldn't get the audio (TikTok throttling this IP). Still hand back the
+            # credit from oEmbed so the caller can answer if it names a real track.
+            e = RuntimeError("tiktok_rate_limited")
+            e.oembed = oe
+            raise e
+        audio = os.path.join(tmp, "a.mp3")
+        _ga0 = time.time()
         try:
             open(audio, "wb").write(_cffi_get(info["playUrl"], timeout=90,
                                               referer="https://www.tiktok.com/").content)
         except Exception:
             open(audio, "wb").write(fetch(info["playUrl"], binary=True, timeout=90))
+        _ga1 = time.time()
         try:
             vid_audio = _fv.result(timeout=45)
         except Exception:
             vid_audio = None
+        tlog("tt_audio", _ga1 - _ga0, vid_wait=round(time.time() - _ga1, 3),
+             vid_ok=bool(vid_audio))
+    finally:
+        _ex.shutdown(wait=False)
 
     out = {"platform": "tiktok", "audio": audio,
            "credit_title": info.get("sound_title") or oe.get("credit_title"),
@@ -627,10 +730,12 @@ def get_source(url):
     # the video, so keeping it would only poison build_queries.
     if vid_audio:
         core = 0.0
+        _gv0 = time.time()
         try:
             core = _verify.verify(vid_audio, audio, 20).get("core", 0.0)
         except Exception:
             core = 1.0                      # can't measure -> don't second-guess TikTok
+        tlog("sound_match_verify", time.time() - _gv0)
         out["sound_match_core"] = round(float(core), 3)
         if core < CORE_KEEP:
             out["audio"] = vid_audio
@@ -792,7 +897,7 @@ def _consensus_id(hits, hints=None):
     return min(pool, key=lambda h: len(h.get("title") or ""))
 
 
-async def _fingerprint_core(audio, hints=None, _scan_out=None):
+async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
     is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
@@ -815,11 +920,13 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
     # is both faster and actually returns answers.
     sem = asyncio.Semaphore(1)
 
-    async def probe(off, rate, label, span=20):
+    async def probe(off, rate, label, span=20, t_sink=None):
         async with sem:
+            _pt0 = time.time()
             wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
             try:
                 cut(audio, wav, off, rate, span=span)
+                _pt1 = time.time()
                 # HARD TIMEOUT. shazamio had none, so a single stalled recognise call
                 # hung the ENTIRE request forever: measured get_source 3.8s then
                 # fingerprint never returning at all, and /base sat past 120s and
@@ -827,7 +934,15 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
                 # whole lookup - the sweep already runs many of these and any single
                 # one is expendable.
                 hit = await asyncio.wait_for(shazam(wav), timeout=SHAZAM_TIMEOUT)
+                tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
+                     off=off, rate=rate, span=span, hit=bool(hit))
             except asyncio.TimeoutError:
+                tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
+                     span=span, hit=False, timeout=True)
+                # a timeout is a STALL, not a "no match" - remember it so the caller
+                # can re-fire exactly these probes if the whole pass came back empty.
+                if t_sink is not None:
+                    t_sink.append((off, rate, label, span))
                 return None
             except Exception:
                 return None
@@ -840,10 +955,46 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
                        probes=n["i"])
         return hit
 
+    async def retry_stalled(t_sink, got_any, cap=8):
+        """STALL RECOVERY. Shazam's outages arrive as bursts - measured: 4+ consecutive
+        probe timeouts spanning ~30s, during which every request answers nothing. When
+        a whole pass produced ZERO hits and at least one probe timed out, the misses are
+        indistinguishable from 'Shazam never heard the question', and one of them may be
+        the single decisive rate (a super-slowed clip only ever answers at its one
+        counter-speed - a stall on that exact probe turned a solid ID into no_match).
+        Re-fire only the timed-out probes, once, capped - if Shazam is still down these
+        cost cap*SHAZAM_TIMEOUT at worst, which is exactly what the old 12s timeout
+        spent on HALF as many stalls with no second chance at all."""
+        if got_any or not t_sink:
+            return []
+        redo = list(t_sink)[:cap]
+        tlog("stall_retry", 0.0, n=len(redo))
+        return [h for h in await asyncio.gather(
+            *[probe(o, r, l, span=s) for (o, r, l, s) in redo]) if h]
+
     # Phase 1: all windows at once -> distinct songs
     scan = _scan_windows(dur)
     span = 12 if len(scan) > 1 else 20
-    res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span) for o in scan])
+    _scan_to = []
+    res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span, t_sink=_scan_to)
+                                 for o in scan])
+    if not any(res):
+        _r2 = await retry_stalled(_scan_to, False, cap=6)
+        if _r2:
+            # map the recovered hits back onto their windows, same shape as `res`
+            _by_off = {h.get("offset"): h for h in _r2}
+            res = [_by_off.get(o) for o in scan]
+    # LAZY HINTS: the comment/sound-page fetch runs in a caller-side thread WHILE the
+    # scan probes fire (comments hit tikwm/tiktok, probes hit Shazam - no contention).
+    # Hints are first NEEDED here, at consensus time, so join now. Same hints, same
+    # decisions - the serial version merely paid the two costs back to back.
+    if hints_fn is not None:
+        _th0 = time.time()
+        try:
+            hints = hints_fn() or []
+        except Exception:
+            hints = []
+        tlog("hints_join_wait", time.time() - _th0, hints=len(hints))
     hits, seen = [], set()
     for off, h in zip(scan, res):
         if h:
@@ -938,8 +1089,10 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
 
     async def sweep_at(off):
         """Counter-speed sweep one window and take the consensus song."""
+        _to = []
         swept = [h for h in await asyncio.gather(
-            *[probe(off, rate, label) for rate, label in FINE_SWEEP]) if h]
+            *[probe(off, rate, label, t_sink=_to) for rate, label in FINE_SWEEP]) if h]
+        swept += await retry_stalled(_to, bool(swept))
         return _consensus_id([h for h in swept if not _junk_id(h)] or swept, hints)
 
     # A window that ONLY matched cover-mill noise hasn't been identified - it's been
@@ -969,8 +1122,12 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None):
     # back. One junk hit at one speed is noise; the same song surfacing at 0.80x, 0.85x
     # and 1.30x is the answer.
     off0 = windows_for(dur)[0]
+    _to = []
     swept = [h for h in await asyncio.gather(
-        *[probe(off0, rate, label) for rate, label in FINE_SWEEP]) if h]
+        *[probe(off0, rate, label, t_sink=_to) for rate, label in FINE_SWEEP]) if h]
+    # a stall on the ONE decisive counter-speed turns a solid ID into no_match -
+    # re-fire only the timed-out rates when the whole sweep came back empty.
+    swept += await retry_stalled(_to, bool(swept))
     pick = _consensus_id(swept, hints)
     if pick:
         pick = dict(pick)
@@ -1099,6 +1256,7 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     for w in (scan or []):
         _add(w)
     if len(order) < 2:
+        tlog("mashup_pass", time.time() - t_start, tier2=False)
         # Unanimous. Do NOT go hunting for a hidden layer anyway: ablated over 48
         # parameter combinations on all 7 reference clips, that branch changed zero
         # verdicts while burning 24 of 36 added probes (2.22s/clip vs 0.74s/clip for
@@ -1149,6 +1307,7 @@ async def annotate_mashup(audio, fp, scan, dur=None):
         if h:
             t2.append(h)
     _cleanup_dir(tmp)
+    tlog("mashup_pass", time.time() - t_start, tier2=True, probes=fired)
     for h in t2:
         _add(h)
 
@@ -1275,13 +1434,13 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     return fp
 
 
-async def fingerprint(audio, hints=None):
+async def fingerprint(audio, hints=None, hints_fn=None):
     """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
     mashup pass looks at the raw window evidence and decides whether this clip is one
     song or two. The pass is free on single-song clips - it returns before probing
     unless the scan already disagreed with itself."""
     scan = []
-    fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan)
+    fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn)
     if fp:
         try:
             await annotate_mashup(audio, fp, scan)
@@ -2004,9 +2163,19 @@ def dl_clip(url, dst, seconds=20, timeout=15):
     showed 29 download attempts summing 361.6s with several pinned at the full 35s,
     against just 4.0s TOTAL for all 25 verifications. The analysis was never slow, the
     downloads were. A candidate that hasn't delivered in 15s is dead weight when there
-    are 20+ others in flight."""
+    are 20+ others in flight.
+
+    DIRECT PATH GETS A SHORT BUDGET, SUBPROCESS KEEPS THE FULL ONE. The two used to
+    stack: a throttled googlevideo range fetch burned the whole 15s (measured: 80KB of
+    1.2MB in 13s) and THEN the subprocess ran its own 15s, so one candidate cost 24.5s
+    and pinned the entire download batch both baseline runs. The direct path normally
+    delivers in 0.9-2.2s; one that hasn't in 6s is being throttled and the subprocess
+    (the proven, more capable path) fetches the same audio anyway - so the cap costs
+    nothing but a slightly slower fetch for that one candidate, and the worst case
+    drops from 30s to 21s. The subprocess timeout itself stays untouched at 15s
+    (lowering THAT to 10s was tried and reverted - it lost a real best candidate)."""
     try:
-        return _dl_direct(url, dst, seconds, timeout)
+        return _dl_direct(url, dst, seconds, min(6, timeout))
     except Exception:
         pass                                     # fall through to the proven subprocess
     is_yt = "youtube.com" in url or "youtu.be" in url
@@ -2190,13 +2359,19 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
     def work(i_c):
         i, c = i_c
         c["_done"] = True
+        _dt0 = time.time()
         got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)))
+        _dt1 = time.time()
         if not got:
+            tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
+                 ok=False)
             c.update(_spec=None, spectral=-1.0, fp=0.0, arr=0.0, vscore=0.0, core=0.0,
                      score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
                      clip_tilt=0.0, cand_tilt=0.0)
             return
         v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
+        tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
+             ok=True, verify=round(time.time() - _dt1, 3), core=v.get("core"))
         # A near-miss is a SIGNAL, not a rejection: the default 20s decode only looks at
         # the START of the candidate, so a remix with an extended intro/build-up (e.g. a
         # dubstep drop that doesn't land until 25s+) gets compared against the wrong
@@ -2220,8 +2395,10 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None):
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
 
     if todo:
+        _bt0 = time.time()
         with ThreadPoolExecutor(max_workers=min(16, len(todo))) as ex:
             list(ex.map(work, enumerate(todo)))
+        tlog("dl_score_batch", time.time() - _bt0, n=len(todo))
     return len(todo)
 
 
@@ -2261,11 +2438,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 if q and len(q) > 3 and q.lower() not in seen_hq:
                     seen_hq.add(q.lower()); hq.append(q)
         if hq:
+            _ft0 = time.time()
             hc = search_edits(hq, 6)[:FAST_POOL]
+            tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc))
             if hc:
                 ftmp = tempfile.mkdtemp()
                 fctx = _verify.prepare_clip(clip_audio)
+                _ft1 = time.time()
                 _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL, clip_ctx=fctx)
+                tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
                 good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
                 if good:
                     for c in good:
@@ -2294,63 +2475,27 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         web_q = [_clean("%s %s" % (base_artist or "", base_title))] + web_q
     if base_title:
         web_q += [_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
-    _t_main = time.time()
-    # see the note at the producer chase: a `with` block would shutdown(wait=True) and
-    # undo the web deadline entirely.
-    ex = ThreadPoolExecutor(max_workers=2)
-    try:
-        f_sc = ex.submit(search_edits, queries, 8)
-    # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
-    # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
-    # hunt, and because the code blocked on .result() it set the floor for the whole
-    # lookup no matter how fast SoundCloud/YouTube came back (8.5s). It is a WIDENER,
-    # not the primary source - SC/YT plus the producer chase already cover most clips -
-    # so it gets a deadline and we take whatever landed by then. Cancelling costs us
-    # nothing on the many clips where SC/YT already found the answer, and on the clips
-    # where the web genuinely cracked it (Ark), the results that matter arrive early.
-        f_web = ex.submit(web_search_edits, web_q)
-        cands = f_sc.result()
-        try:
-            _w = f_web.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
-        except Exception:
-            _w = []
-        web = [w for w in _w if w["url"] not in {c["url"] for c in cands}][:5]
-    finally:
-        ex.shutdown(wait=False)
-    # NO PER-URL METADATA DURING DISCOVERY. _meta() shells out to yt-dlp for every
-    # single web result purely to read a play count and a tidier title, at a MEASURED
-    # 1.4s (SoundCloud) to 2.7s (YouTube) each. Profiling one clip put ~48s of a 90s
-    # lookup in these lookups - more than search and downloading combined. Nothing here
-    # needs them: verify() decides on AUDIO, and plays only ever break ties inside an
-    # already-equal tier. The search result's own title is enough to rank and download
-    # by, so discovery now costs zero extra processes and the ranked winners get
-    # enriched once at the end (see _enrich_top).
-    if web:
-        for w in web:
-            w["plays"] = w.get("plays") or 0; w["likes"] = 0; w["query"] = "web"
-        cands += web
-    result = {"queries": queries, "ranked": [], "decisive": False}
-    if not cands:
-        return result
-
-    # PRODUCER/COLLABORATOR CHASE: sometimes the exact edit is uploaded to the
-    # producer's own account, findable only by searching THEM, not the song. Three
-    # sources, in trust order: (1) a "(prod. X)" credit sitting in a title we already
-    # fetched (kelthraxx's own "wouldnt believe flipp (prod.kelthraxx)"); (2) TikTok's
-    # own "original sound - X" credit (the same "ca" identity build_queries already
-    # folds into one generic query, given its own targeted profile search here);
-    # (3) a second contributing artist Shazam only ever hands back folded into one
-    # "subtitle" string ("Wouldn't Believe (feat. Lil Tony Official)"). One or two
-    # handles total, a couple of queries each - reuses search_edits/web_search_edits
-    # and feeds the SAME verify()-scored ranking below, no separate rescue path.
+    # PRODUCER/COLLABORATOR CHASE handles + title: sometimes the exact edit is uploaded
+    # to the producer's own account, findable only by searching THEM, not the song.
+    # Three sources, in trust order: (1) a "(prod. X)" credit sitting in a title we
+    # already fetched (kelthraxx's own "wouldnt believe flipp (prod.kelthraxx)");
+    # (2) TikTok's own "original sound - X" credit; (3) a second contributing artist
+    # Shazam only ever hands back folded into one "subtitle" string. The extraction is
+    # a closure because it now runs twice - speculatively right after the SC/YT search
+    # (so the producer search can OVERLAP the web wait + first download wave) and
+    # definitively after the web results land (web titles could in principle carry a
+    # "(prod. X)" credit the speculative pass didn't see; when the lists differ the
+    # chase is simply re-run with the definitive list, so the candidate pool is
+    # byte-identical to the serial version's).
     prod_title = None
     if base_title and shazam_reliable:
         prod_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
     elif _is_named_credit(credit_title):
         prod_title = credit_title
-    if prod_title:
+
+    def _prod_handles_now(pool):
         prod_handles = _extract_prod_handles(
-            [c.get("title") for c in cands] + list(hints or []))
+            [c.get("title") for c in pool] + list(hints or []))
         seen_h = {h.lower() for h in prod_handles}
         ca = _clean(credit_author or "")
         if ca and ca.lower() not in (base_artist or "").lower() and ca.lower() not in seen_h:
@@ -2359,11 +2504,43 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             for h in _extract_feat_handles([base_title, base_artist]):
                 if h.lower() not in seen_h and h.lower() not in (base_artist or "").lower():
                     prod_handles.append(h); seen_h.add(h.lower())
-        prod_handles = prod_handles[:2]
-        if prod_handles:
-            existing_urls = {c["url"] for c in cands}
-            cands += [c for c in _producer_search(prod_handles, prod_title)
-                     if c["url"] not in existing_urls]
+        return prod_handles[:2]
+
+    _t_main = time.time()
+    # see the note at the producer chase: a `with` block would shutdown(wait=True) and
+    # undo the web deadline entirely. ex is shut down (wait=False) after the web join.
+    ex = ThreadPoolExecutor(max_workers=2)
+    f_sc = ex.submit(search_edits, queries, 8)
+    # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
+    # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
+    # hunt, and because the code blocked on .result() it set the floor for the whole
+    # lookup no matter how fast SoundCloud/YouTube came back (8.5s). It is a WIDENER,
+    # not the primary source - SC/YT plus the producer chase already cover most clips -
+    # so it gets a deadline and we take whatever landed by then. Cancelling costs us
+    # nothing on the many clips where SC/YT already found the answer, and on the clips
+    # where the web genuinely cracked it (Ark), the results that matter arrive early.
+    f_web = ex.submit(web_search_edits, web_q)
+    try:
+        cands = f_sc.result()
+        tlog("search_scyt", time.time() - _t_main, nq=len(queries), nc=len(cands))
+        # Fire the producer chase NOW, from the main-search titles - it used to run
+        # only after the web deadline had been paid in full, adding its 2-2.5s on top.
+        spec_handles = _prod_handles_now(cands) if (prod_title and cands) else []
+        f_prod = (ex.submit(_producer_search, spec_handles, prod_title)
+                  if spec_handles else None)
+    except Exception:
+        ex.shutdown(wait=False)
+        raise
+
+    # ---- WAVE 1: download the main-search head WHILE the web search and producer
+    # chase are still running. The web deadline used to be dead air - measured 4.2-5.2s
+    # of every broad lookup spent waiting on Chromium with ZERO results taken - and the
+    # producer chase another 1.8-2.5s, all strictly BEFORE the first download byte
+    # moved. The final scored pool is kept byte-identical to the serial version's (see
+    # the parity strip below), so this changes WHEN work happens, never WHAT is scored.
+    clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
+    clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
+    tmp = tempfile.mkdtemp()
 
     # key terms = the CORE song identity, NOT the edit qualifiers. Including
     # "instrumental"/"slowed" made instrumental uploads out-title-match the popular
@@ -2386,11 +2563,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # both - so score coverage, not presence.
     song_terms = {t for t in _clean(core_title).lower().split()
                   if len(t) >= 3 and t not in ORIGINAL_WORDS and not EDIT_WORDS.search(t)}
-    for c in cands:
-        low = c["title"].lower()
-        c["title_hits"] = sum(1 for t in key_terms if t in low)
-        c["song_cov"] = ((sum(1 for t in song_terms if t in low) / float(len(song_terms)))
-                         if song_terms else 1.0)
+
+    def _term_hits(pool):
+        for c in pool:
+            low = c["title"].lower()
+            c["title_hits"] = sum(1 for t in key_terms if t in low)
+            c["song_cov"] = ((sum(1 for t in song_terms if t in low) / float(len(song_terms)))
+                             if song_terms else 1.0)
+    _term_hits(cands)
+
     # DOWNLOAD PRIORITY - the crux of "edits have fewer plays than originals". Sorting
     # by plays here downloads the popular ORIGINAL and its popular guitar/cover spins,
     # so the niche exact edit (tens-to-thousands of views) never reaches the verifier.
@@ -2463,17 +2644,98 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 -genre_hit,                 # the clip's OWN genre before a generic boost
                 -edit_char,                 # a matching edit tag before a plain upload
                 -c.get("plays", 0))         # popularity only breaks ties within a tier
-    cands.sort(key=_dl_priority)
 
-    clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
-    clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
-    tmp = tempfile.mkdtemp()
-    n = _download_and_score(_producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl),
-                            clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
+    _wave1_done = []
+    if cands:
+        wave1 = _sc_quota(sorted(cands, key=_dl_priority), max_dl)[:max_dl]
+        _tw1 = time.time()
+        n = _download_and_score(wave1, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx)
+        tlog("dl_wave1", time.time() - _tw1, n=n)
+        _wave1_done = [c for c in wave1 if c.get("_done")]
+    else:
+        n = 0
+
+    # ---- join the web search on the ORIGINAL deadline (unchanged semantics: full
+    # result set or nothing, measured from when the search pair started).
+    try:
+        _tw0 = time.time()
+        try:
+            _w = f_web.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+        except Exception:
+            _w = []
+        tlog("web_extra_wait", time.time() - _tw0, nw=len(_w))
+        web = [w for w in _w if w["url"] not in {c["url"] for c in cands}][:5]
+    finally:
+        ex.shutdown(wait=False)
+    # NO PER-URL METADATA DURING DISCOVERY. _meta() shells out to yt-dlp for every
+    # single web result purely to read a play count and a tidier title, at a MEASURED
+    # 1.4s (SoundCloud) to 2.7s (YouTube) each. Profiling one clip put ~48s of a 90s
+    # lookup in these lookups - more than search and downloading combined. Nothing here
+    # needs them: verify() decides on AUDIO, and plays only ever break ties inside an
+    # already-equal tier. The search result's own title is enough to rank and download
+    # by, so discovery now costs zero extra processes and the ranked winners get
+    # enriched once at the end (see _enrich_top).
+    if web:
+        for w in web:
+            w["plays"] = w.get("plays") or 0; w["likes"] = 0; w["query"] = "web"
+        cands += web
+    result = {"queries": queries, "ranked": [], "decisive": False}
+    if not cands:
+        return result
+
+    # ---- producer chase results, with the DEFINITIVE handle list (now that web titles
+    # are in the pool). Nearly always identical to the speculative list, in which case
+    # the overlapped search is simply collected; on a mismatch, re-run with the right
+    # handles so the pool matches the serial version's exactly.
+    if prod_title:
+        final_handles = _prod_handles_now(cands)
+        if final_handles:
+            _tp0 = time.time()
+            prod_cands = None
+            if f_prod is not None and final_handles == spec_handles:
+                try:
+                    prod_cands = f_prod.result(timeout=30)
+                except Exception:
+                    prod_cands = []
+            else:
+                prod_cands = _producer_search(final_handles, prod_title)
+            existing_urls = {c["url"] for c in cands}
+            cands += [c for c in prod_cands if c["url"] not in existing_urls]
+            tlog("producer_search", time.time() - _tp0, handles=final_handles,
+                 overlapped=bool(f_prod is not None and final_handles == spec_handles))
+
+    # title relevance for the candidates that arrived since wave 1 (web + producer)
+    _term_hits([c for c in cands if "title_hits" not in c])
+
+    # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial
+    # version would have downloaded: the quota-adjusted head of the fully-merged,
+    # fully-sorted candidate list. Download whatever of that head wave 1 didn't already
+    # fetch, then STRIP the verify results of any wave-1 candidate that ISN'T in the
+    # head - it was only ever prefetched on spec, and letting it into the ranking would
+    # let the overlap change outcomes instead of just timing. A stripped candidate is
+    # indistinguishable downstream from one that was never downloaded (no core, no
+    # spectral, no path), which is exactly what it would have been serially.
+    cands.sort(key=_dl_priority)
+    _tm0 = time.time()
+    head = _producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl)
+    n2 = _download_and_score(head, clip_audio, tmp, n, max_dl, clip_ctx=clip_ctx)
+    head_ids = {id(c) for c in head}
+    stripped = 0
+    for c in _wave1_done:
+        if id(c) not in head_ids:
+            for k in ("_spec", "path", "spectral", "fp", "arr", "core", "vscore",
+                      "score", "same", "vspeed", "bass_delta", "lag", "clip_tilt",
+                      "cand_tilt", "clip_reverb", "cand_reverb", "reverb_delta",
+                      "clip_slope", "cand_slope", "slope_delta"):
+                c.pop(k, None)
+            stripped += 1
+    n += n2
+    tlog("dl_main", time.time() - _tm0, n=n2, stripped=stripped)
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
     if known_dir and not swept and base_title:
+        _te0 = time.time()
         extra_q = [_clean("%s %s %s" % (base_artist or "", base_title, known_dir)),
                    _clean("%s %s" % (base_title, known_dir))]
         more = [c for c in search_edits(extra_q, per=5)
@@ -2483,6 +2745,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
         _download_and_score(more, clip_audio, tmp, n, 5, clip_ctx=clip_ctx)
         cands += more
+        tlog("extra_dir_dl", time.time() - _te0, n=len(more))
 
     # ---- which upload IS the exact audio in the clip ----
     # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
@@ -2628,10 +2891,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # 1.0x. Only editmatch candidates are worth the extra decode. None = lock
     # inconclusive -> both speed_fit and speed_exact fall back to the naive vspeed
     # unchanged (no behaviour change when there's nothing to correct).
+    _tl0 = time.time()
+    # PARALLEL, same results: each lock is an independent pure function of
+    # (clip, candidate) - ffmpeg decode + numpy, both of which release the GIL - and
+    # the serial loop paid them one after another for every editmatch candidate.
+    _lockable = [c for c in keep if c.get("editmatch") and c.get("path")]
     for c in keep:
-        c["vspeed_locked"] = (
-            _speed_master.candidate_speed_lock(clip_audio, c["path"])
-            if c.get("editmatch") and c.get("path") else None)
+        c["vspeed_locked"] = None
+    if _lockable:
+        with ThreadPoolExecutor(max_workers=min(6, len(_lockable))) as _lex:
+            for c, v in zip(_lockable, _lex.map(
+                    lambda c: _speed_master.candidate_speed_lock(clip_audio, c["path"]),
+                    _lockable)):
+                c["vspeed_locked"] = v
+    tlog("speed_locks", time.time() - _tl0, n=len(_lockable))
 
     def bass_fit(c):
         return 1.0 - min(1.0, abs(c.get("cand_tilt", 0.0) - target_tilt) / BASS_FIT_SPAN)
@@ -2936,6 +3209,34 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                   master_core=(master.get("core", 0.0) if master else None),
                   ref_paths=ref_paths)
     return result
+
+
+def prewarm():
+    """Warm the lazy singletons at server start so the FIRST lookup doesn't pay for
+    them inside its own budget: shazamio's import (~0.5s, paid inside the first Shazam
+    probe), the in-process yt-dlp resolvers, the SoundCloud client_id scrape (1-2s,
+    paid inside the first direct download), and the headless-Chromium Google worker
+    (launch used to burn part of the first lookup's WEB_DEADLINE). Best-effort and
+    fully asynchronous - any failure just means that piece warms lazily as before."""
+    def _go():
+        try:
+            import shazamio  # noqa: F401
+        except Exception:
+            pass
+        for is_yt in (True, False):
+            try:
+                _ydl_inproc(is_yt)
+            except Exception:
+                pass
+        try:
+            _sc_client_id()
+        except Exception:
+            pass
+        try:
+            _get_google()
+        except Exception:
+            pass
+    threading.Thread(target=_go, daemon=True).start()
 
 
 # ---------------------------------------------------------------- top level
