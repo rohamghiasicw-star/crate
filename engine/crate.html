@@ -1143,9 +1143,18 @@ function prow(label,song,artist,kind){var q=encodeURIComponent((artist?artist+' 
 function errCard(icon,head,sub,extra){
   return '<div class="card"><div class="note"><div class="bigq '+(icon==='lock'?'lock':'warn')+'">'+
     (icon==='lock'?IC.lock:icon==='sat'?IC.sat:'?')+'</div><b>'+esc(head)+'</b><span>'+sub+'</span>'+(extra||'')+'</div></div>';}
+/* Keep the row ids we created so "Delete account" can actually erase them server-side.
+   Feedback you cannot point at is feedback you cannot withdraw. */
 function sendFeedback(obj){
   return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(obj)}).catch(function(){});}
+    body:JSON.stringify(obj)}).then(function(r){return r.json();})
+    .then(function(j){if(j&&j.id){var a=lsGet('addify-fbids','[]'); a.push(j.id); lsSet('addify-fbids',a);}})
+    .catch(function(){});}
+function eraseMyFeedback(){
+  var ids=lsGet('addify-fbids','[]');
+  return Promise.all(ids.map(function(id){
+    return fetch(ENGINE+'/feedback/erase',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id})}).catch(function(){});}));}
 function renderResult(d,partial){
   lastResult=d;
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
@@ -1715,8 +1724,9 @@ function renderProf(){
   var so=document.getElementById('pfout');
   if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
   document.getElementById('pfdel').onclick=function(){
-    if(confirm('Wipe everything Addify stored in this browser?')){
-      try{localStorage.clear();}catch(e){} location.reload();}};
+    if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.')) return;
+    eraseMyFeedback().then(function(){        // server rows first, then the local copy
+      try{localStorage.clear();}catch(e){} location.reload();});};
 }
 
 /* ---------- run ---------- */

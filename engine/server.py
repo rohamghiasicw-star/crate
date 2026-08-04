@@ -15,7 +15,7 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, re, tempfile, time
+import asyncio, json, os, re, tempfile, time, uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -745,14 +745,44 @@ def trending_sounds():
 
 FEEDBACK = os.path.join(HERE, "feedback.jsonl")
 
+FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict")
+
 def record_feedback(obj):
     """/feedback - the no-match screen's "Yes - it's an edit" / "Not it" taps. This is
     training data for the edit database: every confirm links a clip to its base song.
-    Append-only jsonl, one tap per line."""
-    row = dict(obj); row["ts"] = int(time.time())
+
+    Written with an explicit field allowlist (never the raw posted body) and a per-row
+    id, so a single row can be located and erased on request. A pure append-only log
+    with no row identity cannot satisfy a GDPR Art. 17 erasure request or PIPEDA
+    retention limits, which is why the id is not optional."""
+    row = {k: obj.get(k) for k in FEEDBACK_FIELDS if obj.get(k) is not None}
+    if not row.get("verdict"):
+        return {"ok": False, "error": "verdict required"}
+    row["id"] = uuid.uuid4().hex
+    row["ts"] = int(time.time())
     with open(FEEDBACK, "a") as f:
         f.write(json.dumps(row) + "\n")
-    return {"ok": True}
+    return {"ok": True, "id": row["id"]}
+
+
+def erase_feedback(row_id):
+    """Erasure by row id - rewrite the log without that row."""
+    if not row_id or not os.path.exists(FEEDBACK):
+        return {"ok": True, "erased": 0}
+    kept, gone = [], 0
+    with open(FEEDBACK) as f:
+        for line in f:
+            try:
+                if json.loads(line).get("id") == row_id:
+                    gone += 1
+                    continue
+            except Exception:
+                pass
+            kept.append(line)
+    if gone:
+        with open(FEEDBACK, "w") as f:
+            f.writelines(kept)
+    return {"ok": True, "erased": gone}
 
 
 class H(BaseHTTPRequestHandler):
@@ -824,6 +854,9 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, identify_mic(body, kind))
             if u.path == "/feedback":
                 return self._send(200, record_feedback(json.loads(body.decode())))
+            if u.path == "/feedback/erase":
+                return self._send(200, erase_feedback(
+                    (json.loads(body.decode()) or {}).get("id")))
             return self._send(404, {"error": "not found"})
         except Exception as e:
             return self._send(200, {"result": "error", "error": str(e)[:200]})
