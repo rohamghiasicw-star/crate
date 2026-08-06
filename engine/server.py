@@ -374,8 +374,25 @@ def _phase1(url, key, t0):
         # text. Take the caption as the claim, mark it unverified, and let the edit hunt
         # go find it - verify() still decides against the real audio, so a wrong caption
         # costs a search, never a wrong crown.
-        if not fp and hint_texts:
-            c_artist, c_title = _parse_named_song(hint_texts[0])
+        _claim_from = hint_texts
+        if not fp and not _claim_from:
+            # LAST RESORT: the bare caption. `comment_song_hints` deliberately refuses a
+            # plain phrase like "tap out freestyle" - it has no "song is X", no
+            # "Artist - Title", no Title Case - and that caution is right when Shazam has
+            # already answered, because a loose caption would only add noise. But when the
+            # fingerprint found NOTHING, a phrase the uploader wrote is the only lead in
+            # the building, and verify() still has to clear CORE_KEEP on real audio, so a
+            # wrong guess costs one search and never a wrong crown. Measured case: a reel
+            # captioned "tap out freestyle @killingfrancis" returned "No song here" while
+            # naming itself in plain text.
+            _cap = re.sub(r'[@#]\S+', ' ', (src.get("desc") or ""))
+            _cap = re.sub(r'\s{2,}', ' ', _cap).strip(' -–—.,|\n')
+            _cap = _cap.split("\n")[0].strip()
+            if 3 <= len(_cap) <= 60 and re.search(r'[A-Za-z]{3}', _cap):
+                _claim_from = [_cap]
+                res["caption_guess"] = _cap
+        if not fp and _claim_from:
+            c_artist, c_title = _parse_named_song(_claim_from[0])
             if c_title:
                 base_title, base_artist = c_title, c_artist
                 res["base_song"] = c_title
@@ -581,9 +598,16 @@ def _phase2(ctx, on_cand=None):
             # report the song and no exact version.
             top = verified[0] if verified else None
             if top and (top.get("core") or 0) < E.CORE_KEEP:
+                # Below the bar we refuse to CROWN - a confident wrong answer is worse
+                # than an honest miss, which is why this gate exists. But throwing the
+                # whole list away was overcorrecting: the user is left with nothing when
+                # the engine did find near-misses, and on a heavily edited clip one of
+                # them is often the right upload. Keep them, flag them, let the UI say
+                # "not sure" and let the person decide. Six real results were being
+                # discarded this way at 0.484, 0.451, 0.443, 0.438, 0.397 and 0.263.
                 res["weak_exact"] = round(top.get("core") or 0, 3)
+                res["unsure"] = True
                 top = None
-                candidates = []
             if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))

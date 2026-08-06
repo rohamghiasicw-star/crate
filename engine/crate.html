@@ -1352,7 +1352,20 @@ function renderResult(d,partial){
   var shelf='';
   if(ex){shelf='<div class="sect">The exact version playing</div><div class="list">'+trackRow(ex,true)+'</div>';
     var others=cands.filter(function(c){return c.url!==ex.url;});
-    if(others.length) shelf+='<div class="sect">Other versions</div><div class="list">'+others.slice(0,5).map(function(c){return trackRow(c,false);}).join('')+'</div>';}
+    // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
+    // when the crown is slightly off, the right upload is usually sitting two rows down,
+    // and a list you can scan through is worth paying for even when the top pick misses.
+    if(others.length) shelf+='<div class="sect">More edits of this song</div><div class="list">'+
+      others.slice(0,12).map(function(c){return trackRow(c,false);}).join('')+'</div>';}
+  else if(d.unsure && cands.length){
+    // NOT CONFIDENT, BUT NOT EMPTY. Below CORE_KEEP we refuse to crown - a confident wrong
+    // answer is worse than an honest miss - but the near-misses used to be deleted, which
+    // left the user with nothing at all. Show them, say plainly that we are not sure, and
+    // let them pick.
+    shelf='<div class="sect">Not sure on the exact version - closest matches</div>'+
+      '<div class="list">'+cands.slice(0,12).map(function(c){return trackRow(c,false);}).join('')+'</div>'+
+      '<div class="trainnote">Audio match was '+Math.round((d.weak_exact||0)*100)+'%, under our bar to call it. '+
+      'One of these may still be it.</div>';}
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
     '<span class="pct" id="progpct2">0%</span></div>'+
