@@ -50,6 +50,11 @@ BASS_STRIP_GAP = 6.0
 # and the probe never answers at all. Two back-to-back stalls at 12s each cost the mason
 # clip 24s of its 73s lookup. 6s is still 2.5x the slowest observed real answer.
 SHAZAM_TIMEOUT = 6.0
+# Wall-clock ceiling for ONE counter-speed sweep. 14 rates x 6s of stall is 84s, and the
+# measured tail (23 of 178 runs at 120-183s) was exactly that, twice over. 30s still
+# affords ~5 stalled rates or ~15 answering ones, and the sweep exits earlier than this
+# whenever two speeds agree.
+SWEEP_BUDGET = float(os.environ.get("CRATE_SWEEP_BUDGET", 30.0))
 # Deadline (seconds, from when the search pair starts) for the headless-Chromium web
 # search. Measured at 28.6s of a 44.2s hunt when awaited outright.
 WEB_DEADLINE = 10.0
@@ -964,6 +969,53 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                        probes=n["i"])
         return hit
 
+    async def sweep_rates(off, rates, t_sink=None, need=2, budget=SWEEP_BUDGET):
+        """Counter-speed sweep with an early exit and a wall-clock ceiling.
+
+        This replaced `asyncio.gather` over all 14 FINE_SWEEP rates, which was the single
+        biggest cost in the engine and bought nothing. gather() looks parallel, but every
+        probe takes the same Semaphore(1) - Shazam rate-limits on concurrency, so the
+        serialization is load-bearing and cannot be removed. The probes therefore ran one
+        at a time anyway, and gather() simply removed our ability to stop. Measured over
+        178 runs: 23 of them spent 120-183s, which is 43% of all wall time, while
+        reporting a hit on probe 1 - the clock went to sweep rates nobody needed. At
+        SHAZAM_TIMEOUT 6s a fully-stalled sweep is 14*6 = 84s before retry_stalled adds
+        up to 8 more.
+
+        Sequential costs nothing extra (the semaphore already imposed it) and buys two
+        exits:
+
+          `need`   the sweep's own criterion is CONSENSUS - the title several independent
+                   speeds agree on. Once `need` non-junk probes agree, more rates cannot
+                   change the answer, so stop. This is the same decision the old code
+                   made after paying for all 14.
+          `budget` a clip that is going to fail should fail fast. Past the budget we stop
+                   and answer with what we have, which for a no-match clip is the honest
+                   "nothing" it was always going to be - just sooner.
+
+        Order matters now that we exit early, so FINE_SWEEP is walked as written: the
+        common TikTok/IG presets sit at the front (see the note on FINE_SWEEP).
+        """
+        t_start = time.time()
+        out, agree = [], {}
+        for rate, label in rates:
+            h = await probe(off, rate, label, t_sink=t_sink)
+            if h:
+                out.append(h)
+                if not _junk_id(h):
+                    k = _title_key(h.get("title"))
+                    if k:
+                        agree[k] = agree.get(k, 0) + 1
+                        if agree[k] >= need:
+                            tlog("sweep_early_exit", time.time() - t_start,
+                                 rates=len(out), title=k)
+                            return out
+            if time.time() - t_start > budget:
+                tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
+                return out
+        tlog("sweep_full", time.time() - t_start, hits=len(out))
+        return out
+
     async def retry_stalled(t_sink, got_any, cap=8):
         """STALL RECOVERY. Shazam's outages arrive as bursts - measured: 4+ consecutive
         probe timeouts spanning ~30s, during which every request answers nothing. When
@@ -1073,8 +1125,9 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                 # coverage to break a real ambiguity; the full 13-rate sweep does (Ark
                 # was independently confirmed at 4 rates: 1.15/1.20/1.25/1.30). Escalate
                 # only here, so the common case stays cheap.
-                full = [h for h in await asyncio.gather(
-                    *[probe(off0, r, lbl) for r, lbl in FINE_SWEEP]) if h]
+                # a genuine 2-way tie needs real coverage to break, so demand 3 agreeing
+                # rates here rather than the usual 2 before calling it
+                full = await sweep_rates(off0, FINE_SWEEP, need=3)
                 pool = full + [h for g in groups.values() for h in g]
                 clean = [h for h in pool if not _junk_id(h)]
                 pick = _consensus_id(clean or pool, hints)
@@ -1099,8 +1152,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     async def sweep_at(off):
         """Counter-speed sweep one window and take the consensus song."""
         _to = []
-        swept = [h for h in await asyncio.gather(
-            *[probe(off, rate, label, t_sink=_to) for rate, label in FINE_SWEEP]) if h]
+        swept = await sweep_rates(off, FINE_SWEEP, t_sink=_to)
         swept += await retry_stalled(_to, bool(swept))
         return _consensus_id([h for h in swept if not _junk_id(h)] or swept, hints)
 
@@ -1132,11 +1184,11 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     # and 1.30x is the answer.
     off0 = windows_for(dur)[0]
     _to = []
-    swept = [h for h in await asyncio.gather(
-        *[probe(off0, rate, label, t_sink=_to) for rate, label in FINE_SWEEP]) if h]
+    swept = await sweep_rates(off0, FINE_SWEEP, t_sink=_to)
     # a stall on the ONE decisive counter-speed turns a solid ID into no_match -
-    # re-fire only the timed-out rates when the whole sweep came back empty.
-    swept += await retry_stalled(_to, bool(swept))
+    # re-fire only the timed-out rates when the whole sweep came back empty. Capped
+    # tighter now: the sweep itself already spent its budget getting here.
+    swept += await retry_stalled(_to, bool(swept), cap=4)
     pick = _consensus_id(swept, hints)
     if pick:
         pick = dict(pick)

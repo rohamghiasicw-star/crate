@@ -1192,6 +1192,14 @@ function editBadge(d){
   // as a fingerprint match. The exact version underneath IS still audio-verified.
   if(d.from_caption && (!sp || sp==='as posted'))
     return '<span class="badge orig">From the caption'+(who?' · '+esc(who):'')+'</span>';
+  // A LYRIC SEED IS WEAKER THAN A CAPTION CLAIM AND MUST READ THAT WAY. `lyric_guess` is
+  // set when the only lead was on-screen text naming no artist - "ur LYING" on a cooking
+  // reel, "You'll be that!". That text is usually a lyric, which is a fine thing to search
+  // and a bad thing to present as a verified ID: the search query itself was a guess, and
+  // core has been measured to saturate on exactly this kind of clip (see the engine
+  // skill's core-saturation finding). Keep the result, drop the certainty.
+  if(d.lyric_guess)
+    return '<span class="badge orig">Matched from on-screen text'+(who?' · '+esc(who):'')+'</span>';
   if(!sp||sp==='as posted'){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);

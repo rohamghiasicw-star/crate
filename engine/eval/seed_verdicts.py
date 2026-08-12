@@ -40,6 +40,40 @@ SEED = [
 
     ("https://vt.tiktok.com/ZS49KawYL/", "wrong_edit",
      "flagged by build side: clip measured sped up 1.23x, crowned edit is slowed", None),
+
+    # --- 2026-08-08, reviewing the week table before the Konnor meeting ---
+    ("https://vt.tiktok.com/ZS4foSav3/", "wrong_edit",
+     "i think this was normal speed",
+     {"note": "crowned 'ATM (slowed + reverb)' on a clip that measured as posted"}),
+
+    ("https://www.instagram.com/reel/Da-RX_3h6_V/", "wrong_song",
+     "linking park one was completely wronh btw",
+     {"note": "base came from the on-screen text 'ur LYING' on a #cooking reel. Measured "
+              "after: core saturates on this clip - Forever Young slowed and Sidewalks "
+              "and Skeletons, both unrelated, also score 1.000"}),
+
+    ("https://vt.tiktok.com/ZS49wtyrH/", "wrong_edit",
+     "dont think mixtape madness was the rigth edit if there even was an edit",
+     {"note": "crowned the official music video as though it were an edit"}),
+
+    ("https://vt.tiktok.com/ZS49EaaaE/", "wrong_edit",
+     "i think drama - roy woods was just bass boosted so you got the wrong edit you idiot",
+     {"note": "true version is a plain bass boost; engine crowned a jairtheshadow remix"}),
+
+    ("https://vt.tiktok.com/ZS49E3AN3/", "unclear",
+     "maybe the bacce galo was slowed i dont know",
+     {"note": "engine says as posted. Crown scores 1.000 forward AND 1.000 time-reversed, "
+              "so its evidence is empty either way"}),
+
+    ("https://www.tiktok.com/@onlyryanwilson/photo/7670275125547191582", "should_have_found",
+     "you'r emissing half of teh mix with the rapper",
+     {"note": "found All I Need by Radiohead only; the rapper half of the mashup was "
+              "never surfaced. 14.1s clip, one probe fired"}),
+
+    ("https://vt.tiktok.com/ZS4x1LGof/", "too_slow",
+     "took you way too long to find roar when it was right there linked to the fucking post",
+     {"note": "216s, and it named the song 'They do this everytime' (the caption) while "
+              "the post credited 'Roar - Katy Perry' at fetch time"}),
 ]
 
 

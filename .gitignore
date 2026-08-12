@@ -1,0 +1,13 @@
+# The live working dir carries 2.2GB of audio scratch and saved test runs. None of it is
+# the app; all of it would make the repo unusable to clone.
+testruns/
+__pycache__/
+*.pyc
+*.log
+engine/testruns/
+engine/__pycache__/
+engine/*.log
+engine/timing.jsonl
+engine/eval/review_feed.json      # a build artifact, regenerate with eval/build_feed.py
+engine/eval/resolved.json         # a link-resolution cache, regenerates itself
+.DS_Store

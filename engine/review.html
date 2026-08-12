@@ -1,0 +1,196 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Addify · Review</title>
+<style>
+  :root{--bg:#12101f;--card:#1b1830;--line:#2a2545;--ink:#f2f0ff;--dim:#9a94c2;
+        --acc:#7B6BFF;--good:#39d98a;--warn:#ffb020;--bad:#ff5d73}
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);
+       font:15px/1.45 -apple-system,system-ui,sans-serif;display:flex;flex-direction:column}
+
+  header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+  .prog{font-size:12.5px;color:var(--dim);white-space:nowrap}
+  .track{flex:1;height:5px;background:#221e3c;border-radius:3px;overflow:hidden}
+  .track i{display:block;height:100%;background:var(--acc);width:0}
+  .mode{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:999px;
+        padding:4px 10px;cursor:pointer;white-space:nowrap}
+  .mode.on{color:var(--ink);border-color:var(--acc)}
+
+  main{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .song{font-size:21px;font-weight:680;letter-spacing:-.01em}
+  .song .art{color:var(--dim);font-weight:450}
+  .meta{color:var(--dim);font-size:12.5px;white-space:nowrap}
+  .badges{display:flex;gap:6px;flex-wrap:wrap}
+  .b{font-size:11.5px;border-radius:6px;padding:3px 8px;border:1px solid var(--line);color:var(--dim)}
+  .b.hi{color:var(--good);border-color:#1d5c3e}
+  .b.mid{color:var(--warn);border-color:#6b4a12}
+  .b.lo{color:var(--bad);border-color:#6e2733}
+
+  .play{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:12px;align-items:start}
+  @media (max-width:720px){.play{grid-template-columns:1fr}}
+  .pane{background:#0f0d1c;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .pane .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+             padding:8px 10px 6px;display:flex;justify-content:space-between;gap:8px}
+  .pane .lbl a{color:var(--dim)}
+  .pane iframe{display:block;width:100%;border:0;background:#000}
+  .pane.clip iframe{height:560px}
+  .pane.edit iframe{height:166px}
+  .pane.edit.yt iframe{height:230px}
+  .none{color:var(--dim);font-size:13px;padding:16px 12px 20px}
+  .cands{display:flex;flex-direction:column;gap:4px;padding:4px 10px 12px}
+  .cands a{color:#a89dff;font-size:12.5px;text-decoration:none}
+  .why{color:var(--warn);font-size:12.5px;background:#2a2312;border:1px solid #6b4a12;
+       border-radius:8px;padding:7px 10px}
+
+  footer{border-top:1px solid var(--line);background:rgba(18,16,31,.97);
+         padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+  .verds{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+  @media (max-width:560px){.verds{grid-template-columns:repeat(3,1fr)}}
+  .v{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:11px;
+     padding:11px 6px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center;
+     display:flex;flex-direction:column;gap:2px;align-items:center}
+  .v small{font-weight:450;color:var(--dim);font-size:10.5px}
+  .v:hover{border-color:var(--acc)}
+  .v.right:hover{border-color:var(--good);color:var(--good)}
+  .v.bad:hover{border-color:var(--bad);color:var(--bad)}
+  .row2{display:flex;gap:7px;margin-top:8px}
+  .row2 input{flex:1;background:#0f0d1c;border:1px solid var(--line);border-radius:10px;
+              color:var(--ink);padding:10px 11px;font-size:14px;outline:none}
+  .row2 input:focus{border-color:var(--acc)}
+  .row2 button{background:#221e3c;border:1px solid var(--line);border-radius:10px;
+               color:var(--dim);padding:0 14px;font-size:13px;cursor:pointer}
+  .done{text-align:center;padding:60px 20px;color:var(--dim)}
+  .done b{color:var(--ink);font-size:19px;display:block;margin-bottom:8px}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:120px;background:#173a2c;
+         color:var(--good);border-radius:999px;padding:8px 16px;font-size:13px;opacity:0;
+         transition:opacity .18s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+
+<header>
+  <div class="prog" id="prog">–</div>
+  <div class="track"><i id="bar"></i></div>
+  <div class="mode" id="mode" onclick="toggleMode()">unreviewed only</div>
+</header>
+<main id="main"></main>
+<footer id="foot"></footer>
+<div class="toast" id="toast"></div>
+
+<script>
+var DATA=/*__DATA__*/{rows:[]};
+var NOTES=/*__NOTES__*/[];
+var judged={};                       // clip url -> true, from notes already on file
+NOTES.forEach(function(n){ if(n.url) judged[n.url]=true });
+var ONLY_NEW=true, IDX=0, QUEUE=[];
+
+function esc(s){return (s||'').replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function build(){
+  QUEUE=DATA.rows.filter(function(r){return !ONLY_NEW || !judged[r.url]});
+  if(IDX>=QUEUE.length) IDX=Math.max(0,QUEUE.length-1);
+  render();
+}
+function toggleMode(){ONLY_NEW=!ONLY_NEW;
+  document.getElementById('mode').textContent=ONLY_NEW?'unreviewed only':'all clips';
+  document.getElementById('mode').classList.toggle('on',!ONLY_NEW);
+  IDX=0; build()}
+
+function conf(r){
+  if(r.core!=null){var k=r.core>=0.9?'hi':(r.core>=0.65?'mid':'lo');
+    return '<span class="b '+k+'">match '+r.core.toFixed(2)+'</span>'}
+  if(r.weak) return '<span class="b lo">best guess '+(+r.weak).toFixed(2)+'</span>';
+  return ''}
+
+function render(){
+  var m=document.getElementById('main'), f=document.getElementById('foot');
+  if(!QUEUE.length){
+    m.innerHTML='<div class="done"><b>Nothing left to review</b>'+
+      (ONLY_NEW?'Tap “unreviewed only” to go back through all of them.':'')+'</div>';
+    f.innerHTML=''; document.getElementById('prog').textContent='0 left';
+    document.getElementById('bar').style.width='100%'; return}
+  var r=QUEUE[IDX];
+  document.getElementById('prog').textContent=(IDX+1)+' / '+QUEUE.length;
+  document.getElementById('bar').style.width=(100*(IDX+1)/QUEUE.length)+'%';
+
+  var h='<div class="hd"><div class="song">'+
+    (r.song?esc(r.song)+(r.artist?' <span class="art">— '+esc(r.artist)+'</span>':'')
+           :'<span class="art">no song identified</span>')+
+    '</div><div class="meta">'+(r.secs?r.secs+'s':'')+'</div></div>';
+  h+='<div class="badges">';
+  if(r.speed) h+='<span class="b">'+esc(r.speed)+'</span>';
+  h+=conf(r);
+  if(r.lyric) h+='<span class="b">on-screen text: '+esc(r.lyric)+'</span>';
+  h+='<span class="b"><a style="color:inherit" target="_blank" href="/base?nocache=1&url='+
+     encodeURIComponent(r.url)+'">re-run on engine</a></span>';
+  h+='</div>';
+  if(r.rejected) h+='<div class="why">engine held a match back: '+esc(r.rejected)+'</div>';
+  if(r.overclaim) h+='<div class="why">title vs audio: '+esc(r.overclaim)+'</div>';
+
+  h+='<div class="play">';
+  h+='<div class="pane clip"><div class="lbl"><span>the clip</span>'+
+     '<a target="_blank" href="'+esc(r.url)+'">open ↗</a></div>'+
+     (r.clip_embed?'<iframe src="'+esc(r.clip_embed)+'" allow="autoplay; encrypted-media" '+
+      'loading="eager" scrolling="no"></iframe>'
+      :'<div class="none">no inline player for this link</div>')+'</div>';
+
+  var cls='pane edit'+((r.edit_embed||'').indexOf('youtube')>=0?' yt':'');
+  h+='<div class="'+cls+'"><div class="lbl"><span>'+
+     (r.edit_url?'what Addify says it is':'no exact version found')+'</span>'+
+     (r.edit_url?'<a target="_blank" href="'+esc(r.edit_url)+'">open ↗</a>':'')+'</div>';
+  if(r.edit_embed) h+='<iframe src="'+esc(r.edit_embed)+'" allow="autoplay" loading="eager"></iframe>';
+  if(r.edit) h+='<div class="cands" style="padding-top:8px"><a target="_blank" href="'+
+     esc(r.edit_url)+'">'+esc(r.edit)+'</a></div>';
+  if(!r.edit_url){
+    h+='<div class="none">The engine named the song but could not prove which upload played.</div>';
+    if(r.candidates&&r.candidates.length){
+      h+='<div class="cands"><span style="color:var(--dim);font-size:11px">closest it found</span>';
+      r.candidates.slice(0,4).forEach(function(c){
+        h+='<a target="_blank" href="'+esc(c.url)+'">'+(c.core!=null?c.core.toFixed(2)+' · ':'')+
+           esc(c.title||'untitled')+'</a>'});
+      h+='</div>'}}
+  h+='</div></div>';
+  m.innerHTML=h; m.scrollTop=0;
+
+  f.innerHTML='<div class="verds">'+
+    '<div class="v right" onclick="judge(\'right\')">Correct<small>1</small></div>'+
+    '<div class="v bad" onclick="judge(\'wrong_edit\')">Wrong edit<small>2</small></div>'+
+    '<div class="v bad" onclick="judge(\'wrong_song\')">Wrong song<small>3</small></div>'+
+    '<div class="v" onclick="judge(\'should_have_found\')">Missed it<small>4</small></div>'+
+    '<div class="v" onclick="skip()">Skip<small>space</small></div>'+
+    '</div><div class="row2">'+
+    '<input id="note" placeholder="Add detail (optional) then tap a verdict…" autocomplete="off" '+
+    'onkeydown="if(event.key===\'Enter\'){judge(\'note\');}">'+
+    '<button onclick="back()">← back</button></div>'}
+
+function toast(t){var el=document.getElementById('toast');el.textContent=t;el.classList.add('show');
+  setTimeout(function(){el.classList.remove('show')},900)}
+function next(){IDX++; if(IDX>=QUEUE.length){ if(ONLY_NEW){build();return} IDX=QUEUE.length-1 } render()}
+function back(){if(IDX>0){IDX--;render()}}
+function skip(){next()}
+function judge(v){
+  var r=QUEUE[IDX], inp=document.getElementById('note'), t=(inp&&inp.value||'').trim();
+  fetch('/review/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url:r.url,verdict:v,text:t,
+      song:r.song,artist:r.artist,edit:r.edit,edit_url:r.edit_url})})
+   .then(function(x){return x.json()})
+   .then(function(j){ if(!j.ok){alert('save failed');return}
+     judged[r.url]=true; NOTES.push(j.note);
+     toast(v==='right'?'marked correct ✓':'logged ✓');
+     if(ONLY_NEW){ QUEUE.splice(IDX,1); if(IDX>=QUEUE.length) IDX=Math.max(0,QUEUE.length-1); render() }
+     else next() })
+   .catch(function(e){alert('network: '+e)})}
+
+document.addEventListener('keydown',function(e){
+  if(e.target.tagName==='INPUT') return;
+  if(e.key==='1') judge('right');
+  else if(e.key==='2') judge('wrong_edit');
+  else if(e.key==='3') judge('wrong_song');
+  else if(e.key==='4') judge('should_have_found');
+  else if(e.key===' '){e.preventDefault();skip()}
+  else if(e.key==='ArrowLeft') back();
+  else if(e.key==='ArrowRight') next()});
+build();
+</script>

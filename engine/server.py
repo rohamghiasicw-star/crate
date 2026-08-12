@@ -27,6 +27,48 @@ import links as L
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
+_NOCACHE = {}      # key -> True, set by the handler when ?nocache=1 is present
+# A FAILURE IS NOT AN ANSWER, SO IT DOES NOT GET CACHED FOREVER.
+# `no_match` on this engine is very often transient: Shazam stalls in bursts, TikTok
+# rate-limits, a CDN download times out. Storing that outcome the same way a real ID is
+# stored meant one bad minute permanently poisoned a clip - re-scanning returned the
+# failure instantly, from memory, and looked like a reproducible miss. Measured: two
+# clips that had answered at 1.00 came back "no match" in 0-1s, which is not a lookup,
+# it is a recall. Successes keep the plain cache; failures expire and get retried.
+FAIL_TTL = 120.0
+_FAIL_AT = {}
+
+
+def _cache_get(key):
+    """Cached result for `key`, or None. Expires stale failures."""
+    c = CACHE.get(key)
+    if c is None:
+        return None
+    if c.get("result") in ("no_match", "error", "rate_limited", "uncertain"):
+        if time.time() - _FAIL_AT.get(key, 0) > FAIL_TTL:
+            CACHE.pop(key, None)
+            _FAIL_AT.pop(key, None)
+            return None
+    out = dict(c)
+    out["cached"] = True
+    return out
+
+
+def _cache_put(key, res):
+    CACHE[key] = res
+    if res.get("result") in ("no_match", "error", "rate_limited", "uncertain"):
+        _FAIL_AT[key] = time.time()
+    else:
+        _FAIL_AT.pop(key, None)
+
+
+def _cache_drop(key):
+    """?nocache=1 - force a real lookup. This flag was accepted in the query string and
+    never implemented, so every 'fresh' re-run silently served whatever was in memory and
+    only looked fresh after a restart wiped it. Any timing or accuracy measured that way
+    was measuring the cache."""
+    CACHE.pop(key, None)
+    _FAIL_AT.pop(key, None)
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
 
@@ -141,6 +183,41 @@ def _parse_named_song(text):
     return None, t
 
 
+def _credit_base(src):
+    """The song TikTok/IG already told us, when that credit is trustworthy.
+
+    A licensed catalogue sound carries the real title and artist in the post itself
+    ("Roar - Katy Perry" under the video). That is a platform attribution against a
+    rights-holder's own catalogue, so it beats anything we infer from a caption and it
+    costs nothing - it arrives with the fetch, before a single probe fires. Measured
+    case: a Bengals clip credited "Roar - Katy Perry" took 216s and came back named
+    "They do this everytime", which is the caption.
+
+    Trusted only when all four hold, because each one has its own failure mode:
+      - not an "original sound", which is creator-named and means nothing
+      - the credit doesn't itself describe an edit ("... slowed"), since then the
+        credited name is the EDIT's name, not the base track's
+      - both a title and an artist, so it parses as a real catalogue entry
+      - the credited sound actually matches the video's audio (get_source already
+        measures this); a mismatch means the creator muted it and played something else
+
+    Returns (title, artist) or (None, None). The caller still runs the fingerprint -
+    this names the song, it does not measure speed.
+    """
+    if src.get("is_original") or src.get("sound_mismatch"):
+        return None, None
+    title = (src.get("credit_title") or "").strip()
+    author = (src.get("credit_author") or "").strip()
+    if not title or not author:
+        return None, None
+    if E.names_an_edit(title, author):
+        return None, None
+    core = src.get("sound_match_core")
+    if core is not None and core < 0.95:
+        return None, None
+    return title, author
+
+
 def _prune_sessions():
     """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
     now = time.time()
@@ -252,19 +329,34 @@ def _phase1(url, key, t0):
             except Exception:
                 got = []
             E.tlog("comments", time.time() - _t, hints=len(got))
-            # THE SOUND PAGE. If this clip's own comments named nothing, go where the
-            # answer actually is. Roham's manual technique (captured as the
-            # tiktok-sound-id skill): an "original sound" aggregates every video that
-            # used it, and the biggest of those has already been asked "song?" and
-            # answered. Only runs when the clip's own comments came up empty.
-            if not got and src.get("is_original"):
-                _t = time.time()
-                try:
-                    got = E.strong_song_hints(E.viral_sound_comments(url)) or []
-                    from_sound_page = bool(got)
-                except Exception:
-                    got = []
-                E.tlog("sound_page_comments", time.time() - _t, hints=len(got))
+            # THE SOUND PAGE. Roham's manual technique, captured as the tiktok-sound-id
+            # skill: a sound aggregates every video that used it, and the biggest of those
+            # has already been asked "song?" and answered.
+            #
+            # THIS NOW RUNS ALWAYS, not only as a fallback. It used to require BOTH that
+            # the clip's own comments named nothing AND that the sound was "original", and
+            # that gate cost real answers: on the North Pole clip the reply "north pole
+            # behaving cynmix remix / boohavin*" was sitting on the sound page while the
+            # engine crowned a different upload, and on the t.A.T.u. clip the reply "All
+            # the things she said from tuta" was there too. Roham, seeing both: "this is
+            # why you deploy the method of checking the audio, a skill that should be baked
+            # in the engine, it was there the whole time."
+            #
+            # The clip's own comments and the sound page answer DIFFERENT questions - the
+            # first names the base song, the second names the exact edit family - so they
+            # are merged rather than treated as first-choice and fallback. Cost is ~6s in a
+            # caller-side thread that overlaps the Shazam probes, which take far longer, so
+            # it is effectively free.
+            _t = time.time()
+            try:
+                page = E.strong_song_hints(E.viral_sound_comments(url)) or []
+            except Exception:
+                page = []
+            E.tlog("sound_page_comments", time.time() - _t, hints=len(page))
+            from_sound_page = bool(page) and not got
+            for h in page:
+                if h not in got:
+                    got.append(h)
             return got, from_sound_page
         _hints_ex = ThreadPoolExecutor(max_workers=1)
         _hints_fut = _hints_ex.submit(_fetch_hints)
@@ -374,8 +466,19 @@ def _phase1(url, key, t0):
         # text. Take the caption as the claim, mark it unverified, and let the edit hunt
         # go find it - verify() still decides against the real audio, so a wrong caption
         # costs a search, never a wrong crown.
+        # THE PLATFORM'S OWN CREDIT COMES FIRST. It outranks every caption guess below:
+        # a licensed catalogue attribution is checked against a rights-holder's catalogue,
+        # a caption is whatever the uploader typed. Only fills a base the fingerprint
+        # didn't already produce - when Shazam answered, the audio beats the label.
+        if not base_title:
+            _ct, _ca = _credit_base(src)
+            if _ct:
+                base_title, base_artist = _ct, _ca
+                res["base_song"], res["base_artist"] = _ct, _ca
+                res["from_credit"] = True
+                res["speed"] = None          # nothing measured the speed yet
         _claim_from = hint_texts
-        if not fp and not _claim_from:
+        if not fp and not base_title and not _claim_from:
             # LAST RESORT: the bare caption. `comment_song_hints` deliberately refuses a
             # plain phrase like "tap out freestyle" - it has no "song is X", no
             # "Artist - Title", no Title Case - and that caution is right when Shazam has
@@ -391,14 +494,29 @@ def _phase1(url, key, t0):
             if 3 <= len(_cap) <= 60 and re.search(r'[A-Za-z]{3}', _cap):
                 _claim_from = [_cap]
                 res["caption_guess"] = _cap
-        if not fp and _claim_from:
+        if not fp and not base_title and _claim_from:
             c_artist, c_title = _parse_named_song(_claim_from[0])
             if c_title:
                 base_title, base_artist = c_title, c_artist
-                res["base_song"] = c_title
-                res["base_artist"] = c_artist
-                res["from_caption"] = True          # named by the uploader, not fingerprinted
-                res["unverified_base"] = True
+                # A CAPTION WITH NO ARTIST IS A LYRIC, NOT A SONG NAME. Measured over the
+                # 85-clip corpus: every no-artist caption base was on-screen video text,
+                # not a title - "ur LYING" on a #cooking reel, "They do this everytime",
+                # "You'll be that! (bat emoji)", "Herbi (it's such a good app!)". Showing
+                # those as the song is simply wrong, and one of them ("ur LYING") went on
+                # to crown Linkin Park with total confidence.
+                #
+                # It still makes a fine SEARCH seed - those phrases are usually lyrics, and
+                # lyric search is how "y u gotta be like that" and "About You" were found.
+                # So the claim stays in `base_title` for build_queries and out of the answer
+                # the user reads. A caption that names an artist ("Luh Germ - Bin Laden P")
+                # is a real declaration and keeps its old standing.
+                if c_artist:
+                    res["base_song"] = c_title
+                    res["base_artist"] = c_artist
+                    res["from_caption"] = True      # named by the uploader, not fingerprinted
+                    res["unverified_base"] = True
+                else:
+                    res["lyric_guess"] = c_title    # search seed only, never the answer
                 res["speed"] = None
 
         # REAL DESTINATIONS FOR THE BASE TRACK. Naming a song without a link to it is only
@@ -532,6 +650,167 @@ def _cand_row(c):
             "bass": round(c.get("bass_delta", 0.0), 1)}
 
 
+# A title claiming the clip was re-pitched. Kept apart from EDIT_WORDS, which also
+# covers remix/mashup/cover - those change the arrangement, so verify()'s core drops on
+# its own and no separate guard is needed. These do not: nightcore and daycore are pure
+# speed, and core is built to see straight through them.
+_SPEED_CLAIM = re.compile(r"\b(slowed|slow(ed)? ?(and|\+|&) ?reverb|sped ?up|speed ?up|"
+                          r"nightcore|daycore|super ?slowed|ultra ?slowed)\b", re.I)
+# An upload that IS the commercial release, not a version of it. Crowning one as "the
+# edit" answers a question nobody asked - the base song already carries official links.
+_OFFICIAL = re.compile(r"\b(official (music )?video|music video|official audio|"
+                       r"official visualizer|\(audio\)|lyric video)\b", re.I)
+# dB of spectral tilt between clip and candidate, and ONLY consultable on a clip that
+# measured as-posted. Slowing forges tilt - rank_key's own comment records that a 0.8x
+# slow reads as much apparent bass as a real 14 dB boost - so on a pitched clip this
+# number is an artefact of the pitch, not evidence about EQ. Checked against the stored
+# week: gating on tilt regardless of speed dropped 40 of 83 crowns, most of them
+# correct slowed edits that had simply been slowed. Restricted to as-posted clips it
+# touches four, which is the size of the real problem.
+_TILT_MAX = 9.0
+# Titles that assert a bass boost. Checked against the measurement, never trusted on its own.
+_BASS_CLAIM = re.compile(r"\b(bass ?boost(ed)?|bassboost|boosted bass|extreme bass)\b", re.I)
+
+
+def _url_is_dead(u):
+    """True when the crown's page is gone.
+
+    The Bat Signal clip was crowned with `soundcloud.com/bm4aqmamom2g/bat-signal-by-noodah05`,
+    which answers "This track was not found. Maybe it has been removed." Roham opened it:
+    "bit of an issue gang". The audio verified because the candidate was downloaded and
+    scored while it still resolved through the API, but the page a person actually taps is
+    dead, so the answer is worthless at the only moment that counts.
+
+    Cheap and fail-open: a HEAD, 6s, and any error means keep the crown. A network hiccup
+    must never delete a good answer - only a definite 404/410 does.
+    """
+    if not u:
+        return False
+    import urllib.error
+    import urllib.request
+    try:
+        req = urllib.request.Request(u, method="HEAD", headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"})
+        urllib.request.urlopen(req, timeout=6).getcode()
+        return False
+    except urllib.error.HTTPError as e:
+        return e.code in (404, 410)
+    except Exception:
+        return False
+
+
+def _time_reversed_null(clip_audio, cand_url, fwd_core):
+    """Manufacture a null control for the crown, out of the crown itself.
+
+    A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
+    audio it does not: a heavily slowed #cooking reel scored 1.000 against Linkin Park AND
+    1.000 against two songs it has nothing to do with (Forever Young, Sidewalks and
+    Skeletons). `arr` was the signal carrying it, and ARR_HI is 0.45 - every candidate on
+    that clip landed 0.22-0.48, so true and false pinned to the same perfect score.
+
+    Reversing the candidate in time destroys the recording while preserving its texture,
+    spectrum and reverb. A genuine match must collapse; a texture match will not. Measured:
+
+        clip                       forward   reversed
+        STRUCT slowed (good)         1.000      0.443
+        Omens slowed (good)          1.000      0.676
+        ur LYING (wrong crown)       1.000      0.763
+        GALE (disputed)              1.000      1.000
+
+    Only the last case is separable without risking a real crown, so the gate is set exactly
+    there: reversed >= forward means the score is not reading the recording at all. The
+    ur-LYING case sits too close to a good clip to catch this way and needs the
+    caption-is-not-a-song fix instead. Deliberately conservative - a wrong abstention costs
+    a real answer, and that trade only pays when the evidence is provably empty.
+
+    Returns a reason string to refuse the crown, or None. Any failure returns None: a
+    control that cannot be measured must never cost the user their answer.
+    """
+    if not clip_audio or not cand_url or fwd_core is None or fwd_core < E.CORE_SAME:
+        return None                    # only ever second-guesses a "provably same" claim
+    import shutil
+    import subprocess
+    import verify as _verify
+    tmp = tempfile.mkdtemp()
+    try:
+        dst = os.path.join(tmp, "cand.m4a")
+        if not E.dl_clip(cand_url, dst, seconds=20, timeout=20):
+            return None
+        rev = os.path.join(tmp, "rev.wav")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst,
+                        "-af", "areverse", "-ac", "1", "-ar", "44100", rev],
+                       check=True, timeout=30)
+        rc = _verify.verify(clip_audio, rev, 20).get("core") or 0.0
+        if rc >= fwd_core:
+            return ("scores %.3f against a time-reversed copy of itself, so the match is "
+                    "texture, not this recording" % rc)
+        return None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# How far the crowned upload's tempo may sit from the clip's. The product's whole claim is
+# "the exact version you heard", and a same-recording upload playing at a different speed
+# is by definition a DIFFERENT edit of it. Measured on the regression crowns, which are
+# known-correct: kelthraxx, mason and bouch all land at exactly 1.0000. The ski-slopes
+# crown Roham rejected sits at 0.9002. Nothing real was observed between 1.00 and 0.90, so
+# 6% is generous and still separates them cleanly.
+_TEMPO_TOL = 0.06          # |log2(vspeed)|, about +-4%
+
+
+def _crown_tempo_mismatch(top):
+    """The crowned upload is the same recording but not at the speed that played.
+
+    Distinct from `_crown_contradicts`, which reads TITLES. This reads the measurement, so
+    it catches the case a title cannot: an upload named plainly ("ski slopes") that is
+    simply the un-slowed original of a clip that was slowed. The engine reported that clip
+    as "as posted" with a 1.000 core and Roham called it: "i think its an edit of this
+    maybe slowed and reverb of what u sent me".
+
+    Uses the locked speed where the bass-robust consensus produced one, because a heavily
+    boosted or reverbed clip skews the naive reading.
+    """
+    v = top.get("vspeed_locked")
+    if v is None:
+        v = top.get("vspeed")
+    if not v or v <= 0:
+        return None
+    import math
+    d = abs(math.log2(float(v)))
+    if d <= _TEMPO_TOL:
+        return None
+    # verify()'s `speed` is the CLIP's tempo relative to the candidate, so below 1.0 means
+    # the clip is the slower of the two.
+    return ("clip plays %.0f%% %s than this upload, so it is a different edit of the "
+            "same recording" % (abs(1.0 - float(v)) * 100.0,
+                                "faster" if float(v) > 1.0 else "slower"))
+
+
+def _crown_contradicts(top, speed_label, mdir):
+    """Why this candidate must not be crowned as the exact edit, or None if it may be.
+
+    The two speed rules only fire when the clip was measured to be AT NORMAL SPEED. On a
+    clip we proved is slowed or sped up, an edit-titled candidate is expected and welcome
+    - that is the product working. The contradiction is specifically: nothing measured a
+    shift, and the candidate insists there is one.
+    """
+    title = "%s %s" % (top.get("title") or "", top.get("uploader") or "")
+    if _OFFICIAL.search(title):
+        return "candidate is the official release, not an edit of it"
+    as_posted = (speed_label == "as posted") and not mdir
+    if not as_posted:
+        return None
+    if _SPEED_CLAIM.search(title):
+        return "clip measured as posted, candidate titles itself a speed edit"
+    tilt = abs(top.get("bass_delta") or 0.0)
+    if tilt > _TILT_MAX:
+        return "clip measured as posted, candidate tilt is %.1f dB off it" % tilt
+    return None
+
+
 def _phase2(ctx, on_cand=None):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
     on SoundCloud and YouTube and compare each against the clip's actual audio (same
@@ -586,6 +865,23 @@ def _phase2(ctx, on_cand=None):
             # (editmatch). A plain track then correctly reports no edit instead of a
             # coincidental same-title different song (the seyti / 8ball false positives).
             verified = [c for c in rk if c.get("editmatch")]
+            # DROP UPLOADS THAT HAVE BEEN TAKEN DOWN. A candidate is downloaded and scored
+            # through the API, which can still serve a track whose public page is gone -
+            # so a dead upload verifies perfectly and then hands the user a "track was not
+            # found" page. Only the ones we would actually show are checked, and only a
+            # definite 404/410 removes anything.
+            _dead = 0
+            _live = []
+            for c in verified:
+                if len(_live) >= 6:
+                    _live.append(c)              # past the display window, don't spend a request
+                elif _url_is_dead(c.get("url")):
+                    _dead += 1
+                else:
+                    _live.append(c)
+            if _dead:
+                res["dead_links_dropped"] = _dead
+                verified = _live
             for c in verified[:6]:
                 candidates.append(_cand_row(c))
             # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted
@@ -608,6 +904,45 @@ def _phase2(ctx, on_cand=None):
                 res["weak_exact"] = round(top.get("core") or 0, 3)
                 res["unsure"] = True
                 top = None
+            # THE CROWN MUST NOT CLAIM A TRANSFORM THE CLIP DOESN'T HAVE.
+            # `core` is deliberately invariant to speed and EQ - that is what lets it
+            # recognise a slowed upload as the same recording. But speed and EQ are
+            # exactly what DEFINES an edit, so core saturating at 1.000 says "same song",
+            # never "same version". Crowning on core alone put an edit-titled upload on
+            # top of four clips that measured as-posted: "ATM (slowed + reverb)" on a
+            # normal-speed ATM clip, a jairtheshadow remix 9.6 dB off the clip's tilt, a
+            # Linkin Park upload 18.2 dB off, and the official L4P music video presented
+            # as "the edit". Roham called all four; the audio agrees.
+            #
+            # Both readings of a contradiction argue for the same refusal. Either the
+            # upload really is slowed and the clip is not, so it isn't what played - or
+            # its title is a lie, and repeating that lie as "the exact edit" is the same
+            # error one step removed.
+            if top:
+                _why = _crown_tempo_mismatch(top)
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
+            if top:
+                _why = _crown_contradicts(top, res.get("speed"), mdir)
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
+            # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
+            # claim, so it costs one download plus one verify on the single candidate we
+            # are about to present as proven.
+            if top:
+                _why = _time_reversed_null(src.get("audio"), top.get("url"),
+                                           top.get("core"))
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
             if top:
                 exact = candidates[0]
                 res["decisive"] = bool(edit.get("decisive"))
@@ -756,6 +1091,19 @@ def _phase2(ctx, on_cand=None):
                     res["speed"] = ("bass boosted" if base in (None, "as posted")
                                     else base + " + bass boosted")
                     res["bass_boosted"] = True
+                # THE UPLOAD'S TITLE IS NOT A MEASUREMENT. Edit uploads are named by
+                # whoever posted them and routinely overclaim: "SoIcyBoyz 3 (Best Bass
+                # boosted)" measured 0.14 dB off the clip, i.e. identical EQ, and "Close To
+                # Me [Bass Boosted]" measured -2.92 dB, under the gate. Both were shown to
+                # Roham as the version, because a title was being read as a finding. Say
+                # plainly when the name and the audio disagree instead of repeating a
+                # claim we just failed to confirm.
+                if (_BASS_CLAIM.search("%s %s" % (top.get("title") or "",
+                                                  top.get("uploader") or ""))
+                        and not res.get("bass_boosted")):
+                    res["title_overclaims"] = (
+                        "this upload calls itself bass boosted, but it measures %.1f dB "
+                        "off the clip, which is the same EQ" % abs(cand_delta))
             elif measured and measured.get("label") != "as posted":
                 # no crowned edit, but the clip still measures off-speed vs the original
                 # (Dark Horse: Shazam matched it "straight"). Report the measured label.
@@ -789,7 +1137,7 @@ def _phase2(ctx, on_cand=None):
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key)
-        CACHE[key] = res
+        _cache_put(key, res)
         return res
     finally:
         loop.close()
@@ -800,9 +1148,11 @@ def identify_base(url):
     """/base - name the song as fast as possible and park the rest."""
     _prune_sessions()
     key = url.split("?")[0]
-    if key in CACHE:
-        c = dict(CACHE[key]); c["cached"] = True
-        return c
+    if _NOCACHE.pop(key, None):
+        _cache_drop(key)
+    _c = _cache_get(key)
+    if _c is not None:
+        return _c
     old = SESSIONS.pop(key, None)
     if old:
         _cleanup((old.get("src") or {}).get("tmp"))
@@ -810,7 +1160,7 @@ def identify_base(url):
     if ctx and ctx.get("worth"):
         SESSIONS[key] = ctx              # /edits will finish it and free the audio
     elif ctx:
-        CACHE[key] = res                 # nothing more to find - this IS the answer
+        _cache_put(key, res)             # nothing more to find - this IS the answer
         _cleanup((ctx.get("src") or {}).get("tmp"))
     return res
 
@@ -819,9 +1169,11 @@ def identify_edits(url):
     """/edits - finish the job for a clip /base already named."""
     _prune_sessions()
     key = url.split("?")[0]
-    if key in CACHE:
-        c = dict(CACHE[key]); c["cached"] = True
-        return c
+    if _NOCACHE.pop(key, None):
+        _cache_drop(key)
+    _c = _cache_get(key)
+    if _c is not None:
+        return _c
     ctx = SESSIONS.pop(key, None)
     if not ctx:                      # no live session (expired / called cold) - do it all
         return identify(url)
@@ -838,9 +1190,11 @@ def _edits_job(url, on_cand):
     function so the streaming path can never diverge from the blocking one."""
     _prune_sessions()
     key = url.split("?")[0]
-    if key in CACHE:
-        c = dict(CACHE[key]); c["cached"] = True
-        return c
+    if _NOCACHE.pop(key, None):
+        _cache_drop(key)
+    _c = _cache_get(key)
+    if _c is not None:
+        return _c
     ctx = SESSIONS.pop(key, None)
     if not ctx:
         # No live session: either /base was never called or the server restarted under
@@ -850,7 +1204,7 @@ def _edits_job(url, on_cand):
         if not ctx:                       # rate-limited: no audio was ever fetched
             return res
         if not ctx.get("worth"):          # named it, nothing left to hunt for
-            CACHE[key] = res
+            _cache_put(key, res)
             _cleanup((ctx.get("src") or {}).get("tmp"))
             return res
     try:
@@ -863,14 +1217,16 @@ def identify(url):
     """/find - the whole thing in one shot. Kept for callers that want one response."""
     _prune_sessions()
     key = url.split("?")[0]
-    if key in CACHE:
-        c = dict(CACHE[key]); c["cached"] = True
-        return c
+    if _NOCACHE.pop(key, None):
+        _cache_drop(key)
+    _c = _cache_get(key)
+    if _c is not None:
+        return _c
     res, ctx = _phase1(url, key, time.time())
     if not ctx:                          # rate-limited: no audio was ever fetched
         return res
     if not ctx.get("worth"):             # named it, nothing left to hunt for
-        CACHE[key] = res
+        _cache_put(key, res)
         _cleanup((ctx.get("src") or {}).get("tmp"))
         return res
     try:
@@ -972,6 +1328,36 @@ def trending_sounds():
 FEEDBACK = os.path.join(HERE, "feedback.jsonl")
 
 FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict")
+
+def record_review_note(obj):
+    """One line of Roham's feedback -> eval/inbox.jsonl, tied to the clip URL.
+
+    `url` may be null: that is the global box for notes about the app rather than one
+    clip. Nothing here grades anything by itself - a session harvests the inbox, turns
+    each note into a verdict in the eval store, and marks it processed. Same boundary as
+    harvest.py: a machine wrote it down, a human's words stay verbatim."""
+    text = (obj.get("text") or "").strip()
+    verdict = (obj.get("verdict") or "").strip() or None
+    if not text and not verdict:
+        return {"ok": False, "error": "empty"}
+    url = (obj.get("url") or "").strip() or None
+    note = {"url": url,
+            "id": url.rstrip("/").split("/")[-1] if url else None,
+            "verdict": verdict,
+            "text": text[:2000],
+            # what the engine claimed at the moment it was judged. A verdict months later
+            # is worthless if the answer it refers to has since changed, so the claim is
+            # frozen into the record rather than looked up again.
+            "judged": {k: obj.get(k) for k in ("song", "artist", "edit", "edit_url")
+                       if obj.get(k)},
+            "when": time.strftime("%b %d %H:%M"),
+            "ts": round(time.time(), 1),
+            "by": "roham", "channel": "review_page", "state": "new"}
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval", "inbox.jsonl")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(note) + "\n")
+    return {"ok": True, "note": note}
+
 
 def record_feedback(obj):
     """/feedback - the no-match screen's "Yes - it's an edit" / "Not it" taps. This is
@@ -1123,6 +1509,41 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _send_review(self):
+        """The review page: every scanned clip, the engine's answer, and a text box per
+        clip. Exists because feedback used to arrive as screenshots of the results table
+        pasted into chat, which loses the link, the timestamp and half the context.
+        Every note lands in eval/inbox.jsonl tied to the clip's URL, so a complaint and
+        the exact run it complains about can never be separated again.
+
+        Feed and notes are injected server-side into the static page - one request, no
+        API surface for the page to version-skew against."""
+        base = os.path.dirname(os.path.abspath(__file__))
+        try:
+            html = open(os.path.join(base, "review.html"), encoding="utf-8").read()
+        except FileNotFoundError:
+            return self._send(404, {"error": "review.html not next to server.py"})
+        try:
+            feed = open(os.path.join(base, "eval", "review_feed.json"),
+                        encoding="utf-8").read()
+        except FileNotFoundError:
+            feed = '{"rows":[]}'
+        notes = []
+        try:
+            with open(os.path.join(base, "eval", "inbox.jsonl"), encoding="utf-8") as f:
+                notes = [json.loads(l) for l in f if l.strip()]
+        except FileNotFoundError:
+            pass
+        html = html.replace("/*__DATA__*/{rows:[]}", feed, 1)
+        html = html.replace("/*__NOTES__*/[]", json.dumps(notes), 1)
+        b = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")   # same rule as the app page
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
     def _send_raw(self, body, ctype):
         b = body.encode() if isinstance(body, str) else body
         self.send_response(200)
@@ -1164,6 +1585,8 @@ class H(BaseHTTPRequestHandler):
                 '<path d="M96 256c34-96 62-96 96 0s62 96 96 0 62-96 96 0" fill="none" '
                 'stroke="#fff" stroke-width="46" stroke-linecap="round"/></svg>',
                 "image/svg+xml")
+        if u.path == "/review":
+            return self._send_review()
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
@@ -1182,6 +1605,8 @@ class H(BaseHTTPRequestHandler):
         # itself is untouched and stays the fallback for any client that can't stream.
         if u.path == "/edits/stream":
             return self._sse(link)
+        if (q.get("nocache") or [""])[0] in ("1", "true", "yes"):
+            _NOCACHE[link.split("?")[0]] = True
         fn = {"/base": identify_base, "/edits": identify_edits}.get(u.path, identify)
         try:
             self._send(200, fn(link))
@@ -1199,6 +1624,8 @@ class H(BaseHTTPRequestHandler):
                 ct = (self.headers.get("Content-Type") or "").lower()
                 kind = ("mp4" if "mp4" in ct else "ogg" if "ogg" in ct else "webm")
                 return self._send(200, identify_mic(body, kind))
+            if u.path == "/review/note":
+                return self._send(200, record_review_note(json.loads(body.decode())))
             if u.path == "/feedback":
                 return self._send(200, record_feedback(json.loads(body.decode())))
             if u.path == "/feedback/erase":
