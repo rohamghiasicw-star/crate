@@ -645,6 +645,19 @@ def _phase1(url, key, t0):
                 links = []
             E.tlog("comment_links", 0.0, n=len(links),
                    creator=sum(1 for l in links if l.get("from_creator")))
+            # ---- @HANDLES DROPPED AS THE ANSWER. A third kind of evidence: not a name
+            # to search, not the file itself, but WHO MADE IT. Written straight onto res
+            # from this worker (res is this lookup's dict, nobody else writes this key)
+            # so phase 2 can read it even though the join sites only pass (got, links).
+            try:
+                hs = E.comment_producer_handles(
+                    pool, ignore=[src.get("poster"), src.get("handle"),
+                                  src.get("sound_creator")])
+                if hs:
+                    res["comment_handles"] = hs
+                    E.tlog("comment_handles", 0.0, n=len(hs))
+            except Exception:
+                pass
             return got, links
 
         # THE SOUND PAGE, ON ITS OWN THREAD. Roham's manual technique, captured as the
@@ -1543,6 +1556,24 @@ def _phase2(ctx, on_cand=None):
             # the pool for every clip, while this only ever APPENDS a URL that still has
             # to clear verify() against the real clip audio.
             _cmlinks = ctx.get("comment_links") or res.get("comment_links") or []
+            # @HANDLE -> THAT PRODUCER'S SOUNDCLOUD. The comments named the maker but
+            # pasted no link, so _cmlinks is empty and the search would run blind while
+            # the exact upload sits under the handle (the Manziel clip: creator answered
+            # "Song?" with "@kjtheproducer"; kjtheproducer_'s "party in the USA (raq
+            # remix)" verifies at core 0.888). Resolve at most two handles here in the
+            # hunt phase - never in phase 1, this is ~5s of yt-dlp - and let the tracks
+            # ride the comment lane, where verify() still has the only vote that counts.
+            for _h in (res.get("comment_handles") or [])[:2]:
+                try:
+                    _ht = E.producer_handle_tracks(_h, base_title)
+                except Exception:
+                    _ht = []
+                if _ht:
+                    _have = {(l.get("url") if isinstance(l, dict) else l)
+                             for l in _cmlinks}
+                    _cmlinks = list(_cmlinks) + [t for t in _ht
+                                                 if t["url"] not in _have]
+                    E.tlog("handle_tracks", 0.0, handle=_h, n=len(_ht))
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,

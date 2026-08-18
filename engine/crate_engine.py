@@ -869,6 +869,106 @@ def comment_audio_urls(comments, cap=6, with_meta=False):
     return order
 
 
+_HANDLE_RX = re.compile(r'@([A-Za-z0-9_.]{4,30})')
+
+
+def comment_producer_handles(comments, cap=2, ignore=None):
+    """@handles dropped as the ANSWER to "song?" -> the producer to go find.
+
+    The Manziel clip is the whole case: "Song?" was answered BY THE CREATOR with
+    "@kjtheproducer" and a reply added "SoundCloud homie" - no URL anywhere, so
+    comment_audio_urls returned nothing and the hunt searched blind while the exact
+    upload sat on that producer's SoundCloud (verified core 0.888 once fetched).
+
+    Same who-said-it scoring as comment_audio_urls: the creator naming the producer is
+    close to authoritative, a reply under the "song?" ask is the crowd answering. A
+    handle buried in a long stranger comment with no likes is someone tagging a friend
+    and is dropped - that filter is what keeps this from spraying SoundCloud searches
+    on every clip.
+
+    `ignore`: handles that are NOT the producer (the poster, the sound creator) - being
+    told "@zevonae made this video" is not a lead."""
+    ig = {re.sub(r'[^a-z0-9]', '', (h or '').lower()) for h in (ignore or []) if h}
+    scored = {}
+    for raw in (comments or []):
+        meta = {}
+        if isinstance(raw, (tuple, list)):
+            meta = (raw[1] if len(raw) > 1 else None) or {}
+            if not isinstance(meta, dict):
+                meta = {"likes": meta} if isinstance(meta, int) else {}
+            raw = raw[0]
+        text = (raw or "")
+        for m in _HANDLE_RX.finditer(text):
+            h = m.group(1).strip("._")
+            hk = re.sub(r'[^a-z0-9]', '', h.lower())
+            if len(hk) < 4 or hk in ig:
+                continue
+            likes = int(meta.get("likes") or 0)
+            creator = bool(meta.get("creator") or meta.get("is_creator"))
+            answer = bool(meta.get("to_ask") or meta.get("reply"))
+            # the handle IS the message: strip it out and at most two filler words
+            # remain ("@kj on soundcloud" yes, "yo @friend look at this" no)
+            bare = len(text.replace("@" + h, "").split()) <= 2
+            if not (creator or answer or bare or likes >= 20):
+                continue
+            score = likes + (10000 if creator else 0) + (50 if answer else 0) \
+                + (25 if bare else 0)
+            if score > scored.get(h.lower(), (-1, ""))[0]:
+                scored[h.lower()] = (score, h)
+    ranked = sorted(scored.values(), key=lambda sv: -sv[0])
+    return [h for _, h in ranked[:cap]]
+
+
+def producer_handle_tracks(handle, base_title=None, cap=3):
+    """SoundCloud tracks BY @handle, shaped like comment_audio_urls meta rows so
+    comment_candidates() takes them unchanged.
+
+    scsearch matches the handle against uploader names; rows whose uploader slug does
+    not match the handle are other people talking ABOUT them and get dropped. When the
+    base song is known, tracks sharing a title token come first - the producer's other
+    beats are real uploads but not this answer. Each kept row is resolved to its
+    permalink because the flat search returns api.soundcloud.com ids, which slug-derived
+    titles and dedup keys both choke on."""
+    try:
+        out = subprocess.run(["yt-dlp", "scsearch10:%s" % handle, "--flat-playlist",
+                              "-J", "--no-warnings"],
+                             capture_output=True, timeout=25).stdout
+        j = json.loads(out or "{}")
+    except Exception:
+        return []
+    slug = lambda s: re.sub(r'[^a-z0-9]', '', (s or '').lower())
+    hs = slug(handle)
+    rows = []
+    for e in (j.get("entries") or []):
+        up = slug(e.get("uploader") or e.get("channel") or "")
+        if not up or (hs not in up and up not in hs):
+            continue
+        rows.append({"url": e.get("webpage_url") or e.get("url") or "",
+                     "title": e.get("title") or ""})
+    if base_title:
+        toks = [t for t in re.split(r'[^a-z0-9]+', base_title.lower()) if len(t) > 2]
+        hit = lambda r: sum(1 for t in toks if t in (r["title"] or "").lower())
+        rows.sort(key=lambda r: -hit(r))
+        good = [r for r in rows if hit(r) > 0]
+        if good:
+            rows = good + [r for r in rows if not hit(r)][:1]   # one flyer, rest cut
+    out_rows = []
+    for r in rows[:cap]:
+        u = r["url"]
+        if "api.soundcloud.com" in u:
+            try:
+                jj = json.loads(subprocess.run(
+                    ["yt-dlp", "-J", "--no-warnings", u],
+                    capture_output=True, timeout=20).stdout or "{}")
+                u = jj.get("webpage_url") or u
+            except Exception:
+                pass
+        if u:
+            out_rows.append({"url": u, "likes": 0, "from_creator": False,
+                             "reply": True, "handle": handle})
+    return out_rows
+
+
 def crowd_claims(comments, pool="clip", top=6):
     """The skill's reading step. -> ranked
     [{"name","mashup","score","votes","likes","answers_ask","thanked","demand"}].
