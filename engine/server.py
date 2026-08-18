@@ -15,7 +15,7 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, queue, re, tempfile, threading, time, uuid
+import asyncio, json, os, queue, re, tempfile, threading, time, unicodedata, uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -24,6 +24,18 @@ import crate_engine as E
 import wrong_song
 import speed_from_master
 import links as L
+
+# ---------------------------------------------------------------- creator evidence
+# NEW 2026-08-13. The check Roham did by hand on ZS4qqMqXq, in code: whose sound is
+# this, and is it the poster's own? See creator_check.py for the measurements.
+# PURELY ADDITIVE - it writes metadata onto the result and touches nothing that ranks
+# or crowns, so it needs no regression gate. Seeding the edit search from it DOES
+# change ranking and is deliberately left unapplied in
+# research/creator-check.seed.patch until the five-clip gate can be run.
+try:
+    import creator_check as CC
+except Exception:                                    # never take the server down for it
+    CC = None
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
@@ -37,6 +49,59 @@ _NOCACHE = {}      # key -> True, set by the handler when ?nocache=1 is present
 # it is a recall. Successes keep the plain cache; failures expire and get retried.
 FAIL_TTL = 120.0
 _FAIL_AT = {}
+
+
+SOUND_CACHE = {}          # tiktok sound id -> a finished result for that sound
+# clip keys that ?nocache=1 asked to redo, so the sound cache cannot answer for them
+# either. Cleared as soon as the lookup consumes it - one flag, one forced lookup.
+_NO_SOUND_CACHE = set()
+SOUND_CACHE_MAX = 4000
+
+
+def _sound_cache_get(src):
+    """A finished answer for this clip's SOUND, if another clip already resolved it.
+
+    One TikTok sound is used by thousands of videos, so identifying it once should answer
+    all of them. Measured on the recorded corpus: 59.2% of clips sit on a sound another
+    clip had already used, and a hit costs no Shazam call, no candidate download and no
+    verify pass - the two things that make a lookup slow. It is also the only cheap path
+    that works on audio with no name at all, because it keys on the platform's id rather
+    than on a title anyone had to know.
+
+    Guarded by sound_match_core, which get_source already measures: TikTok's credited
+    sound is usually the audio in the video but NOT always, and when the creator muted it
+    and played something else the cached answer belongs to a different recording. Below
+    the keep bar we fall through and do the real work.
+    """
+    sid = src.get("sound_id")
+    if not sid:
+        return None
+    core = src.get("sound_match_core")
+    if src.get("sound_mismatch") or (core is not None and core < E.CORE_KEEP):
+        return None
+    hit = SOUND_CACHE.get(sid)
+    if not hit:
+        return None
+    out = dict(hit)
+    out["cached"] = True
+    out["from_sound_cache"] = sid
+    return out
+
+
+def _sound_cache_put(src, res):
+    sid = (src or {}).get("sound_id")
+    if not sid or not res or res.get("result") != "found":
+        return
+    if (src.get("sound_match_core") is not None
+            and src["sound_match_core"] < E.CORE_KEEP) or src.get("sound_mismatch"):
+        return
+    if len(SOUND_CACHE) > SOUND_CACHE_MAX:
+        SOUND_CACHE.clear()
+    # strip the clip-specific bits: the waveform, thumbnail and handle belong to the
+    # video that was scanned, not to the sound every other video shares.
+    keep = {k: v for k, v in res.items()
+            if k not in ("peaks", "wave", "thumb", "handle", "desc", "secs", "cached")}
+    SOUND_CACHE[sid] = keep
 
 
 def _cache_get(key):
@@ -66,11 +131,73 @@ def _cache_drop(key):
     """?nocache=1 - force a real lookup. This flag was accepted in the query string and
     never implemented, so every 'fresh' re-run silently served whatever was in memory and
     only looked fresh after a restart wiped it. Any timing or accuracy measured that way
-    was measuring the cache."""
+    was measuring the cache.
+
+    It ALSO has to drop the sound cache, which is the half that was still lying. The
+    regression gate re-ran all five clips in 0s each and returned full, plausible,
+    identical answers - not one of them had done any work, because the URL cache was
+    cleared and the SOUND cache answered instead. A gate that replays yesterday's answers
+    cannot fail, which is worse than no gate. `nocache` means redo the work; there is no
+    layer it is allowed to skip."""
     CACHE.pop(key, None)
     _FAIL_AT.pop(key, None)
+    _NO_SOUND_CACHE.add(key)
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
+
+
+# ---------------------------------------------------------------- creator evidence
+# NEW 2026-08-13. Both helpers are additive: they attach fields and never feed anything
+# that ranks, searches or crowns, so no regression gate is owed on them.
+def _creator_start(url, src):
+    """Kick off the creator-side lookup in its own thread.
+
+    Non-blocking on purpose. creator_evidence() makes two TikTok page requests
+    (~0.7s + ~1.1s measured, worse under the embed wall's 503 backoff) and phase 1 is
+    already waiting on Shazam for longer than that, so overlapping it costs nothing.
+    Returns a handle for _creator_attach, or None when there is nothing to look up."""
+    if CC is None or (src or {}).get("platform") != "tiktok":
+        return None
+    try:
+        ex = ThreadPoolExecutor(max_workers=1)
+        return ex, ex.submit(CC.creator_evidence, url)
+    except Exception:
+        return None
+
+
+def _creator_attach(res, h, budget=5.0):
+    """Attach the evidence if it landed inside the budget. Silent on anything else -
+    a missing creator block must never cost the user their answer."""
+    if not h:
+        return
+    ex, fut = h
+    try:
+        ev = fut.result(timeout=budget)
+    except Exception:
+        ev = None
+    finally:
+        try:
+            ex.shutdown(wait=False)
+        except Exception:
+            pass
+    if not ev or not ev.get("ok"):
+        return
+    res["creator"] = ev
+    try:
+        res["creator_line"] = CC.summary(ev)
+    except Exception:
+        pass
+    # THE REAL @HANDLE. `handle` has been the SOUND's author DISPLAY NAME on every clip
+    # that came through embed/v2 (tt_embed_v2 sets creator = musicInfos.authorName), so
+    # on ZS4qqMqXq it was "Sᴏᴜɴᴅᴇʀ" and the review page's "see the creator" link pointed
+    # at tiktok.com/@Sᴏᴜɴᴅᴇʀ, which is not an account. Measured across the recorded
+    # corpus: handle == the credit's author string on 132 of 158 TikTok clips.
+    # Only the UI reads res["handle"]; the edit hunt reads src["handle"], which is left
+    # exactly as it was so nothing about ranking moves here.
+    if ev.get("clip_creator"):
+        res["handle"] = ev["clip_creator"]
+    if ev.get("third_party_edit"):
+        res["third_party_edit"] = True
 
 
 def _edit_worthy(src, fp):
@@ -98,6 +225,58 @@ def _edit_worthy(src, fp):
 SLOPE_BOOST_GAP = 0.40
 SESSIONS = {}        # key -> the phase-1 context, kept alive between /base and /edits
 SESSION_TTL = 900
+
+# ---- WHAT THE ENGINE IS DOING RIGHT NOW, so the app can say it.
+#
+# /base is one awaited call. Everything inside it - resolving the link, pulling the mp4,
+# building the waveform, the 1.0x scan, the counter-speed sweep - is invisible to the
+# page, which therefore had exactly one thing it could honestly draw: a bar that creeps
+# to 30% and stops until the song is named. On a hard clip that is 20-60s of a frozen
+# 30%, then a jump. Konnor hit it twice tonight and read it as the app being hung.
+#
+# These are milestones the engine ACTUALLY passes, written as they happen and read back
+# by GET /progress. Nothing here is a timer: if the engine stalls, the number stops,
+# which is the truth and is what a stall should look like.
+_PROG = {}
+_PROG_TTL = 300.0
+
+
+def _prog_set(key, pct, label=None):
+    p = _PROG.get(key)
+    if p is None or p.get("t", 0) < time.time() - _PROG_TTL:
+        p = _PROG[key] = {"pct": 0.0, "label": "", "t": time.time()}
+    # monotonic: a later milestone never walks the bar backwards
+    p["pct"] = max(float(p.get("pct") or 0), float(pct))
+    if label:
+        p["label"] = label
+    p["t"] = time.time()
+
+
+def _prog_probe(key, ceiling):
+    """One finished Shazam probe, converted to progress.
+
+    Asymptotic on purpose. The engine cannot know how many probes a clip needs - an easy
+    one answers on probe 1, a slowed clip walks all 14 sweep rates - so a fraction like
+    "probes done / probes planned" would be a made-up denominator. Closing a fixed share
+    of the remaining gap each time is honest about that: it always moves, it moves most
+    at the start when most probes are cheap, and it can never reach a milestone the
+    engine has not actually hit.
+
+    The 0.4 floor is there because a pure ratio converges: measured in the browser, the
+    bar climbed 8-11-24-36 and then crawled 36 to 37 across the whole back half of the
+    sweep, which reads as stalled even though probes were landing. A floor keeps each
+    real probe worth a visible step, and the min() still means no number is ever reached
+    without the work behind it."""
+    p = _PROG.get(key)
+    now = float((p or {}).get("pct") or 0)
+    _prog_set(key, min(ceiling, now + max(0.4, (ceiling - now) * 0.16)))
+
+
+def _prog_clear(key):
+    _PROG.pop(key, None)
+    for k, v in list(_PROG.items()):
+        if v.get("t", 0) < time.time() - _PROG_TTL:
+            _PROG.pop(k, None)
 
 
 def _peaks(path, n=96):
@@ -218,6 +397,80 @@ def _credit_base(src):
     return title, author
 
 
+# The bracketed / trailing qualifier on a release title - "(HARDSTYLE SLOWED)",
+# "- Super Slowed", "[sped up]". Everything outside it is the track's identity.
+_QUALIFIER = re.compile(r"[\(\[\{][^\)\]\}]*[\)\]\}]|\s[-–—]\s.*$")
+
+
+def _title_identity(t):
+    """A title stripped to the track it names, so two spellings of the same release can
+    be compared. "MEANT TO BE (HARDSTYLE SLOWED)" and "MEANT TO BE (HARDSTYLE ULTRA
+    SLOWED)" both reduce to "meant to be"."""
+    t = _QUALIFIER.sub(" ", t or "")
+    t = E.EDIT_WORDS.sub(" ", t)
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", t.lower()).split())
+
+
+def _qualifier_tokens(t):
+    """The words the identity threw away - what this spelling CLAIMS about the version."""
+    ident = set(_title_identity(t).split())
+    words = re.sub(r"[^a-z0-9 ]", " ", (t or "").lower()).split()
+    return {w for w in words if w not in ident}
+
+
+def _credit_qualifier(src, base_title):
+    """The platform's own title for a sound whose audio we have already matched, when
+    Shazam named the SAME track with a DIFFERENT version qualifier.
+
+    v_94f23d, verbatim: *"don't know how you got this wrong when the song is right there
+    u idiot"*. Recorded payload (testruns/full45/b_12.json):
+
+        credit            MEANT TO BE (HARDSTYLE SLOWED) - prodArvee & svdst
+        base_song         MEANT TO BE (HARDSTYLE ULTRA SLOWED)
+        sound_match_core  1.0
+
+    Two real releases exist by those artists and the clip is playing the one TikTok
+    names. `_credit_base` above could never fix this: it only fills a base the
+    fingerprint left EMPTY, and it refuses any credit that names an edit at all - which
+    is exactly the case where the credit is the most specific thing anyone has.
+
+    Deliberately narrow, because a credit is wrong about which sound is in the video
+    often enough to have its own gate elsewhere in this file:
+      - the credited sound must MEASURE as the clip's audio (sound_match_core >= 0.95,
+        the same bar `_credit_base` uses). Not "TikTok said so" - "we checked".
+      - both titles must name the SAME track once qualifiers are stripped. A different
+        identity is a different problem and this must not touch it.
+      - only the QUALIFIER moves. The base identity and the artist are left alone.
+      - the credit's qualifier must be a VERSION claim - an EDIT_WORDS hit. A bare credit
+        against a Shazam row that names an edit is LESS specific, and taking it would
+        throw information away; and a "(feat. Ne-Yo & Akon)" parenthetical is part of who
+        is on the track, not which version it is. Measured: without this clause the rule
+        rewrote "Play Hard (feat. Ne-Yo & Akon) [New Edit]" down to
+        "Play Hard (feat. Ne-Yo & Akon)", deleting the one word that identified the
+        release.
+
+    Returns the credit's title, or None. Blast radius on the recorded 45: fires on 1
+    clip, n=12, the one it was written for. The only other named credit in the corpus
+    (n=5, "88 - slowed" vs "88 (slowed)") has the same qualifier and is left alone.
+    """
+    if src.get("is_original") or src.get("sound_mismatch"):
+        return None
+    ct = (src.get("credit_title") or "").strip()
+    if not ct or not base_title or not E._is_named_credit(ct):
+        return None
+    core = src.get("sound_match_core")
+    if core is None or core < 0.95:
+        return None
+    if _title_identity(ct) != _title_identity(base_title):
+        return None
+    cq, bq = _qualifier_tokens(ct), _qualifier_tokens(base_title)
+    if not cq or cq == bq:
+        return None
+    if not any(E.EDIT_WORDS.search(w) for w in cq):
+        return None
+    return ct
+
+
 def _prune_sessions():
     """Drop stale phase-1 contexts (and their temp audio) if /edits never came."""
     now = time.time()
@@ -233,10 +486,12 @@ def _phase1(url, key, t0):
     30-60s: the user shouldn't wait on the edit search to learn what the song is.
     Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
     E.tlog("request_start", 0.0, url=key)
+    _prog_set(key, 6, "Reading the clip")
     _p0 = time.time()
     try:
         src = E.get_source(url)
         E.tlog("get_source", time.time() - _p0)
+        _prog_set(key, 18, "Got the audio")
     except RuntimeError as e:
         if str(e) == "tiktok_rate_limited":
             oe = getattr(e, "oembed", {}) or {}
@@ -282,10 +537,26 @@ def _phase1(url, key, t0):
         res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
                                              src.get("credited_author"))
 
+    # ---- WHO MADE THE SOUND, at zero network cost. The richer block below
+    # (_creator_attach / creator_check.py) resolves this from the sound page; these four
+    # come straight out of tikwm's canonical "original sound - <handle>" title, which
+    # get_source has already fetched for the video mp4. Free, and present on 180 of the
+    # 204 recorded TikTok clips, so the app and the review page can show the creator on
+    # essentially every scan without waiting on anything.
+    for _k in ("sound_creator", "sound_name", "sound_url", "poster", "sound_is_posters"):
+        if src.get(_k) is not None:
+            res[_k] = src[_k]
+
+    # WHOSE SOUND IS THIS? Started here so its two page fetches overlap the waveform
+    # work and the Shazam probes, and joined at the end of phase 1. Costs the request
+    # nothing it was not already waiting on.
+    _cr = _creator_start(url, src)
+
     _t = time.time()
     res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
     res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
     E.tlog("peaks_wave", time.time() - _t)
+    _prog_set(key, 24, "Building the fingerprint")
     # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
     # not the length of the source video. The scanning timeline is scaled to this, so it
     # has to describe the same thing the window offsets below are measured against.
@@ -293,6 +564,28 @@ def _phase1(url, key, t0):
         res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
     except Exception:
         res["clip_secs"] = None
+
+    # ANOTHER CLIP MAY HAVE ALREADY ANSWERED THIS SOUND. Checked here, after the audio
+    # exists so sound_match_core can be trusted, and before a single Shazam probe fires.
+    # This is the one change that makes the app faster AND broader at once: a hit skips
+    # identification and the entire edit hunt, and it works on audio nobody has a name
+    # for. The clip-specific fields (waveform, thumbnail, handle) come from THIS scan and
+    # are layered over the shared answer.
+    _forced = key in _NO_SOUND_CACHE
+    _NO_SOUND_CACHE.discard(key)
+    _sc = None if _forced else _sound_cache_get(src)
+    if _sc:
+        for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
+            if res.get(k) is not None:
+                _sc[k] = res[k]
+        _sc["secs"] = round(time.time() - t0, 1)
+        _prog_set(key, 44, "Known sound")
+        E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
+        # The cached answer belongs to the SOUND; who posted THIS clip does not, so the
+        # creator block is re-attached per clip rather than served from the cache.
+        _creator_attach(_sc, _cr, budget=2.0)
+        _cleanup(src.get("tmp"))
+        return _sc, None
 
     # Comments OVERLAPPED WITH the fingerprint. The crowd routinely names the track
     # outright ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least
@@ -318,77 +611,181 @@ def _phase1(url, key, t0):
         res["caption_hints"] = caption_hints
 
     hint_texts = []
+    comment_links = []          # audio URLs pasted in the comments, creator-first
     _hints_ex = None
     _hints_fut = None
-    if src["platform"] == "tiktok":
+    _page_fut = None
+    _is_tt = src["platform"] == "tiktok"
+    if _is_tt:
         def _fetch_hints():
-            got, from_sound_page = [], False
+            got = []
+            pool = []
             _t = time.time()
             try:
-                got = E.comment_song_hints(E.tiktok_comments(url)) or []
+                # WHO OWNS THE AUDIO, handed to the reader. `url` here is the
+                # vt.tiktok.com short link the app is given, which carries no @handle at
+                # all, so without this every comment looks like a stranger's and
+                # `comment_audio_urls` can never award the creator bonus it is built on.
+                pool = E.tiktok_comments(
+                    url, poster=[src.get("poster"), src.get("sound_creator")])
+                got = E.comment_song_hints(pool) or []
             except Exception:
-                got = []
+                got, pool = [], (pool or [])
             E.tlog("comments", time.time() - _t, hints=len(got))
-            # THE SOUND PAGE. Roham's manual technique, captured as the tiktok-sound-id
-            # skill: a sound aggregates every video that used it, and the biggest of those
-            # has already been asked "song?" and answered.
-            #
-            # THIS NOW RUNS ALWAYS, not only as a fallback. It used to require BOTH that
-            # the clip's own comments named nothing AND that the sound was "original", and
-            # that gate cost real answers: on the North Pole clip the reply "north pole
-            # behaving cynmix remix / boohavin*" was sitting on the sound page while the
-            # engine crowned a different upload, and on the t.A.T.u. clip the reply "All
-            # the things she said from tuta" was there too. Roham, seeing both: "this is
-            # why you deploy the method of checking the audio, a skill that should be baked
-            # in the engine, it was there the whole time."
-            #
-            # The clip's own comments and the sound page answer DIFFERENT questions - the
-            # first names the base song, the second names the exact edit family - so they
-            # are merged rather than treated as first-choice and fallback. Cost is ~6s in a
-            # caller-side thread that overlaps the Shazam probes, which take far longer, so
-            # it is effectively free.
-            _t = time.time()
+            # ---- AUDIO LINKS PEOPLE PASTED. Read off the SAME comment pool that was
+            # already fetched for the hints, so this costs zero extra requests. It is a
+            # different KIND of evidence from a hint: a hint is a name to search, a link
+            # is the file itself, and the reader that produces the names is blind to URLs
+            # by construction (measured: a comment containing only
+            # "m.soundcloud.com/fvckaron/obsessed" yields [] from comment_song_hints).
+            links = []
             try:
-                page = E.strong_song_hints(E.viral_sound_comments(url)) or []
+                links = E.comment_audio_urls(pool, with_meta=True) or []
+            except Exception:
+                links = []
+            E.tlog("comment_links", 0.0, n=len(links),
+                   creator=sum(1 for l in links if l.get("from_creator")))
+            return got, links
+
+        # THE SOUND PAGE, ON ITS OWN THREAD. Roham's manual technique, captured as the
+        # tiktok-sound-id skill: a sound aggregates every video that used it, and the
+        # biggest of those has already been asked "song?" and answered. It stays baked in
+        # - it is what found the "north pole behaving cynmix remix" reply and the t.A.T.u.
+        # "from tuta" reply that the engine was otherwise blind to.
+        #
+        # WHAT CHANGED IS ONLY WHEN IT IS WAITED ON. It used to run inside the same future
+        # as the clip's own comments, so naming the song blocked on it. Measured on a cold
+        # random clip tonight: the song was known at 12.9s, the sound-page chase took
+        # 18.9s, and phase 1 did not finish until 54.9s - 18.9 of those seconds bought
+        # ZERO hints, and the app sat frozen for all of them.
+        #
+        # The two sources answer DIFFERENT questions - the clip's own comments name the
+        # base song, the sound page names the exact edit family - so the base-song vote
+        # only ever needed the first one. This one is joined later, once the sweep has
+        # already run and it has almost certainly finished for free.
+        def _fetch_page():
+            _t = time.time()
+            page_pool = []
+            try:
+                page_pool = E.viral_sound_comments(url)
+                page = E.strong_song_hints(page_pool) or []
             except Exception:
                 page = []
             E.tlog("sound_page_comments", time.time() - _t, hints=len(page))
-            from_sound_page = bool(page) and not got
-            for h in page:
-                if h not in got:
-                    got.append(h)
-            return got, from_sound_page
-        _hints_ex = ThreadPoolExecutor(max_workers=1)
-        _hints_fut = _hints_ex.submit(_fetch_hints)
-
-    def _join_hints():
-        """Blocking hint join - idempotent, safe from any thread."""
-        nonlocal hint_texts
-        got, from_sound_page = [], False
-        if _hints_fut is not None:
+            links = []
             try:
-                got, from_sound_page = _hints_fut.result()
+                links = E.comment_audio_urls(page_pool or [], with_meta=True) or []
             except Exception:
-                got, from_sound_page = [], False
+                links = []
+            return page, links
+
+        _hints_ex = ThreadPoolExecutor(max_workers=2)
+        _hints_fut = _hints_ex.submit(_fetch_hints)
+        _page_fut = _hints_ex.submit(_fetch_page)
+
+    _hints_got = {}
+
+    def _join_hints(wall=8.0):
+        """Hint join - idempotent, safe from any thread, and BOUNDED.
+
+        This used to block with no ceiling, and on a slow clip that is the whole lookup:
+        measured tonight, tiktok_comments took 21.5s while the song had been named at
+        under 10s, so the app sat on a finished answer for eleven seconds waiting on
+        evidence it did not need yet.
+
+        A wall does not throw the hints away. concurrent.futures leaves a future readable
+        after a timeout, so a later call collects whatever landed in the meantime - and
+        one runs after the sweep, before the hints are used to seed the edit search. The
+        only thing the wall can cost is a hint arriving too late to join the base-song
+        consensus vote, which is the one decision that cannot wait."""
+        nonlocal hint_texts, comment_links
+        got, links = [], []
+        if _hints_fut is not None:
+            if _hints_got:
+                got, links = _hints_got["got"], _hints_got["links"]
+            else:
+                try:
+                    got, links = _hints_fut.result(timeout=wall)
+                    _hints_got["got"], _hints_got["links"] = got, links
+                except Exception:
+                    got, links = [], []
+                    E.tlog("hints_wall_hit", wall or 0)
             if got:
                 res["comment_hints"] = got
-                if from_sound_page:
-                    res["hints_from_sound_page"] = True
+            if links:
+                comment_links = links
+                res["comment_links"] = links
         # Caption leads: the uploader outranks the crowd. Deduped, order preserved.
         hint_texts = caption_hints + [g for g in got if g not in caption_hints]
         return hint_texts
 
+    def _join_page(wall):
+        """Collect the sound-page chase, having already had the whole sweep to run.
+
+        `wall` is a real ceiling, not a courtesy: by the time this is called the thread
+        has had the entire Shazam sweep to finish in, so a hit costs nothing. If it is
+        STILL running after that, it is a slow page nobody is waiting on - the base song
+        is already named and the edit hunt has its own evidence, so we take what we have
+        and move. The thread is left to die with the executor rather than joined."""
+        nonlocal hint_texts, comment_links
+        if _page_fut is None:
+            return
+        try:
+            page, links = _page_fut.result(timeout=wall)
+        except Exception:
+            E.tlog("sound_page_dropped", 0.0)
+            return
+        fresh = [h for h in (page or []) if h not in hint_texts]
+        if fresh:
+            res["comment_hints"] = (res.get("comment_hints") or []) + fresh
+            res["hints_from_sound_page"] = True
+            hint_texts = hint_texts + fresh
+        if links:
+            have = {l.get("url") for l in (comment_links or [])}
+            add = [l for l in links if l.get("url") not in have]
+            if add:
+                comment_links = list(comment_links or []) + add
+                res["comment_links"] = comment_links
+
     loop = asyncio.new_event_loop()
     try:
         _t = time.time()
+        # THE SWEEP REPORTS ITSELF. This is the long pole of phase 1 and the stretch the
+        # app used to spend frozen at 30%; each finished probe now ticks the bar toward
+        # 42, the number "song identified" is worth. Restored in a finally so a second
+        # lookup can never inherit this clip's hook.
+        _prev_hook = E.PROBE_HOOK
+        E.PROBE_HOOK = lambda: _prog_probe(key, 42)
         # Always hand the fingerprint a hint source now - caption hints exist on both
         # platforms, so Instagram was previously running the whole sweep blind.
-        fp = loop.run_until_complete(E.fingerprint(
-            src["audio"],
-            hints_fn=(_join_hints if (_hints_fut is not None or caption_hints) else None)))
-        _join_hints()                      # no-op if fingerprint already joined
+        try:
+            fp = loop.run_until_complete(E.fingerprint(
+                src["audio"],
+                hints_fn=(_join_hints if (_hints_fut is not None or caption_hints) else None)))
+        finally:
+            E.PROBE_HOOK = _prev_hook
+        # Second pass at both comment threads, now that the sweep has run and given them
+        # its whole duration to finish in. Anything that missed the consensus vote still
+        # gets to seed the edit search, which is where a crowd hint does most of its work.
+        _join_hints(3.0)
+        _join_page(4.0)
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
+        # WHAT THE CONFIRM STEP FOUND, if it ran. Memo read only, no network: the engine
+        # fires the catalogue check lazily, at the one moment a tie needs breaking, so
+        # this reports what was actually checked rather than provoking a lookup the
+        # engine decided not to pay for. An absent entry means "never asked".
+        try:
+            import hint_confirm as _HCF
+            _seen = _HCF.cached(hint_texts)
+            if _seen:
+                res["hint_confirmations"] = [
+                    {"hint": h, "title": r.get("cat_title"), "artist": r.get("cat_artist"),
+                     "paired": bool(r.get("paired")), "source": r.get("source"),
+                     "url": r.get("url")}
+                    for h, r in _seen.items()]
+        except Exception:
+            pass
         E.tlog("fingerprint", time.time() - _t,
                probes=(fp or {}).get("probes"), rate=(fp or {}).get("rate"))
         base_title = base_artist = None
@@ -477,6 +874,19 @@ def _phase1(url, key, t0):
                 res["base_song"], res["base_artist"] = _ct, _ca
                 res["from_credit"] = True
                 res["speed"] = None          # nothing measured the speed yet
+        else:
+            # ...AND IT IS NOT SILENTLY OVERWRITTEN WHEN THE FINGERPRINT ANSWERS EITHER.
+            # "When Shazam answered, the audio beats the label" is right about WHICH SONG
+            # and wrong about WHICH RELEASE: Shazam matched a real catalogue row for a
+            # DIFFERENT version of the same track ("HARDSTYLE ULTRA SLOWED") while the
+            # platform was handing over the licensed title of the sound the clip actually
+            # plays ("HARDSTYLE SLOWED", sound_match_core 1.0). Only the qualifier moves
+            # and only when the identity already agrees - see _credit_qualifier.
+            _cq = _credit_qualifier(src, base_title)
+            if _cq:
+                res["credit_override"] = {"was": base_title, "now": _cq}
+                base_title = _cq
+                res["base_song"] = _cq
         _claim_from = hint_texts
         if not fp and not base_title and not _claim_from:
             # LAST RESORT: the bare caption. `comment_song_hints` deliberately refuses a
@@ -538,7 +948,13 @@ def _phase1(url, key, t0):
                 pass
 
         # ---- phase 1 ends here: the song is named, hand it straight to the user ----
-        res["result"] = "found" if (fp or base_title) else "no_match"
+        # "found" MUST MEAN THE USER GETS SOMETHING. base_title is an internal search seed
+        # and is deliberately set without res["base_song"] when the only lead was a bare
+        # caption phrase with no artist - that is a lyric to search, not an answer to show.
+        # Calling that "found" rendered a completely blank card: Roham hit it on
+        # @at.http/7671401975044476174, a card with a title bar reading "No match" and
+        # nothing underneath. Classify on what is actually displayable.
+        res["result"] = "found" if res.get("base_song") else "no_match"
         res["exact"] = None
         res["candidates"] = []
         res["decisive"] = False
@@ -552,7 +968,10 @@ def _phase1(url, key, t0):
         ctx = {"src": src, "fp": fp, "base_title": base_title, "base_artist": base_artist,
                "edit_label": edit_label, "mdir": mdir, "hint_texts": hint_texts,
                "shazam_reliable": shazam_reliable, "t0": t0, "key": key, "url": url,
-               "res": res, "worth": worth}
+               "res": res, "worth": worth, "comment_links": comment_links}
+        # Joined last so it never delays the fingerprint. By now it has had the whole
+        # Shazam sweep to finish in, so the budget is a backstop, not a wait.
+        _creator_attach(res, _cr, budget=5.0)
         return res, ctx
     finally:
         loop.close()
@@ -570,11 +989,20 @@ def _cands_of(edit, n=6):
     """The verified candidates of a find_edit result, in the shape the UI already eats."""
     out = []
     for c in [c for c in edit.get("ranked", []) if c.get("editmatch")][:n]:
+        # Same unverified-claim note as the whole-clip rows. A per-section answer is
+        # still an answer, so a section crown must not be the one place a "reverb" or
+        # "bass boosted" title gets to stand unqualified.
+        _claim, _kinds = _unverified_claims(
+            c.get("title"), c.get("uploader"),
+            bass_delta=c.get("bass_delta"),
+            bass_confirmed=((c.get("bass_delta") or 0.0) <= -E.BASS_STRIP_GAP
+                            and (c.get("slope_delta") or 0.0) <= -SLOPE_BOOST_GAP))
         out.append({"title": c.get("title", ""), "uploader": c.get("uploader", ""),
                     "source": c.get("source", ""), "url": c.get("url", ""),
                     "score": round(c.get("final", c.get("score", 0)), 3),
                     "plays": c.get("plays", 0),
-                    "bass": round(c.get("bass_delta", 0.0), 1)})
+                    "bass": round(c.get("bass_delta", 0.0), 1),
+                    "claim": _claim or None, "claimkind": _kinds or None})
     return out
 
 
@@ -639,6 +1067,17 @@ def _cand_row(c):
     field - the streaming client stacks these up live and then replaces them wholesale
     with the authoritative list, and a shape mismatch there would read as the row
     changing under the user."""
+    # WHAT THIS TITLE CLAIMS THAT WE DID NOT MEASURE, decided once here rather than
+    # re-derived in JavaScript. The page used to run its own copy of these regexes and
+    # had no reverb rule at all, so a reverb-titled upload could be presented as the
+    # answer with nothing beside it. The per-row bass verdict uses THIS row's own dual
+    # gate - the same two numbers the crown uses - never the family-wide `bass_boosted`
+    # flag, which is true whenever any upload anywhere in the pool is bassy.
+    _claim, _kinds = _unverified_claims(
+        c.get("title"), c.get("uploader"),
+        bass_delta=c.get("bass_delta"),
+        bass_confirmed=((c.get("bass_delta") or 0.0) <= -E.BASS_STRIP_GAP
+                        and (c.get("slope_delta") or 0.0) <= -SLOPE_BOOST_GAP))
     return {"title": c.get("title", ""),
             "uploader": c.get("uploader", ""),
             "source": c.get("source", ""), "url": c.get("url", ""),
@@ -647,7 +1086,46 @@ def _cand_row(c):
             # audited without re-running the hunt
             "core": round(c.get("core"), 3) if c.get("core") is not None else None,
             "plays": c.get("plays", 0),
-            "bass": round(c.get("bass_delta", 0.0), 1)}
+            "bass": round(c.get("bass_delta", 0.0), 1),
+            # THE TEMPO RATIO, carried because its absence made the crown gates
+            # unauditable offline. `vspeed` is the clip's tempo relative to THIS upload and
+            # it is what `_crown_tempo_mismatch` decides on, but it was never persisted, so
+            # a saved payload could only recover it for the top row by inverting the
+            # refusal string ("clip plays 10% slower than this upload") at whole-percent
+            # precision. Display ignores this field; it exists so the next simulation over
+            # testruns/ does not have to parse English.
+            "vspeed": (round(c["vspeed_locked"], 4) if c.get("vspeed_locked") is not None
+                       else (round(c["vspeed"], 4) if c.get("vspeed") is not None else None)),
+            # PROVENANCE. "found on the sound creator's own channel" is the single most
+            # convincing thing we can say about an answer, and until now the payload
+            # could not say it at all. `aligned_at` records that the match was found
+            # further into a padded upload rather than at its head, so a 1.000 on a
+            # 10-minute file is explainable instead of suspicious.
+            # `creator_upload`, not `query == "creator"`: when the main search happens to
+            # surface the editor's own file first the row keeps its original query tag and
+            # only carries the provenance flag - which is exactly what happened on the
+            # 917JOSH clip whose crown this field is meant to explain.
+            "from_creator": bool(c.get("creator_upload")) or None,
+            # PASTED IN THE COMMENTS. `from_comment` = somebody linked this file under the
+            # video; `from_creator_link` = the person who MADE the audio linked it, which
+            # is the strongest single piece of provenance on the belt and the reason this
+            # row can win a tie at equal core. Carried separately from `from_creator`
+            # (their own CHANNEL) because they are different facts with different failure
+            # modes - a channel match is inferred from a name, a link is stated outright.
+            "from_comment": bool(c.get("comment_link")) or None,
+            "from_creator_link": bool(c.get("creator_link")) or None,
+            "comment_likes": c.get("comment_likes") or None,
+            "aligned_at": c.get("aligned_at"),
+            # THE SPEED-INVARIANT HALF OF THE BASS MEASUREMENT. `bass` above is the
+            # tilt delta, which slowing forges; `slope_delta` is the same reading taken
+            # across log-frequency and is the leg that actually separates a real boost
+            # from a slow. It was in NO payload, which is exactly why "why does it keep
+            # saying bass boosted" could not be checked offline and cost a session of
+            # re-downloading candidates. (`vspeed` is carried above for the same reason.)
+            "slope": (round(c["slope_delta"], 3)
+                      if c.get("slope_delta") is not None else None),
+            "claim": _claim or None,
+            "claimkind": _kinds or None}
 
 
 # A title claiming the clip was re-pitched. Kept apart from EDIT_WORDS, which also
@@ -670,6 +1148,83 @@ _OFFICIAL = re.compile(r"\b(official (music )?video|music video|official audio|"
 _TILT_MAX = 9.0
 # Titles that assert a bass boost. Checked against the measurement, never trusted on its own.
 _BASS_CLAIM = re.compile(r"\b(bass ?boost(ed)?|bassboost|boosted bass|extreme bass)\b", re.I)
+
+# ---- UNMEASURED TRANSFORM CLAIMS ------------------------------------------------------
+# An upload's title is its NAME, not a measurement. Three families of transform word turn
+# up in edit titles and this engine can only check ONE of them:
+#
+#   bass boost  - MEASURABLE. The dual gate below (`bass_delta <= -BASS_STRIP_GAP` AND
+#                 `slope_delta <= -SLOPE_BOOST_GAP`) is the only thing entitled to say it.
+#   reverb      - NOT MEASURABLE HERE, BY CONSTRUCTION. hard-rules, from ground truth:
+#                 heavy echo moves verify()'s reverb estimate +0.019 while slowing alone
+#                 moves it +0.033. Noise exceeds signal, so `reverb_delta` can never
+#                 support a claim and nothing in the pipeline reads it as evidence.
+#                 Therefore EVERY reverb word that has ever reached a user was unverified.
+#                 Roham has called this twice: "definitely not reverb, i hate when you
+#                 call random songs reverb that are not reverb" (verdict v_e4871f) and
+#                 "don't know if this is reverbed but" on the crowned "Lil Wayne - Love Me
+#                 (slowed + reverb)" (v_71ac98).
+#   8D / 432Hz  - spatial and tuning claims. Nothing in the pipeline looks at either. A
+#                 crown carried one uncaveated: "Slowdive - When The Sun Hits (8D Audio)".
+#
+# THE RULE: state a transform only where we measured it; show a title as the upload's
+# NAME; and where the name claims something we did not measure, say so on the row that is
+# being presented as the answer. This is deliberately generic rather than a second
+# bass-shaped special case - the bass overclaim guard existed and reverb still got through
+# because the mechanism was one word wide.
+_REVERB_CLAIM = re.compile(r"\b(reverb(ed)?|reverd|slowed ?n ?reverb)\b", re.I)
+_SPATIAL_CLAIM = re.compile(r"\b(8 ?d ?audio|8d|432 ?hz|440 ?hz)\b", re.I)
+
+
+def _unverified_claims(title, uploader, bass_delta=None, bass_confirmed=False):
+    """One sentence naming every transform this title asserts that we did not measure.
+
+    Returns (sentence, kinds) or ("", []). `kinds` is what the UI counts so it can say
+    it once for a shelf instead of repeating it on six rows.
+
+    Reverb and the spatial/tuning words are unconditional: there is no regime in which
+    this engine can confirm them, so the answer does not depend on the clip. Bass is the
+    opposite - it IS measurable, so it only reads as an overclaim when the measurement
+    was taken and came back under the bar.
+    """
+    # FOLD THE STYLED UNICODE FIRST. Edit uploads are titled in mathematical-bold and
+    # fullwidth letters constantly, and a plain regex reads straight past them:
+    # "(𝙨𝙡𝙤𝙬𝙚𝙙 + 𝙧𝙚𝙫𝙚𝙧𝙗)" is not "(slowed + reverb)" to `re`. Measured on the 45 saved
+    # runs: 2 of 215 candidate titles hide a transform word this way, both of them
+    # reverb, and both were sailing through every claim check in the product. NFKC is
+    # the normalisation that maps those blocks back to ASCII.
+    t = unicodedata.normalize("NFKC", "%s %s" % (title or "", uploader or ""))
+    try:
+        bass_delta = None if bass_delta is None else float(bass_delta)
+    except (TypeError, ValueError):
+        bass_delta = None
+    parts, kinds = [], []
+    if _REVERB_CLAIM.search(t):
+        kinds.append("reverb")
+        parts.append("titled reverb, which we cannot measure, so that word is the "
+                     "uploader's and not ours")
+    if _BASS_CLAIM.search(t) and not bass_confirmed:
+        kinds.append("bass")
+        if bass_delta is None:
+            parts.append("titled bass boosted, which we did not confirm")
+        else:
+            d = abs(float(bass_delta))
+            # The old sentence said "which is the same EQ" unconditionally, which is a
+            # flat contradiction whenever the number is large: a title can fail the dual
+            # gate on the speed-invariant slope leg while still sitting 13 dB off. Branch
+            # on the number instead of asserting past it.
+            parts.append("titled bass boosted, but it measures %.1f dB off the clip, %s"
+                         % (d, "which is the same EQ" if d < E.BASS_STRIP_GAP
+                            else "and that gap does not read as a boost"))
+    if _SPATIAL_CLAIM.search(t):
+        kinds.append("spatial")
+        parts.append("titled 8D or retuned, neither of which we measure")
+    if not parts:
+        return "", []
+    # NOT str.capitalize(): it lowercases the rest of the string and would turn "8D" into
+    # "8d" and "dB" into "db".
+    s = "; ".join(parts)
+    return s[:1].upper() + s[1:], kinds
 
 
 def _url_is_dead(u):
@@ -760,15 +1315,43 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core):
 # 6% is generous and still separates them cleanly.
 _TEMPO_TOL = 0.06          # |log2(vspeed)|, about +-4%
 
+# THE SOFT BAND, and Roham's Soap ruling: "0.9 slowed is basically closer to original you
+# know". A tempo gap is only proof of "a different edit" when there is a competing reading.
+# When the upload is PROVABLY the same recording (core >= CORE_SAME) and its own title
+# claims no pitch of its own, there is only one available reading: the upload is the
+# source and the clip is that source, re-pitched. Refusing there loses the answer AND the
+# measurement, which is exactly what happened on ski slopes - the payload said
+# "as posted", the refusal said "clip plays 10% slower than this upload", the upload was
+# the plain `ski slopes` at core 1.000 / 1.05M plays, and Roham said "think this clip was
+# slowed a bit". The gate had the number and used it only to refuse.
+#
+# WHY 0.20 AND NOT SOMETHING TIGHTER. Measured across the 8 tempo refusals in the 45 saved
+# payloads, the candidates that pass the core+title preconditions sit at |log2 v| = 0.152
+# (ski slopes, v 0.90 - the case Roham called) and 0.322 (GDFR, v 0.80, an "[Ableton Live
+# Remake]" whose own measured clip speed is 1.0679, i.e. the upload sits at 1.33x of the
+# original and is a genuinely different render). 0.20 is 1.3x the first and 0.62x the
+# second, so it is not threading a needle. Obsessed (v 1.13, core 1.000) is excluded by
+# the TITLE precondition, not by this number - it calls itself "slowed & reverb" and is
+# arithmetically a further-slowed re-render (clip 0.9256 of the original, upload 0.819).
+# 0.0 = OFF. The soft branch let a plain un-slowed upload be crowned as the version so
+# long as the clip could be described as it re-pitched. On ski slopes that crowns Lex
+# Amarni's own straight upload at v 0.9002, and Roham graded that clip wrong_edit TODAY -
+# he wants the slowed version found, not the original relabelled. The half of the idea
+# that IS right is kept below: the ratio is still returned as a speed READING while the
+# crown stays refused.
+_SOFT_TEMPO_TOL = float(os.environ.get("CRATE_SOFT_TEMPO_TOL", 0.0))
+
 
 def _crown_tempo_mismatch(top):
     """The crowned upload is the same recording but not at the speed that played.
 
     Distinct from `_crown_contradicts`, which reads TITLES. This reads the measurement, so
     it catches the case a title cannot: an upload named plainly ("ski slopes") that is
-    simply the un-slowed original of a clip that was slowed. The engine reported that clip
-    as "as posted" with a 1.000 core and Roham called it: "i think its an edit of this
-    maybe slowed and reverb of what u sent me".
+    simply the un-slowed original of a clip that was slowed.
+
+    Returns (reason_or_None, source_speed_or_None). A non-None second element means "do
+    not refuse, but this upload is the SOURCE and the clip is it re-pitched by that
+    ratio" - the caller records the ratio as the clip's speed.
 
     Uses the locked speed where the bass-robust consensus produced one, because a heavily
     boosted or reverbed clip skews the naive reading.
@@ -777,37 +1360,103 @@ def _crown_tempo_mismatch(top):
     if v is None:
         v = top.get("vspeed")
     if not v or v <= 0:
-        return None
+        return None, None
     import math
-    d = abs(math.log2(float(v)))
+    v = float(v)
+    d = abs(math.log2(v))
     if d <= _TEMPO_TOL:
-        return None
+        return None, None
+    title = "%s %s" % (top.get("title") or "", top.get("uploader") or "")
+    if (_SOFT_TEMPO_TOL > 0 and d <= _SOFT_TEMPO_TOL
+            and (top.get("core") or 0) >= E.CORE_SAME
+            and not _SPEED_CLAIM.search(title)):
+        return None, v
     # verify()'s `speed` is the CLIP's tempo relative to the candidate, so below 1.0 means
     # the clip is the slower of the two.
     return ("clip plays %.0f%% %s than this upload, so it is a different edit of the "
-            "same recording" % (abs(1.0 - float(v)) * 100.0,
-                                "faster" if float(v) > 1.0 else "slower"))
+            "same recording" % (abs(1.0 - v) * 100.0,
+                                "faster" if v > 1.0 else "slower")), None
 
 
-def _crown_contradicts(top, speed_label, mdir):
+def _crown_contradicts(top, speed_label, mdir, measured=None, tilt_readable=True):
     """Why this candidate must not be crowned as the exact edit, or None if it may be.
 
     The two speed rules only fire when the clip was measured to be AT NORMAL SPEED. On a
     clip we proved is slowed or sped up, an edit-titled candidate is expected and welcome
     - that is the product working. The contradiction is specifically: nothing measured a
     shift, and the candidate insists there is one.
+
+    `measured` is the bass-robust consensus reading (or None). THE TWO RULES DELIBERATELY
+    DISAGREE ABOUT WHICH SPEED FACT THEY TRUST, and that asymmetry is the whole fix:
+
+    * The SPEED-CLAIM rule asks "is the clip really unmodified?". Answering that from a
+      placeholder is cog A - 8 of 8 of this rule's refusals in the 45 saved payloads cite
+      an "as posted" that nothing measured, and three of those payloads carry a
+      speed_measured of 0.7506 / 0.8424 / 0.8496. So it uses the MEASUREMENT when there is
+      one and only falls back to the phase-1 label when there is not.
+
+    * The TILT rule asks a different question - "is bass_delta trustworthy?" - and the
+      answer to that must stay conservative, so it keeps reading the phase-1 label
+      (`tilt_readable`, decided by the caller). Two alternatives were simulated against
+      the saved payloads and both cost more than they bought:
+        - keying tilt on tempo-match instead (physically the cleaner rule, since a pitch
+          difference between clip and candidate is what forges tilt) REFUSES the kyks
+          regression crown, whose bass_delta is -37.4 dB at a matched tempo. That is
+          exactly the failure hard-rules.md already records under Reverted for absolute
+          tilt thresholds, and "bass and speed NUDGE, never REJECT".
+        - standing tilt down whenever ANY reading says pitched crowns a 0.635 remix on
+          Get Low, the clip Roham named the theme from ("its just the siong slowed").
+      So the ordering fix is scoped to the rule it is actually about.
     """
     title = "%s %s" % (top.get("title") or "", top.get("uploader") or "")
     if _OFFICIAL.search(title):
         return "candidate is the official release, not an edit of it"
-    as_posted = (speed_label == "as posted") and not mdir
-    if not as_posted:
-        return None
-    if _SPEED_CLAIM.search(title):
-        return "clip measured as posted, candidate titles itself a speed edit"
-    tilt = abs(top.get("bass_delta") or 0.0)
-    if tilt > _TILT_MAX:
-        return "clip measured as posted, candidate tilt is %.1f dB off it" % tilt
+
+    # -- RULE 1: the speed claim, judged on the MEASURED view. THIS is cog A.
+    # Only a CONFIDENT measurement may overrule the phase-1 label. An unconfident
+    # "as posted" reading would otherwise refuse crowns the old code could not touch -
+    # reproduced on Love Me, where the old inputs return None and a bare
+    # {"label": "as posted"} measurement loses the crown. A measurement we do not trust
+    # must not be more powerful than no measurement at all.
+    if measured is not None and measured.get("confident"):
+        # BOTH READINGS HAVE TO AGREE THE CLIP IS UNMODIFIED, because they are measured
+        # against different references and only one of them is anchored to the original
+        # recording. `measured` is consensus against the candidate pool, and when the pool
+        # IS the edit - every upload of it slowed the same way - the clip measures "as
+        # posted" against those uploads while being plainly slowed against the song.
+        #
+        # kyks is that case exactly, and it is a regression-gate clip. Phase 1's
+        # counter-speed sweep matched the song at a shifted rate and labelled the clip
+        # "slowed ~0.71x". The correct answer, "cult member - three (super slowed +
+        # reverb)", then verified at core 1.000 and vspeed 1.0 - the signature of having
+        # found the exact edit - and this rule refused the crown citing "clip measures as
+        # posted against the original". The clip is not as posted; the sweep measured that
+        # it is not. Requiring agreement keeps cog A fixed (a label that says as-posted
+        # over a measurement that says slowed still does not fire) while no longer
+        # refusing the crown on a clip two independent methods disagree about.
+        speed_as_posted = ((measured.get("label") == "as posted")
+                           and (speed_label == "as posted") and not mdir)
+        _phrase = "clip measures as posted against the original"
+    else:
+        speed_as_posted = (speed_label == "as posted") and not mdir
+        # NOT "clip measured as posted" - nothing measured it. Saying so was the visible
+        # half of cog A: the refusal asserted a finding the engine did not have.
+        _phrase = "nothing measured a speed shift on this clip"
+    if speed_as_posted and _SPEED_CLAIM.search(title):
+        return "%s, candidate titles itself a speed edit" % _phrase
+
+    # -- RULE 2: the tilt check, judged on the LABEL view, unchanged from before the fix.
+    # Deliberately NOT switched over to the measurement - see the docstring. `tilt_readable`
+    # is False when the tempo gate's soft band admitted a candidate at a known-different
+    # tempo, because a pitch difference between the two sides forges bass_delta outright.
+    label_as_posted = (speed_label == "as posted") and not mdir
+    if tilt_readable and label_as_posted:
+        tilt = abs(top.get("bass_delta") or 0.0)
+        if tilt > _TILT_MAX:
+            # The old wording was "clip measured as posted, candidate tilt is X dB off it",
+            # which on Get Low printed "measured as posted" on a payload that also said
+            # slowed ~0.85x. State the number that was actually measured and nothing else.
+            return "candidate tilt is %.1f dB off the clip's own EQ" % tilt
     return None
 
 
@@ -825,6 +1474,14 @@ def _phase2(ctx, on_cand=None):
     base_title, base_artist = ctx["base_title"], ctx["base_artist"]
     edit_label, mdir = ctx["edit_label"], ctx["mdir"]
     hint_texts, shazam_reliable = ctx["hint_texts"], ctx["shazam_reliable"]
+    # THE EDIT HUNT REPORTS ITSELF TOO. Phase 1 got real milestones; without the same
+    # here the bar climbs to the song, then parks in the 60s for the 20-60s the hunt
+    # takes and only jumps when a candidate happens to verify. Each candidate CHECKED
+    # ticks it toward 96 - the number "hunt finished" is worth - so the movement tracks
+    # work done rather than luck.
+    _prog_set(key, 60, "Hunting the exact version")
+    _prev_cand_hook = E.CAND_HOOK
+    E.CAND_HOOK = lambda: _prog_probe(key, 96)
     loop = asyncio.new_event_loop()
     try:
         exact = None
@@ -842,6 +1499,33 @@ def _phase2(ctx, on_cand=None):
                 if t and t != base_title:
                     search_hints.append(t)
             mash = fp.get("mashup") if fp else None
+            # ---- THE CREATOR LANE. Phase 1 already worked out who OWNS this sound (see
+            # creator_check.py); this is where that evidence stops being a label and
+            # starts being a search. An editor who posts mashups on TikTok posts the same
+            # edits on YouTube and SoundCloud under the same name - a search space of
+            # dozens against SoundCloud's millions.
+            #
+            # NOTE WHAT IS *NOT* DONE HERE, deliberately. The shelved
+            # research/creator-check.seed.patch fed the handle into `handle=` and the
+            # seeds into `hints=`, and both feed build_queries, which changes the
+            # candidate pool for EVERY clip - a ranking change that cannot ship without
+            # the five-clip gate, and the gate needs Shazam, which is off-limits while
+            # the owner is demoing. This passes the creator down its OWN parameter
+            # instead: find_edit runs it as a separate concurrent search, tags the
+            # results, and downloads them in ADDITION to the normal head. Existing
+            # queries, existing pool and existing scores are all byte-identical, so the
+            # only thing that can change is that a new, audio-verified candidate wins.
+            #
+            # Handle preference: the free one first. get_source parses it out of tikwm's
+            # canonical "original sound - <handle>" title at zero network cost and it
+            # covers 180 of 204 recorded TikTok clips; creator_check's sound-page
+            # resolution is the fallback for the rest.
+            _cev = res.get("creator") or {}
+            _creator = {"creator": (src.get("sound_creator")
+                                    or (_cev.get("sound_owner") if _cev.get("ok") else None)),
+                        "nickname": src.get("sound_name") or src.get("credit_author")}
+            if not _creator["creator"]:
+                _creator = None
             _t = time.time()
             # The engine hands back the raw candidate; the row shape is ours to build.
             # Wrapped so a dead client socket can never propagate into the hunt.
@@ -852,11 +1536,19 @@ def _phase2(ctx, on_cand=None):
                         on_cand(_cand_row(c))
                     except Exception:
                         pass
+            # ---- COMMENT LINKS. Phase 1 already read these off the comment pools it
+            # fetched for the hints; this is where they stop being a note on the payload
+            # and become candidates. They travel on their own parameter for the same
+            # reason the creator does: `hints=` feeds build_queries, which would change
+            # the pool for every clip, while this only ever APPENDS a URL that still has
+            # to clear verify() against the real clip audio.
+            _cmlinks = ctx.get("comment_links") or res.get("comment_links") or []
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
                 handle=src.get("handle"), hints=search_hints,
-                shazam_reliable=shazam_reliable,
+                shazam_reliable=shazam_reliable, creator=_creator,
+                comment_urls=_cmlinks,
                 pair=(mash or {}).get("pair"), on_cand=_emit))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
@@ -904,56 +1596,23 @@ def _phase2(ctx, on_cand=None):
                 res["weak_exact"] = round(top.get("core") or 0, 3)
                 res["unsure"] = True
                 top = None
-            # THE CROWN MUST NOT CLAIM A TRANSFORM THE CLIP DOESN'T HAVE.
-            # `core` is deliberately invariant to speed and EQ - that is what lets it
-            # recognise a slowed upload as the same recording. But speed and EQ are
-            # exactly what DEFINES an edit, so core saturating at 1.000 says "same song",
-            # never "same version". Crowning on core alone put an edit-titled upload on
-            # top of four clips that measured as-posted: "ATM (slowed + reverb)" on a
-            # normal-speed ATM clip, a jairtheshadow remix 9.6 dB off the clip's tilt, a
-            # Linkin Park upload 18.2 dB off, and the official L4P music video presented
-            # as "the edit". Roham called all four; the audio agrees.
+
+            # ================= MEASURE THE SPEED *BEFORE* JUDGING THE CROWN ============
+            # THIS BLOCK USED TO SIT BELOW THE GATES AND THAT WAS THE BUG (cog A).
+            # `res["speed"]` is set at _phase1 to `"as posted" if fp else None` - a
+            # PLACEHOLDER, not a reading. The crown gates read it, refused a candidate for
+            # "contradicting" an as-posted clip, and only afterwards did this block
+            # overwrite it with the real number. Measured over the 45 saved payloads in
+            # testruns/full45: 8 of 8 `_crown_contradicts` refusals cite an "as posted"
+            # that nothing had measured, and on n=5 (88), n=25 (Just Can't Get Enough) and
+            # n=28 (Get Low) the SAME payload carries speed_measured 0.7506 / 0.8424 /
+            # 0.8496. The refusal string was the proof that the refusal was wrong.
             #
-            # Both readings of a contradiction argue for the same refusal. Either the
-            # upload really is slowed and the clip is not, so it isn't what played - or
-            # its title is a lie, and repeating that lie as "the exact edit" is the same
-            # error one step removed.
-            if top:
-                _why = _crown_tempo_mismatch(top)
-                if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
-                    res["unsure"] = True
-                    top = None
-            if top:
-                _why = _crown_contradicts(top, res.get("speed"), mdir)
-                if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
-                    res["unsure"] = True
-                    top = None
-            # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
-            # claim, so it costs one download plus one verify on the single candidate we
-            # are about to present as proven.
-            if top:
-                _why = _time_reversed_null(src.get("audio"), top.get("url"),
-                                           top.get("core"))
-                if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
-                    res["unsure"] = True
-                    top = None
-            if top:
-                exact = candidates[0]
-                res["decisive"] = bool(edit.get("decisive"))
-
-            # PER-SECTION HUNT. Only ever runs on a clip the mashup pass proved holds
-            # two songs, so a single-song lookup pays nothing for this.
-            if mash:
-                _t = time.time()
-                res["sections"] = _hunt_sections(loop, ctx, exact, candidates)
-                E.tlog("hunt_sections", time.time() - _t)
-
+            # Nothing here depends on `top`, `exact` or the gates - its inputs (`edit`,
+            # `fp`, `shazam_reliable`, `base_title`, `base_artist`, `src`) are all settled
+            # by the find_edit call above - so this is a reordering of the DECISION, not of
+            # the measurement. Same work, same network calls, same latency.
+            #
             # SPEED. Measure the clip's TRUE speed against GENUINE normal-speed originals
             # via the bass-robust high-pass consensus - NEVER derive the magnitude from a
             # fellow edit. On a heavily bass-boosted / reverb'd clip verify()'s core
@@ -1009,6 +1668,86 @@ def _phase2(ctx, on_cand=None):
                     measured = None
                 E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured))
 
+            # "as posted" HAS TO BE SAYABLE AS A FINDING, NOT ONLY AS A DEFAULT.
+            # Until now a confident as-posted reading was thrown away (the `pass` branch
+            # below), so no consumer - gate, payload, UI or a later analyst - could tell
+            # "measured at 1.0x" from "never measured". 19 of the 45 saved payloads are
+            # labelled "as posted" and 0 of them carry a speed_measured. Recorded here as a
+            # diagnostic only: `speed_confirmed` is NOT consulted by any gate. Wiring it in
+            # was simulated (variant SIM-B in research/autopsy-held-back.md) and it crowns
+            # the bass outliers on n=24, n=29 and n=30 - and n=30 is a clip Roham graded
+            # "good job". One win for three regressions; do not do it.
+            if measured:
+                res["speed_confirmed"] = True
+                if res.get("speed_measured") is None:
+                    res["speed_measured"] = measured.get("speed")
+                    res["speed_refs"] = measured.get("agree")
+            # ===========================================================================
+
+            # THE CROWN MUST NOT CLAIM A TRANSFORM THE CLIP DOESN'T HAVE.
+            # `core` is deliberately invariant to speed and EQ - that is what lets it
+            # recognise a slowed upload as the same recording. But speed and EQ are
+            # exactly what DEFINES an edit, so core saturating at 1.000 says "same song",
+            # never "same version". Crowning on core alone put an edit-titled upload on
+            # top of four clips that measured as-posted: "ATM (slowed + reverb)" on a
+            # normal-speed ATM clip, a jairtheshadow remix 9.6 dB off the clip's tilt, a
+            # Linkin Park upload 18.2 dB off, and the official L4P music video presented
+            # as "the edit". Roham called all four; the audio agrees.
+            #
+            # Both readings of a contradiction argue for the same refusal. Either the
+            # upload really is slowed and the clip is not, so it isn't what played - or
+            # its title is a lie, and repeating that lie as "the exact edit" is the same
+            # error one step removed.
+            _source_v = None            # set when the crown is the SOURCE, not the edit
+            if top:
+                _why, _source_v = _crown_tempo_mismatch(top)
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
+            if top:
+                _why = _crown_contradicts(top, res.get("speed"), mdir,
+                                          measured=measured,
+                                          tilt_readable=(_source_v is None))
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
+            # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
+            # claim, so it costs one download plus one verify on the single candidate we
+            # are about to present as proven.
+            if top:
+                _why = _time_reversed_null(src.get("audio"), top.get("url"),
+                                           top.get("core"))
+                if _why:
+                    res["crown_rejected"] = _why
+                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    res["unsure"] = True
+                    top = None
+            if top:
+                exact = candidates[0]
+                res["decisive"] = bool(edit.get("decisive"))
+                if _source_v is not None:
+                    # Say what this crown IS. Not "the exact edit" - the SOURCE, with the
+                    # clip running off its tempo. Presentation can then stop short of the
+                    # "exact version" claim on a row we have not earned it on.
+                    res["crown_is_source"] = True
+            else:
+                _source_v = None
+
+            # PER-SECTION HUNT. Only ever runs on a clip the mashup pass proved holds
+            # two songs, so a single-song lookup pays nothing for this.
+            if mash:
+                _t = time.time()
+                res["sections"] = _hunt_sections(loop, ctx, exact, candidates)
+                E.tlog("hunt_sections", time.time() - _t)
+
+            # (the speed measurement used to live HERE, below the gates. It is now above
+            #  them - see "MEASURE THE SPEED *BEFORE* JUDGING THE CROWN". `measured` is
+            #  already populated by the time we reach this line.)
+
             if top:
                 # the winning upload NAMES its own transform ("slowed"/"sped") - a strong
                 # prior for DIRECTION - but the MAGNITUDE must be measured vs the original,
@@ -1032,6 +1771,19 @@ def _phase2(ctx, on_cand=None):
                     # fall through to the title-direction prior when we have NO confident
                     # reading either way.
                     pass
+                elif _source_v is not None:
+                    # THE REFUSAL STRING WAS THE MEASUREMENT. The soft band only admits an
+                    # upload that is provably the same recording (core >= CORE_SAME) and
+                    # claims no pitch of its own, so `vspeed` against it is a legitimate
+                    # clip-vs-original ratio, not the forbidden "magnitude derived from a
+                    # fellow edit". ski slopes: payload said "as posted", the gate had
+                    # computed 0.90 and printed it inside a refusal, and Roham said "think
+                    # this clip was slowed a bit". Tagged so it can never be confused with
+                    # the bass-robust consensus.
+                    res["speed"] = "%s ~%.2fx" % (
+                        "slowed" if _source_v < 1.0 else "sped up", _source_v)
+                    res["speed_measured"] = round(_source_v, 4)
+                    res["speed_source"] = "crown_tempo"
                 else:
                     cur = res.get("speed") or "as posted"
                     cur_slow, cur_fast = "slow" in cur, "sped" in cur
@@ -1098,12 +1850,20 @@ def _phase2(ctx, on_cand=None):
                 # Roham as the version, because a title was being read as a finding. Say
                 # plainly when the name and the audio disagree instead of repeating a
                 # claim we just failed to confirm.
-                if (_BASS_CLAIM.search("%s %s" % (top.get("title") or "",
-                                                  top.get("uploader") or ""))
-                        and not res.get("bass_boosted")):
-                    res["title_overclaims"] = (
-                        "this upload calls itself bass boosted, but it measures %.1f dB "
-                        "off the clip, which is the same EQ" % abs(cand_delta))
+                #
+                # This used to cover the word "bass" and nothing else, which is why the
+                # reverb complaint kept coming back: the crown "Lil Wayne - Love Me
+                # (slowed + reverb)" carries an unmeasurable claim in the biggest text on
+                # the screen and there was no rule that could touch it. `title_overclaims`
+                # is now the general "your title says more than we checked" note, and the
+                # bass leg keeps the same measured wording it had.
+                _oc, _ockind = _unverified_claims(
+                    top.get("title"), top.get("uploader"),
+                    bass_delta=cand_delta,
+                    bass_confirmed=bool(res.get("bass_boosted")))
+                if _oc:
+                    res["title_overclaims"] = _oc
+                    res["title_overclaims_kind"] = _ockind
             elif measured and measured.get("label") != "as posted":
                 # no crowned edit, but the clip still measures off-speed vs the original
                 # (Dark Horse: Shazam matched it "straight"). Report the measured label.
@@ -1138,8 +1898,10 @@ def _phase2(ctx, on_cand=None):
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key)
         _cache_put(key, res)
+        _sound_cache_put(src, res)       # answer the SOUND, not just this clip
         return res
     finally:
+        E.CAND_HOOK = _prev_cand_hook
         loop.close()
         _cleanup(src.get("tmp"))
 
@@ -1161,6 +1923,7 @@ def identify_base(url):
         SESSIONS[key] = ctx              # /edits will finish it and free the audio
     elif ctx:
         _cache_put(key, res)             # nothing more to find - this IS the answer
+        _sound_cache_put(ctx.get("src") or {}, res)
         _cleanup((ctx.get("src") or {}).get("tmp"))
     return res
 
@@ -1205,6 +1968,7 @@ def _edits_job(url, on_cand):
             return res
         if not ctx.get("worth"):          # named it, nothing left to hunt for
             _cache_put(key, res)
+            _sound_cache_put(ctx.get("src") or {}, res)
             _cleanup((ctx.get("src") or {}).get("tmp"))
             return res
     try:
@@ -1227,6 +1991,7 @@ def identify(url):
         return res
     if not ctx.get("worth"):             # named it, nothing left to hunt for
         _cache_put(key, res)
+        _sound_cache_put(ctx.get("src") or {}, res)
         _cleanup((ctx.get("src") or {}).get("tmp"))
         return res
     try:
@@ -1353,6 +2118,16 @@ def record_review_note(obj):
             "when": time.strftime("%b %d %H:%M"),
             "ts": round(time.time(), 1),
             "by": "roham", "channel": "review_page", "state": "new"}
+    # WHICH CANDIDATE HE PICKED, when the review page's "the right one is #3" was used.
+    # The correction is the most valuable thing in the whole inbox - it names the upload
+    # the crown should have been - so it is kept as structured fields rather than only as
+    # prose. The page also writes the same thing into `text`, so a note is complete even
+    # when this server predates the field.
+    pick = obj.get("pick")
+    if isinstance(pick, dict) and pick.get("url"):
+        note["pick"] = {k: pick.get(k) for k in
+                        ("n", "title", "url", "core", "source", "uploader")
+                        if pick.get(k) is not None}
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval", "inbox.jsonl")
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(note) + "\n")
@@ -1587,6 +2362,13 @@ class H(BaseHTTPRequestHandler):
                 "image/svg+xml")
         if u.path == "/review":
             return self._send_review()
+        if u.path == "/progress":
+            # What the engine is doing on THIS clip, right now. Polled by the page while
+            # it waits on /base, which is one long awaited call with no events of its own.
+            k = (parse_qs(u.query).get("url") or [""])[0].strip().split("?")[0]
+            p = _PROG.get(k) or {}
+            return self._send(200, {"pct": round(float(p.get("pct") or 0), 1),
+                                    "label": p.get("label") or ""})
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})

@@ -92,6 +92,35 @@ def load_resolved():
         return {}
 
 
+def player(u):
+    """Inline player for one candidate upload, or None if the host has no embed.
+
+    Split out of embeds() because the review page now auditions EVERY candidate, not
+    only the crowned one - "the right one was in the list" is the most common
+    correction, and it can only be checked by hearing the list."""
+    if not u:
+        return None
+    yt = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_\-]{11})', u)
+    if yt:
+        return "https://www.youtube.com/embed/" + yt.group(1)
+    if "soundcloud.com" in u:
+        return ("https://w.soundcloud.com/player/?url=" + urllib.parse.quote(u, safe="") +
+                "&color=%237B6BFF&auto_play=false&show_comments=false&visual=false")
+    return None
+
+
+def full_link(url, resolved):
+    """The clip's own page on the platform, short links resolved.
+
+    A vt.tiktok.com code hides the creator; the resolved link carries @handle and the
+    video id. Opening that page and reading the sound credit under the caption is the
+    manual check that caught the Sounder mashup, so the page needs the real link."""
+    r = resolved.get(url) or resolved.get(url.rstrip("/"))
+    if r and "/video/" in r and "/@/" not in r:
+        return r.split("?")[0]
+    return None
+
+
 def embeds(url, edit_url, resolved):
     """Playable players for the clip and its crowned edit.
 
@@ -115,17 +144,7 @@ def embeds(url, edit_url, resolved):
         ig = re.search(r'instagram\.com/(?:reel|reels|p|tv)/([A-Za-z0-9_\-]{5,20})', url)
         if ig:
             clip = "https://www.instagram.com/reel/%s/embed" % ig.group(1)[:11]
-
-    edit = None
-    if edit_url:
-        yt = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_\-]{11})', edit_url)
-        if yt:
-            edit = "https://www.youtube.com/embed/" + yt.group(1)
-        elif "soundcloud.com" in edit_url:
-            edit = ("https://w.soundcloud.com/player/?url=" +
-                    urllib.parse.quote(edit_url, safe="") +
-                    "&color=%237B6BFF&auto_play=false&show_comments=false&visual=false")
-    return clip, edit
+    return clip, player(edit_url)
 
 
 def rank(d):
@@ -206,12 +225,29 @@ def main():
                 and not (b["j"].get("exact") or {}).get("url"):
             continue
         j, ex = b["j"], (b["j"].get("exact") or {})
-        cands = [{"title": c.get("title"), "url": c.get("url"),
-                  "core": c.get("core")} for c in (j.get("candidates") or [])[:5]]
+        # every candidate the engine verified, each with its own player. Six, not five:
+        # the result payload carries up to six and the page judges them individually.
+        cands = [{"title": c.get("title"), "url": c.get("url"), "core": c.get("core"),
+                  "uploader": c.get("uploader"), "source": c.get("source"),
+                  "bass": c.get("bass"), "plays": c.get("plays"),
+                  # provenance, so the page can say "this is the sound creator's own
+                  # upload" and explain a high score found deep inside a padded file
+                  "from_creator": c.get("from_creator"),
+                  "aligned_at": c.get("aligned_at"),
+                  # WHAT THIS TITLE CLAIMS THAT NOTHING MEASURED (server.py
+                  # `_unverified_claims`), plus the two numbers the claim is judged on.
+                  # The judging page has to carry the same caveat the app carries, or a
+                  # verdict is being given on a different answer than the user saw.
+                  "claim": c.get("claim"), "claimkind": c.get("claimkind"),
+                  "slope": c.get("slope"), "vspeed": c.get("vspeed"),
+                  "embed": player(c.get("url"))}
+                 for c in (j.get("candidates") or [])[:6]]
         rows.append({
             "clip_id": E.clip_id(b["u"], resolve=False) or k,
             "id": b["u"].rstrip("/").split("/")[-1],
             "url": b["u"],
+            # the clip's own page, short link resolved - the sound credit lives there
+            "full_url": full_link(b["u"], resolved),
             "sent": when.get(k) or when.get(vid_key(b["u"])),
             "song": j.get("base_song"), "artist": j.get("base_artist"),
             "speed": j.get("speed"),
@@ -219,6 +255,25 @@ def main():
             "weak": j.get("weak_exact"), "rejected": j.get("crown_rejected"),
             "overclaim": j.get("title_overclaims"),
             "result": j.get("result"), "lyric": j.get("lyric_guess"),
+            # WHAT THE PLATFORM ITSELF SAYS. The engine got "Where Them Girls At, bass
+            # boosted" on ZS4qqMqXq while the clip's own page credited "suono originale -
+            # Sounder" by @world.of.sounder, a Nicki x Guetta mashup. Nobody could see
+            # that from the answer alone, so the credit, the creator and how well that
+            # credited sound actually matches the video now ride along with every row.
+            "credit": j.get("credit"), "handle": j.get("handle"),
+            "is_original": j.get("is_original"),
+            # WHO MADE THE SOUND, split from who posted the clip. On ZS4qqMqXq those are
+            # @world.of.sounder and @shinsauce, and the whole error is that the engine
+            # only ever saw one blurred "handle". Free fields - get_source parses the
+            # @handle out of TikTok's own "original sound - <handle>" title.
+            "sound_creator": j.get("sound_creator"),
+            "sound_name": j.get("sound_name"),
+            "sound_url": j.get("sound_url"),
+            "sound_is_posters": j.get("sound_is_posters"),
+            "sound_match_core": j.get("sound_match_core"),
+            "desc": (j.get("desc") or "")[:160] or None,
+            "hints": j.get("comment_hints") or None,
+            "cached": bool(j.get("from_sound_cache")) or None,
             "candidates": cands, "secs": b["secs"], "run": b["run"],
         })
         rows[-1]["clip_embed"], rows[-1]["edit_embed"] = embeds(

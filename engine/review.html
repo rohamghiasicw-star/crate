@@ -9,188 +9,601 @@
   html,body{height:100%}
   body{background:var(--bg);color:var(--ink);
        font:15px/1.45 -apple-system,system-ui,sans-serif;display:flex;flex-direction:column}
+  a{color:#a89dff}
 
-  header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
-  .prog{font-size:12.5px;color:var(--dim);white-space:nowrap}
-  .track{flex:1;height:5px;background:#221e3c;border-radius:3px;overflow:hidden}
-  .track i{display:block;height:100%;background:var(--acc);width:0}
-  .mode{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:999px;
-        padding:4px 10px;cursor:pointer;white-space:nowrap}
-  .mode.on{color:var(--ink);border-color:var(--acc)}
+  header{display:flex;align-items:center;gap:10px;padding:9px 12px;
+         border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .prog{font-size:12.5px;color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .prog b{color:var(--ink)}
+  .track{flex:1;min-width:70px;height:5px;background:#221e3c;border-radius:3px;overflow:hidden}
+  .track i{display:block;height:100%;background:var(--acc);width:0;transition:width .18s}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  /* phone: one scrolling row of filters instead of three stacked rows of them, and no
+     keyboard legend on a device with no keyboard. Both were eating the clip. */
+  @media (max-width:640px){
+    header{gap:7px;padding:7px 10px}
+    .prog{order:1}.track{order:2}
+    .chips{order:3;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:2px;
+           -webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}
+    .keys{display:none}
+  }
+  .chip{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:999px;
+        padding:4px 10px;cursor:pointer;white-space:nowrap;background:none}
+  .chip.on{color:var(--ink);border-color:var(--acc);background:#221e3c}
+  .chip u{text-decoration:none;color:#6f6899;font-variant-numeric:tabular-nums}
+  select.chip{-webkit-appearance:none;appearance:none;padding-right:10px}
 
-  main{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  main{flex:1;overflow:auto;padding:12px;display:grid;gap:12px;align-content:start;
+       grid-template-columns:minmax(0,320px) minmax(0,1fr)}
+  @media (max-width:760px){main{grid-template-columns:1fr}}
+  .col{display:flex;flex-direction:column;gap:10px;min-width:0}
+  @media (min-width:761px){.col.left{position:sticky;top:0}}
+
+  .pane{background:#0f0d1c;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .pane .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+             padding:8px 10px 6px;display:flex;justify-content:space-between;gap:8px}
+  .pane iframe{display:block;width:100%;border:0;background:#000}
+  .pane.clip iframe{height:560px}
+  @media (max-width:760px){.pane.clip iframe{height:420px}}
+  .pane.play{border:0;border-radius:0}
+  .pane.play iframe{height:166px}   /* soundcloud's compact widget clips below this */
+  .pane.play.yt iframe{height:190px}
+  .none{color:var(--dim);font-size:13px;padding:14px 12px 18px}
+
   .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
-  .song{font-size:21px;font-weight:680;letter-spacing:-.01em}
+  .song{font-size:22px;font-weight:680;letter-spacing:-.01em;min-width:0;word-break:break-word}
   .song .art{color:var(--dim);font-weight:450}
-  .meta{color:var(--dim);font-size:12.5px;white-space:nowrap}
-  .badges{display:flex;gap:6px;flex-wrap:wrap}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .b{font-size:11.5px;border-radius:6px;padding:3px 8px;border:1px solid var(--line);color:var(--dim)}
   .b.hi{color:var(--good);border-color:#1d5c3e}
   .b.mid{color:var(--warn);border-color:#6b4a12}
   .b.lo{color:var(--bad);border-color:#6e2733}
-
-  .play{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:12px;align-items:start}
-  @media (max-width:720px){.play{grid-template-columns:1fr}}
-  .pane{background:#0f0d1c;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-  .pane .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
-             padding:8px 10px 6px;display:flex;justify-content:space-between;gap:8px}
-  .pane .lbl a{color:var(--dim)}
-  .pane iframe{display:block;width:100%;border:0;background:#000}
-  .pane.clip iframe{height:560px}
-  .pane.edit iframe{height:166px}
-  .pane.edit.yt iframe{height:230px}
-  .none{color:var(--dim);font-size:13px;padding:16px 12px 20px}
-  .cands{display:flex;flex-direction:column;gap:4px;padding:4px 10px 12px}
-  .cands a{color:#a89dff;font-size:12.5px;text-decoration:none}
+  .b.acc{color:#bdb2ff;border-color:#3c3470}
+  .b a{color:inherit;text-decoration:none}
   .why{color:var(--warn);font-size:12.5px;background:#2a2312;border:1px solid #6b4a12;
        border-radius:8px;padding:7px 10px}
+  .why.bad{color:var(--bad);background:#2a1218;border-color:#6e2733}
+
+  /* the clip's own credit block: what the PLATFORM says, not what the engine decided */
+  .cred{background:#0f0d1c;border:1px solid var(--line);border-radius:12px;padding:9px 11px;
+        display:flex;flex-direction:column;gap:7px;font-size:13.5px}
+  .crow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .ckey{color:#6f6899;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+        width:94px;flex:none}
+  .cval{flex:1;min-width:140px;color:var(--ink);word-break:break-word}
+  .cval.q{color:#ffd79a;font-weight:600}
+  .cred a.go{font-size:12.5px;text-decoration:none;border:1px solid var(--line);
+             border-radius:8px;padding:4px 10px;color:#a89dff;white-space:nowrap}
+  .cred a.go:hover{border-color:var(--acc)}
+  .hint{color:var(--dim);font-size:12.5px;font-style:italic}
+  @media (max-width:560px){.ckey{width:100%}}
+
+  /* candidate list: every verified version, each auditionable and pickable in one tap */
+  .cands{display:flex;flex-direction:column;gap:6px}
+  .cw{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0f0d1c}
+  .cw.on{border-color:var(--acc)}
+  .cd{display:flex;gap:9px;align-items:center;background:#0f0d1c;
+      padding:8px 9px;cursor:pointer}
+  .cw:hover{border-color:#3c3470}
+  .cd.on{background:#171335}
+  .cd.crown{box-shadow:inset 3px 0 0 var(--acc)}
+  .cd .n{width:22px;height:22px;flex:none;border-radius:6px;background:#221e3c;color:var(--dim);
+         font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .cd.on .n{background:var(--acc);color:#0f0d1c}
+  .cd .mid{flex:1;min-width:0}
+  .cd .t{font-size:13.5px;line-height:1.3;word-break:break-word}
+  .cd .s{color:var(--dim);font-size:11.5px;margin-top:2px}
+  /* the title claims something nothing measured. Amber, same meaning as the app's flag. */
+  .cd .s.claim{color:var(--warn);font-size:11px;line-height:1.35}
+  .cd .sc{font-size:12px;font-variant-numeric:tabular-nums;color:var(--dim);flex:none}
+  .cd .sc.hi{color:var(--good)}
+  .cd .pick{flex:none;border:1px solid var(--line);background:#221e3c;color:var(--dim);
+            border-radius:9px;padding:7px 10px;font-size:12.5px;font-weight:650;cursor:pointer}
+  .cd .pick:hover{border-color:var(--good);color:var(--good)}
+  .cd a.ext{flex:none;color:#6f6899;text-decoration:none;font-size:13px;padding:0 2px}
+  .sect{color:#6f6899;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+        display:flex;justify-content:space-between;align-items:baseline}
 
   footer{border-top:1px solid var(--line);background:rgba(18,16,31,.97);
-         padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+         padding:8px 12px calc(9px + env(safe-area-inset-bottom))}
+  .aud{display:flex;gap:8px;align-items:center;margin-bottom:7px;font-size:12.5px;
+       color:var(--dim);flex-wrap:wrap}
+  .aud b{color:var(--ink);font-weight:600}
+  .aud button{background:#173a2c;border:1px solid #1d5c3e;color:var(--good);border-radius:10px;
+              padding:8px 13px;font-size:13.5px;font-weight:700;cursor:pointer}
+  .said{color:var(--dim);font-size:12.5px;margin-bottom:7px}
+  .said b{color:#ffd79a;font-weight:600}
   .verds{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
   @media (max-width:560px){.verds{grid-template-columns:repeat(3,1fr)}}
   .v{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:11px;
-     padding:11px 6px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center;
+     padding:10px 6px;font-size:13.5px;font-weight:600;cursor:pointer;text-align:center;
      display:flex;flex-direction:column;gap:2px;align-items:center}
   .v small{font-weight:450;color:var(--dim);font-size:10.5px}
   .v:hover{border-color:var(--acc)}
-  .v.right:hover{border-color:var(--good);color:var(--good)}
-  .v.bad:hover{border-color:var(--bad);color:var(--bad)}
-  .row2{display:flex;gap:7px;margin-top:8px}
+  .v.right:hover,.v.right.was{border-color:var(--good);color:var(--good)}
+  .v.bad:hover,.v.bad.was{border-color:var(--bad);color:var(--bad)}
+  .v.was{background:#171335}
+  .row2{display:flex;gap:7px;margin-top:7px}
   .row2 input{flex:1;background:#0f0d1c;border:1px solid var(--line);border-radius:10px;
-              color:var(--ink);padding:10px 11px;font-size:14px;outline:none}
+              color:var(--ink);padding:9px 11px;font-size:14px;outline:none;min-width:0}
   .row2 input:focus{border-color:var(--acc)}
   .row2 button{background:#221e3c;border:1px solid var(--line);border-radius:10px;
-               color:var(--dim);padding:0 14px;font-size:13px;cursor:pointer}
-  .done{text-align:center;padding:60px 20px;color:var(--dim)}
+               color:var(--dim);padding:0 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .done{text-align:center;padding:60px 20px;color:var(--dim);grid-column:1/-1}
   .done b{color:var(--ink);font-size:19px;display:block;margin-bottom:8px}
-  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:120px;background:#173a2c;
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:118px;background:#173a2c;
          color:var(--good);border-radius:999px;padding:8px 16px;font-size:13px;opacity:0;
-         transition:opacity .18s;pointer-events:none}
+         transition:opacity .18s;pointer-events:none;z-index:9}
   .toast.show{opacity:1}
+  .toast.err{background:#2a1218;color:var(--bad)}
+
+  /* jump list: 45 clips is too many to reach by pressing back */
+  .drawer{position:fixed;inset:0 0 0 auto;width:min(420px,92vw);background:#15122a;
+          border-left:1px solid var(--line);transform:translateX(100%);transition:transform .18s;
+          z-index:10;display:flex;flex-direction:column}
+  .drawer.on{transform:none}
+  .drawer .dh{padding:11px 12px;border-bottom:1px solid var(--line);display:flex;
+              justify-content:space-between;align-items:center;font-size:13px;color:var(--dim)}
+  .drawer .dl{overflow:auto;padding:6px}
+  .di{display:flex;gap:9px;align-items:center;padding:8px 9px;border-radius:9px;cursor:pointer}
+  .di:hover{background:#1b1830}
+  .di.cur{background:#221e3c}
+  .di .dot{width:8px;height:8px;border-radius:50%;flex:none;background:#3a3460}
+  .di .dot.right{background:var(--good)}
+  .di .dot.bad{background:var(--bad)}
+  .di .dot.other{background:var(--warn)}
+  .di .dt{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .di .dn{color:#6f6899;font-size:11px;font-variant-numeric:tabular-nums;flex:none}
+  .keys{color:#6f6899;font-size:11.5px;padding:2px 2px 0;line-height:1.7}
+  .keys kbd{background:#221e3c;border:1px solid var(--line);border-radius:5px;padding:1px 5px;
+            font:inherit;font-size:11px;color:var(--dim)}
 </style>
 
 <header>
-  <div class="prog" id="prog">–</div>
+  <div class="prog" id="prog">-</div>
   <div class="track"><i id="bar"></i></div>
-  <div class="mode" id="mode" onclick="toggleMode()">unreviewed only</div>
+  <div class="chips" id="chips"></div>
 </header>
 <main id="main"></main>
 <footer id="foot"></footer>
 <div class="toast" id="toast"></div>
+<div class="drawer" id="drawer">
+  <div class="dh"><span id="dhc">all clips</span><button class="chip" onclick="drawer(0)">close</button></div>
+  <div class="dl" id="dl"></div>
+</div>
 
 <script>
 var DATA=/*__DATA__*/{rows:[]};
 var NOTES=/*__NOTES__*/[];
-var judged={};                       // clip url -> true, from notes already on file
-NOTES.forEach(function(n){ if(n.url) judged[n.url]=true });
-var ONLY_NEW=true, IDX=0, QUEUE=[];
 
-function esc(s){return (s||'').replace(/[&<>"]/g,function(c){
+/* ---------- what has already been judged -------------------------------------------
+   Two sources, merged newest-wins: the notes the server injected (the real record, in
+   eval/inbox.jsonl) and a local mirror. The mirror exists so a verdict is never lost
+   to a dropped request - a failed POST is queued and retried on the next load, and the
+   page still shows the verdict in the meantime. The log is append-only, so changing
+   your mind is just a second note and the latest one is the answer. */
+var LS={pos:'addify.rv.pos',filt:'addify.rv.filter',run:'addify.rv.run',
+        mirror:'addify.rv.mirror',outbox:'addify.rv.outbox'};
+function lsGet(k,d){try{var v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+
+var MIRROR=lsGet(LS.mirror,{});          // url -> {verdict, ts, text}
+var judged={};
+function seed(u,v,ts,text){ if(!u||!v)return;
+  var c=judged[u]; if(!c||(ts||0)>=(c.ts||0)) judged[u]={verdict:v,ts:ts||0,text:text||''} }
+NOTES.forEach(function(n){seed(n.url,n.verdict||'note',n.ts,n.text)});
+Object.keys(MIRROR).forEach(function(u){seed(u,MIRROR[u].verdict,MIRROR[u].ts,MIRROR[u].text)});
+
+var VLABEL={right:'correct',wrong_edit:'wrong edit',wrong_song:'wrong song',
+            should_have_found:'missed it',correct_abstain:'right to say no',note:'note'};
+
+/* ---------- queue + filters --------------------------------------------------------- */
+function verdictOf(r){var j=judged[r.url];return j?j.verdict:null}
+// a note is a thought, not a judgement: jotting one must not quietly drop the clip out
+// of "left to do" before it has actually been called right or wrong.
+function settled(r){var v=verdictOf(r);return !!v&&v!=='note'}
+
+var FILTERS=[
+  ['left','left to do',    function(r){return !settled(r)}],
+  ['crown','has a crown',  function(r){return !!r.edit_url}],
+  ['nocrown','no crown',   function(r){return !r.edit_url}],
+  ['flag','flagged',       function(r){return !!(r.rejected||r.overclaim)||
+                                        (r.sound_match_core!=null&&r.sound_match_core<0.95)}],
+  ['all','everything',     function(){return true}]
+];
+var FILT=lsGet(LS.filt,'left'), RUN=lsGet(LS.run,''), IDX=0, QUEUE=[], AUD=null, CUR=null;
+
+function runs(){var m={};DATA.rows.forEach(function(r){m[r.run]=(m[r.run]||0)+1});return m}
+function inRun(r){return !RUN||r.run===RUN}
+function pred(){var f=FILTERS.filter(function(x){return x[0]===FILT})[0];return f?f[2]:function(){return true}}
+function esc(s){return (s==null?'':''+s).replace(/[&<>"]/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-function build(){
-  QUEUE=DATA.rows.filter(function(r){return !ONLY_NEW || !judged[r.url]});
-  if(IDX>=QUEUE.length) IDX=Math.max(0,QUEUE.length-1);
-  render();
-}
-function toggleMode(){ONLY_NEW=!ONLY_NEW;
-  document.getElementById('mode').textContent=ONLY_NEW?'unreviewed only':'all clips';
-  document.getElementById('mode').classList.toggle('on',!ONLY_NEW);
-  IDX=0; build()}
 
+function build(keepUrl){
+  var want=keepUrl||(QUEUE[IDX]&&QUEUE[IDX].url)||lsGet(LS.pos,'');
+  QUEUE=DATA.rows.filter(function(r){return inRun(r)&&pred()(r)});
+  IDX=0;
+  for(var i=0;i<QUEUE.length;i++) if(QUEUE[i].url===want){IDX=i;break}
+  render(true);
+}
+function setFilt(f){FILT=f;lsSet(LS.filt,f);build()}
+function setRun(v){RUN=v;lsSet(LS.run,v);build()}
+
+function chips(){
+  var h='',m=runs();
+  FILTERS.forEach(function(f){
+    var n=DATA.rows.filter(function(r){return inRun(r)&&f[2](r)}).length;
+    h+='<button class="chip'+(FILT===f[0]?' on':'')+'" onclick="setFilt(\''+f[0]+'\')">'+
+       f[1]+' <u>'+n+'</u></button>'});
+  var ks=Object.keys(m).sort(function(a,b){return m[b]-m[a]});
+  h+='<select class="chip'+(RUN?' on':'')+'" onchange="setRun(this.value)">'+
+     '<option value="">all runs</option>'+ks.map(function(k){
+       return '<option value="'+esc(k)+'"'+(RUN===k?' selected':'')+'>'+esc(k)+' ('+m[k]+')</option>'
+     }).join('')+'</select>';
+  h+='<button class="chip" onclick="drawer(1)" title="jump to any clip (L)">&#9776; list</button>';
+  document.getElementById('chips').innerHTML=h;
+}
+
+/* ---------- rendering --------------------------------------------------------------- */
 function conf(r){
   if(r.core!=null){var k=r.core>=0.9?'hi':(r.core>=0.65?'mid':'lo');
     return '<span class="b '+k+'">match '+r.core.toFixed(2)+'</span>'}
-  if(r.weak) return '<span class="b lo">best guess '+(+r.weak).toFixed(2)+'</span>';
+  if(r.weak!=null) return '<span class="b lo">best guess '+(+r.weak).toFixed(2)+'</span>';
   return ''}
 
-function render(){
-  var m=document.getElementById('main'), f=document.getElementById('foot');
-  if(!QUEUE.length){
-    m.innerHTML='<div class="done"><b>Nothing left to review</b>'+
-      (ONLY_NEW?'Tap “unreviewed only” to go back through all of them.':'')+'</div>';
-    f.innerHTML=''; document.getElementById('prog').textContent='0 left';
-    document.getElementById('bar').style.width='100%'; return}
-  var r=QUEUE[IDX];
-  document.getElementById('prog').textContent=(IDX+1)+' / '+QUEUE.length;
-  document.getElementById('bar').style.width=(100*(IDX+1)/QUEUE.length)+'%';
+function poster(r){
+  /* Who actually posted the clip, and a link that is real.
 
+     Two different things get called "the creator" and they are not the same person:
+     the account that posted the video (in the resolved link) and the display name on
+     the sound (what the engine carries as `handle`). On ZS4qqMqXq the sound author is
+     the small-caps string "Sᴏᴜɴᴅᴇʀ", which is not a username at all - linking
+     tiktok.com/@Sᴏᴜɴᴅᴇʀ would be a dead end dressed as a lead. So: prefer the poster
+     parsed out of the resolved URL, and only ever link a handle that could be one. */
+  var m=/tiktok\.com\/@([A-Za-z0-9._]{1,24})\//.exec(r.full_url||r.url||'');
+  if(m&&m[1]) return {h:m[1],link:'https://www.tiktok.com/@'+m[1]};
+  var ig=(r.url||'').indexOf('instagram.com')>=0, h=(r.handle||'').trim();
+  if(!h) return null;
+  if(/^[A-Za-z0-9._]{2,30}$/.test(h))
+    return {h:h,link:(ig?'https://www.instagram.com/':'https://www.tiktok.com/@')+h};
+  return {h:h,link:null}}
+
+function credBlock(r){
+  /* The clip's own sound credit and creator. This is the field that caught the Sounder
+     mashup: the engine said "Where Them Girls At, bass boosted" while the clip's page
+     credited "suono originale - Sounder" by @world.of.sounder, whose account IS the
+     editor. Reading it should not require opening TikTok. */
+  if(!r.credit&&!r.handle&&!r.desc&&!(r.hints&&r.hints.length)) return '';
+  var h='<div class="cred">';
+  h+='<div class="crow"><span class="ckey">sound credit</span>'+
+     '<span class="cval q">'+esc(r.credit||'none given')+'</span>'+
+     '<a class="go" target="_blank" href="'+esc(r.full_url||r.url)+'">open the clip page</a></div>';
+  var p=poster(r);
+  if(p) h+='<div class="crow"><span class="ckey">posted by</span>'+
+     '<span class="cval">@'+esc(p.h)+
+     (r.is_original?' <span class="b">original sound</span>':'')+'</span>'+
+     (p.link?'<a class="go" target="_blank" href="'+esc(p.link)+'">see the creator</a>':'')+
+     '</div>';
+  /* WHOSE SOUND IS IT. The row above says who posted the video; this one says who MADE
+     the audio, and on ZS4qqMqXq those are two different people - @shinsauce posted it,
+     @world.of.sounder made the mashup. That single line is the whole Sounder catch, and
+     it was not on this page. `sound_creator` is the real @handle (parsed free out of
+     TikTok's canonical "original sound - <handle>" title), so unlike the display name it
+     is safe to link. */
+  if(r.sound_creator){
+    var own=(r.sound_is_posters===true);
+    h+='<div class="crow"><span class="ckey">sound made by</span>'+
+       '<span class="cval">@'+esc(r.sound_creator)+
+       (r.sound_name&&r.sound_name!==r.sound_creator?' <span class="q">('+esc(r.sound_name)+')</span>':'')+
+       (own?' <span class="b">the poster\'s own</span>'
+           :' <span class="b lo">someone else - this is a third-party edit</span>')+
+       '</span>'+
+       '<a class="go" target="_blank" href="https://www.tiktok.com/@'+esc(r.sound_creator)+
+       '">see the editor</a></div>';
+    if(r.sound_url)
+      h+='<div class="crow"><span class="ckey">sound page</span>'+
+         '<span class="cval q">'+esc(r.sound_url)+'</span>'+
+         '<a class="go" target="_blank" href="'+esc(r.sound_url)+'">every video on this sound</a></div>';
+  }
+  if(r.sound_match_core!=null&&r.sound_match_core<0.95)
+    h+='<div class="why bad">the credited sound is NOT the audio in this video ('+
+       r.sound_match_core.toFixed(2)+' match). The creator muted it and played something else, '+
+       'so the credit is a lead, not the answer.</div>';
+  if(r.desc) h+='<div class="crow"><span class="ckey">caption</span>'+
+     '<span class="cval">'+esc(r.desc)+'</span></div>';
+  if(r.hints&&r.hints.length){
+    h+='<div class="crow" style="align-items:flex-start"><span class="ckey">comments</span>'+
+       '<span class="cval">';
+    r.hints.slice(0,4).forEach(function(c){h+='<div class="hint">"'+esc(c)+'"</div>'});
+    h+='</span></div>'}
+  return h+'</div>'}
+
+function clipCol(r){
+  return '<div class="pane clip"><div class="lbl"><span>the clip</span>'+
+    '<a target="_blank" href="'+esc(r.full_url||r.url)+'">open</a></div>'+
+    (r.clip_embed?'<iframe src="'+esc(r.clip_embed)+'" allow="autoplay; encrypted-media" '+
+     'loading="eager" scrolling="no"></iframe>'
+     :'<div class="none">no inline player for this link</div>')+'</div>'}
+
+function embedOf(u){
+  /* Fallback player, computed in the page. build_feed.py already ships `embed` on every
+     candidate, but a feed written by an older build of it would not, and a silent "no
+     inline player" on a YouTube link would read as a broken candidate rather than a
+     stale file. */
+  if(!u) return null;
+  var y=/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_\-]{11})/.exec(u);
+  if(y) return 'https://www.youtube.com/embed/'+y[1];
+  if(u.indexOf('soundcloud.com')>=0)
+    return 'https://w.soundcloud.com/player/?url='+encodeURIComponent(u)+
+           '&color=%237B6BFF&auto_play=false&show_comments=false&visual=false';
+  return null}
+
+function cands(r){
+  /* Crown first, then the rest. Every row plays and every row can be crowned in one
+     tap, because "the right one was in the list" is the most common correction. */
+  var list=(r.candidates||[]).slice(), out=[];
+  if(r.edit_url){
+    var i=-1;
+    list.forEach(function(c,k){if(c.url===r.edit_url)i=k});
+    if(i>=0) out.push(list.splice(i,1)[0]);
+    else out.push({title:r.edit,url:r.edit_url,core:r.core,embed:r.edit_embed})}
+  return out.concat(list).map(function(c){
+    if(!c.embed) c=Object.assign({},c,{embed:embedOf(c.url)});
+    return c})}
+
+function ansBody(r){
+  var cs=cands(r), crown=r.edit_url||null;
   var h='<div class="hd"><div class="song">'+
-    (r.song?esc(r.song)+(r.artist?' <span class="art">— '+esc(r.artist)+'</span>':'')
-           :'<span class="art">no song identified</span>')+
-    '</div><div class="meta">'+(r.secs?r.secs+'s':'')+'</div></div>';
+    (r.song?esc(r.song)+(r.artist?' <span class="art">/ '+esc(r.artist)+'</span>':'')
+           :'<span class="art">no song identified</span>')+'</div></div>';
   h+='<div class="badges">';
+  if(r.secs!=null) h+='<span class="b'+(r.secs<=10?' hi':(r.secs>=45?' mid':''))+'">found in '+r.secs+'s</span>';
+  if(r.cached) h+='<span class="b acc">from the sound cache</span>';
   if(r.speed) h+='<span class="b">'+esc(r.speed)+'</span>';
   h+=conf(r);
+  if(r.result&&r.result!=='found') h+='<span class="b lo">'+esc(r.result)+'</span>';
   if(r.lyric) h+='<span class="b">on-screen text: '+esc(r.lyric)+'</span>';
-  h+='<span class="b"><a style="color:inherit" target="_blank" href="/base?nocache=1&url='+
-     encodeURIComponent(r.url)+'">re-run on engine</a></span>';
+  h+='<span class="b">'+esc(r.run)+'</span>';
+  h+='<span class="b"><a target="_blank" href="/base?nocache=1&url='+encodeURIComponent(r.url)+
+     '" onclick="return confirm(\'Re-scan this clip on the live engine?\')">re-scan</a></span>';
   h+='</div>';
   if(r.rejected) h+='<div class="why">engine held a match back: '+esc(r.rejected)+'</div>';
-  if(r.overclaim) h+='<div class="why">title vs audio: '+esc(r.overclaim)+'</div>';
+  /* "title vs audio" was right when this only ever carried the bass overclaim, which IS
+     a title-versus-measurement comparison. It now also carries reverb and 8D/432Hz,
+     which have no audio side at all - nothing in this engine measures them - so the
+     heading has to say "we did not check this", not "we checked and it disagrees". */
+  if(r.overclaim) h+='<div class="why">the crown\'s title claims more than we measured: '+esc(r.overclaim)+'</div>';
+  h+=credBlock(r);
 
-  h+='<div class="play">';
-  h+='<div class="pane clip"><div class="lbl"><span>the clip</span>'+
-     '<a target="_blank" href="'+esc(r.url)+'">open ↗</a></div>'+
-     (r.clip_embed?'<iframe src="'+esc(r.clip_embed)+'" allow="autoplay; encrypted-media" '+
-      'loading="eager" scrolling="no"></iframe>'
-      :'<div class="none">no inline player for this link</div>')+'</div>';
+  if(!cs.length)
+    return h+'<div class="pane"><div class="none">The engine named the song but could not '+
+             'prove which upload played. Nothing to audition.</div></div>';
 
-  var cls='pane edit'+((r.edit_embed||'').indexOf('youtube')>=0?' yt':'');
-  h+='<div class="'+cls+'"><div class="lbl"><span>'+
-     (r.edit_url?'what Addify says it is':'no exact version found')+'</span>'+
-     (r.edit_url?'<a target="_blank" href="'+esc(r.edit_url)+'">open ↗</a>':'')+'</div>';
-  if(r.edit_embed) h+='<iframe src="'+esc(r.edit_embed)+'" allow="autoplay" loading="eager"></iframe>';
-  if(r.edit) h+='<div class="cands" style="padding-top:8px"><a target="_blank" href="'+
-     esc(r.edit_url)+'">'+esc(r.edit)+'</a></div>';
-  if(!r.edit_url){
-    h+='<div class="none">The engine named the song but could not prove which upload played.</div>';
-    if(r.candidates&&r.candidates.length){
-      h+='<div class="cands"><span style="color:var(--dim);font-size:11px">closest it found</span>';
-      r.candidates.slice(0,4).forEach(function(c){
-        h+='<a target="_blank" href="'+esc(c.url)+'">'+(c.core!=null?c.core.toFixed(2)+' · ':'')+
-           esc(c.title||'untitled')+'</a>'});
-      h+='</div>'}}
-  h+='</div></div>';
-  m.innerHTML=h; m.scrollTop=0;
+  /* The player lives INSIDE the row it belongs to. A separate "here is the crown" pane
+     duplicated the first row and pushed the rest of the list off the screen, which is
+     the opposite of what "the right one was in the list" needs. */
+  h+='<div class="sect"><span>every version it verified</span>'+
+     '<span>tap to hear · “this one” to crown</span></div><div class="cands">';
+  cs.forEach(function(c,i){
+    var isc=c.url===crown, on=AUD===i;
+    h+='<div class="cw'+(on?' on':'')+'">';
+    h+='<div class="cd'+(on?' on':'')+(isc?' crown':'')+'" onclick="aud('+i+')">'+
+       '<div class="n">'+(i+1)+'</div><div class="mid">'+
+       '<div class="t">'+esc(c.title||'untitled')+
+       (isc?' <span class="b acc">what Addify says it is</span>':'')+
+       /* PROVENANCE, on the row. "found on the sound creator's own channel" is the most
+          convincing thing this page can say about a candidate, and `aligned_at` explains
+          a high score on a long file: the match is at +Ns, not at the head, because the
+          editor padded their own re-upload to dodge Content ID. */
+       (c.from_creator?' <span class="b acc">the sound creator\'s own upload</span>':'')+
+       (c.aligned_at!=null?' <span class="b">matched at +'+c.aligned_at+'s</span>':'')+'</div>'+
+       /* THE TITLE IS NOT A MEASUREMENT, on the judging screen too. `claim` is the
+          server's own sentence for whatever this title asserts that nothing measured
+          (reverb, 8D/432Hz, an unconfirmed bass boost). Roham grades from this page, so
+          it has to show the same caveat the app shows or he is grading a different
+          answer. `slope` and `vspeed` sit beside `bass` because the bass claim is
+          decided on bass_delta AND slope_delta together, and slope was in no payload at
+          all - which is exactly why the false-bass theme could not be checked offline. */
+       '<div class="s">'+[c.uploader?esc(c.uploader):'',c.source?esc(c.source):'',
+          (c.plays!=null?(+c.plays).toLocaleString()+' plays':''),
+          (c.bass!=null?c.bass+' dB':''),
+          (c.slope!=null?'slope '+c.slope:''),
+          (c.vspeed!=null?'x'+c.vspeed:'')].filter(Boolean).join(' · ')+'</div>'+
+       (c.claim?'<div class="s claim">'+esc(c.claim)+'</div>':'')+'</div>'+
+       (c.core!=null?'<div class="sc'+(c.core>=0.9?' hi':'')+'">'+c.core.toFixed(2)+'</div>':'')+
+       '<a class="ext" target="_blank" href="'+esc(c.url)+'" title="open it" '+
+       'onclick="event.stopPropagation()">&#8599;</a>'+
+       '<button class="pick" onclick="event.stopPropagation();pick('+i+')">this one</button></div>';
+    if(on){
+      if(c.embed) h+='<div class="pane play'+(c.embed.indexOf('youtube')>=0?' yt':'')+'">'+
+        '<iframe src="'+esc(c.embed)+'" allow="autoplay" loading="eager"></iframe></div>';
+      else h+='<div class="pane play"><div class="none">no inline player on '+
+        esc(c.source||'this host')+'. Use the arrow to open it.</div></div>'}
+    h+='</div>'});
+  return h+'</div>'}
 
-  f.innerHTML='<div class="verds">'+
-    '<div class="v right" onclick="judge(\'right\')">Correct<small>1</small></div>'+
-    '<div class="v bad" onclick="judge(\'wrong_edit\')">Wrong edit<small>2</small></div>'+
-    '<div class="v bad" onclick="judge(\'wrong_song\')">Wrong song<small>3</small></div>'+
-    '<div class="v" onclick="judge(\'should_have_found\')">Missed it<small>4</small></div>'+
-    '<div class="v" onclick="skip()">Skip<small>space</small></div>'+
-    '</div><div class="row2">'+
-    '<input id="note" placeholder="Add detail (optional) then tap a verdict…" autocomplete="off" '+
-    'onkeydown="if(event.key===\'Enter\'){judge(\'note\');}">'+
-    '<button onclick="back()">← back</button></div>'}
+function render(full){
+  var m=document.getElementById('main'), f=document.getElementById('foot');
+  chips();
+  if(!QUEUE.length){
+    CUR=null;
+    m.innerHTML='<div class="done"><b>Nothing left here</b>'+
+      (FILT==='left'?'Every clip in this view has a verdict. Switch to “everything” to go back through them.'
+                    :'No clips match this filter.')+'</div>';
+    f.innerHTML=''; document.getElementById('prog').textContent='0 left';
+    document.getElementById('bar').style.width='100%'; drawList(); return}
+  if(IDX>=QUEUE.length) IDX=QUEUE.length-1;
+  if(IDX<0) IDX=0;
+  var r=QUEUE[IDX];
+  if(r.url!==CUR){ CUR=r.url; AUD=(r.edit_url||(r.candidates||[]).length)?0:null; full=true;
+                   lsSet(LS.pos,r.url);
+                   // replace, never push: the browser Back button should leave the page,
+                   // not crawl backwards through 45 clips one hash at a time.
+                   try{history.replaceState(null,'','#'+(r.id||''))}catch(e){} }
 
-function toast(t){var el=document.getElementById('toast');el.textContent=t;el.classList.add('show');
-  setTimeout(function(){el.classList.remove('show')},900)}
-function next(){IDX++; if(IDX>=QUEUE.length){ if(ONLY_NEW){build();return} IDX=QUEUE.length-1 } render()}
-function back(){if(IDX>0){IDX--;render()}}
-function skip(){next()}
+  // judged is counted over everything in scope, not over the queue: in "left to do" the
+  // queue empties as you work, so counting inside it would always read zero.
+  var scope=DATA.rows.filter(inRun), done=scope.filter(settled).length;
+  document.getElementById('prog').innerHTML='<b>'+(IDX+1)+'</b> / '+QUEUE.length+
+     ' &nbsp;<span style="color:#6f6899">'+done+' of '+scope.length+' judged</span>';
+  document.getElementById('bar').style.width=(100*(IDX+1)/QUEUE.length)+'%';
+
+  if(full){
+    m.innerHTML='<div class="col left" id="cl"></div><div class="col" id="ca"></div>';
+    document.getElementById('cl').innerHTML=clipCol(r);
+    m.scrollTop=0}
+  document.getElementById('ca').innerHTML=ansBody(r);
+  foot(r); drawList()}
+
+function foot(r){
+  var cs=cands(r), sel=(AUD!=null&&cs[AUD])?cs[AUD]:null, was=judged[r.url];
+  var h='';
+  if(sel&&sel.url!==r.edit_url)
+    h+='<div class="aud">auditioning <b>#'+(AUD+1)+' '+esc((sel.title||'').slice(0,60))+'</b>'+
+       '<button onclick="pick('+AUD+')">this one is right (P)</button></div>';
+  if(was) h+='<div class="said">you said <b>'+esc(VLABEL[was.verdict]||was.verdict)+'</b>'+
+     (was.text?': '+esc(was.text.slice(0,90)):'')+'. Tap another to change it.</div>';
+  function btn(v,label,key,cls){
+    return '<div class="v '+(cls||'')+(was&&was.verdict===v?' was':'')+
+           '" onclick="judge(\''+v+'\')">'+label+'<small>'+key+'</small></div>'}
+  h+='<div class="verds">'+
+     btn('right','Correct','Y','right')+
+     btn('wrong_edit','Wrong edit','E','bad')+
+     btn('wrong_song','Wrong song','W','bad')+
+     btn(r.song?'should_have_found':'correct_abstain',
+         r.song?'Missed it':'Right to say no','M')+
+     '<div class="v" onclick="next()">Skip<small>space</small></div>'+
+     '</div><div class="row2">'+
+     '<input id="note" placeholder="Type a detail then tap a verdict, or hit enter to just note it" '+
+     'autocomplete="off" onkeydown="if(event.key===\'Enter\'){judge(\'note\')}">'+
+     '<button onclick="back()">&#8592; back</button></div>'+
+     '<div class="keys"><kbd>1</kbd>-<kbd>6</kbd> hear that version · <kbd>P</kbd> crown it · '+
+     '<kbd>Y</kbd> correct · <kbd>E</kbd> wrong edit · <kbd>W</kbd> wrong song · '+
+     '<kbd>M</kbd> missed · <kbd>space</kbd> skip · <kbd>F</kbd> filter · <kbd>L</kbd> list · '+
+     '<kbd>/</kbd> note</div>';
+  document.getElementById('foot').innerHTML=h}
+
+function aud(i){var r=QUEUE[IDX];if(!r)return;var cs=cands(r);if(!cs[i])return;
+  AUD=i; document.getElementById('ca').innerHTML=ansBody(r); foot(r)}
+
+/* ---------- the jump list ------------------------------------------------------------ */
+function drawer(on){document.getElementById('drawer').classList.toggle('on',!!on);
+  if(on) drawList(1)}
+function drawList(scroll){
+  var d=document.getElementById('dl'),h='';
+  QUEUE.forEach(function(r,i){
+    var v=verdictOf(r), k=(v==='right'||v==='correct_abstain')?'right':
+      ((v==='wrong_edit'||v==='wrong_song')?'bad':(v&&v!=='note'?'other':''));
+    h+='<div class="di'+(i===IDX?' cur':'')+'" onclick="go('+i+')">'+
+       '<span class="dn">'+(i+1)+'</span><span class="dot '+k+'"></span>'+
+       '<span class="dt">'+esc(r.song||r.credit||r.id)+'</span>'+
+       '<span class="dn">'+(r.secs!=null?r.secs+'s':'')+'</span></div>'});
+  d.innerHTML=h;
+  document.getElementById('dhc').textContent=QUEUE.length+' clips in this view';
+  if(scroll){var c=d.querySelector('.di.cur'); if(c) c.scrollIntoView({block:'center'})}}
+function go(i){IDX=i;drawer(0);render(true)}
+
+/* ---------- writing a verdict --------------------------------------------------------- */
+function toast(t,bad){var el=document.getElementById('toast');el.textContent=t;
+  el.className='toast show'+(bad?' err':'');setTimeout(function(){el.className='toast'+(bad?' err':'')},1000)}
+function next(){ if(IDX<QUEUE.length-1){IDX++;render(true)}
+  else if(FILT==='left'){build()} else toast('that was the last one') }
+function back(){if(IDX>0){IDX--;render(true)}}
+
+function post(body){
+  /* Fire and forget with a retry queue. A verdict must never be lost to a flaky
+     request, and the page must never make him wait on the network to move on. */
+  return fetch('/review/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)}).then(function(x){return x.json()}).then(function(j){
+      if(!j||!j.ok) throw new Error((j&&j.error)||'refused'); return j})}
+function queueFailed(body){var q=lsGet(LS.outbox,[]);q.push(body);lsSet(LS.outbox,q)}
+function flush(){var q=lsGet(LS.outbox,[]);if(!q.length)return;lsSet(LS.outbox,[]);
+  q.forEach(function(b){post(b).catch(function(){queueFailed(b)})});
+  if(q.length) toast('sent '+q.length+' saved verdict'+(q.length>1?'s':''))}
+
+function record(body,label){
+  var now=Date.now()/1000;
+  judged[body.url]={verdict:body.verdict,ts:now,text:body.text||''};
+  MIRROR[body.url]={verdict:body.verdict,ts:now,text:body.text||''}; lsSet(LS.mirror,MIRROR);
+  post(body).then(function(){toast(label)})
+            .catch(function(e){queueFailed(body);toast('saved offline, will retry',1)});
+  var inp=document.getElementById('note'); if(inp) inp.value='';
+  if(FILT==='left'&&body.verdict!=='note'){
+    QUEUE.splice(IDX,1); if(IDX>=QUEUE.length) IDX=QUEUE.length-1; render(true) }
+  else next()}
+
 function judge(v){
-  var r=QUEUE[IDX], inp=document.getElementById('note'), t=(inp&&inp.value||'').trim();
-  fetch('/review/note',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({url:r.url,verdict:v,text:t,
-      song:r.song,artist:r.artist,edit:r.edit,edit_url:r.edit_url})})
-   .then(function(x){return x.json()})
-   .then(function(j){ if(!j.ok){alert('save failed');return}
-     judged[r.url]=true; NOTES.push(j.note);
-     toast(v==='right'?'marked correct ✓':'logged ✓');
-     if(ONLY_NEW){ QUEUE.splice(IDX,1); if(IDX>=QUEUE.length) IDX=Math.max(0,QUEUE.length-1); render() }
-     else next() })
-   .catch(function(e){alert('network: '+e)})}
+  var r=QUEUE[IDX]; if(!r) return;
+  var inp=document.getElementById('note'), t=(inp&&inp.value||'').trim();
+  if(v==='note'&&!t) return;
+  record({url:r.url,verdict:v,text:t,song:r.song,artist:r.artist,
+          edit:r.edit,edit_url:r.edit_url},
+         v==='right'?'marked correct':'logged '+(VLABEL[v]||v))}
 
+function pick(i){
+  /* "The right answer is #3." One tap. It is recorded as a correction to the crowned
+     answer, with the chosen upload named in the note text so the record survives even
+     though the server keeps notes as plain lines. `pick` rides along as structured data
+     for whenever the server is next restarted with the field persisted. */
+  var r=QUEUE[IDX]; if(!r) return;
+  var c=cands(r)[i]; if(!c) return;
+  var inp=document.getElementById('note'), t=(inp&&inp.value||'').trim();
+  var same=c.url===r.edit_url;
+  var v=same?'right':(r.edit_url?'wrong_edit':'should_have_found');
+  var line=same?'confirmed the crowned version'
+               :('the right one is #'+(i+1)+': '+(c.title||'untitled')+' | '+c.url);
+  record({url:r.url,verdict:v,text:t?line+' - '+t:line,
+          song:r.song,artist:r.artist,edit:r.edit,edit_url:r.edit_url,
+          pick:{n:i+1,title:c.title,url:c.url,core:c.core,
+                source:c.source,uploader:c.uploader}},
+         same?'confirmed':'crowned #'+(i+1))}
+
+/* ---------- keys ---------------------------------------------------------------------- */
 document.addEventListener('keydown',function(e){
-  if(e.target.tagName==='INPUT') return;
-  if(e.key==='1') judge('right');
-  else if(e.key==='2') judge('wrong_edit');
-  else if(e.key==='3') judge('wrong_song');
-  else if(e.key==='4') judge('should_have_found');
-  else if(e.key===' '){e.preventDefault();skip()}
-  else if(e.key==='ArrowLeft') back();
-  else if(e.key==='ArrowRight') next()});
-build();
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  var inp=document.getElementById('note');
+  if(e.target.tagName==='INPUT'){ if(e.key==='Escape'){e.target.blur()} return }
+  var k=e.key.toLowerCase();
+  if(k>='1'&&k<='6'){aud(+k-1);return}
+  if(k==='p'){var r=QUEUE[IDX];if(r&&AUD!=null)pick(AUD);return}
+  if(k==='y'||k==='enter'){judge('right');return}
+  if(k==='e'){judge('wrong_edit');return}
+  if(k==='w'){judge('wrong_song');return}
+  if(k==='m'){var q=QUEUE[IDX];judge(q&&q.song?'should_have_found':'correct_abstain');return}
+  if(k===' '){e.preventDefault();next();return}
+  if(k==='arrowleft'){back();return}
+  if(k==='arrowright'){next();return}
+  if(k==='f'){var i=0;FILTERS.forEach(function(x,n){if(x[0]===FILT)i=n});
+              setFilt(FILTERS[(i+1)%FILTERS.length][0]);return}
+  if(k==='l'){drawer(!document.getElementById('drawer').classList.contains('on'));return}
+  if(k==='/'){e.preventDefault();if(inp)inp.focus();return}
+  if(k==='escape'){drawer(0)}});
+
+/* swipe on a phone: sideways moves between clips. Only a clearly horizontal drag counts,
+   so scrolling the candidate list is never mistaken for "next clip". */
+(function(){var x0=0,y0=0,t0=0;
+  var m=document.getElementById('main');
+  m.addEventListener('touchstart',function(e){var t=e.touches[0];x0=t.clientX;y0=t.clientY;
+    t0=Date.now()},{passive:true});
+  m.addEventListener('touchend',function(e){var t=e.changedTouches[0];
+    var dx=t.clientX-x0, dy=t.clientY-y0;
+    if(Date.now()-t0>600) return;
+    if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*2) return;
+    if(dx<0) next(); else back()},{passive:true})})();
+
+/* deep link: /review#ZS4qqMqXq opens straight on that clip, so a screenshot or a message
+   about one clip can point at the exact card instead of "scroll until you find it". */
+function openHash(){
+  var want=(location.hash||'').replace('#','');
+  if(!want) return false;
+  var hit=DATA.rows.filter(function(r){return r.id===want||r.clip_id===want||
+                                              (r.url||'').indexOf(want)>=0})[0];
+  if(!hit) return false;
+  if(hit.url===CUR) return true;
+  // a link to a clip the current filter hides must still open it
+  if(!pred()(hit)||!inRun(hit)){FILT='all';RUN='';lsSet(LS.filt,'all');lsSet(LS.run,'')}
+  build(hit.url); return true}
+window.addEventListener('hashchange',openHash);
+(function(){ if(!openHash()) build(); flush() })();
 </script>

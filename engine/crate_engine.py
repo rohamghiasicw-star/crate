@@ -14,7 +14,7 @@ Pipeline
                          candidate, and CORRELATE it against the clip audio so we
                          return the real source, not just a same-titled upload.
 """
-import asyncio, concurrent.futures, difflib, json, os, queue, re, statistics, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import asyncio, concurrent.futures, difflib, json, os, queue, re, statistics, subprocess, sys, tempfile, threading, time, unicodedata, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -24,6 +24,10 @@ from find_song import (resolve, scrape_music, fetch, cut, duration_of,
 import ig
 import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
 import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
+try:
+    import websearch as _web   # open-web search lane (the manual "google it" step)
+except Exception:              # a widener must never be able to stop the engine booting
+    _web = None
 
 try:
     from curl_cffi import requests as creq   # real-browser TLS, beats TikTok's wall
@@ -37,6 +41,11 @@ YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
 CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
 CORE_EDIT = 0.62     # min core to count as a real edit match, not a coincidence
 CORE_SAME = 0.95     # core this high = provably the SAME audio, whatever the title says
+# The floor at which a candidate has shown REAL audio merit rather than title agreement.
+# Already the bar _editmatch_calc uses to admit an artist-hit candidate on its own audio
+# (core >= 0.38); named here because rank_key needs the same line to stop a row that
+# matched the audio badly from outranking one that matched it well.
+CORE_MERIT = 0.38
 # if a same-recording upload is this many dB bassier than the (normalised) clip, the
 # clip's bass was cut on playback -> treat it as bass-boosted and target the family's
 # bass end (the heavy version the person actually hears). Below the gap, trust the clip.
@@ -49,12 +58,61 @@ BASS_STRIP_GAP = 6.0
 # 0.4-2.4s (max observed hit 2.38s); when Shazam stalls it stalls the connection outright
 # and the probe never answers at all. Two back-to-back stalls at 12s each cost the mason
 # clip 24s of its 73s lookup. 6s is still 2.5x the slowest observed real answer.
-SHAZAM_TIMEOUT = 6.0
+# TWO TIMEOUTS, because the two kinds of probe are not alike.
+#
+# The straight 1.0x scan asks Shazam about unmodified audio, which it either knows at once
+# or not at all: measured over 1002 probes, the 398 that ANSWERED had a 0.42s median and a
+# 0.50s p90, while the 604 that returned nothing sat at a 6.03s median, every one waiting
+# out the old ceiling. That was 1982 of 2172 total Shazam seconds, 91%, spent on silence.
+# Cutting that wait to 3.5s took phase 1 from 8.9s to 6.5s with all five regression crowns
+# intact.
+#
+# The counter-speed sweep was given 6s on the theory that re-pitched audio is a harder
+# question that answers late, and the evidence cited for it was the STRUCT clip going
+# from a correct 1.00 crown to "gelly (Live)" at 3.5s. THAT ATTRIBUTION WAS WRONG. The
+# STRUCT regression was isolated afterwards to the sweep's early exit (SWEEP_NEED), not
+# to the probe ceiling; disabling the early exit fixed it with the timeout untouched.
+#
+# The premise does not survive measurement either. Across 947 recorded probes that
+# actually ANSWERED, latency is p50 0.43s, p90 0.58s, p99 1.45s, all-time max 4.50s -
+# and counter-speed hits land in the same 0.3-0.45s band as 1.0x hits, so they are not
+# "late" at all. Five hits in 947 took longer than 2s. Meanwhile the stall rate is a flat
+# 22-37% at EVERY rate, extreme ones no worse than 1.0x, which says a stall is Shazam
+# declining to answer rather than a hard question being worked on.
+#
+# So 6s was buying the 0.3% of hits past 3s and charging 6s for the ~30% that stall. On
+# one measured clip the tail rates 1.3/1.4/1.5 each burned the full 6s: 18s of dead air,
+# half the lookup. 3.0s keeps 99.7% of all hits ever recorded and halves the stall cost.
+SHAZAM_TIMEOUT = float(os.environ.get("CRATE_SHAZAM_TIMEOUT", 3.5))
+SWEEP_PROBE_TIMEOUT = float(os.environ.get("CRATE_SWEEP_PROBE_TIMEOUT", 3.0))
 # Wall-clock ceiling for ONE counter-speed sweep. 14 rates x 6s of stall is 84s, and the
 # measured tail (23 of 178 runs at 120-183s) was exactly that, twice over. 30s still
 # affords ~5 stalled rates or ~15 answering ones, and the sweep exits earlier than this
 # whenever two speeds agree.
-SWEEP_BUDGET = float(os.environ.get("CRATE_SWEEP_BUDGET", 30.0))
+SWEEP_BUDGET = float(os.environ.get("CRATE_SWEEP_BUDGET", 75.0))
+# How many independent speeds must name the same title before the sweep stops early.
+#
+# 2 IS NOT ENOUGH AND IT SHIPPED WRONG. Two rates agreeing is a coincidence the full sweep
+# routinely overturns: at need=2 the STRUCT clip came back "gelly (Live)", a different song,
+# because a wrong pair agreed before the rates that know the real answer were ever probed.
+# Measured on three slowed clips, which is the case this whole sweep exists for:
+#
+#     need=2   STRUCT wrong
+#     need=3   3/3 right, 95s total
+#     need=4   1/3 right, 192s total
+#
+# 4 is worse AND slower, which looks backwards until you notice it interacts with
+# SWEEP_BUDGET: a bar that high is rarely met before the 30s budget expires, so the sweep
+# returns a truncated sample and consensus is taken over fewer rates than at need=3.
+# Raising this without also raising the budget makes accuracy worse, not better.
+# DEFAULT: OFF. Every threshold that actually stops the sweep early made the engine
+# worse. 2 crowned a different song (STRUCT -> "gelly (Live)"). 3 got those three clips
+# right but cost mason its crown entirely and took the regression set from a 25s median
+# to 74s, because not exiting early means running the full sweep AND paying the budget.
+# 4 was worse still at 1/3. The sweep is a consensus over all 14 rates by design and it
+# does not survive being cut short; the speed has to come from somewhere else, and it
+# does - see the SHAZAM_TIMEOUT split, which is where the real win lives.
+SWEEP_NEED = int(os.environ.get("CRATE_SWEEP_NEED", 99))   # 99 = never exit early
 # Deadline (seconds, from when the search pair starts) for the headless-Chromium web
 # search. Measured at 28.6s of a 44.2s hunt when awaited outright.
 WEB_DEADLINE = 10.0
@@ -176,12 +234,17 @@ def tt_embed_v2(video_id):
     if dm:
         try: desc = json.loads('"%s"' % dm.group(1))
         except Exception: desc = ""
+    # THE SOUND ID IS RIGHT HERE AND WAS BEING DISCARDED. embed/v2 is the path that
+    # actually runs (tt_tikwm is only a fallback), so keying the sound cache off tikwm
+    # meant it was never populated at all - measured: two clips on the same sound both
+    # missed. _walk_music already located this object BY its musicId.
     return {"playUrl": pu, "sound_title": mo.get("musicName"),
             "sound_author": mo.get("authorName"), "is_original": bool(mo.get("original")),
+            "music_id": mo.get("musicId"),
             "desc": desc, "creator": mo.get("authorName")}
 
 
-def _tt_replies(comment_id, item_id, n=20):
+def _tt_replies(comment_id, item_id, n=20, with_user=False):
     """Replies under one comment. The ANSWER to 'what's the song?' lives here, never in
     the question itself.
 
@@ -192,7 +255,16 @@ def _tt_replies(comment_id, item_id, n=20):
     tiktok.com/api/comment/list/reply/ returns the two real replies
     ("Faded nightcore", "Thank you!"). No rate-limit sleep needed here: this is
     tiktok.com direct, not tikwm's 1 req/s free tier.
-    Returns [(text, digg_count)] so the caller can weight likes."""
+    Returns [(text, digg_count)] so the caller can weight likes.
+
+    `with_user=True` returns [(text, digg_count, @handle)] instead. WHO said it is the
+    difference between a stranger's guess and the person who made the audio telling you
+    what it is: measured on the Obsessed sound (tayazendayasgf / 7359622493688139026),
+    the single most-liked link in the whole thread is the sound owner's own reply
+    ("https://m.soundcloud.com/fvckaron/obsessed", 94 likes) and the response payload
+    carries `user.unique_id` on every row for free. Off by default - two research
+    scripts unpack the 2-tuple (research/commentmine/deepmine.py,
+    research/bakecomments/harvest_live.py) and must keep working."""
     try:
         r = _cffi_get("https://www.tiktok.com/api/comment/list/reply/?aid=1988"
                       "&comment_id=%s&item_id=%s&count=%d&cursor=0"
@@ -205,7 +277,12 @@ def _tt_replies(comment_id, item_id, n=20):
     out = []
     for c in (d.get("comments") or []):
         t = (c.get("text") or "").strip()
-        if t:
+        if not t:
+            continue
+        if with_user:
+            out.append((t, c.get("digg_count") or 0,
+                        ((c.get("user") or {}).get("unique_id") or "")))
+        else:
             out.append((t, c.get("digg_count") or 0))
     return out
 
@@ -216,7 +293,13 @@ _C_THANKS = re.compile(r"\b(thank(s| ?you| ?u)?|tysm|ty\b|tyy|appreciate|"
                        r"legend|goat|found it|thats it|that'?s it|real one)\b", re.I)
 
 
-def tiktok_comments(full_url, n=60, with_replies=True):
+def _handle_in_tt_url(u):
+    """The @handle out of a full TikTok video URL, or None for a vt.tiktok.com short one."""
+    m = re.search(r"tiktok\.com/@([\w.\-]{2,30})/(?:video|photo)/", u or "", re.I)
+    return m.group(1) if m else None
+
+
+def tiktok_comments(full_url, n=60, with_replies=True, with_total=False, poster=None):
     """Comments via tikwm (1 req/s). People literally name the edit in the comments
     ('song is X slowed by Y'), so it's a real signal - especially for original sounds
     Shazam can't match.
@@ -227,29 +310,79 @@ def tiktok_comments(full_url, n=60, with_replies=True):
 
     Returns a mixed list: plain str for top-level comments, (text, meta) tuples for
     replies, where meta carries {"reply": True, "to_ask": bool, "likes": int,
-    "thanked": bool}. comment_song_hints() normalises both shapes."""
-    items = []
+    "thanked": bool}. comment_song_hints() normalises both shapes.
+
+    `with_total=True` returns `(texts, total)` instead, where total is the page's REAL
+    comment count as tikwm reports it. Free - it is in the same response - and it is the
+    only way a caller can tell "I read 43 of 85" from "I read 94 of 12,600", which is the
+    difference between a hint and noise. Default off so no existing caller changes.
+
+    WHO SAID IT is carried on every row now (`who`), plus `creator=True` when that handle
+    is the person whose video this is. Both fields are free - tikwm and TikTok's reply
+    endpoint each return `user.unique_id` on every comment and the fetcher was dropping
+    it. It is what separates "a stranger guessed" from "the person who made the audio
+    told you": on the Obsessed sound the top link in the thread is the sound owner's own
+    reply at 94 likes, and `comment_audio_urls` scores exactly that difference.
+    `poster` overrides the handle parsed from the URL, for the vt.tiktok.com short links
+    the app is actually handed (they carry no @handle at all). It takes a list too: the
+    SOUND'S OWNER counts as the creator here even when someone else posted the video,
+    because they are the person who made the audio."""
+    _p = poster if isinstance(poster, (list, tuple, set)) else [poster]
+    owners = {str(h).lstrip("@").lower() for h in _p if h}
+    _u = _handle_in_tt_url(full_url)
+    if _u:
+        owners.add(_u.lower())
+
+    def _meta_of(c, extra=None):
+        who = ((c.get("user") or {}).get("unique_id") or "")
+        m = {"likes": c.get("digg_count") or 0, "who": who}
+        if who and who.lower() in owners:
+            m["creator"] = True
+        if extra:
+            m.update(extra)
+        return m
+
+    items, total = [], 0
+    _ret = (lambda t: (t, total)) if with_total else (lambda t: t)
     for attempt in range(3):
         try:
             r = _cffi_get("https://www.tikwm.com/api/comment/list/?url=%s&count=%d"
                           % (urllib.parse.quote(full_url, safe=""), n))
             d = json.loads(r.text)
         except Exception:
-            return []
+            return _ret([])
         if d.get("code") == 0:
-            items = (d.get("data", {}).get("comments") or [])
+            data = d.get("data") or {}
+            items = data.get("comments") or []
+            try:
+                total = int(data.get("total") or 0)
+            except (TypeError, ValueError):
+                total = 0
             break
         time.sleep(1.3)
     if not items:
-        return []
-    texts = [(c.get("text") or "").strip() for c in items if c.get("text")]
+        return _ret([])
+    # TOP-LEVEL LIKES WERE BEING THROWN AWAY. The skill's last reading rule is "prefer
+    # the most-liked line - the crowd upvotes the correct ID", and tikwm hands us
+    # digg_count on every comment for free. Dropping it to a bare string made that rule
+    # impossible to obey for top-level comments, which is where most IDs actually sit.
+    texts = [((c.get("text") or "").strip(), _meta_of(c))
+             for c in items if (c.get("text") or "").strip()]
     # some responses inline a few replies - take those for free before spending requests
     for c in items:
         for rp in (c.get("reply_comment") or []):
             t = (rp.get("text") or "").strip()
             if t:
-                texts.append((t, {"reply": True, "to_ask": bool(_C_ASK.search(c.get("text") or "")),
-                                  "likes": rp.get("digg_count") or 0, "thanked": False}))
+                texts.append((t, _meta_of(rp, {
+                    "reply": True, "to_ask": bool(_C_ASK.search(c.get("text") or "")),
+                    "thanked": False,
+                    # THE PARENT TEXT. The reader needs to know whether the
+                    # question this answers was about a SONG. "What is his
+                    # name?" under a hockey clip and "what car is this?"
+                    # both used to hand their replies the reply-to-an-ask
+                    # bonus, which crowned "dustin byfuglien" and "It's a
+                    # Mercedes bro". Costs nothing - it is already in hand.
+                    "parent": (c.get("text") or "")[:100]})))
     if with_replies:
         item_id = _tt_id(full_url) or (items[0].get("video_id") if items else None)
         # Only threads that HAVE replies are worth a request, and tikwm gives us
@@ -268,15 +401,20 @@ def tiktok_comments(full_url, n=60, with_replies=True):
             # parallel: these are tiktok.com direct, no 1 req/s wall, so 4 threads cost
             # about one request of wall time instead of the old 2 x 1.1s of sleeps.
             with ThreadPoolExecutor(max_workers=4) as ex:
-                got = list(ex.map(lambda c: (c, _tt_replies(_cid(c), item_id)), pick))
+                got = list(ex.map(
+                    lambda c: (c, _tt_replies(_cid(c), item_id, with_user=True)), pick))
             for c, reps in got:
                 to_ask = bool(_C_ASK.search(c.get("text") or ""))
                 # an ACK anywhere in the thread means a sibling reply was the answer
-                thanked = any(_C_THANKS.search(t) for t, _ in reps)
-                for t, likes in reps:
-                    texts.append((t, {"reply": True, "to_ask": to_ask,
-                                      "likes": likes, "thanked": thanked}))
-    return texts
+                thanked = any(_C_THANKS.search(t) for t, _, _ in reps)
+                for t, likes, who in reps:
+                    m = {"reply": True, "to_ask": to_ask, "likes": likes,
+                         "thanked": thanked, "who": who,
+                         "parent": (c.get("text") or "")[:100]}
+                    if who and who.lower() in owners:
+                        m["creator"] = True
+                    texts.append((t, m))
+    return _ret(texts)
 
 
 # song-specific edit words (NOT bare "edit"/"version" - those describe the video
@@ -303,75 +441,565 @@ _OPINION = re.compile(r"\b(fire|trash|mid|dog ?shi|dogshi|garbage|goated|so ?bad
 _HAS_WORD = re.compile(r"[A-Za-zÀ-ɏ]{2,}")
 
 
-def comment_song_hints(comments):
-    """Comments that might NAME a track, scored rather than gate-kept.
+# ==================================================================== crowd reader
+# The tiktok-sound-id skill's "Read the comments for the answer" step, as code.
+# Roham, twice: "the skills should be baked into the engine". These are his reading
+# rules, one function each, measured in research/bake-comment-extraction.md:
+#
+#   song: <A> x <B>   -> TWO candidates, not one mangled string
+#   <artist> - <title>
+#   a bare title with likes sitting under a "what song is this"
+#   keep "sped up" / "slowed" / "remix" - they change WHICH version to hunt
+#   copy non-English titles exactly, diacritics and all
+#   skip the asks: "song?", "name song", "peak song", "what song is this"
+#   prefer the most-liked line - the crowd upvotes the correct ID
+#
+# Nothing here decides anything. It decides what gets SEARCHED; verify() still has to
+# clear CORE_KEEP against the real clip audio, so a wrong read costs a query, never a
+# wrong crown.
 
-    The old version demanded one of three narrow shapes and hard-rejected anything
-    ending in "?" - which threw away both "Dark Horse hoodtrap?" (names it, just
-    unsure) and "what's the song?" (whose REPLY names it). Comments are cheap and
-    verify() gates the final answer anyway, so a wrong guess here costs a query slot,
-    never a wrong result. Be open: take anything track-shaped, rank by how ID-like it
-    looks, and let the audio decide."""
-    scored = []
-    for raw in comments:
+_CS_SONGIS = re.compile(r"\b(song|sound|track|beat|audio|music)\b[\s:=,\-]{0,4}"
+                        r"\b(is|are|called|named?)\b[\s:=\-]*(?P<v>\S.*)$", re.I)
+# "song: X" / "track - X" / "song name: X", plus the same word in the languages that
+# actually show up in TikTok comments. A Japanese clip's answer reads "曲名: 夜に駆ける"
+# and the English-only prefix never saw it.
+_CS_SONGPFX = re.compile(
+    r"^\s*(?:song\s*name|song|track|audio|sound|music|"
+    r"canci[oó]n|can[cç][aã]o|m[uú]sica|musique|chanson|lied|canzone|"
+    u"песня|песни|музыка|أغنية|اغنية|موسيقى|"
+    u"曲名|歌名|曲|歌|노래|เพลง|lagu|şarki|sarki)"
+    r"\s*(?:name)?\s*[:\-：]\s*(?P<v>.+)$", re.I)
+_CS_BY = re.compile(r"^(?P<a>.{2,45}?)\s+by\s+(?P<b>.{2,45})$", re.I)
+# no space required BEFORE the dash - "Broke in a minute- Tory lanes" is how it reads
+_CS_DASH = re.compile(r"^[^\-–—]{2,45}?\s*[\-–—]\s+"
+                      r"[^\-–—]{2,45}$")
+# A real quotation, not an apostrophe. The shipped class treats the ' in "I'm"
+# as an opening quote, so "I'm sorry I don't wanna be rude" scores as a quoted
+# title and, once the reader emits the SPAN instead of the sentence, ships the
+# search query "m sorry I don". Require the quote marks to sit outside a word.
+_CS_QUOTED = re.compile(u"(?<![\\w])[\"“‘']([^\"”’']{3,50})[\"”’'](?![\\w])")
+# A SONG ask, not just any question. `_C_ASK` matches "What is his name?" (a hockey
+# player) and "what car is this?", and the reply bonus then crowns the answer to the
+# wrong question - measured: "dustin byfuglien" tops the pucksindeep sound page and
+# "It's a Mercedes bro" tops the Ferrari one. A song ask has to mention audio.
+_CS_MUSIC_NOUN = re.compile(r"\b(song|songs|sound|soundtrack|track|audio|beat|music|"
+                            r"tune|remix|sauce|shazam|lyrics?)\b", re.I)
+_CS_BARE_ASK = re.compile(r"^\s*(song|sound|track|audio)\s*\??\s*$", re.I)
+# ...and the ask does not need a question mark. Both real answers in the corpus sit
+# under asks that have none: "What song is this" -> "north pole behaving cynmix remix"
+# (ZS4DEJkdP) and "the name of the song" -> "Whistle by Flo Rida" (ZS4qVTE97).
+_CS_ASK_LEAD = re.compile(r"\b(what'?s?|whats|wats|which|who|name of|the name|"
+                          r"anyone know|does anyone|somebody|sauce)\b", re.I)
+# "peak song" is on the skill's skip list, but it is a COMPLIMENT, not an ask - putting
+# it here made "peak audio twin" a song ask, which handed its replies the +5 answer
+# bonus and put "faxxx" above "I need your love" on ZS4nroxWx. It needs no special case:
+# with no naming shape it scores 1 and never reaches the floor.
+_CS_ASK_TAIL = re.compile(r"\b(song|sound|track|audio|music)\s*(name|pls|please|\?)|"
+                          r"\bname\s*(of\s*(the\s*)?)?(song|sound|track|audio|music)\b",
+                          re.I)
+_CS_THANKS = re.compile(r"\b(thank(s| ?you| ?u)?|tysm|ty|tyy|appreciate|legend|goat|"
+                        r"found it|thats it|that'?s it|real one|no problem\w*|np|"
+                        r"anytime|you'?re welcome|yw|got you|gotchu)\b", re.I)
+_CS_HEDGE = re.compile(r"\b(i think|i believe|maybe|probably|pretty sure|ithink)\b", re.I)
+# mashup notation. "worki w tłum x give me everythin" is TWO tracks layered.
+_CS_X = re.compile(r"\s+(?:x|×)\s+", re.I)
+_CS_COMMA2 = re.compile(r"\s*,\s*")
+
+# The internet's stock non-answers, every one given in bad faith under exactly the
+# comment worth reading. Measured: on ZS4YNkjxn "darude sandstorm" is a 0-like reply to
+# a genuine song ask and outranks the real answer without this list.
+_CS_JOKES = {"darude sandstorm", "sandstorm", "darude", "never gonna give you up",
+             "rick astley", "rickroll", "baby shark", "crazy frog", "john cena",
+             "bing chilling", "megalovania", "windows xp startup", "nokia ringtone",
+             "coffin dance", "astronomia", "fitnessgram pacer test", "gangnam style",
+             "wii sports theme", "roblox death sound", "cotton eye joe", "numa numa",
+             "imperial march", "your mom", "ur mom", "deez nuts", "skibidi toilet"}
+# value words that mean the sentence named nothing: "what song is THIS"
+_CS_NONVALUE = {"this", "that", "it", "what", "who", "which", "here", "the", "a", "an",
+                "same", "so", "sm", "too", "also", "still", "not", "no", "yes"}
+_CS_STOP = {"the", "a", "an", "of", "and", "feat", "ft", "by", "x", "slowed", "sped",
+            "up", "reverb", "remix", "version", "super", "ultra", "tiktok", "edit",
+            "audio", "prod", "mix", "song", "sound", "track", "name", "part", "best",
+            "looped", "bass", "boosted", "nightcore", "daycore", "full", "its", "this",
+            "that", "is", "it", "pls", "please", "idk", "music"}
+
+
+def _cs_alpha(t):
+    """Letter count, any script. The shipped `_HAS_WORD` is [A-Za-zÀ-ɏ], which means a
+    Cyrillic, Arabic, Thai, Hangul or CJK title could never even enter the reader -
+    831 of the 7,432 comments in the recorded corpus are in one of those scripts."""
+    n = 0
+    for ch in (t or ""):
+        if ch.isalpha():
+            n += 1
+            if n >= 2:
+                return n
+    return n
+
+
+def _cs_fold(s):
+    """Casefold + strip diacritics for MATCHING only. The emitted string keeps its
+    original spelling - the skill says copy non-English titles exactly."""
+    s = unicodedata.normalize("NFKD", s or "")
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return "".join((c if c.isalnum() else " ") for c in s.lower())
+
+
+def _cs_key(s):
+    return " ".join(w for w in _cs_fold(s).split()
+                    if len(w) >= 2 and w not in _CS_STOP)
+
+
+def _cs_near(a, b):
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    sa, sb = set(a.split()), set(b.split())
+    if sa and sb and (sa <= sb or sb <= sa):
+        return True                     # "helicopter" inside "helicopter chopper sky"
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.86
+
+
+def _cs_strip(s):
+    s = re.sub(r"[@#]\S+", " ", s or "")
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip(" .!?,:;’\"'“”-–—")
+
+
+def is_song_ask(text):
+    """Is this comment ASKING for the ID? Those are signposts, never answers - the
+    skill's skip list is "song?", "name song", "peak song", "what song is this"."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _CS_BARE_ASK.match(t):
+        return True
+    if not _CS_MUSIC_NOUN.search(t):
+        return False
+    return bool(_CS_ASK_TAIL.search(t) or _CS_ASK_LEAD.search(t)
+                or t.rstrip().endswith("?"))
+
+
+def _cs_value(v):
+    """The captured value of a "song is X" / "song: X", or None when the sentence named
+    nothing. "what song is this" captures "this"; "Song Name ?" captures "?"; neither
+    is a title, and both used to score 4 and go out as real search queries."""
+    v = _cs_strip(_CS_HEDGE.sub("", v or ""))
+    if _cs_alpha(v) < 2 and not re.search(r"\d", v):
+        return None
+    if _cs_fold(v).strip() in _CS_NONVALUE:
+        return None
+    return v if len(v) >= 3 else None
+
+
+def _cs_name_of(text):
+    """The claimed TITLE inside the comment, so the query is the name and not the
+    sentence around it ("crave you", not "bro no need for the ratio and just tell")."""
+    for rx in (_CS_SONGPFX, _CS_SONGIS):
+        m = rx.search(text or "")
+        if m:
+            v = _cs_value(m.group("v"))
+            if v:
+                return v
+    q = _CS_QUOTED.findall(text or "")
+    if q:
+        v = _cs_strip(q[0])
+        if len(v) >= 3:
+            return v
+    return _cs_strip(_CS_HEDGE.sub("", text or ""))
+
+
+def _cs_half_ok(h):
+    h = (h or "").strip()
+    if not (3 <= len(h) <= 45) or _cs_alpha(h) < 2:
+        return False
+    first = h.split()[0]
+    if first.isdigit():                      # "240 millions x 40 millions"
+        return False
+    if len(h.split()) == 1 and len(h) <= 4 and re.search(r"\d", h):
+        return False                         # "Lana x v12"
+    return True
+
+
+def split_mashup(name):
+    """`song: A x B` -> ["A", "B"]. Both halves are answers.
+
+    The skill is explicit: "`worki w tłum x give me everythin` is two tracks layered,
+    not one title. Look up both." The engine used to emit the joined string as a single
+    search query, which finds the mashup upload only when someone titled it identically
+    and finds neither song otherwise. Returns [] when it is not a mashup."""
+    n = (name or "").strip()
+    if not n:
+        return []
+    parts = [p.strip() for p in _CS_X.split(n) if p.strip()]
+    if len(parts) < 2:
+        # "Slow down-Selena Gomez,Outside-Calvin Harris" - two full IDs, comma-joined.
+        # A looser dash than _CS_DASH on purpose: this one is only reached when a comma
+        # already split the line in two, so the shape is corroborated.
+        cp = [p.strip() for p in _CS_COMMA2.split(n) if p.strip()]
+        if len(cp) == 2 and all(re.search(r"\w\s*[\-–—]\s*\w", p) for p in cp):
+            parts = cp
+        else:
+            return []
+    parts = [p for p in parts if _cs_half_ok(p)][:3]
+    return parts if len(parts) >= 2 else []
+
+
+# Weights and gates, in one place because they were picked with a sweep, not by feel.
+# See research/bake-comment-extraction.md for the table each number came from.
+_CS_W_MASHUP = 5        # "A x B" - two titles in one line, the most specific ID shape
+_CS_ENTRY = {"clip": 4, "sound": 6}    # per-comment score needed to enter the vote
+_CS_FLOOR = {"clip": 6, "sound": 6}    # claim score needed AFTER agreement, to be emitted
+
+
+def _cs_score(text, meta):
+    """-> (score, bare). Per-comment naming score, deliberately close to the shipped
+    `comment_song_hints` gate, which is well tuned - a rewrite that accepted any short
+    phrase as a bare title was measured at 48% top-1 against its 88%. Changes marked
+    CHANGED. `bare` means nothing in the TEXT named a track and the score is provenance
+    only, which crowd_claims caps."""
+    t = (text or "").strip()
+    if not t or len(t) > 120 or _cs_alpha(t) < 2:
+        return 0, True
+    words = t.split()
+    s = 0
+    # computed once - each of these is a few hundred microseconds over a 600-comment
+    # sound page and they were being evaluated twice apiece
+    _nm = _cs_name_of(t)
+    _mash = split_mashup(t)
+    songis = bool(_CS_SONGPFX.match(t) or _CS_SONGIS.search(t))
+    # CHANGED: "song is X" only counts when X is a real value. "what song is this" and
+    # "whats the song called??" both used to clear this and go out as search queries.
+    named_value = bool(songis and _nm and not is_song_ask(t))
+    if named_value:
+        # 5, not 4. An explicit "song: X" is the least ambiguous line on the page, and
+        # at 4 it only cleared the floor when the title also happened to be Title Case -
+        # so "song: Paper planes", "song: Тает лёд" and "曲名: 夜に駆ける" all fell under
+        # it while "song: Dark Horse" sailed through. That is a scoring bias against
+        # sentence-case and against every script that has no case at all.
+        s += 5
+    if _CS_DASH.match(t):
+        s += 4                      # CHANGED: dash needs no space before it
+    # CHANGED: mashup notation is a NAMING shape in its own right, and the strongest
+    # one there is - it names TWO tracks. "Sound of da police x Just a lil bit" carries
+    # no dash, no "song:" and no artist, so on the old shape bonuses it scored 3 and
+    # fell under the bar; it only ever surfaced because two people happened to type it.
+    # Rare and precise in the recorded corpus: 4 "A x B" lines in 7,432 comments, and
+    # `split_mashup` refuses both lookalikes ("Lana x v12", "240 millions x 40
+    # millions"), leaving 2 for 2 real IDs.
+    if len(_mash) >= 2:
+        s += _CS_W_MASHUP
+    if _CS_QUOTED.search(t):
+        s += 3
+    if _C_EDIT.search(t):
+        s += 3                      # "sped up" / "slowed" / "remix" - keep them
+    by = _CS_BY.match(t)
+    if by and len(words) <= 10:
+        s += 3                      # CHANGED: anchored "A by B", not a bare "by"
+    if len(words) <= 7:
+        s += 1
+    caps = [w for w in words if w[:1].isupper() and w[1:2].islower()]
+    if len(caps) >= 2:
+        s += 2
+    elif len(words) <= 5 and not any(c.isupper() or c.islower() for c in t):
+        s += 2                      # CJK / Thai / Arabic have no case to signal with
+    if _OPINION.search(t):
+        s -= 4
+    # "<title> <edit-word>" - the exact shape of a crowd answer ("Faded nightcore",
+    # "Sicko Mode slowed"). Measured on the CLAIMED NAME, not the raw line, because the
+    # hedge and the @mention are not part of the title: "Paper planes but slowed down i
+    # think" is 7 raw words and misses, while the name it claims - "Paper planes but
+    # slowed down" - is 5 and is the answer on ZS4fTwFqW.
+    if (len(_nm.split()) <= 5 and _C_EDIT.search(_nm) and "?" not in t
+            and not _C_ASK.search(t)):
+        s += 2
+    # PREFER THE MOST-LIKED LINE - but as a RANKING signal, never a threshold one.
+    # Tried the other way and measured it: giving top-level comments +1 at 3 likes and
+    # +2 at 25 pushed 19 extra non-answers over the bar on the 36 held-out clips
+    # ("Average Ronaldo fan", "i love blondes", "Turn around") and found nothing new.
+    # Likes now only order claims that already cleared the naming gate - see the sort
+    # in crowd_claims, which the fetcher's new digg_count makes real for the first time.
+    to_ask = False
+    if meta.get("reply"):
+        # THE QUESTION IS THE SIGNPOST, THE REPLY IS THE ANSWER. Recomputed from the
+        # parent text when the fetcher carried it, so the bonus fires for "What song is
+        # this" (no question mark, missed by _C_ASK) and NOT for "What is his name?".
+        parent = meta.get("parent")
+        to_ask = is_song_ask(parent) if parent is not None else bool(meta.get("to_ask"))
+        if to_ask:
+            s += 5
+        if meta.get("thanked"):
+            s += 2
+        if (meta.get("likes") or 0) >= 3:
+            s += 1
+    names = bool(named_value or _CS_DASH.match(t) or _CS_QUOTED.search(t)
+                 or (by and len(words) <= 10) or len(_mash) >= 2)
+    bare = not names and not _C_EDIT.search(t)
+    if not names and (is_song_ask(t) or _C_ASK.search(t)):
+        return 0, True              # the ask, not the answer
+    if _CS_THANKS.search(t) and bare:
+        return 0, True              # the ACK is not the answer either
+    # PROVENANCE-ONLY. Nothing in the TEXT named a track; the whole case is where it
+    # sits. The skill allows exactly one such case - "a bare title with high likes
+    # sitting under a what song is this" - so require that thread, and require the line
+    # to read like a name. Measured: without the to_ask requirement, "It's a Mercedes
+    # bro" clears the floor at 6 on the Ferrari clip (caps 2, short 1, thanked 2, likes
+    # 1) purely because somebody in a thread about a CAR said thanks.
+    if bare and (not to_ask or not _cs_reads_like_a_name(t)):
+        return 0, True
+    return s, bare
+
+
+# THE REPLY-UNDER-AN-ASK BONUS NEEDS A GUARD. "The question is the signpost, the reply
+# is the answer" is right, but most replies under a song ask are conversation, and +5
+# alone clears the evidence floor. Measured on ak_talks_ (real answer "Mario by
+# blamian"): the thread under "What song is this, shit genuinely have dancing" also
+# emitted "What are you hating for", "be fr gng", "Say less" and "I am fr, what do you
+# gain from just hating on every lil thing" - four wasted queries out of the four hint
+# slots build_queries has.
+#
+# TRIED AND REVERTED: requiring one word outside a ~250-word everyday-English list.
+# It killed "I need your love" (ZS4nroxWx), whose every word is everyday English and
+# which is the correct answer, sitting under "Song?". Titles are made of common words.
+# What is left is shape, not vocabulary: a bare answer is SHORT and is not itself a
+# question - and however many survive that, only the top two go out, because a thread
+# under one ask yields at most one real answer.
+_CS_WH = {"what", "whats", "why", "how", "who", "when", "where", "which", "whos"}
+# agreeing with the question is not answering it. "yup" under "is the song a remix ?"
+# was the third hint on the North Pole clip, behind the two real ones.
+_CS_AFFIRM = {"yup", "yep", "yeah", "yea", "ya", "yes", "yh", "nah", "no", "nope", "fr",
+              "frfr", "facts", "fax", "true", "real", "same", "ok", "okay", "k", "lol",
+              "lmao", "bro", "bruh", "ong", "exactly", "agreed", "preach", "this", "w",
+              "l", "based", "mood", "deadass", "period", "periodt", "amen", "so", "it",
+              "is", "was", "im", "me", "u", "you", "og", "goat", "peak", "hard", "cold"}
+_CS_BARE_MAX = 2
+
+
+def _cs_reads_like_a_name(t):
+    """Only asked of a claim whose entire case is "it is a reply under a song ask"."""
+    words = _cs_fold(t).split()
+    if not (1 <= len(words) <= 5):
+        return False
+    if words[0] in _CS_WH and len(words) >= 4:
+        return False
+    return any(w not in _CS_AFFIRM for w in words)
+
+
+# An audio link posted in the comments IS the answer, not a hint about it.
+# Found on the Mariah Carey "Obsessed" clip: the CREATOR replied with
+# m.soundcloud.com/fvckaron/obsessed and 94 people liked it, while the parser - which
+# reads titles - returned nothing at all for that comment. Meanwhile the engine's own
+# search had found the same editor's upload and a gate refused it. The one unambiguous
+# signal in the whole thread was the one being discarded.
+#
+# These go straight into the candidate pool rather than into search queries: a URL needs
+# no interpretation, and verify() still scores it against the real clip audio, so a wrong
+# link costs one download and can never become a wrong crown.
+_COMMENT_AUDIO_URL = re.compile(
+    r'https?://(?:m\.|www\.|on\.)?'
+    r'(soundcloud\.com/[\w\-]+/[\w\-]+'
+    r'|youtu\.be/[\w\-]{11}'
+    r'|youtube\.com/watch\?v=[\w\-]{11})', re.I)
+
+
+def _norm_audio_url(u):
+    """One canonical spelling per upload, so a comment link and a search result that are
+    the same track dedup against each other instead of being downloaded twice.
+
+    The share sheet decorates what people paste - the Obsessed link arrives as
+    `m.soundcloud.com/fvckaron/obsessed?utm_source=clipboard&utm_medium=text&
+    utm_campaign=social_sharing` - and `search_edits` returns `soundcloud.com/...` and
+    `www.youtube.com/watch?v=...`. Matching those two strings is the whole reason the
+    dedup exists."""
+    if u.startswith("http://"):
+        u = "https://" + u[7:]
+    # The video id comes out BEFORE the query string is dropped - `watch?v=ID` keeps its
+    # identity in a parameter, unlike every other URL shape here, and stripping first
+    # turned `watch?v=ID&t=30` into a bare `/watch`.
+    m = (re.search(r"youtu\.be/([\w\-]{11})", u, re.I)
+         or re.search(r"youtube\.com/watch\?(?:[^#]*&)?v=([\w\-]{11})", u, re.I))
+    if m:
+        return "https://www.youtube.com/watch?v=%s" % m.group(1)
+    u = u.split("?")[0].split("#")[0].rstrip("/")
+    u = u.replace("//m.soundcloud.com/", "//soundcloud.com/")
+    u = u.replace("//www.soundcloud.com/", "//soundcloud.com/")
+    return u
+
+
+def comment_audio_urls(comments, cap=6, with_meta=False):
+    """Audio links people posted in the comments, creator-first. -> list of urls.
+
+    Ranked by who said it and how many agreed: a link from the video's own creator is
+    close to authoritative, and a heavily-liked link is the crowd confirming it.
+
+    `with_meta=True` returns [{"url","likes","from_creator","reply"}] instead, because
+    the candidate pool needs the provenance and not just the string: a creator-posted
+    link earns the `_creator_source` rank tier once the audio confirms it, a stranger's
+    does not.
+    """
+    scored, prov = {}, {}
+    for raw in (comments or []):
         meta = {}
-        if isinstance(raw, (tuple, list)):           # (text, meta) from a reply thread
+        if isinstance(raw, (tuple, list)):
             meta = (raw[1] if len(raw) > 1 else None) or {}
+            if not isinstance(meta, dict):
+                meta = {"likes": meta} if isinstance(meta, int) else {}
             raw = raw[0]
-        t = (raw or "").strip()
-        if not t or len(t) > 120 or not _HAS_WORD.search(t):
+        text = (raw or "")
+        for m in _COMMENT_AUDIO_URL.finditer(text):
+            u = _norm_audio_url(m.group(0))
+            likes = int(meta.get("likes") or 0)
+            creator = bool(meta.get("creator") or meta.get("is_creator"))
+            score = likes
+            if creator:
+                score += 10000          # the person who made it, telling you what it is
+            if meta.get("to_ask") or meta.get("reply"):
+                score += 50             # posted as the answer to "what song is this"
+            if score >= scored.get(u, -1):
+                scored[u] = score
+                p = prov.setdefault(u, {"url": u, "likes": 0, "from_creator": False,
+                                        "reply": False})
+                p["likes"] = max(p["likes"], likes)
+                p["from_creator"] = p["from_creator"] or creator
+                p["reply"] = p["reply"] or bool(meta.get("reply"))
+    order = [u for u, _ in sorted(scored.items(), key=lambda kv: -kv[1])][:cap]
+    if with_meta:
+        return [prov[u] for u in order]
+    return order
+
+
+def crowd_claims(comments, pool="clip", top=6):
+    """The skill's reading step. -> ranked
+    [{"name","mashup","score","votes","likes","answers_ask","thanked","demand"}].
+
+    `pool="clip"` is the clip's own comment section - on topic, read loosely.
+    `pool="sound"` is an aggregated SOUND PAGE, where most comments are about a
+    different video entirely, so the bar is higher and a page on which nobody asked
+    what the song is returns nothing at all (measured: that gate drops both remaining
+    false positives across 12 sounds and costs neither real answer).
+    """
+    min_score = _CS_ENTRY.get(pool, 4)
+    floor = _CS_FLOOR.get(pool, 6)
+    require_demand = (pool == "sound")
+    clusters, n_ask = [], 0
+    for raw in (comments or []):
+        meta = {}
+        if isinstance(raw, (tuple, list)):
+            meta = (raw[1] if len(raw) > 1 else None) or {}
+            if not isinstance(meta, dict):
+                meta = {"likes": meta} if isinstance(meta, int) else {}
+            raw = raw[0]
+        text = (raw or "").strip()
+        if not text:
             continue
-        low = t.lower()
-        words = t.split()
-        s = 0
-        if _C_SONGIS.search(t):                     s += 4   # "song is X" / "track called X"
-        if _C_DASH.match(t):                        s += 4   # "Artist - Title"
-        if _C_QUOTED.search(t):                     s += 3   # 'it's "Dark Horse"'
-        if _C_EDIT.search(t):                       s += 3   # names an edit family
-        if _C_BY.search(t) and len(words) <= 10:    s += 3   # "X by Y"
-        if len(words) <= 7:                         s += 1   # short = more likely a name
-        # Title Case multi-word phrase ("Dark Horse", "Push The Feeling On")
-        caps = [w for w in words if w[:1].isupper() and w[1:2].islower()]
-        if len(caps) >= 2:                          s += 2
-        if _OPINION.search(t):                      s -= 4   # "fire", "mid", "trash"
-        # "<title> <edit-word>" - the exact shape of a crowd answer ("Faded nightcore",
-        # "Sicko Mode slowed"). Terse, no question mark, an edit family named outright.
-        if (len(words) <= 5 and _C_EDIT.search(t) and "?" not in t
-                and not _C_ASK.search(t)):          s += 2
-        # ANSWERING the ID question is the single most reliable comment on the page.
-        # Nothing here decides anything - it only moves this text up the query list,
-        # and verify()'s audio core still crowns the winner.
-        if meta.get("reply"):
-            if meta.get("to_ask"):                  s += 5   # reply UNDER "what song is this?"
-            if meta.get("thanked"):                 s += 2   # OP said thanks -> crowd-confirmed
-            if (meta.get("likes") or 0) >= 3:       s += 1
-        # A QUESTION names nothing, ever - the answer is in its replies, which we now
-        # actually fetch. "Anyone know what remix this is?" used to clear the bar on
-        # _C_EDIT("remix") + short alone and became a real search query for a title
-        # that does not exist. Require a genuine NAMING signal before a "?" comment
-        # counts ("Dark Horse hoodtrap?" still passes on the quoted/dash/by/songis
-        # shapes, or on the edit-shape bonus above).
-        names = bool(_C_SONGIS.search(t) or _C_DASH.match(t) or _C_QUOTED.search(t)
-                     or (_C_BY.search(t) and len(words) <= 10))
-        if _C_ASK.search(t) and not names:
+        if is_song_ask(text):
+            n_ask += 1                       # demand: did anyone want the ID here
+        s, bare = _cs_score(text, meta)
+        if s < min_score:
             continue
-        # ...and the ACK is not the answer either. "Thank you!" sits in the same thread
-        # and now inherits the to_ask/thanked bonuses, which would otherwise make the
-        # single most useless string on the page a top-ranked search query.
-        if _C_THANKS.search(t) and not names and not _C_EDIT.search(t):
+        name = _cs_name_of(text)
+        k = _cs_key(name)
+        if not k or len(k) < 3:
             continue
-        # 4 = at least one REAL song signal. Title Case + short alone is every fan
-        # comment in every language ("Kocham Yamala on jest cudowny") and those become
-        # wasted search queries.
-        if s >= 4:
-            scored.append((s, t))
-    scored.sort(key=lambda x: -x[0])
-    seen, out = set(), []
-    for _, h in scored:
-        k = h.lower()
-        if k not in seen:
-            seen.add(k); out.append(h)
-    return out[:8]
+        if k in _CS_JOKES or any(_cs_near(k, j) for j in _CS_JOKES):
+            continue
+        hit = None
+        for c in clusters:
+            if _cs_near(k, c["key"]):
+                hit = c
+                break
+        if hit is None:
+            hit = {"key": k, "names": {}, "score": 0.0, "votes": 0, "likes": 0,
+                   "answers_ask": False, "thanked": False, "bare": True}
+            clusters.append(hit)
+        hit["names"][name] = hit["names"].get(name, 0) + 1
+        hit["score"] = max(hit["score"], s)
+        hit["votes"] += 1
+        hit["likes"] = max(hit["likes"], int(meta.get("likes") or 0))
+        _p = meta.get("parent")
+        hit["answers_ask"] = hit["answers_ask"] or (
+            is_song_ask(_p) if _p is not None else bool(meta.get("to_ask")))
+        hit["thanked"] = hit["thanked"] or bool(meta.get("thanked"))
+        hit["bare"] = hit["bare"] and bare
+    if require_demand and n_ask == 0:
+        return []
+    out = []
+    for c in clusters:
+        # AGREEMENT. Two people typing the same title independently is the strongest
+        # thing on the page and no per-comment scorer can see it. Capped so a spammed
+        # phrase cannot run away with it.
+        agree = min(6.0, 3.0 * (c["votes"] - 1))
+        # the most informative spelling in the cluster: most repeated, then longest -
+        # "Soap by Melanie Martinez" is a better query than the bare "Soap" beside it
+        best = max(c["names"].items(), key=lambda kv: (kv[1], len(kv[0])))[0]
+        total = c["score"] + agree
+        # THE EVIDENCE FLOOR, applied after agreement so two people half-naming a track
+        # can still clear it. Swept on both sets: raising the clip pool from 4 to 6 left
+        # recall untouched (31/32 coverage, 30/32 top-1, both mashups still carried) and
+        # cut wasted search queries from 81 to 58 on the on-topic set and from 67 to 10
+        # on the 36 held-out clips, where there is nothing to find and every string is a
+        # wasted query. 7 was too far - coverage fell to 26/32.
+        if total < floor:
+            continue
+        out.append({"name": best, "mashup": split_mashup(best), "bare": c["bare"],
+                    "score": round(total, 1), "votes": c["votes"],
+                    "likes": c["likes"], "answers_ask": c["answers_ask"],
+                    "thanked": c["thanked"], "demand": n_ask})
+    out.sort(key=lambda r: (-r["score"], -r["votes"], -r["likes"]))
+    # ...and only the top few provenance-only claims survive. One ask thread yields at
+    # most one real answer; the rest of it is the argument that broke out underneath.
+    kept, bares = [], 0
+    for r in out:
+        if r["bare"]:
+            if bares >= _CS_BARE_MAX:
+                continue
+            bares += 1
+        kept.append(r)
+    return kept[:top]
+
+
+def crowd_hints(comments, pool="clip", cap=8):
+    """crowd_claims flattened to search strings, mashups expanded to BOTH halves.
+
+    The joined string goes first because uploaders title mashups exactly that way
+    ("Song A x Song B (Mashup)"), then each half as its own candidate so the two songs
+    can be found separately when nobody uploaded the pair."""
+    out, seen = [], set()
+
+    def add(s):
+        s = (s or "").strip()
+        k = s.lower()
+        if s and k not in seen:
+            seen.add(k)
+            out.append(s)
+    for c in crowd_claims(comments, pool=pool, top=cap):
+        add(c["name"])
+        for half in c["mashup"]:
+            add(half)
+        if len(out) >= cap:
+            break
+    return out[:cap]
+
+
+def comment_song_hints(comments):
+    """The clip's OWN comment section, read with the skill's rules. -> list of strings.
+
+    Kept as a name and a return shape because server.py, build_queries, hint_confirm and
+    the caption reader all call it; the body is now `crowd_hints(pool="clip")`.
+
+    Measured before -> after, offline, in research/bakecomments/bake_bench.py:
+      33 clips / 3,094 recorded comments: strings emitted 113 -> 54, of which name the
+      track 42% -> 67%, clips covered 30/32 -> 31/32, TOP-1 correct 28/32 -> 31/32,
+      mashups carried as two candidates 0/2 -> 2/2.
+      36 held-out clips / 1,983 comments freshly fetched, where the answer is not in the
+      comments at all: strings emitted 85 -> 9, the same 1 real hit. Those 76 were
+      search queries spent on "Average Ronaldo fan" and "It's a Mercedes bro".
+    Full table and the reverted attempts: research/bake-comment-extraction.md.
+    """
+    return crowd_hints(comments, pool="clip", cap=8)
+
+
 
 
 _TT_VIDEO_URL = {}   # full_url -> the video mp4 url, cached from whichever call saw it
@@ -388,6 +1016,50 @@ def _remember_video_url(full_url, vu, dur=None, size=None):
     _TT_VIDEO_URL[full_url] = (vu, dur, size)
 
 
+_TT_MUSIC_ID = {}          # url (as given AND resolved) -> the sound's own id
+
+
+def _remember_music_id(mi, *urls):
+    """Keep the sound id that tikwm already handed us.
+
+    tt_music_id() used to re-request the whole tikwm payload purely to read
+    music_info.id - a field the resolver above has already parsed and thrown away. That
+    is a second call to a host with a documented 1 req/s wall, on the critical path,
+    for data in hand. Measured at 0.85-1.05s per lookup.
+
+    Keyed on every spelling of the url we have seen, because a scan arrives as a
+    vt.tiktok.com short link and only becomes the /@user/video/<id> form after
+    resolution - key on one and the other never hits."""
+    mid = (mi or {}).get("id")
+    if not mid:
+        return
+    if len(_TT_MUSIC_ID) > 512:
+        _TT_MUSIC_ID.clear()
+    for u in urls:
+        if u:
+            _TT_MUSIC_ID[u] = mid
+
+
+_TT_SOUND_CREDIT = {}      # url -> tikwm's canonical {title, author} for the sound
+
+
+def _remember_sound_credit(mi, *urls):
+    """tikwm's ENGLISH sound title, kept for whoever needs the creator's @handle.
+
+    embed/v2 is the primary credit source and it answers in the VIEWER's locale ("suono
+    originale"), which drops the "- <handle>" suffix TikTok's canonical English title
+    carries. tikwm is fetched anyway (tt_video_audio needs the mp4), so the handle is
+    free - it was simply never kept."""
+    t = (mi or {}).get("title")
+    if not t:
+        return
+    if len(_TT_SOUND_CREDIT) > 512:
+        _TT_SOUND_CREDIT.clear()
+    for u in urls:
+        if u:
+            _TT_SOUND_CREDIT[u] = {"title": t, "author": (mi or {}).get("author")}
+
+
 def tt_tikwm(full_url):
     """Third-party resolver: returns the isolated sound mp3 + rich credit. Hard
     1 req/s limit, so it's a fallback, not the front line."""
@@ -399,6 +1071,8 @@ def tt_tikwm(full_url):
             return None
         if d.get("code") == 0 and d.get("data"):
             data = d["data"]; mi = data.get("music_info") or {}
+            _remember_music_id(mi, full_url)
+            _remember_sound_credit(mi, full_url)
             au = data.get("music")
             vu = data.get("play") or data.get("hdplay")
             if vu:
@@ -441,6 +1115,15 @@ def tt_video_audio(full_url, tmp, seconds=30):
                               % urllib.parse.quote(full_url, safe=""))
                 d = (json.loads(r.text).get("data") or {})
                 vu = d.get("play") or d.get("hdplay")
+                # THE SOUND CREDIT WAS BEING THROWN AWAY HERE. This leg calls tikwm on
+                # essentially every TikTok lookup (it is the only route to the video's own
+                # mp4), and tikwm's music_info spells the sound out in the ENGLISH
+                # canonical form - "original sound - world.of.sounder" - carrying the
+                # creator's actual @handle, which the localised embed/v2 title ("suono
+                # originale") does not. Keeping it costs zero requests; discarding it is
+                # why the engine never knew who made the audio it was identifying.
+                _remember_music_id(d.get("music_info") or {}, full_url)
+                _remember_sound_credit(d.get("music_info") or {}, full_url)
                 try:
                     vdur = float(d.get("duration") or 0) or None
                     vsize = int(d.get("size") or 0) or None
@@ -516,11 +1199,20 @@ def tiktok_fetch(url, _full=None):
         try:
             info = tt_embed_v2(iid)
             if info and info.get("playUrl"):
+                _remember_music_id({"id": info.get("music_id")}, full, url)
                 return full, info
         except Exception:
             pass
     try:
         info = tt_tikwm(full)
+        # tt_tikwm keyed the sound id on the RESOLVED url; the caller that later asks for
+        # it (viral_sound_comments, via server.py) passes the url the USER gave, which for
+        # a vt.tiktok.com share link is a different string. Alias them here, where both
+        # spellings are in scope, or the cache is written and never read.
+        if url != full:
+            _mid = _TT_MUSIC_ID.get(full)
+            if _mid:
+                _TT_MUSIC_ID[url] = _mid
         if info and info.get("playUrl"):
             return full, info
     except Exception:
@@ -557,68 +1249,250 @@ _ARTIST_TITLE = re.compile(r"^[^\n]{2,40}\s+[-\u2013\u2014]\s+[^\n]{2,40}$")
 
 
 def strong_song_hints(comments, cap=4):
-    """Strict hint extraction for SOUND-PAGE comments.
+    """The aggregated SOUND-PAGE pool, read with the skill's rules. -> list of strings.
 
-    The clip's own comment section is on-topic, so the loose reader is fine there. A
-    sound page is not: the same audio gets used by hundreds of unrelated videos, and
-    their comment sections are about THOSE videos. Running the loose reader over 212
-    aggregated comments returned "He sure did not ! Amen!", "Them the Pharisees
-    laughing" and "Amor, imposible que pierda Alana" alongside one real answer - junk
-    that would burn real search queries.
+    The clip's own comments are on topic; a sound page is not - the same audio carries
+    hundreds of unrelated videos and their comment sections are about THOSE videos. The
+    old body handled that structurally, accepting only "song: X" and a clean
+    "Artist - Title" line. Perfectly precise, and it recovered 10 of the 31 findable
+    answers in the recall set because the crowd overwhelmingly writes neither shape.
 
-    So here we only accept text that is structurally a song ID: an explicit
-    "song: <x>" / "track - <x>" prefix, or a clean "<artist> - <title>" line. Everything
-    conversational is dropped, even at the cost of missing a bare-title answer.
+    Provenance is a THRESHOLD here instead: same reader, higher bar (min_score 6), plus
+    a demand gate - if not one person on the page asked what the song is, nothing on it
+    is an answer to that question. Measured on 11 frozen sound pages (2,370 comments):
+    true answers found 1 -> 2 of 2, false-positive pages 1 -> 0 of 9.
     """
-    out, seen = [], set()
-    for c in (comments or []):
-        t = (c[0] if isinstance(c, tuple) else c) or ""
-        t = t.strip()
-        if not t or len(t) > 90 or "\n" in t:
-            continue
-        low = t.lower()
-        if any(w in low for w in ("what song", "song?", "name song", "peak song",
-                                  "whats the song", "what's the song", "song name")):
-            continue                                   # that's the ask, not the answer
-        m = _STRONG_ID.match(t)
-        cand = (m.group(1) if m else (t if _ARTIST_TITLE.match(t) else None))
-        if not cand:
-            continue
-        cand = cand.strip(" .!?\u2019\"'")
-        k = cand.lower()
-        if len(cand) < 4 or k in seen:
-            continue
-        seen.add(k); out.append(cand)
-        if len(out) >= cap:
-            break
-    return out
+    return crowd_hints(comments, pool="sound", cap=cap)
+
+
 
 
 # ---------------------------------------------------------------- viral sound page
 def tt_music_id(full_url):
     """The sound's own id. Every TikTok audio has a page at tiktok.com/music/... that
     aggregates every video using it."""
+    hit = _TT_MUSIC_ID.get(full_url)
+    if hit:
+        return hit
     try:
         j = json.loads(_cffi_get("https://tikwm.com/api//?url=%s&hd=0" % full_url,
                                  timeout=25).text)
-        return ((j.get("data") or {}).get("music_info") or {}).get("id")
+        mi = (j.get("data") or {}).get("music_info") or {}
+        _remember_music_id(mi, full_url)
+        return mi.get("id")
     except Exception:
         return None
 
 
-def viral_sound_comments(full_url, top=2, per=60):
-    """Comments from the MOST-VIRAL videos using this same sound, not just this clip's.
+_TT_SOUND_PAGE = {}        # music id -> the parsed sound-page node (bounded)
+
+
+def sound_page(mid):
+    """The sound's OWN page, parsed once and remembered.
+
+    Two different techniques need this exact blob - `viral_sound_comments` (whose videos
+    to mine) and `sound_creator` (who MADE the sound) - and it used to be fetched inline
+    by the first of them, so the second would have paid a second 1.7s round trip for
+    bytes already in hand. Memoised per music id, bounded like every other cache here.
+
+    RETRY, BECAUSE THIS ROUTE FLAPS. Measured 2026-08-13, 32 spaced calls over 8 real
+    music ids: **21 x 200 (66%) and 11 x 503 (34%)**, the 503 being a 26-byte body, not a
+    ban - the same id answers 200 on the next attempt. With a single shot and a memo that
+    remembered the failure, one scan in three got an empty video list for the rest of the
+    process and the whole sound-page technique silently did nothing. A 503 fails fast
+    (0.42s median vs 0.96s for a 200), so three attempts cost ~0.4s in the bad case and
+    take the miss rate from 34% to ~4%. Failures are NOT memoised, successes are.
+
+    Returns the node dict (`videoList` + `embedInfo`) or {}."""
+    if not mid:
+        return {}
+    hit = _TT_SOUND_PAGE.get(mid)
+    if hit:
+        return hit
+    node = {}
+    for _attempt in range(3):
+        try:
+            html = _cffi_get("https://www.tiktok.com/embed/music/x-%s" % mid,
+                             timeout=20).text
+            m = re.search(r'<script id="__FRONTITY_CONNECT_STATE__"[^>]*>(.*?)</script>',
+                          html, re.S)
+            if m:
+                node = ((json.loads(m.group(1)).get("source") or {}).get("data") or {}) \
+                    .get("/embed/music/x-%s" % mid) or {}
+        except Exception:
+            node = {}
+        if node.get("videoList"):
+            break
+        time.sleep(0.5)
+    if not node:
+        return {}                                  # don't poison the memo with a 503
+    if len(_TT_SOUND_PAGE) > 256:
+        _TT_SOUND_PAGE.clear()
+    _TT_SOUND_PAGE[mid] = node
+    return node
+
+
+# "original sound - world.of.sounder" / "son original - wtkh.edt7" / "nhạc nền - x".
+# TikTok's canonical title for a creator-made sound IS "<localised original sound> -
+# <the creator's @handle>", and tikwm hands back the ENGLISH form even when the embed
+# page is localised - so on the tikwm leg the handle is sitting in a string we already
+# fetched, at zero network cost. Measured over the recorded corpus: 180 of 204 TikTok
+# clips carry a name in this position.
+_ORIG_PREFIX = re.compile(
+    r"^\s*(?:original\s+sound|som\s+original|son\s+original|sonido\s+original|"
+    r"suono\s+originale|originalton|origineel\s+geluid|orijinal\s+ses|nh\w*c\s+n\w*n|"
+    r"الصوت\s+الأصلي|"
+    r"оригинальный\s+"
+    r"звук)\s*[-–—]\s*(\S.*)$", re.I)
+
+
+def _is_handleish(s):
+    """Does this read as a TikTok unique id rather than a display nickname? Unique ids
+    are [A-Za-z0-9._] only, so "Sᴏᴜɴᴅᴇʀ", "jrock 👾" and "𝘝𝘪𝘴𝘪𝘰𝘯𝘧𝘹💎" all fail it while
+    "world.of.sounder", "917JOSH" and "wtkh.edt7" pass."""
+    return bool(s) and len(s) <= 24 and bool(re.fullmatch(r"[A-Za-z0-9._]+", s))
+
+
+def handle_from_credit(credit_title):
+    """The @handle baked into an 'original sound - <handle>' credit, or None.
+
+    FREE - no request. The credited title is already in hand from the fetch, and on the
+    tikwm leg it spells out the sound owner's actual unique id, which is the one thing
+    the display nickname ('Sᴏᴜɴᴅᴇʀ') does not give you."""
+    m = _ORIG_PREFIX.match(credit_title or "")
+    if not m:
+        return None
+    h = m.group(1).strip()
+    # tikwm sometimes appends the display name: "original sound - boohavinn - boohavinn"
+    h = h.split(" - ")[0].strip().strip(".")
+    # A HANDLE, NOT A DISPLAY NAME. Unique ids are [A-Za-z0-9._] with no spaces, so
+    # "Sam Allais" and "jrock 👾" are correctly refused. The >= 3 floor rejects the
+    # localised-abbreviation case ("nhạc nền - Ar." puts a two-letter nickname in the
+    # handle slot); searching a 2-character token would only widen the pool with noise.
+    return h if (len(h) >= 3 and _is_handleish(h)) else None
+
+
+def _tt_ts(snowflake):
+    """Unix seconds out of a TikTok id (top 32 bits are the timestamp)."""
+    try:
+        return int(snowflake) >> 32
+    except (TypeError, ValueError):
+        return None
+
+
+# NOT DUPLICATED HERE. Resolving the sound's owner from the sound page (snowflake
+# timestamp match against the origin video, avatar cross-check, origin caption) lives in
+# creator_check.py, which server.py already runs in phase 1 - see `_creator_start`. The
+# ENGINE side of the creator check is deliberately only the two things creator_check
+# cannot do from outside: `handle_from_credit` above, which costs zero requests because
+# tikwm's canonical title is already in hand, and the creator SEARCH lane further down,
+# which turns that handle into candidates.
+
+
+# ------------------------------------------------------- which video to actually open
+# The skill's step 2 - "open the most-viral video" - is the step it calls the one that
+# makes the whole trick work. The shipped reading of it (sort the embed payload by
+# playCount, take the top 2) turns out to be the WORST selector measured, and these two
+# numbers are why.
+#
+# 1. A big page is a page you cannot read. `tiktok_comments` pulls ~60 comments however
+#    many the video has. Measured over 87 real sound-page videos, 2026-08-13:
+#
+#        comments on the video   n   median coverage (what we actually read)
+#        0-25                   22            43%
+#        25-100                 19            55%
+#        100-300                15            24%
+#        300-1K                 21             9%
+#        1K+                    10             4%
+#
+#    On @alexachior's 12,600-comment video we read 94 of them, 0.7%. The answer is more
+#    likely to EXIST on the biggest video and far less likely to be SEEN there.
+#
+# 2. Tile #1 is not an arbitrary tile, it is the sound's ORIGIN video. Measured on 12
+#    sounds: in 11 of them the first entry of `videoList` is the post whose snowflake sits
+#    1-50 seconds from the music id, i.e. the post that CREATED the sound (the twelfth is
+#    a sound whose origin post is deleted). Its audience came for the sound; a 3.4M-play
+#    reuse's audience came for the video. Sorting by playCount demotes it.
+#
+# Every crowd answer found in the harvest sat on a mid-sized video, never the biggest:
+#
+#     sound       answer text                                  tile#  rank by plays
+#     ZS4P1BXkR   "Selena Gomez - slow down (slowed)"            1        9/10
+#     ZS4P1BXkR   "I need your love - Calvin Harris"             8       10/10
+#     ZS4qa8sbb   "Like a tattoo by Sade"                        3        5/10
+#     ZS4qVTE97   "Whistle by Flo rida"                          4        4/10
+#     ZSXWjGrqT   "wouldn't believe - luhh dyl, ...a remix"      9        9/10
+#
+# That last one is the kelthraxx regression clip, whose crowned answer IS "Wouldn't
+# Believe" by Luhh Dyl: the crowd names it exactly right on the 9th tile, and sorting by
+# playCount means the engine never opens it.
+#
+# So "most viral" gets implemented as the skill actually means it - a FLOOR, not a
+# maximum. Keep the page's own order (origin first), skip the dead tiles, and let the
+# readable pages through.
+_SOUND_PLAYS_FLOOR = 20000   # below this the comment section is dead: of 22 videos with
+                             # <25 comments, a 20K floor drops 14 while costing 1 of the
+                             # 65 videos that do have a live section.
+_SOUND_MIN_COVERAGE = 0.10   # read less than a tenth of a page and its hints are mostly
+                             # that video's own chatter. Scale-free on purpose: an
+                             # absolute comment ceiling gated the kelthraxx ORIGIN video
+                             # (360 comments, 14% read) which is exactly the page worth
+                             # reading.
+
+
+def pick_sound_videos(vids, top=3, floor=_SOUND_PLAYS_FLOOR):
+    """Which videos on a sound page are worth a comment fetch, in order.
+
+    Deliberately NOT `sort(-playCount)`. Measured head-to-head on 12 real sounds (87
+    videos, 2,900 comments, no Shazam), scoring "did the crowd's real answer come back":
+
+        selector                          top=2          top=3
+        sort by playCount (shipped)     1/4, 50 junk   1/4, 60 junk
+        page order + floor (this)       2/4, 19 junk   3/4, 24 junk
+
+    Twice the answers at the same request count, and a third of the junk. The result
+    survives leave-one-sound-out on all 12 folds. Other orderings tried and beaten:
+    likes desc (1/4 @ top=2), comments desc (0/4, and it needs an extra request per video
+    to even know the comment count), plays ascending (2/4 but it walks into dead pages),
+    and six play-count bands - the bands matched page order at top=3 and none beat it, so
+    the version with no tunable constant is the one that ships."""
+    live = [v for v in vids if (v.get("playCount") or 0) >= floor]
+    dead = [v for v in vids if (v.get("playCount") or 0) < floor]
+    # dead tiles go last rather than away: a small sound can be nothing but dead tiles,
+    # and mining a 6-comment page is still better than mining none.
+    return (live + dead)[:top]
+
+
+def viral_sound_comments(full_url, top=3, per=60):
+    """Comments from the videos on this sound worth reading, not just this clip's.
 
     Roham's own manual technique, recorded as the `tiktok-sound-id` skill: when a clip is
     an unnamed "original sound", don't mine the clip you were handed - open the SOUND's
-    page, jump to the biggest video on it, and read THAT comment section, because someone
-    has already asked "song?" there and been answered.
+    page, jump to the video whose comment section is worth mining, and read THAT one,
+    because someone has already asked "song?" there and been answered.
 
-    The size gap is the whole point. Measured on the Embergrass sound: the clip we were
-    given had 277 comments, while the top video on the same sound had 469K likes and
-    5,153 comments. A dead comment section next to one where the answer is near-certain
-    to be sitting. Sorting by likes matters too - the sound page is only roughly ordered,
-    so the first tile is not reliably the biggest.
+    WHICH video is `pick_sound_videos` above, and its docstring carries the measurement
+    that made this stop being a playCount sort.
+
+    HOW DEEP: top=3. The marginal-value curve on the same 12 sounds, page order + floor:
+    top=1 -> 1/4 answers, top=2 -> 2/4, top=3 -> 3/4, top=4 -> 3/4. Each extra video is
+    one more `tiktok_comments` call, measured at 1.33s median over 87 fetches (p90 2.66s,
+    5 back-to-back = 5.4s), so the third video costs ~1.1s and buys a quarter of the
+    answerable sounds while the fourth buys nothing. Three is the knee, not a guess.
+    Fetching them in parallel was measured too - 3 at once is 4.0s vs 7.3s serial, but
+    tikwm's 1 req/s tier dropped one of the three videos on 1 of 3 trials, so it stays
+    serial.
+
+    THE CEILING: only 10 videos are reachable. `tiktok.com/embed/music/x-<id>` caps
+    `videoList` at 10 no matter how big the sound is (measured: a 29.7K-video sound and a
+    561-video sound both return 10). `?page=2` and `/page/2` flip the `page` field in the
+    payload and return the identical 10 ids; `?count=`/`?cursor=`/`?offset=` 503. The raw
+    `tiktok.com/music/x-<id>` page is a JS shell (381KB, zero `/video/` links), and
+    `api/music/item_list` and `api/music/detail` both answer 200 with a ZERO-LENGTH body
+    because they want the browser's signing params. tikwm `/api/music/posts` is still 403
+    Cloudflare. Everything past 10 therefore needs either a headless render of the signed
+    XHR or a signed request, so 10 is the ceiling for this path and that is a known limit,
+    not an oversight.
 
     Returns comments in the same mixed shape tiktok_comments() gives, so it drops
     straight into comment_song_hints().
@@ -626,27 +1500,48 @@ def viral_sound_comments(full_url, top=2, per=60):
     mid = tt_music_id(full_url)
     if not mid:
         return []
-    try:
-        j = json.loads(_cffi_get("https://tikwm.com/api/music/posts?music_id=%s&count=12"
-                                 % mid, timeout=30).text)
-        vids = (j.get("data") or {}).get("videos") or []
-    except Exception:
-        return []
+    # FIRST-PARTY, because the third party died. tikwm/api/music/posts now answers 403 on
+    # every request - verified live - so this whole path, the one that reads the crowd for
+    # a song no catalogue knows, had been silently returning nothing. TikTok's own embed
+    # page for a sound answers 200 in ~1.0s with the same list, needs no key and no
+    # browser, and is not behind anyone's 1 req/s tier.
+    vids = sound_page(mid).get("videoList") or []
     if not vids:
         return []
-    # engagement, not position: comment_count is the better signal than likes here,
-    # because it is literally the thing we are about to read.
-    vids.sort(key=lambda v: -((v.get("comment_count") or 0) * 3 + (v.get("digg_count") or 0) // 50))
-    out = []
-    for v in vids[:top]:
-        vid, who = v.get("video_id"), (v.get("author") or {}).get("unique_id")
+    out, spare = [], []
+    for v in pick_sound_videos(vids, top):
+        vid, who = v.get("id"), v.get("authorUniqueId")
         if not (vid and who):
             continue
         try:
-            out += tiktok_comments("https://www.tiktok.com/@%s/video/%s" % (who, vid),
-                                   n=per) or []
+            cs, total = tiktok_comments("https://www.tiktok.com/@%s/video/%s" % (who, vid),
+                                        n=per, with_total=True)
         except Exception:
             continue
+        if not cs:
+            continue
+        # THE UNREADABLE-PAGE GATE. tikwm hands back the page's true comment total for
+        # free and the engine was throwing it away. Coverage - how much of the page we
+        # actually read - is what separates a hint from noise: measured live, we read 61
+        # of @gymbrahaesthetic's 82 comments (74%) and 94 of @alexachior's 12,620 (0.7%).
+        # At 0.7% the top-liked lines are that video's own jokes, and `_hint_words` feeds
+        # every token of them into the TOP tier of `_consensus_id` - a wrong-crown
+        # mechanism aimed at the clips that already work. Every crowd answer measured on
+        # this corpus came off a page we had read at least 19% of, so a 10% floor is well
+        # clear of all of them and cut the strings reaching the ranker from 28 to 23.
+        cov = (len(cs) / float(total)) if total else 1.0
+        if cov < _SOUND_MIN_COVERAGE:
+            spare.append((cov, cs))
+            continue
+        out += cs
+    # BEST EFFORT BEATS NOTHING. On a sound where every reachable video is a monster (the
+    # kelthraxx sound: 360 / 2,599 / 415 comments), a hard gate returns an empty list
+    # where the old code at least returned something. Measured live on 13 sounds, the gate
+    # alone emptied 4 of them. So when nothing clears the floor, keep the single page we
+    # read the most of - the gate is there to rank confidence, not to switch the technique
+    # off.
+    if not out and spare:
+        out = max(spare, key=lambda t: t[0])[1]
     return out
 
 
@@ -713,8 +1608,17 @@ def get_source(url):
         except Exception:
             open(audio, "wb").write(fetch(info["playUrl"], binary=True, timeout=90))
         _ga1 = time.time()
+        # HOW LONG THE CROSS-CHECK STREAM GETS. This leg is the video's OWN audio, used
+        # only to test TikTok's credited sound against what the video actually plays. The
+        # answer-bearing audio (playUrl) is already on disk one line up, so every second
+        # spent here is spent on a second opinion.
+        #
+        # It was 45s, and on a clip whose mp4 will not download that is 45s of nothing:
+        # measured on five cold clips tonight it burned 24-26s each with vid_ok False,
+        # which was more than half of a 50s lookup. When it succeeds it takes 4-6s.
+        # 12s keeps every success seen and stops paying for the failures.
         try:
-            vid_audio = _fv.result(timeout=45)
+            vid_audio = _fv.result(timeout=12)
         except Exception:
             vid_audio = None
         tlog("tt_audio", _ga1 - _ga0, vid_wait=round(time.time() - _ga1, 3),
@@ -727,7 +1631,36 @@ def get_source(url):
            "credit_author": info.get("sound_author") or oe.get("credit_author"),
            "is_original": bool(info.get("is_original")), "desc": info.get("desc") or "",
            "handle": info.get("creator") or oe.get("handle"),
+           # THE SOUND'S OWN ID, carried out so a result can be cached against the SOUND
+           # rather than the clip. Thousands of different videos use one sound, so one
+           # lookup can answer all of them: 59.2% of the recorded corpus is on a sound
+           # another clip already used. It costs nothing here - tt_tikwm already parsed
+           # it and _remember_music_id kept it.
+           "sound_id": _TT_MUSIC_ID.get(full) or _TT_MUSIC_ID.get(url),
            "thumb": oe.get("thumb"), "tmp": tmp}
+
+    # ---------------- WHO MADE THE SOUND (the creator check, zero requests) ----------
+    # `handle` above is whichever identity the winning fetch leg happened to hand back:
+    # embed/v2 returns the SOUND's display nickname, tikwm returns the CLIP POSTER's
+    # unique id. Those are different people and conflating them is what let the engine
+    # look at "suono originale - Sᴏᴜɴᴅᴇʀ" and learn nothing. Split them out explicitly
+    # and, where tikwm's canonical English title is in hand (it is fetched anyway for the
+    # video mp4), pull the sound owner's real @handle straight out of it.
+    _cred = _TT_SOUND_CREDIT.get(full) or _TT_SOUND_CREDIT.get(url) or {}
+    out["poster"] = ((info.get("creator") if _is_handleish(info.get("creator")) else None)
+                     or oe.get("handle"))
+    out["sound_name"] = out["credit_author"]                 # the display nickname
+    out["sound_creator"] = handle_from_credit(_cred.get("title")) \
+        or handle_from_credit(out["credit_title"])
+    if out["sound_creator"]:
+        out["sound_creator_from"] = "credit"
+    if out["sound_id"]:
+        out["sound_url"] = "https://www.tiktok.com/music/x-%s" % out["sound_id"]
+    # did the person who POSTED this clip also make the sound? A "no" is the interesting
+    # answer: it means an editor made this audio and someone else is using it, which is
+    # exactly the case where the editor's own upload is the thing we should be hunting.
+    if out.get("sound_creator") and out.get("poster"):
+        out["sound_is_posters"] = (out["sound_creator"].lower() == out["poster"].lower())
 
     # TRUST THE VIDEO, NOT THE CREDIT. TikTok's attributed sound is usually the exact
     # audio in the video, and it's the cleaner source (no voiceover, no SFX), so it
@@ -820,13 +1753,90 @@ def _title_key(t):
 _HINT_STOP = {"music", "song", "sound", "track", "name", "audio", "the", "and", "por",
               "feat", "remix", "slowed", "reverb", "version", "pls", "please"}
 
+# Weight carried by a word from a hint that CONFIRMED against a real catalogue - and
+# ONLY when that confirmation matched a title AND an artist. That pairing is links.py's
+# whole trust model: iTunes and Deezer always answer, so one agreeing field is not a
+# check, two are.
+#
+# A TITLE-ONLY confirmation is recorded (server.py reports it) but carries NO ranking
+# weight, and that is a measurement, not taste. Over the 237 distinct hints the engine has
+# actually captured, 24 confirmed on title alone and roughly half of those were chatter
+# that happens to be a real release - "MEWING", "Masteron", "Helicopter", "16 pro max",
+# "Keep your head up", "beat me to the punch". Planting each confirmed catalogue title as
+# a rival group against the recorded crown, title-only confirmations cost the crown in 3
+# runs and paired ones in 0. The tier had upside too ("Ultraviolence", "Wake up (super
+# slowed)"), but on every clip where a bare hint was genuine the same clip also carried a
+# paired hint naming the same track, so the tier bought nothing it did not also risk.
+CONFIRM_W = 2.0
+
+
+class HintSet(list):
+    """The hint texts, plus which of them survived step 4 of the tiktok-sound-id skill.
+
+    It IS a list, so every existing consumer (iteration, truthiness, `list(hints)`, the
+    search-query builder) is untouched; `_hint_words` is the only thing that looks at the
+    extra attribute. `confirmed` maps hint text -> the catalogue record that backed it,
+    from hint_confirm.confirm_hints()."""
+
+    def __init__(self, texts=(), confirmed=None):
+        list.__init__(self, texts)
+        self.confirmed = dict(confirmed or {})
+
+
+def confirmed_hints(hints, wall=None):
+    """Run the CONFIRM step over `hints` and return a HintSet.
+
+    THE SKILL'S STEP 4, which the engine has never done: "Treat what you find in the
+    comments as a candidate, then confirm it against a real music source before reporting
+    it." Idempotent and memoised, so calling it again for the same texts costs nothing.
+
+    Confirmation only ever ADDS weight (see hint_confirm's header). A hint that does not
+    confirm keeps exactly the weight it had before this existed, because the edits this
+    product exists to find are precisely the recordings no catalogue carries.
+
+    `wall` caps the whole pass. Callers on the ranking path pass a short one: this runs
+    synchronously inside the event loop, so a sick endpoint must cost a bounded amount and
+    then get out of the way, exactly like every Shazam probe."""
+    if isinstance(hints, HintSet):
+        return hints
+    texts = list(hints or [])
+    if not texts:
+        return HintSet(texts)
+    t0 = time.time()
+    try:
+        import hint_confirm
+        kw = {} if wall is None else {"wall": wall}
+        conf = hint_confirm.confirm_hints(texts, **kw)
+    except Exception:
+        conf = {}
+    tlog("hint_confirm", time.time() - t0, hints=len(texts), confirmed=len(conf),
+         paired=len([1 for r in conf.values() if r.get("paired")]))
+    return HintSet(texts, conf)
+
 
 def _hint_words(hints):
-    out = set()
+    """-> {word: weight}. Weight is 1.0 for a plain crowd word and CONFIRM_W for one that
+    came out of a hint a real catalogue agreed with.
+
+    Only words the hint ALREADY contributed can be re-weighted - the catalogue's own
+    spelling is never injected. That keeps the change monotone: no candidate can lose
+    backing it used to have, and no candidate can gain backing from nothing."""
+    conf = getattr(hints, "confirmed", None) or {}
+    out = {}
+
+    def add(text, w):
+        for word in re.sub(r"[^a-z0-9 ]", " ", (text or "").lower()).split():
+            if len(word) >= 3 and word not in _HINT_STOP and out.get(word, 0.0) < w:
+                out[word] = w
+
     for h in (hints or []):
-        for w in re.sub(r"[^a-z0-9 ]", " ", (h or "").lower()).split():
-            if len(w) >= 3 and w not in _HINT_STOP:
-                out.add(w)
+        add(h, 1.0)
+    for h in (hints or []):
+        rec = conf.get(h)
+        if rec and rec.get("paired"):
+            # only the SPAN that resolved earns the bump. On "Sound of da police x Just
+            # a lil bit" the half that a catalogue actually knows is the confirmed one.
+            add(rec.get("phrase") or h, CONFIRM_W)
     return out
 
 
@@ -855,30 +1865,67 @@ def _edit1(a, b):
     return diff + (la - i) + (lb - j) <= 1
 
 
-def _hint_backed(title_key, hwords):
-    """Does the crowd's naming support this title? Returns 2 (EXACT word match), 1
-    (fuzzy - people type it by ear, so "Blu - Arc" in the comments can mean the track
-    called "Ark"), or 0 (no support).
+def _hint_support(title_key, hwords):
+    """-> (rung, confirm). The crowd's support for this title, split into two terms that
+    callers rank SEPARATELY and at different priorities.
 
-    Exact must outrank fuzzy: two different commenters can each name a real, different
-    song with words one edit apart ("Ark" from NCS vs "Arc" by BLU are BOTH real,
-    distinct tracks). Fuzzy-matching them together erased the distinction and let a
-    weaker candidate steal credit for the stronger one's exact, specific hint - the
-    literal fix for "ARK from ncs" (Ship Wrek & Zookeepers' actual NCS release) losing
-    to "Arc - BLU" on a coin-flip tie."""
+        rung     2 EXACT word match / 1 fuzzy / 0 nothing. Byte-for-byte the old
+                 `_hint_backed` value.
+        confirm  1.0 the hint behind that match named a title AND an artist and a real
+                 catalogue agreed with both / 0 anything else, including a title-only
+                 catalogue hit (see CONFIRM_W for why that tier earns nothing).
+
+    Exact must outrank fuzzy, confirmed or not: two different commenters can each name a
+    real, different song with words one edit apart ("Ark" from NCS vs "Arc" by BLU are
+    BOTH real, distinct tracks). Fuzzy-matching them together erased the distinction and
+    let a weaker candidate steal credit for the stronger one's exact, specific hint - the
+    literal fix for "ARK from ncs" (Ship Wrek & Zookeepers' actual NCS release) losing to
+    "Arc - BLU" on a coin-flip tie.
+
+    WHY TWO TERMS AND NOT ONE NUMBER. Folding confirmation into the rung was tried first
+    and is wrong: it let one confirmed comment outrank THREE independent counter-speeds
+    agreeing on a different song (measured, synthetic hits, no Shazam). The hard rule here
+    is that audio evidence decides which song and metadata only nudges. So the callers put
+    `confirm` BELOW rate agreement in their sort keys - it breaks ties the audio could not
+    break, and nothing more. With no confirmations anywhere both call sites reduce to
+    exactly the tuples they used before."""
     if not hwords or not title_key:
-        return 0
-    best = 0
+        return (0, 0.0)
+    rung, conf = 0, 0.0
     for t in title_key.split():
         if len(t) < 3:
             continue
-        if t in hwords:
-            return 2
-        for w in hwords:
-            if _edit1(t, w) or (len(t) > 4 and
-                                difflib.SequenceMatcher(None, t, w).ratio() >= 0.85):
-                best = 1
-    return best
+        w = hwords.get(t) if hasattr(hwords, "get") else (1.0 if t in hwords else None)
+        if w is not None:
+            c = _conf_of(w)
+            if 2 > rung or (rung == 2 and c > conf):
+                rung, conf = 2, c
+            if conf >= 1.0:
+                return (2, 1.0)
+            continue                       # an exact rung already beats every fuzzy one
+        if rung >= 2:
+            continue
+        for word in hwords:
+            if _edit1(t, word) or (len(t) > 4 and
+                                   difflib.SequenceMatcher(None, t, word).ratio() >= 0.85):
+                c = _conf_of(hwords.get(word, 1.0) if hasattr(hwords, "get") else 1.0)
+                if 1 > rung or (rung == 1 and c > conf):
+                    rung, conf = 1, c
+    return (rung, conf)
+
+
+def _conf_of(w):
+    """Word weight -> confirmation strength. Zero when the hint did not confirm, which is
+    the case this whole path is careful never to punish - an edit no catalogue carries is
+    the answer this product exists to find."""
+    return 1.0 if w >= CONFIRM_W else 0.0
+
+
+def _hint_backed(title_key, hwords):
+    """The rung alone - kept as its own name because that is what the ranking doctrine
+    talks about, and because a caller that only wants "is this named by the crowd" should
+    not have to know about the confirmation term."""
+    return _hint_support(title_key, hwords)[0]
 
 
 def _consensus_id(hits, hints=None):
@@ -898,17 +1945,84 @@ def _consensus_id(hits, hints=None):
     if not groups:
         return None
 
-    def score(item):
+    def score(item, hw):
         k, g = item
         rates = {h.get("rate", 1.0) for h in g}
         clean = [h for h in g if not _junk_id(h)]
-        return (_hint_backed(k, hwords), len(rates), bool(clean),
+        rung, conf = _hint_support(k, hw)
+        # `conf` sits below rate agreement on purpose: a catalogue-confirmed comment is
+        # allowed to break a tie the audio could not break, never to overrule the audio.
+        # Above the rate-distance tie-break, which is a coin flip by comparison.
+        return (rung, len(rates), bool(clean), conf,
                 -min(abs((h.get("rate") or 1.0) - 1.0) for h in g))
-    k, g = max(groups.items(), key=score)
+
+    ranked = sorted(groups.items(), key=lambda it: score(it, hwords), reverse=True)
+    # THE CONFIRM STEP, GATED ON THE ONLY SITUATION THAT CAN USE IT. Two catalogue
+    # lookups cost ~0.5s (measured, cold, over a clip's top 3 hints), and phase 1 has no
+    # slack to hide them in - hints_join_wait already runs 0.67s median over 107 recorded
+    # lookups, so paying it on every clip would land straight on the critical path for a
+    # tie-break that almost never fires. It only CAN fire when the top two groups are
+    # level on everything the audio can say, so ask the catalogue exactly then and pay
+    # nothing the rest of the time.
+    if len(ranked) > 1 and hints:
+        a, b = score(ranked[0], hwords), score(ranked[1], hwords)
+        if a[:4] == b[:4] and a[3] == 0.0:
+            hints = confirmed_hints(hints, wall=1.0)
+            hwords = _hint_words(hints)
+            ranked = sorted(groups.items(), key=lambda it: score(it, hwords), reverse=True)
+    k, g = ranked[0]
     clean = [h for h in g if not _junk_id(h)]
     pool = clean or g
     # the least-decorated title in the winning group reads best as the song's name
     return min(pool, key=lambda h: len(h.get("title") or ""))
+
+
+# ONE COMPLETED SHAZAM PROBE = ONE REAL UNIT OF PROGRESS.
+#
+# Naming the song is a single awaited call from the server's point of view, so the app
+# had no event to move the bar on between "reading the clip" and "song identified". It
+# parked at 30% for the entire counter-speed sweep and then jumped - which is exactly
+# what Konnor reported ("stayed at 30% then just went right to this", twice). The sweep
+# is where the seconds go and it is the one part of the lookup that reports nothing.
+#
+# A probe finishing is real evidence that work happened, whichever way it finished: a
+# timeout burned the same wall-clock as a hit and the user is owed the same tick for it.
+# Deliberately a bare counter and not a percentage - the engine does not know how many
+# probes this clip will need, so the caller decides what a tick is worth.
+PROBE_HOOK = None
+
+
+def _probe_tick():
+    """Announce one finished Shazam probe. Never allowed to break a lookup."""
+    h = PROBE_HOOK
+    if h is None:
+        return
+    try:
+        h()
+    except Exception:
+        pass
+
+
+# ONE CANDIDATE CHECKED = ONE UNIT OF PROGRESS IN THE EDIT HUNT.
+#
+# The hunt's only outward signal used to be a candidate that VERIFIED, so the bar moved
+# on success and froze on everything else - and freezing is the common case, because most
+# candidates the search turns up are not the answer. Roham, watching it: "dont just stop
+# loading at a number as you're looking for it, the percentage goes up accordingly."
+#
+# This fires per candidate CHECKED, pass or fail. A download that came back wrong is work
+# done and time spent, and the bar should say so.
+CAND_HOOK = None
+
+
+def _cand_tick():
+    h = CAND_HOOK
+    if h is None:
+        return
+    try:
+        h()
+    except Exception:
+        pass
 
 
 async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
@@ -934,7 +2048,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     # is both faster and actually returns answers.
     sem = asyncio.Semaphore(1)
 
-    async def probe(off, rate, label, span=20, t_sink=None):
+    async def probe(off, rate, label, span=20, t_sink=None, timeout=None):
         async with sem:
             _pt0 = time.time()
             wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
@@ -947,7 +2061,11 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                 # answered with nothing. One slow probe must cost one probe, not the
                 # whole lookup - the sweep already runs many of these and any single
                 # one is expendable.
-                hit = await asyncio.wait_for(shazam(wav), timeout=SHAZAM_TIMEOUT)
+                # a rate other than 1.0 IS a counter-speed probe: harder question,
+                # answers later, and the thing the product exists to do
+                _to = timeout if timeout is not None else (
+                    SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+                hit = await asyncio.wait_for(shazam(wav), timeout=_to)
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                      off=off, rate=rate, span=span, hit=bool(hit))
             except asyncio.TimeoutError:
@@ -957,10 +2075,13 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                 # can re-fire exactly these probes if the whole pass came back empty.
                 if t_sink is not None:
                     t_sink.append((off, rate, label, span))
+                _probe_tick()
                 return None
             except Exception:
+                _probe_tick()
                 return None
         n["i"] += 1
+        _probe_tick()
         if hit:
             # span rides along with offset so the caller can report the ACTUAL slice
             # this answer came from. The UI draws that window on the clip's waveform,
@@ -969,7 +2090,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                        probes=n["i"])
         return hit
 
-    async def sweep_rates(off, rates, t_sink=None, need=2, budget=SWEEP_BUDGET):
+    async def sweep_rates(off, rates, t_sink=None, need=None, budget=SWEEP_BUDGET):
         """Counter-speed sweep with an early exit and a wall-clock ceiling.
 
         This replaced `asyncio.gather` over all 14 FINE_SWEEP rates, which was the single
@@ -996,6 +2117,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
         Order matters now that we exit early, so FINE_SWEEP is walked as written: the
         common TikTok/IG presets sit at the front (see the note on FINE_SWEEP).
         """
+        need = SWEEP_NEED if need is None else need
         t_start = time.time()
         out, agree = [], {}
         for rate, label in rates:
@@ -1089,12 +2211,15 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
         hw = _hint_words(hints)
 
         def _key(k):
-            # _hint_backed is now 2=exact / 1=fuzzy / 0=none, so two DIFFERENT real
-            # songs each named exactly by a different commenter ("ARK from ncs" vs
-            # "Blu - Arc") no longer collapse into one fuzzy bucket and fight over
-            # scraps - each gets full credit for its own exact word.
-            return (_hint_backed(k, hw), nrates(k),
-                    any(not _junk_id(h) for h in groups[k]))
+            # the rung is 2=exact / 1=fuzzy / 0=none, so two DIFFERENT real songs each
+            # named exactly by a different commenter ("ARK from ncs" vs "Blu - Arc") no
+            # longer collapse into one fuzzy bucket and fight over scraps - each gets
+            # full credit for its own exact word. `conf` then breaks a rung+rates tie
+            # toward the name a real catalogue actually carries - the skill's step 4 -
+            # and is deliberately ranked BELOW nrates so it cannot overrule the audio.
+            rung, conf = _hint_support(k, hw)
+            return (rung, nrates(k),
+                    any(not _junk_id(h) for h in groups[k]), conf)
         if groups:
             key_posted = _key(posted)
             # NEVER use max(groups, key=_key) to find a rival - on a tie it silently
@@ -1125,6 +2250,38 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                 # coverage to break a real ambiguity; the full 13-rate sweep does (Ark
                 # was independently confirmed at 4 rates: 1.15/1.20/1.25/1.30). Escalate
                 # only here, so the common case stays cheap.
+                #
+                # ASK THE CATALOGUE FIRST. This is the skill's step 4 and this branch is
+                # the cheapest possible place to spend it: the engine has just PROVEN the
+                # audio cannot separate the two, and the alternative on the next line is
+                # 13 more Shazam probes. Two keyless lookups cost ~0.5s measured; the
+                # sweep they may replace is budgeted in seconds and burns rate limit the
+                # owner's live demo shares. If a real catalogue carries one of these
+                # names, title and artist both, that decides it and the sweep never runs.
+                if hints:
+                    _hc0 = time.time()
+                    hints = confirmed_hints(hints, wall=1.0)
+                    hw = _hint_words(hints)      # _key reads this by closure
+                    key_posted = _key(posted)
+                    best = max(rivals, key=_key) if rivals else posted
+                    tlog("tie_confirm", time.time() - _hc0,
+                         broke=bool(_key(best) != key_posted))
+                if best != posted and _key(best) > key_posted:
+                    win = dict(_consensus_id(groups[best], hints) or groups[best][0])
+                    win["at"] = off0
+                    rest = [h for h in hits
+                            if _title_key(h.get("title")) not in (posted, best)]
+                    merged = [win] + rest
+                    primary = dict(merged[0])
+                    primary["songs"] = merged
+                    primary["multi"] = len(merged) > 1
+                    return primary
+                # The catalogue did not name a winner, so nothing has been decided and the
+                # sweep runs exactly as it always did. Deliberately NOT skipped when the
+                # confirmation merely favours the as-posted read: the sweep's other job is
+                # to surface a THIRD song neither of these probes saw, and letting a
+                # comment suppress audio coverage is the failure mode the hard rules were
+                # written about. Only a positive catalogue answer above short-circuits it.
                 # a genuine 2-way tie needs real coverage to break, so demand 3 agreeing
                 # rates here rather than the usual 2 before calling it
                 full = await sweep_rates(off0, FINE_SWEEP, need=3)
@@ -1529,6 +2686,55 @@ def _clean(s):
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", _ascii_fold(s) or "")).strip()
 
 
+def _build_style_map():
+    """Small-capital and modifier letters -> plain ASCII. NFKD does NOT decompose these.
+
+    Mathematical alphanumerics ("\U0001d495\U0001d48a\U0001d489\U0001d486\U0001d494") have compatibility decompositions and
+    _ascii_fold already handles them. The Phonetic Extensions small capitals do not:
+    NFKD leaves ᴏ ᴜ ɴ ᴅ ᴇ ʀ alone and the ASCII encode then DELETES them, so
+    "Sᴏᴜɴᴅᴇʀ" folded to the single letter "S". That is not cosmetic - it is why
+    the ZS4qqMqXq clip produced no creator tokens at all: `cred_toks` needs words of 4+
+    characters, "S" is one, so `creator_hit` in the download sort and `_creator_source`
+    in rank_key could never fire, and the credit turned into the garbage search query
+    "S Where Them Girls At". Built from the Unicode names so it stays correct without a
+    hand-maintained table."""
+    import unicodedata
+    m = {}
+    for cp in (list(range(0x0250, 0x0300)) + list(range(0x1D00, 0x1D80))
+               + list(range(0xA720, 0xA800))):
+        try:
+            n = unicodedata.name(chr(cp))
+        except ValueError:
+            continue
+        hit = (re.match(r"LATIN LETTER SMALL CAPITAL ([A-Z])$", n)
+               or re.match(r"MODIFIER LETTER (?:SMALL|CAPITAL) ([A-Z])$", n))
+        if hit:
+            m[cp] = hit.group(1).lower()
+    return m
+
+
+_STYLE_MAP = _build_style_map()
+
+
+def fold_name(s):
+    """_ascii_fold for a PERSON'S NAME - handles the stylised alphabets TikTok nicknames
+    are written in that NFKD alone drops on the floor.
+
+    Deliberately NOT folded into `_ascii_fold` itself. That function runs on every
+    candidate TITLE and feeds EDIT_WORDS / OTHER_RENDITION / the bass and speed labelling,
+    i.e. the ranking; widening it would change which titles read as edits across the whole
+    corpus and could not be shipped without the regression gate. This is used only where
+    we are reading somebody's NAME - the sound credit and the creator handle - so it
+    cannot move a crown by itself."""
+    import unicodedata
+    return unicodedata.normalize(
+        "NFKD", (s or "").translate(_STYLE_MAP)).encode("ascii", "ignore").decode()
+
+
+def clean_name(s):
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", fold_name(s) or "")).strip()
+
+
 def _is_named_credit(title):
     t = (title or "").strip().lower()
     return t and not any(w == t or t.startswith(w) for w in ORIGINAL_WORDS)
@@ -1684,6 +2890,235 @@ def _producer_quota(cands, max_dl, min_producer=2):
     return (head[:max_dl - len(extra)] + extra)
 
 
+def creator_queries(handle, nickname=None, title=None):
+    """The queries that reach an EDITOR'S OWN CATALOGUE.
+
+    An editor who posts mashups on TikTok almost always posts the same edits on YouTube
+    and SoundCloud under the same name, and that space is tiny and exactly on-topic next
+    to "all of SoundCloud". Measured, live:
+
+      * `917josh`                 -> soundcloud.com/917josh, the creator's own profile,
+                                     carrying "Slow Down vs. Outside vs. Dynamite vs. Give
+                                     Me Everything (917Josh Mashup)". That upload verifies
+                                     against the ZS4PDQ9F1 clip at core 1.000, and the
+                                     engine currently crowns NOTHING on that clip.
+      * `world.of.sounder`        -> the Sounder YouTube channel (4 of 10 rows), i.e. the
+                                     ZS4qqMqXq editor, found from the handle alone.
+      * `mashup by sounder`       -> soundcloud.com/user-271729859, the same editor's
+                                     SoundCloud, which the bare handle misses.
+      * `world of sounder` (dots  -> junk. The de-dotted form is NOT a substitute for the
+        turned to spaces)            verbatim handle; it is a cheap extra, nothing more.
+
+    So: the verbatim handle first (highest yield by a distance), then the handle with the
+    song, then the nickname-scoped forms that reach a profile the handle spelling misses.
+    Capped at 6 - these are per-query SoundCloud+YouTube round trips."""
+    out, seen = [], set()
+
+    def add(q):
+        q = (q or "").strip()
+        if q and len(q) > 2 and q.lower() not in seen:
+            seen.add(q.lower()); out.append(q)
+
+    h = (handle or "").strip()
+    nick = clean_name(nickname or "")
+    if h:
+        add(h)                                   # VERBATIM, dots and all - the big one
+        if title:
+            add("%s %s" % (h, _clean(title)))
+        loose = _clean(h)
+        if loose.lower() != h.lower():
+            add(loose)
+    if nick and nick.lower() != h.lower():
+        # the display nickname reaches uploads titled "(Mashup by Sounder)" that carry the
+        # pretty name and never the @handle. Scoped by an edit word so a common nickname
+        # ("astro", "cookie") doesn't just return the whole platform.
+        add("mashup by %s" % nick)
+        if title:
+            add("%s %s" % (nick, _clean(title)))
+    return out[:6]
+
+
+def creator_search(handle, nickname=None, title=None, per=6):
+    """Run the creator lane. Same search_edits path, same verify()-decides-everything
+    contract as every other query - this only changes which URLs get found.
+
+    Tagged `query="creator"` so `_creator_extra` can add download slots for it: an
+    editor's own upload is routinely titled nothing like the base song ("Slow Down vs.
+    Outside vs. Dynamite vs. Give Me Everything") and so scores near-zero on the generic
+    title-relevance sort that decides what gets downloaded."""
+    qs = creator_queries(handle, nickname, title)
+    if not qs:
+        return []
+    found = search_edits(qs, per)
+    for c in found:
+        c["query"] = "creator"
+        # PULL MORE OF A LONG UPLOAD, IN THE FIRST DOWNLOAD, NOT AS A RETRY.
+        # Editors pad their own re-uploads to dodge Content ID - 917Josh literally titles
+        # them "*EXTRA 10 MIN DUE TO COPYRIGHT*" - so the 20s head of the file is the
+        # padding, not the music. Measured on ZS4PDQ9F1 vs the creator's own SoundCloud:
+        # head-to-head verify reads core 0.142 and the candidate is dropped, while the
+        # same file compared at offset 30s reads core 1.000. Grabbing 180s instead of 20s
+        # costs 3.74s vs 1.88s for that download, and it happens inside the existing
+        # 16-wide download pool alongside a dozen others, so it is not on the wall clock.
+        # Only for uploads that ARE long - a normal-length track gains nothing.
+        try:
+            if float(c.get("duration") or 0) > 45:
+                c["dl_seconds"] = 180
+        except (TypeError, ValueError):
+            pass
+    return found
+
+
+def _creator_extra(cands, head, want=3):
+    """Creator-lane candidates to download IN ADDITION TO the normal head - never
+    instead of one.
+
+    The sound's owner MADE this audio, so provenance beats title overlap, and their own
+    upload is routinely titled nothing like the base song ("Slow Down vs. Outside vs.
+    Dynamite vs. Give Me Everything" against a Shazam base of "Slow Down"), which means
+    it scores near-zero on the relevance sort that decides what gets downloaded and would
+    never reach the verifier.
+
+    `_producer_quota` solves the same problem by DISPLACING two candidates out of the
+    head. This one appends instead, and the caller raises max_dl to match. That costs two
+    extra downloads inside an already 16-wide pool - no wall time - and it buys something
+    worth more right now: the pool every existing clip is scored on stays byte-identical,
+    so this whole lane can only ever ADD a candidate, never remove one. With the five-clip
+    regression gate unrunnable (it needs Shazam, and the owner's demo shares that quota)
+    that property is the difference between shippable and shelved."""
+    if not head:
+        return []
+    seen = {id(c) for c in head}
+    pool = [c for c in cands if c.get("creator_upload") and id(c) not in seen]
+    if not pool:
+        return []
+    # PICKED ON ITS OWN TERMS, NOT BY `_dl_priority`. Two of that sort's keys are exactly
+    # wrong for this pool and cost the measured case:
+    #   * `_artist_hit` - an editor's mashup title names the SONGS, not the base artist
+    #     ("Slow Down vs. Outside vs. Dynamite vs. Give Me Everything" never says Selena
+    #     Gomez), so every generic re-upload outranks the creator's own file.
+    #   * `_is_compilation` - anything over 10 minutes. Editors pad their own re-uploads
+    #     past that line ON PURPOSE to dodge Content ID and say so in the title ("*EXTRA
+    #     10 MIN DUE TO COPYRIGHT*"). MEASURED: this sank the one correct upload in a
+    #     57-row creator pool to last, so the two reserved slots went to a live DJ set and
+    #     a best-of mix and the align pass never saw the right file.
+    # The compilation guard is right and stays - it just belongs at RANKING time, where
+    # `rank_key` still applies it, not at "is this worth one download".
+    def _pick(c):
+        return (-(c.get("title_hits") or 0), -(c.get("song_cov") or 0),
+                -(c.get("plays") or 0))
+    return sorted(pool, key=_pick)[:want]
+
+
+# ============================================================ comment links as candidates
+# A URL somebody pasted in the comments is not a hint about the answer, it IS the answer -
+# no title to parse, no query to guess, nothing to interpret. It is also the one signal on
+# this belt that can be added with no risk to anything already working: it still has to
+# survive verify() against the real clip audio, so a wrong link costs exactly one download
+# and can never become a wrong crown.
+#
+# The case it was built from (v_d61ad2, Mariah Carey "Obsessed"): the sound's own creator
+# replied to "name of the song ?" with `m.soundcloud.com/fvckaron/obsessed` and 94 people
+# liked it. `comment_song_hints` reads titles, so it returned NOTHING for that comment,
+# and `comment_audio_urls` - which does read it - had zero call sites in the repo.
+
+def _slug_title(url):
+    """A title from the URL's own path. NOT metadata, not a guess - the uploader typed
+    this slug. `soundcloud.com/fvckaron/obsessed` -> ("obsessed", "fvckaron").
+
+    Only a placeholder until `_meta` answers: it exists so a comment link still carries
+    real words into `title_hits` / `song_cov` / `_dl_priority` if the metadata lookup
+    times out, instead of entering the pool as an untitled row that every ranking tier
+    reads as junk. YouTube watch URLs have no slug at all and correctly get ("", "")."""
+    m = re.search(r"soundcloud\.com/([\w\-]+)/([\w\-]+)", url or "", re.I)
+    if not m:
+        return "", ""
+    return m.group(2).replace("-", " ").strip(), m.group(1).replace("-", " ").strip()
+
+
+def comment_candidates(links):
+    """[{"url","likes","from_creator"}] from comment_audio_urls(with_meta=True)
+    -> candidate rows in the same shape `search_edits` returns.
+
+    Tagged `query="comment"` so `_comment_extra` can hand them their own download slots:
+    a linked upload is routinely titled nothing like the base song, so it would score
+    near-zero on the title-relevance sort that decides what actually gets downloaded -
+    the same problem the creator lane hit, with the same fix."""
+    out = []
+    for L in (links or []):
+        u = (L or {}).get("url") if isinstance(L, dict) else L
+        if not u:
+            continue
+        ti, up = _slug_title(u)
+        out.append({"title": ti, "url": u, "uploader": up,
+                    "source": ("soundcloud" if "soundcloud.com" in u else "youtube"),
+                    "plays": 0, "likes": 0, "query": "comment",
+                    "comment_link": True,
+                    "comment_likes": int((L or {}).get("likes") or 0)
+                                     if isinstance(L, dict) else 0,
+                    "creator_link": bool(isinstance(L, dict) and L.get("from_creator"))})
+    return out
+
+
+def _comment_meta(cands):
+    """Real title/uploader/plays for the comment links, in parallel.
+
+    Discovery deliberately never spawns yt-dlp per URL (see the note in find_edit - it
+    cost ~48s of a 90s lookup across ~25 candidates). This is at most three URLs and it is
+    submitted alongside the SoundCloud/YouTube search, which measures 7-8s, so it hides
+    completely: one `_meta` call is 0.8-2.7s. The title matters here because a candidate
+    the ranker cannot read is a candidate the ranker distrusts."""
+    if not cands:
+        return cands
+    try:
+        with ThreadPoolExecutor(max_workers=min(3, len(cands))) as ex:
+            for c, (pl, ti, up) in zip(cands, ex.map(_meta, [c["url"] for c in cands])):
+                if pl:
+                    c["plays"] = pl
+                if ti:
+                    c["title"] = ti
+                if up:
+                    c["uploader"] = up
+                c["link_alive"] = bool(ti or pl)
+    except Exception:
+        pass
+    return cands
+
+
+def _comment_extra(comment_cands, cands, head, want=3):
+    """Comment links to download IN ADDITION TO the normal head - never instead of one.
+
+    Same contract as `_creator_extra`, and for the same reason: the pool every existing
+    clip is scored on has to stay byte-identical or this cannot ship without the five-clip
+    regression gate, which needs Shazam. A URL the main search already found is not
+    duplicated - it is TAGGED in place, because knowing the creator linked it is what
+    earns it the `_creator_source` tier, and that is worth more than a second download of
+    the same file. If that tagged row missed the head, it comes back here for a slot: the
+    creator naming a file is exactly the evidence the title-relevance sort cannot see.
+
+    Creator-posted first, then by how many people liked the comment - that ordering is
+    the entire evidential content of a comment link."""
+    if not comment_cands:
+        return []
+    by_url = {c.get("url"): c for c in cands}
+    in_head = {id(c) for c in (head or [])}
+    out = []
+    for c in comment_cands:
+        hit = by_url.get(c["url"])
+        if hit is None:
+            out.append(c)
+            continue
+        hit["comment_link"] = True
+        hit["creator_link"] = hit.get("creator_link") or c.get("creator_link")
+        hit["comment_likes"] = max(hit.get("comment_likes") or 0,
+                                   c.get("comment_likes") or 0)
+        if id(hit) not in in_head:
+            out.append(hit)
+    out.sort(key=lambda c: (0 if c.get("creator_link") else 1,
+                            -(c.get("comment_likes") or 0)))
+    return out[:want]
+
+
 def _pair_queries(pair):
     """The two-title forms a mashup upload is actually TITLED. Uploaders overwhelmingly
     write "Song A x Song B (Mashup)" or "Artist VS Artist - A X B", so once we know BOTH
@@ -1712,7 +3147,19 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
     credit verbatim; (3) the Shazam base VERBATIM + edit-family token variants
     (tiktok version / hoodtrap / mylancore / bass boosted) a plain search never
     reaches. Found by NAME + tag, never plays; the verifier throws out misses, so a
-    broad edit-tagged pool is safe. Cap 14 - pull more, let the verifier rank."""
+    broad edit-tagged pool is safe. Cap 14 - pull more, let the verifier rank.
+
+    THE CREATOR LANE DELIBERATELY DOES NOT LIVE HERE, and it is worth writing down why,
+    because this is the obvious place to reach for. Two reasons, both measured:
+      * `add()` runs `_clean`, which strips punctuation - so the one query that actually
+        finds the editor's channel, the VERBATIM dotted handle "world.of.sounder", turns
+        into "world of sounder", and that returns pure junk (measured: 0 of 10 rows on the
+        creator, versus 4 of 10 for the dotted form).
+      * this list is hard-capped at 16 and every entry costs a SoundCloud AND a YouTube
+        round trip. Appending here would displace an existing query on every clip, which
+        is a ranking change for the whole corpus.
+    It lives beside `_producer_search` instead - the established pattern for "chase this
+    specific person's own profile" - and runs concurrently, so it is purely additive."""
     q, seen = [], set()
     def add(s):
         s = _clean(s)
@@ -2017,26 +3464,68 @@ def _get_google():
     return _google_worker
 
 
-def web_search_edits(queries):
-    """Google first (real browser, sees what a person searching would see) - DuckDuckGo
-    only as a silent fallback if Playwright/Chromium isn't available on this machine.
-    Dedup by url; plays come later (metadata)."""
+# Google is CAPTCHA-walled from this machine (measured 2026-08-13, see web_search_edits).
+# The worker cannot tell us that through `_ok` - Chromium launches fine and every search
+# just returns [] two to six seconds later. So the wall is tracked separately: probe it
+# once, and once it has answered nothing, stop paying for it. Re-armed on a long timer
+# rather than never, because the wall is an IP-reputation state, not a permanent fact.
+_GOOGLE_WALL_RETRY = 3600.0
+_google_walled_until = 0.0
+
+
+def _google_alive():
+    return time.time() >= _google_walled_until
+
+
+def _google_mark_walled():
+    global _google_walled_until
+    _google_walled_until = time.time() + _GOOGLE_WALL_RETRY
+
+
+def web_search_edits(queries, budget=None):
+    """The open-web lane. See websearch.py for the full backend survey; the short
+    version, all MEASURED on this machine 2026-08-13:
+
+      * GOOGLE IS CAPTCHA-WALLED. The headless request 302s to google.com/sorry/index
+        ("Our systems have detected unusual traffic from your computer network"), 3
+        anchors, zero results. `_ok` stays True because Chromium launched fine, so this
+        failed SILENTLY: every g.search() returned [] after 2.5-6.2s of waiting, and
+        with 2-4 web_q that is the entire 10s WEB_DEADLINE spent on a closed door. We
+        do not try to get around a bot check, so Google is simply gone from the hot
+        path - it is probed once per process and then skipped (see _google_walled).
+      * THE OLD DDG FALLBACK BLOCKED ITSELF. It fired every query through
+        `ex.map(_ddg, queries)` on up to 6 threads. Measured: 4 concurrent requests all
+        return HTTP 202 and a 14KB soft-block page in 0.26s wall. `_ddg` never checked
+        the status, and a 202 body simply has no uddg= links, so a total block looked
+        exactly like "the web had no answer". Serial+paced returns 3-9 audio urls per
+        query at ~1.0-1.8s each.
+
+    So the lane is now websearch.web_audio_search: serial, paced, status-aware, with a
+    wall-clock budget. Everything it returns is a candidate that still has to clear
+    verify() and CORE_KEEP like any other."""
     seen, out = set(), []
-    g = _get_google()
-    if g._ok:
-        for q in queries:
-            for r in g.search(q):
+    # Google, once, only while it is not known-walled. Costs nothing after the first
+    # detection and lets the lane recover for free if the wall ever lifts.
+    # prewarm() normally settles this before any lookup runs, so this block is dead
+    # weight on a warmed server. It stays for the CLI/first-call case, and it is ONE
+    # query with a short timeout - never a fan-out - because a walled Google's only
+    # possible contribution is latency.
+    if _google_alive() and queries:
+        g = _get_google()
+        if g._ok:
+            for r in g.search(queries[0], timeout=6):
                 if r["url"] not in seen:
                     seen.add(r["url"]); out.append(r)
-        if out:
-            return out
-    with ThreadPoolExecutor(max_workers=min(6, len(queries) or 1)) as ex:
-        for rows in ex.map(_ddg, queries):
-            for r in rows:
-                u = r["url"]
-                if u in seen:
-                    continue
-                seen.add(u); out.append(r)
+            if not out:
+                _google_mark_walled()
+    if _web is not None:
+        try:
+            for r in _web.web_audio_search(queries, budget=budget if budget is not None
+                                           else max(2.0, WEB_DEADLINE - 2.0)):
+                if r["url"] not in seen:
+                    seen.add(r["url"]); out.append(r)
+        except Exception:
+            pass
     return out
 
 
@@ -2435,7 +3924,8 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         i, c = i_c
         c["_done"] = True
         _dt0 = time.time()
-        got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)))
+        got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)),
+                      seconds=(c.get("dl_seconds") or 20))
         _dt1 = time.time()
         if not got:
             tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
@@ -2443,6 +3933,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             c.update(_spec=None, spectral=-1.0, fp=0.0, arr=0.0, vscore=0.0, core=0.0,
                      score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
                      clip_tilt=0.0, cand_tilt=0.0)
+            _cand_tick()
             return
         v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
         tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
@@ -2464,15 +3955,23 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         # meaningful share of candidates. Removed: it was pure latency.
         c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
         c["path"] = got                     # kept so the caller can measure speed vs it
+        # slope_delta rides along because the bass claim needs BOTH halves: bass_delta is
+        # speed-contaminated (a 0.8x slow forges as much apparent bass as a real 14 dB
+        # shelf) and slope_delta is pitch-shift invariant. It was computed in verify() and
+        # dropped here, so bass_confirmed was False on 100% of live rows and the dual gate
+        # could never fire - which is why "bass boosted" kept reaching Roham unverified.
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
                  vscore=v["score"], score=v["score"], same=v["same"],
                  vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
+                 slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
+                 cand_slope=v.get("cand_slope"),
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
         # THE MOMENT A CANDIDATE IS VERIFIED. Everything above is this candidate's own
         # audio evidence against the clip, complete - the rest of find_edit only decides
         # ORDER. So this is the one honest place to tell the UI "another one just
         # confirmed" instead of making the user watch a bar for 20-40s. Optional and
         # swallowed: a streaming consumer must never be able to break the hunt.
+        _cand_tick()
         if on_scored is not None:
             try:
                 on_scored(c)
@@ -2489,7 +3988,8 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
 
 async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
                     edit_label, known_dir=None, handle=None, max_dl=14,
-                    hints=None, shazam_reliable=True, pair=None, on_cand=None):
+                    hints=None, shazam_reliable=True, pair=None, on_cand=None,
+                    creator=None, comment_urls=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -2501,10 +4001,46 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     result is byte-identical either way - it only lets a caller show the user each hit as
     it lands instead of after the whole hunt. It is called ONLY for candidates that both
     satisfy the real `editmatch` predicate AND clear CORE_KEEP, i.e. the same bar the
-    crown itself has to clear, so nothing unverified can ever be surfaced as confirmed."""
+    crown itself has to clear, so nothing unverified can ever be surfaced as confirmed.
+
+    `creator` is the SOUND'S OWNER as resolved by get_source/sound_creator - the person
+    who MADE this audio, which is not the same thing as the person who posted the clip.
+    When present it opens the creator lane: search that editor's own SoundCloud/YouTube
+    catalogue. Runs concurrently with the main search, so it costs no wall time unless
+    it is the slowest leg.
+
+    `comment_urls` are audio links people PASTED IN THE COMMENTS
+    (comment_audio_urls(with_meta=True), creator-posted first). They skip search entirely
+    and enter the candidate pool as URLs, because a link needs no interpretation. They are
+    APPENDED to the download head, never substituted into it, so the pool every existing
+    clip is scored on is unchanged and the only reachable outcome is that a new,
+    audio-verified candidate wins."""
     queries = build_queries(credit_title, credit_author, base_title, base_artist,
                             edit_label, handle=handle, hints=hints,
                             shazam_reliable=shazam_reliable, pair=pair)
+    # The links, as rows. Built before anything else so the fast path can try them too:
+    # they are the cheapest evidence on the belt and the whole point is not to search.
+    # Their titles are resolved on a thread from here, because BOTH paths need them and
+    # the fast path returns in ~3s: started now, the lookup is finished by the time
+    # anything wants to read it, and a row that wins on a comment link then shows the
+    # upload's real name instead of its URL slug.
+    cm_cands = comment_candidates(comment_urls)
+    f_cm = None
+    if cm_cands:
+        _cm_ex = ThreadPoolExecutor(max_workers=1)
+        f_cm = _cm_ex.submit(_comment_meta, cm_cands)
+        # Shut down IMMEDIATELY, wait=False: the queued job still runs to completion, the
+        # worker thread exits when it is done, and `find_edit` can now raise from any of
+        # the dozen places below without leaking an idle thread into a long-lived server.
+        _cm_ex.shutdown(wait=False)
+
+    def _join_cm(budget=3.0):
+        if f_cm is None:
+            return
+        try:
+            f_cm.result(timeout=max(0.1, budget))
+        except Exception:
+            pass                       # slug titles are the fallback, see _slug_title
     # ---------------------------------------------------------------- FAST PATH
     # COMMENTS FIRST. When the crowd has already named the edit in the comments, the
     # entire broad hunt is wasted work: measured on @kyks.edits7's clip the comment read
@@ -2521,7 +4057,11 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # AUDIO that decides: nothing is returned unless it verifies at FAST_EXIT_CORE
     # (0.95, near-identity). The Levels x Part Of Me mashup measures 0.975 against the
     # clip, so this turns a ~90s broad sweep into one short check on that clip.
-    if hints or pair:
+    # A COMMENT LINK IS FAST-PATH EVIDENCE TOO, and it is the only kind that costs no
+    # search at all. It is APPENDED to the hint pool rather than replacing it (the pool
+    # every existing clip sees is unchanged, exactly as with the download head) and the
+    # exit bar is untouched at FAST_EXIT_CORE - the audio still decides.
+    if hints or pair or cm_cands:
         hq, seen_hq = [], set()
         for q in _pair_queries(pair):
             if q.lower() not in seen_hq:
@@ -2530,10 +4070,27 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             for q in (_clean(h), _clean("%s %s" % (h, edit_label or ""))):
                 if q and len(q) > 3 and q.lower() not in seen_hq:
                     seen_hq.add(q.lower()); hq.append(q)
-        if hq:
+        if hq or cm_cands:
             _ft0 = time.time()
-            hc = search_edits(hq, 6)[:FAST_POOL]
-            tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc))
+            hc = (search_edits(hq, 6)[:FAST_POOL] if hq else [])
+            # Tag, don't drop. When the hint search happens to surface the very URL the
+            # creator linked - measured on this clip, where "obsessed mariah carey" finds
+            # it in 2.8s - the row must still carry the provenance, or the one fact that
+            # would break a tie between two 1.000s is thrown away at the door.
+            _fast_by_url = {c["url"]: c for c in hc}
+            _fresh = []
+            for c in cm_cands:
+                hit = _fast_by_url.get(c["url"])
+                if hit is None:
+                    _fresh.append(c)
+                else:
+                    hit["comment_link"] = True
+                    hit["creator_link"] = (hit.get("creator_link")
+                                           or c.get("creator_link"))
+                    hit["comment_likes"] = c.get("comment_likes")
+            hc = hc + _fresh
+            tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc),
+                 ncomment=len(cm_cands))
             if hc:
                 ftmp = tempfile.mkdtemp()
                 fctx = _verify.prepare_clip(clip_audio)
@@ -2547,8 +4104,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                     def _fast_hit(c):
                         if (c.get("core") or 0) >= FAST_EXIT_CORE:
                             on_cand(c)
-                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL, clip_ctx=fctx,
-                                    on_scored=_fast_hit)
+                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL + len(cm_cands),
+                                    clip_ctx=fctx, on_scored=_fast_hit)
                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
                 good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
                 if good:
@@ -2556,7 +4113,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                         c["editmatch"] = True; c["strong_core"] = True
                         c["final"] = c.get("core")
                         c["score"] = c.get("core")
-                    good.sort(key=lambda c: (-(c.get("core") or 0), -(c.get("plays") or 0)))
+                    # THE CREATOR'S OWN LINK BREAKS A TIE, NOT A SCORE. Everything in
+                    # `good` is already at near-identity, so the gap between them is
+                    # noise; when the person who made the audio has posted the file, that
+                    # is the upload to hand back. Inert on every clip recorded before this
+                    # lane existed - nothing carried `creator_link`.
+                    _join_cm()          # real titles for any comment row about to be shown
+                    good.sort(key=lambda c: (-(c.get("core") or 0),
+                                             0 if c.get("creator_link") else 1,
+                                             -(c.get("plays") or 0)))
                     return {"queries": hq, "ranked": good, "decisive": True,
                             "clip_ok": True, "bass_boosted": False,
                             "clip_tilt": 0.0, "target_tilt": 0.0,
@@ -2573,11 +4138,27 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # "Ship Wrek & Zookeepers - Ark [NCS Release]" on the first page. The old version
     # only ever searched queries[:2] (comment-hint or credit-based, not necessarily the
     # confirmed identification) plus one heavily-biased template.
-    web_q = queries[:2]
-    if base_title and shazam_reliable:
-        web_q = [_clean("%s %s" % (base_artist or "", base_title))] + web_q
-    if base_title:
-        web_q += [_clean("%s %s slowed reverb edit tiktok" % (base_artist or "", base_title))]
+    # WEB QUERIES ARE NOT THE SC/YT QUERIES. They used to be `queries[:2]` plus two
+    # hand-built strings, i.e. whatever the platform search happened to be asking. But
+    # the web is a different index and the budget is far tighter (a paced DDG query is
+    # ~1.0-1.8s and the bucket empties after about seven), so the shapes are chosen for
+    # the one-or-four queries we can actually afford. They are the owner's own manual
+    # habit, written down in websearch.build_web_queries: "<song> slowed" (the edit type
+    # the Trophies clip proved we never searched), "<song> tiktok version" (his literal
+    # phrasing), "<song> <editor handle>" (the creator IS the editor - the catch he made
+    # by hand on the Where Them Girls At mashup, which the engine had never looked for),
+    # and "<song> x" (mashup notation).
+    web_q = []
+    if _web is not None:
+        try:
+            web_q = _web.build_web_queries(
+                base_title if shazam_reliable else None,
+                base_artist if shazam_reliable else None,
+                credit_title, credit_author, edit_label, handle, hints)
+        except Exception:
+            web_q = []
+    if not web_q:
+        web_q = queries[:2]
     # PRODUCER/COLLABORATOR CHASE handles + title: sometimes the exact edit is uploaded
     # to the producer's own account, findable only by searching THEM, not the song.
     # Three sources, in trust order: (1) a "(prod. X)" credit sitting in a title we
@@ -2609,10 +4190,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                     prod_handles.append(h); seen_h.add(h.lower())
         return prod_handles[:2]
 
+    # THE CREATOR LANE. The sound's owner is the person who MADE this audio, and an
+    # editor's own catalogue is a tiny, on-topic corner of SoundCloud/YouTube next to the
+    # whole platform. Submitted alongside the main search rather than after it, exactly
+    # like the producer chase, so its ~2s of SC/YT round trips hides under the main
+    # search's 7-8s and the hunt's wall time is unchanged unless it is the slowest leg.
+    _cre_handle = (creator or {}).get("creator") if isinstance(creator, dict) else creator
+    _cre_nick = (creator or {}).get("nickname") if isinstance(creator, dict) else None
+    _cre_nick = _cre_nick or credit_author
     _t_main = time.time()
     # see the note at the producer chase: a `with` block would shutdown(wait=True) and
     # undo the web deadline entirely. ex is shut down (wait=False) after the web join.
-    ex = ThreadPoolExecutor(max_workers=2)
+    ex = ThreadPoolExecutor(max_workers=3)
+    f_cre = (ex.submit(creator_search, _cre_handle, _cre_nick, prod_title)
+             if _cre_handle else None)
     f_sc = ex.submit(search_edits, queries, 8)
     # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
     # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
@@ -2706,7 +4297,24 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # this, Anytunz's own "Gut Genug (Marimba Ringtone Cover)" lost every download slot
     # because "cover" zeroes out edit_titled, and the clip got answered with a 0-play
     # re-upload instead of the creator's original.
-    cred_toks = [w for w in _clean(credit_author or "").lower().split() if len(w) >= 4]
+    # clean_name, not _clean: the credited name is a PERSON, routinely typed in a
+    # stylised alphabet. `_clean` folds "Sᴏᴜɴᴅᴇʀ" to the single letter "S" (small capitals
+    # have no NFKD decomposition, so the ASCII encode deletes them), which produced ZERO
+    # tokens of length 4+ - so on the ZS4qqMqXq clip `creator_hit` below and
+    # `_creator_source` in rank_key were both structurally unable to fire, and the engine
+    # crowned a generic "Bass Boosted" upload over the editor's own mashup. clean_name
+    # gives "Sounder".
+    # THE RESOLVED @HANDLE TOO. `credit_author` is the display nickname; the sound's owner
+    # id ("world.of.sounder", "917JOSH") is the thing an uploader actually puts in a
+    # channel name, and it is the only spelling that matches a SoundCloud profile.
+    _cred_names = [credit_author or ""]
+    if _cre_handle:
+        _cred_names.append(_cre_handle)
+    cred_toks, _seen_ct = [], set()
+    for _nm in _cred_names:
+        for w in clean_name(_nm).lower().split():
+            if len(w) >= 4 and w not in _seen_ct:
+                _seen_ct.add(w); cred_toks.append(w)
     # The CONFIRMED base artist (from Shazam, already trust-gated) is stronger evidence
     # than any title-word overlap. Title words alone can't tell "Ship Wrek & Zookeepers -
     # Ark" from an unrelated "Ark Patrol" - both contain "ark" - and on ambient/slowed
@@ -2809,8 +4417,44 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             w["plays"] = w.get("plays") or 0; w["likes"] = 0; w["query"] = "web"
         cands += web
     result = {"queries": queries, "ranked": [], "decisive": False}
-    if not cands:
+    # A COMMENT LINK IS A CANDIDATE EVEN WHEN THE SEARCH FOUND NOTHING. This used to be
+    # `if not cands`, which threw the links away on exactly the clips they are worth the
+    # most on: an edit no query reaches is precisely the one somebody had to paste a link
+    # for. The pool is still built the same way below - the links are appended, never
+    # substituted - so on every clip that HAS search results this line changes nothing.
+    if not cands and not cm_cands:
         return result
+
+    # ---- creator lane results. Joined on the SAME deadline the web search gets, for the
+    # same reason: it is a widener, so a slow SoundCloud must not set the floor for the
+    # whole lookup. Measured on the two live cases below it lands in ~2s, well inside.
+    if f_cre is not None:
+        _tc0 = time.time()
+        try:
+            _cre = f_cre.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+        except Exception:
+            _cre = []
+        # A URL THE MAIN SEARCH ALREADY FOUND STILL GAINS ITS PROVENANCE. Dropping the
+        # duplicate outright threw away the whole point of the lane in the measured case:
+        # the main search's plain "<artist> <song> slowed" query DOES surface
+        # soundcloud.com/917josh/slow-down-vs-outside-vs-1, it just scores it 0.142
+        # head-to-head against a padded 13-minute file and drops it. Knowing it is the
+        # sound creator's own upload is exactly what earns it the extra look below.
+        _by_url = {c["url"]: c for c in cands}
+        _new = 0
+        for c in _cre:
+            hit = _by_url.get(c["url"])
+            if hit is not None:
+                hit["creator_upload"] = True
+                if c.get("dl_seconds") and not hit.get("_done"):
+                    hit["dl_seconds"] = c["dl_seconds"]
+                if not hit.get("duration"):
+                    hit["duration"] = c.get("duration")
+            else:
+                c["creator_upload"] = True
+                cands.append(c); _by_url[c["url"]] = c; _new += 1
+        tlog("creator_search", time.time() - _tc0, handle=_cre_handle,
+             nc=len(_cre), new=_new, dup=len(_cre) - _new)
 
     # ---- producer chase results, with the DEFINITIVE handle list (now that web titles
     # are in the pool). Nearly always identical to the speculative list, in which case
@@ -2847,8 +4491,50 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     cands.sort(key=_dl_priority)
     _tm0 = time.time()
     head = _producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl)
-    n2 = _download_and_score(head, clip_audio, tmp, n, max_dl, clip_ctx=clip_ctx,
-                             on_scored=_hit)
+    # APPENDED, NOT SUBSTITUTED - see _creator_extra. The head above is exactly what this
+    # engine downloaded before the creator lane existed, so nothing that used to be
+    # scored stops being scored.
+    #
+    # GATED ON A CHEAP PRECONDITION, because the half of this lane that costs real time
+    # is right here. The SEARCH is free (it overlaps the main one and joins at 0.0s wall),
+    # but three extra 180-second downloads plus the alignment slide MEASURED 7.5s + 5.1s
+    # on the 917JOSH clip. That is too much to spend on every lookup for a product being
+    # timed for marketing. So it only runs when the audio has NOT already settled the
+    # question: if wave 1 already produced a candidate at CORE_SAME - provably the same
+    # recording, whatever its title claims - the clip is answered and the creator's
+    # channel is not worth 12 seconds.
+    # THE TRADE, stated so the next session can reverse it in one line: this gives up the
+    # case where the creator's own upload and a stranger's re-upload BOTH verify at 1.000
+    # and rank_key's `_creator_source` tier should have preferred the creator's. Those
+    # clips still get the right recording, just possibly the wrong URL for it.
+    _cre_settled = any((c.get("core") or 0) >= CORE_SAME for c in cands)
+    _cre_extra = [] if _cre_settled else _creator_extra(cands, head)
+    # ---- COMMENT LINKS. Appended on the same terms as the creator lane, and NOT behind
+    # the `_cre_settled` gate: that gate buys back three 180-second downloads plus an
+    # alignment slide, while this is at most three ordinary 20-second fetches, and the
+    # case it exists for is precisely the one the gate would skip - a candidate already at
+    # CORE_SAME does not tell you WHICH upload of that recording the clip used, and the
+    # creator's own link does.
+    _join_cm(max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+    _cm_extra = _comment_extra(cm_cands, cands, head)
+    _term_hits([c for c in _cm_extra if "title_hits" not in c])
+    for c in _cm_extra:
+        if id(c) not in {id(x) for x in cands}:
+            cands.append(c)
+    tlog("comment_links", 0.0, n=len(cm_cands), extra=len(_cm_extra),
+         creator=sum(1 for c in _cm_extra if c.get("creator_link")))
+    # DEDUP BY IDENTITY, not by URL: one upload can be both the creator's own channel and
+    # the file they linked, and the same object appearing twice in `head` would be handed
+    # to two download workers at once (`_download_and_score` snapshots its todo list
+    # before any of them sets `_done`).
+    _seen_head = {id(c) for c in head}
+    _appended = []
+    for c in _cre_extra + _cm_extra:
+        if id(c) not in _seen_head:
+            _seen_head.add(id(c)); _appended.append(c)
+    head = head + _appended
+    n2 = _download_and_score(head, clip_audio, tmp, n, max_dl + len(_appended),
+                             clip_ctx=clip_ctx, on_scored=_hit)
     head_ids = {id(c) for c in head}
     stripped = 0
     for c in _wave1_done:
@@ -2877,6 +4563,102 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                             on_scored=_hit)
         cands += more
         tlog("extra_dir_dl", time.time() - _te0, n=len(more))
+
+    # ---- CREATOR-LANE ALIGNMENT.
+    #
+    # verify() compares the clip against the candidate's FIRST 20 SECONDS, and an editor's
+    # own re-upload of their own edit is routinely padded - both to dodge Content ID
+    # ("*EXTRA 10 MIN DUE TO COPYRIGHT*", the uploader says so in the title) and because
+    # they post the long DJ version of a section TikTok only used 25s of. So the lane
+    # finds exactly the right file and verify() reads the padding.
+    #
+    # MEASURED on ZS4PDQ9F1, an "original sound - 917josh_" clip the engine crowns NOTHING
+    # on today, against soundcloud.com/917josh/slow-down-vs-outside-vs-1, the sound
+    # creator's own upload:
+    #     head-to-head        core 0.142   -> below CORE_KEEP, dropped
+    #     aligned at +30s     core 1.000   same=True
+    # The slide over a 125s file costs 1.00s (11 offsets x 0.102s verify + 0.035s cut) and
+    # runs concurrently across at most three candidates.
+    #
+    # FOUR THINGS KEEP THIS FROM BECOMING A GENERAL RESCUE, which is what it must not be -
+    # sliding a long file past a clip gives many chances to hit a spurious high score, and
+    # core saturation on low-transient audio is a documented failure mode here:
+    #   1. PROVENANCE. Only uploads on the sound creator's own channel are eligible - or,
+    #      now, a file the CREATOR THEMSELF LINKED in the comments, which is the same fact
+    #      arriving by a different route and is if anything more direct: the person who
+    #      made the audio pointing at the file. A stranger's comment link gets no slide.
+    #      Both are first-party facts, not guesses about a title.
+    #   2. It only ever looks at candidates ALREADY BELOW CORE_KEEP, i.e. ones the engine
+    #      was about to throw away.
+    #   3. `spectral` >= 0.85 - the coarse, EQ- and reverb-tolerant content match, which is
+    #      precisely the signal that stays high when the fine-grained one collapses on a
+    #      misalignment (0.940 in the measured case). No coarse evidence, no slide.
+    #   4. DECISIVE OR NOTHING: the aligned score is adopted only if it clears CORE_EDIT,
+    #      the bar for "a real edit match, not a coincidence". A marginal improvement is
+    #      left on the floor and the candidate keeps its original score. `core_head` is
+    #      carried either way so any result is auditable after the fact.
+    _align = [] if _cre_settled else [
+        c for c in cands
+        if (c.get("creator_upload") or c.get("creator_link")) and c.get("path")
+        and (c.get("core") or 0) < CORE_KEEP
+        and (c.get("spectral") or 0) >= 0.85][:3]
+    if _align:
+        _ta0 = time.time()
+
+        def _slide(c):
+            path = c.get("path")
+            try:
+                dur = duration_of(path) or 0
+            except Exception:
+                return None
+            # The head-only 20s grab is all we have when the main search found this URL
+            # first (it does not know the upload is the creator's, so it uses the default).
+            # Re-pull 180s - one download, ~1.9s, inside this parallel pass.
+            if dur < 45:
+                try:
+                    src_dur = float(c.get("duration") or 0)
+                except (TypeError, ValueError):
+                    src_dur = 0
+                if src_dur <= 45:
+                    return None
+                longer = os.path.join(tmp, "cl_%d.wav" % (id(c) % 100000))
+                got = dl_clip(c["url"], longer, seconds=180, timeout=30)
+                if not got:
+                    return None
+                path = got
+                dur = duration_of(path) or 0
+                if dur < 45:
+                    return None
+            best, at, bv = (c.get("core") or 0), None, None
+            w = os.path.join(tmp, "al_%d.wav" % (id(c) % 100000))
+            for off in range(15, int(dur) - 20, 15):
+                try:
+                    cut(path, w, float(off), 1.0, span=25)
+                    v = _verify.verify(clip_audio, w, 20, clip_ctx=clip_ctx)
+                except Exception:
+                    continue
+                if (v.get("core") or 0) > best:
+                    best, at, bv = (v.get("core") or 0), off, v
+            if at is None or best < CORE_EDIT:      # decisive or nothing
+                return None
+            return (best, at, bv, path)
+
+        with ThreadPoolExecutor(max_workers=min(3, len(_align))) as _aex:
+            for c, got in zip(_align, _aex.map(_slide, _align)):
+                if not got:
+                    continue
+                best, at, bv, path = got
+                c["aligned_at"] = at
+                c["core_head"] = c.get("core")
+                c["path"] = path
+                c.update(core=bv["core"], spectral=bv["spectral"], fp=bv["fp"],
+                         arr=bv["arr"], same=bv["same"], vspeed=bv["speed"],
+                         bass_delta=bv["bass_delta"], cand_tilt=bv["cand_tilt"],
+                         slope_delta=bv.get("slope_delta"),
+                         clip_slope=bv.get("clip_slope"), cand_slope=bv.get("cand_slope"),
+                         score=bv["score"], vscore=bv["score"])
+        tlog("creator_align", time.time() - _ta0, n=len(_align),
+             hit=sum(1 for c in _align if c.get("aligned_at") is not None))
 
     # ---- which upload IS the exact audio in the clip ----
     # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
@@ -3099,6 +4881,13 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         provenance the search can't fake. Requires same=True AND core>=CORE_EDIT, so this
         is never a text-only rescue - it only reorders candidates the audio already
         confirmed."""
+        # A FILE THE CREATOR LINKED IN THEIR OWN COMMENTS is the same claim made directly,
+        # and it does not depend on `cred_toks` matching a title at all - which matters,
+        # because an editor's file is routinely titled nothing like their handle. Same
+        # audio bar as above: same=True and CORE_EDIT, so the link reorders confirmed
+        # candidates and never rescues an unconfirmed one.
+        if c.get("creator_link"):
+            return bool(c.get("same")) and (c.get("core") or 0.0) >= CORE_EDIT
         if not cred_toks:
             return False
         hay = ((c.get("title") or "") + " " + (c.get("uploader") or "")).lower()
@@ -3252,6 +5041,39 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                                                        # candidate to compete, it doesn't
                                                        # mean it's as trustworthy as one
                                                        # that didn't need rescuing
+                # AUDIO MERIT BEFORE TRANSFORM GUESSING. `strong_core` above is a single
+                # boolean at CORE_EDIT 0.62, so every candidate under 0.62 ties there and
+                # the first tier that can separate them is speed_exact - a signal derived
+                # from the TITLE and from a tempo read, on audio that may have scored
+                # 0.000. That is how the app showed a 19% match at #1 with a 43% match at
+                # #4 on a Bobby Shmurda clip, which is the defect the tester reported:
+                # "It should track the closest version possible at #1."
+                #
+                # Measured over 366 recorded shelves: 221 carry a core inversion above
+                # 0.05, 74 put a sub-0.38 row above a 0.38-or-better row, and 23 LEAD with
+                # a sub-0.38 row while a better-matching one sits below it.
+                #
+                # Deliberately a BAND and not a swap to raw core. The tiers below exist
+                # because raw core alone crowned wrong answers - "Ark Patrol" at core
+                # 1.000 beside the true "Ark [NCS]" at 0.40 - and ranking bass ahead of
+                # speed cost three clips in one night. Those stay. This only says a
+                # candidate that never cleared the audio-merit floor cannot be ordered
+                # above one that did, on the strength of what its title claims.
+                #
+                # THREE RUNGS, not a sort on core. The top rung is CORE_SAME, which this
+                # file already defines as "provably the SAME audio, whatever the title
+                # says" - if that sentence is true then a candidate holding it cannot be
+                # ordered below one that merely shares a tempo. kyks proves the cost of
+                # not having it: the shelf led with "Three Days Grace - Time Of Dying" at
+                # core 0.780, a different song, while two uploads of the actual answer sat
+                # at core 1.000 in positions 5 and 6, beaten on speed_exact because the
+                # wrong song happened to play at the clip's rate.
+                #
+                # Still below _artist_own and strong_core, deliberately. Those exist for
+                # the Ark Patrol case - core 1.000 on the wrong track beside the true "Ark
+                # [NCS]" at 0.40 - and they keep first refusal on it.
+                (0 if c.get("core", 0) >= CORE_SAME
+                 else 1 if c.get("core", 0) >= CORE_MERIT else 2),
                 speed_exact,                          # SPEED BEFORE BASS. Both answer
                                                        # "which member of this family",
                                                        # but speed is measured by the
@@ -3373,10 +5195,18 @@ def prewarm():
             _sc_client_id()
         except Exception:
             pass
+        # GOOGLE: launch it AND find out whether it is walled, here, off the clock.
+        # Chromium launching is not the same as Google answering - it is currently
+        # CAPTCHA-walled from this machine, and the worker reports _ok=True anyway, so
+        # a lookup that "tries Google first" pays 2.5-6.2s per query for a guaranteed
+        # empty list. Probing once in prewarm means the request path pays zero and
+        # still picks Google back up for free if the wall ever lifts.
         try:
-            _get_google()
+            g = _get_google()
+            if g._ok and not g.search("song slowed reverb", timeout=12):
+                _google_mark_walled()
         except Exception:
-            pass
+            _google_mark_walled()
     threading.Thread(target=_go, daemon=True).start()
 
 

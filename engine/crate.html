@@ -18,6 +18,9 @@
   --text:#FFFFFF; --muted:#CFC4F5; --faint:#A294DC;
   --accent:#5B4BE8; --accent2:#8172FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
   --signal:#A855F7; --cool:#2DD4BF; --good:#2ED8A7;
+  /* --warn is for a caveat, never for an error: a held-back crown and an upload whose
+     title outruns its measurement are both "read this before you trust it", not failures. */
+  --warn:#F5B94D;
   --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
   --r-card:26px; --r-mid:18px; --r-pill:999px;
   --spring:cubic-bezier(.2,.9,.25,1.15);
@@ -29,7 +32,7 @@
   --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
   --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
   --accent:#5B4BE8; --accent2:#7360FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
-  --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E;
+  --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
   --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
   --shadow:0 20px 50px rgba(60,40,140,.16);
 }
@@ -38,7 +41,7 @@
     --bg:#EFEBFF; --bg2:#F7F5FF; --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
     --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
     --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
-    --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E;
+    --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
     --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
     --shadow:0 20px 50px rgba(60,40,140,.16);
   }
@@ -123,6 +126,10 @@ a{color:inherit;text-decoration:none}
 .go{background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);padding:9px 15px;font-weight:650;
   font-size:13.5px;flex:none;transition:background .15s,transform .12s}
 .go:hover{background:var(--accent-press)} .go:active{transform:scale(.96)} .go[disabled]{opacity:.5;pointer-events:none}
+/* Secondary to "Find it": the clipboard shortcut, quiet enough not to compete with it. */
+.pastebtn{background:transparent;color:var(--faint);border-radius:var(--r-pill);padding:9px 11px;
+  font-weight:600;font-size:13px;flex:none;transition:color .15s,transform .12s}
+.pastebtn:hover{color:var(--accent2)} .pastebtn:active{transform:scale(.96)}
 .subacts{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--faint)}
 .subacts button{color:var(--accent2);font-weight:600}
 .subacts button:hover{text-decoration:underline}
@@ -535,7 +542,8 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .trk .tt{min-width:0;flex:1}
 .trk .nm{font-size:13.5px;font-weight:640;line-height:1.3;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.trk .mt{display:flex;align-items:center;gap:7px;margin-top:3px;font-size:11.5px;color:var(--muted)}
+.trk .mt{display:flex;align-items:center;flex-wrap:wrap;gap:3px 7px;margin-top:3px;font-size:11.5px;color:var(--muted)}
+.trk .mt .mono{white-space:nowrap}
 .src{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em}
 .src.soundcloud{background:rgba(255,85,0,.2);color:#FF8A4C}
 .src.youtube{background:rgba(255,60,60,.2);color:#FF7A7A}
@@ -550,6 +558,74 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
    whole pool, and this row is deliberately not called "the exact version". */
 .lvtag{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:2px 7px;border-radius:6px;
   background:color-mix(in oklab,var(--good) 20%,transparent);color:var(--good)}
+
+/* ---------- confidence, rank and caveats on every version row ----------
+   The complaint this answers: a confident wrong answer is worse than an honest ranked
+   list. Every row that names a version now carries the score that put it there, so the
+   crown is a claim the user can check instead of one they have to take.
+
+   The number is `core` - the bass- and speed-invariant same-recording evidence - and it
+   is labelled "audio match", never "confidence" or "certainty". core saturates at 1.000
+   on low-transient audio (the engine skill's core-saturation finding: two unrelated
+   songs measured a perfect 1.000 on one slowed clip), so dressing it up as certainty
+   would be the exact overclaim this shelf exists to stop. */
+.trk{position:relative;overflow:hidden}
+.trk .rkn{width:15px;flex:none;text-align:center;font-size:12px;font-weight:700;
+  color:var(--faint);font-variant-numeric:tabular-nums}
+.trk.top .rkn{color:var(--text)}
+/* The score, twice: as a number in the meta line and as a proportional rule along the
+   bottom edge of the row. The rule is the reason this works as a LIST - six numbers
+   have to be read one at a time, six bars of different length are one glance. A 30px
+   inline meter was tried first and could not tell 72% from 93%. */
+.cf{font-size:11px;font-weight:750;font-variant-numeric:tabular-nums;flex:none}
+.cfl{position:absolute;left:0;right:0;bottom:0;height:3px;
+  background:color-mix(in oklab,var(--text) 9%,transparent)}
+.cfl i{display:block;height:100%;background:currentColor;border-radius:0 3px 3px 0}
+/* The ramp has to READ as a ramp: brighter = stronger, all the way down. An earlier pass
+   used --accent2 for the 0.80 tier and --muted for 0.50, which made a 74% look bolder
+   than an 82% on this background. */
+.cf.s3{color:var(--good)}    .cfl.s3{color:var(--good)}      /* 0.95+ */
+.cf.s2{color:var(--text)}    .cfl.s2{color:var(--accent2)}   /* 0.80+ */
+.cf.s1{color:var(--muted)}   .cfl.s1{color:var(--faint)}     /* 0.50+ */
+/* Under the keep bar is worth marking - it is the line we refuse to crown under - but it
+   is a weak score, not an alarm, so the amber is pulled back toward the body colour. The
+   flags are the only thing on this screen allowed to shout. */
+.cf.s0{color:color-mix(in oklab,var(--warn) 68%,var(--muted))}
+.cfl.s0{color:color-mix(in oklab,var(--warn) 68%,var(--muted))}
+/* The row a gate refused keeps its real score colour - colour always encodes the
+   MEASUREMENT here, and this upload genuinely did match. The amber edge and the HELD BACK
+   pill carry the verdict. Mixing the two channels (an amber rule under a green 100%) was
+   tried and read as two different numbers. */
+/* On the crown's accent gradient the mid tiers need the body colour, not a literal white:
+   the light theme's crown row is pale lavender, and #fff on it was measured unreadable in
+   the light-theme screenshot. --text is white in dark and near-black in light. */
+.trk.top .cf.s2,.trk.top .cf.s1{color:var(--text)}
+.trk.top .cfl.s2 i,.trk.top .cfl.s1 i{background:var(--text)}
+/* A caveat the audio can back. Amber, small, under the title so it reads as a footnote
+   on that row and not as a second headline. Only the two the ENGINE itself flagged - the
+   crowned upload's `title_overclaims` and a held-back crown - get the shouting pill; the
+   rest are quiet, because four loud rows out of six is noise, not a warning. */
+.flag{display:block;margin-top:5px;font-size:11px;line-height:1.4;
+  color:color-mix(in oklab,var(--warn) 82%,var(--text));font-weight:600}
+.flag:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:var(--warn);margin:0 6px 1.5px 1px;vertical-align:middle}
+.flag b{font-weight:800;letter-spacing:.03em;text-transform:uppercase;font-size:9.5px;
+  margin-right:6px;padding:2px 6px;border-radius:5px;color:var(--warn);
+  background:color-mix(in oklab,var(--warn) 20%,transparent)}
+.flag.tag:before{display:none}
+/* One plain sentence about the shelf as a whole - the tie, or a lower-ranked upload that
+   beats the crown on raw audio. */
+.shelfnote{margin-top:9px;font-size:11.5px;line-height:1.45;color:var(--faint)}
+.shelfnote b{color:var(--muted);font-weight:700}
+/* HELD BACK. A gate refused to crown anything, so the list is the whole answer. It gets
+   a proper heading and the engine's own reason, because "we found six versions and will
+   not pick" is a result, not an error. */
+.heldcard{margin:0 0 9px;padding:11px 12px;border-radius:14px;
+  background:color-mix(in oklab,var(--warn) 12%,transparent);
+  border:1px solid color-mix(in oklab,var(--warn) 34%,transparent)}
+.heldcard b{display:block;font-size:12.5px;font-weight:750;color:var(--warn);margin-bottom:3px}
+.heldcard span{display:block;font-size:12px;line-height:1.45;color:var(--muted)}
+.trk.held{box-shadow:inset 3px 0 0 var(--warn)}
 
 /* ---------- playlist rows ---------- */
 .plat{display:flex;flex-direction:column;gap:7px;margin-top:8px}
@@ -673,6 +749,10 @@ button.savecard[disabled]{pointer-events:none}
       <form class="form" id="form" autocomplete="off">
         <span class="lk" id="ico-link"></span>
         <input id="url" type="text" placeholder="Paste a TikTok or Instagram link" aria-label="Clip link" spellcheck="false">
+        <!-- the clipboard path lives HERE, not on the scan dial: on iOS reading the
+             clipboard summons a native "Paste" button the user must tap, which is fine
+             beside a control that says paste and wrong on a control that says scan -->
+        <button class="pastebtn" type="button" id="pastebtn" aria-label="Paste link from clipboard">Paste</button>
         <button class="go" type="submit" id="gobtn">Find it</button>
       </form>
       <div class="err" id="err" hidden></div>
@@ -1061,11 +1141,58 @@ function setProg(pct, cap, label){
   pgPaint();
   clearInterval(pgTimer);
   pgTimer=setInterval(function(){
-    if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.15,(pgCap-pgNow)*0.045); pgPaint(); }
+    // Chases the ceiling fast enough to keep up with a batch of candidates landing at
+    // once, slow enough to read as movement rather than a jump.
+    if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }
   }, 400);
 }
 function pgReset(){clearInterval(pgTimer); pgNow=0; pgCap=0; pgPaint();}
-function pgDone(){clearInterval(pgTimer); pgNow=100; pgPaint();}
+/* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
+   Naming the song is one awaited call, so between "reading the clip" and "song
+   identified" the page had no event to move on: the bar parked at 30% for the whole
+   counter-speed sweep and then jumped. Konnor hit that twice and read it as a hang.
+   /progress reports milestones the engine actually passed - audio fetched, fingerprint
+   started, one more Shazam probe done - so the bar moves only on work that happened,
+   and STOPS moving if the engine genuinely stalls, which is the honest thing to show. */
+var progT=null;
+function progPollOn(u){
+  progPollOff();
+  progT=setInterval(function(){
+    if(!busy){progPollOff(); return;}
+    fetch(ENGINE+'/progress?url='+encodeURIComponent(u),{cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(function(p){
+        if(!busy||!p||!p.pct) return;
+        // THE ENGINE'S NUMBER IS THE CEILING, NOT THE VALUE. Assigning it directly makes
+        // the bar teleport: the hunt downloads candidates in a concurrent batch, so a
+        // dozen can finish between two polls and the reading leaps - measured 71% to 92%
+        // in one step. Feeding it in as a cap lets the existing creep walk there instead,
+        // which is the same information delivered as motion. Never 100; only finishing
+        // is allowed to say 100.
+        if(p.pct>pgCap) setProg(pgNow, Math.min(97,p.pct), p.label||null);
+      }).catch(function(){});
+  }, 700);
+}
+function progPollOff(){clearInterval(progT); progT=null;}
+/* RUN IT UP TO 100, do not snap to it. Roham: "it keeps going up until 100, not stop
+   then jump". Snapping is the same complaint as parking at 30, just at the other end -
+   the number stops being a report of progress and becomes two states. This walks the
+   remaining gap in ~450ms and returns a promise so the caller can let the bar actually
+   ARRIVE before the finished card replaces the element it lives in. */
+function pgDone(){
+  clearInterval(pgTimer);
+  return new Promise(function(done){
+    var t0=Date.now(), from=pgNow, span=Math.max(0,100-from), ms=450;
+    if(span<0.5){pgNow=100; pgPaint(); return done();}
+    clearInterval(pgTimer);
+    pgTimer=setInterval(function(){
+      var k=Math.min(1,(Date.now()-t0)/ms);
+      pgNow=from+span*(1-Math.pow(1-k,2));      // ease out, never backwards
+      pgPaint();
+      if(k>=1){clearInterval(pgTimer); pgNow=100; pgPaint(); done();}
+    }, 16);
+  });
+}
 /* Source card. Repainted in place as facts arrive (thumbnail, handle, audio confirmed),
    so pass null for anything you are not changing. The audio tick only goes green once
    the server has actually handed back waveform data - it reports the one step in the
@@ -1204,17 +1331,109 @@ function editBadge(d){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);
   return '<span class="badge">'+esc(s)+(who?' · edit by @'+esc(who):'')+'</span>';}
-/* `tag` and `fresh` are only used by the live hunt list; the finished result calls this
-   with two arguments exactly as before, so the shelf renders byte-for-byte the same. One
-   row builder for both, so a streamed row and a final row can never drift apart. */
-function trackRow(c,top,tag,fresh){var src=(c.source||'').toLowerCase();
-  return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+'" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
+/* ---------- how sure we are, per row ----------
+   `core` is the bass- and speed-invariant same-recording evidence the engine ranks on,
+   and it is the only score worth putting in front of a person: `score`/`final` folds in
+   transform fit, so two rows can differ on it for reasons that are not "does this sound
+   like the clip". CORE_KEEP mirrors crate_engine.CORE_KEEP - keep them in step. */
+var CORE_KEEP=0.50, CORE_SAME=0.95;
+/* Tiers off the ROUNDED percentage, the number actually on screen - core 0.796 prints
+   "80%" and must not then be coloured as the sub-80 tier. */
+function confTier(v){var p=Math.round(v*100);
+  return p>=CORE_SAME*100?3:p>=80?2:p>=CORE_KEEP*100?1:0;}
+/* Deliberately says "audio match", never "confidence" or "sure": core saturates at 1.000
+   on low-transient audio - two songs with nothing to do with each other have measured a
+   perfect 1.000 on the same slowed clip - so a 100% here means "nothing in the audio
+   rules it out", not "proven". The tooltip says so in as many words. */
+function confPct(v){return Math.max(0,Math.min(100,Math.round(v*100)));}
+function confChip(v){
+  if(v===null||v===undefined) return '';
+  return '<span class="cf s'+confTier(v)+'" title="Audio match '+confPct(v)+'% - how closely this '+
+    'upload lines up with the clip. High is good evidence, not proof.">'+confPct(v)+'% match</span>';}
+function confRule(v){
+  if(v===null||v===undefined) return '';
+  return '<span class="cfl s'+confTier(v)+'"><i style="width:'+Math.max(2,confPct(v))+'%"></i></span>';}
+/* THE TITLE IS NOT A MEASUREMENT - the same doctrine the crown gate applies, extended to
+   the rows under it. Mirrors server.py's `_crown_contradicts` deliberately: same three
+   patterns, same 9 dB tilt ceiling, and the same restriction that a tilt or speed reading
+   is only admissible on a clip that measured at normal tempo (slowing forges tilt, so on
+   a pitched clip the number is an artefact of the pitch). The crown itself never uses
+   this - it gets the server's own `title_overclaims`, which had `slope_delta` to check
+   against - so the page can never contradict the engine about the crowned upload. */
+var RX_SPEEDCLAIM=/\b(slowed|slow(ed)? ?(and|\+|&) ?reverb|sped ?up|speed ?up|nightcore|daycore|super ?slowed|ultra ?slowed)\b/i,
+    RX_OFFICIAL=/\b(official (music )?video|music video|official audio|official visualizer|\(audio\)|lyric video)\b/i,
+    RX_BASSCLAIM=/\b(bass ?boost(ed)?|bassboost|boosted bass|extreme bass)\b/i,
+    TILT_MAX=9.0, BASS_GAP=6.0;
+/* `lead` = this row is being presented as the answer (the crown, or row 1 of a shelf with
+   no crown). Only the answer row gets the unmeasurable-claim sentence; the rest of the
+   list is covered once by claimNote() below. */
+function candFlag(c,d,lead){
+  // NFKC for the same reason server.py does it: "(𝙨𝙡𝙤𝙬𝙚𝙙 + 𝙧𝙚𝙫𝙚𝙧𝙗)" is not "(slowed +
+  // reverb)" to a regex, and 2 of the 215 saved candidate titles hide a transform word
+  // in mathematical-bold letters.
+  var t=((c.title||'')+' '+(c.uploader||'')).normalize('NFKC');
+  if(RX_OFFICIAL.test(t)) return 'The official release, not an edit of it';
+  // AN UNMEASURABLE CLAIM IS UNMEASURABLE IN EVERY REGIME, so on the answer row it is
+  // checked BEFORE the pitched-clip bail below. `c.claim` is the server's own sentence
+  // (server.py `_unverified_claims`), covering reverb, 8D/432Hz and an unconfirmed bass
+  // boost. The bail exists because tilt and speed readings are artefacts on a pitched
+  // clip - true, and irrelevant to reverb, which this engine cannot measure on ANY clip.
+  // That conflation is why a slowed clip could lead with "(slowed + reverb)" or "(Bass
+  // Boosted)" and the page was structurally forbidden from saying a word: measured on
+  // testruns/full45, 66 reverb-titled and 14 bass-titled shelf rows across 30 of the 45
+  // clips reached the screen with no caveat.
+  if(lead&&c.claim) return c.claim;
+  // "nothing measured a shift" - the only state where a title's speed or EQ claim can be
+  // contradicted. A bass-boosted-but-unpitched clip still counts as normal tempo.
+  if(/slow|sped|speed|nightcore|daycore/i.test(d.speed||'')) return '';
+  if(RX_SPEEDCLAIM.test(t)) return 'Titled a speed edit, but the clip measured as posted';
+  var tilt=Math.abs(c.bass||0);
+  if(tilt>TILT_MAX) return 'Its EQ is '+tilt.toFixed(1)+' dB off the clip';
+  // Fallback only: pre-`claim` payloads (the saved runs, and any row streamed by an
+  // older build) have no server sentence, so the page keeps its own bass rule for them.
+  if(RX_BASSCLAIM.test(t)&&tilt<BASS_GAP)
+    return 'Titled bass boosted, but measures the same EQ as the clip ('+tilt.toFixed(1)+' dB off)';
+  return '';}
+/* SAY IT ONCE PER SHELF, NOT ONCE PER ROW. Six uploads of the same slowed edit are all
+   called "(slowed + reverb)", so putting the sentence on all six is noise, not honesty -
+   the same reasoning the .flag CSS comment already records ("four loud rows out of six is
+   noise, not a warning"). The row that is being presented AS THE ANSWER carries its own
+   caveat; the rest of the list carries one line underneath. That is the whole rule: a
+   title may be the upload's NAME, never the verdict. */
+function claimNote(list){
+  if(!list||!list.length) return '';
+  var kinds={},n=0,i,j,k;
+  for(i=0;i<list.length;i++){k=list[i].claimkind; if(!k||!k.length) continue; n++;
+    for(j=0;j<k.length;j++) kinds[k[j]]=1;}
+  if(!n) return '';
+  var words=[];
+  if(kinds.reverb) words.push('reverb');
+  if(kinds.bass) words.push('bass boosted');
+  if(kinds.spatial) words.push('8D or 432Hz');
+  var lead=(n===1?'One of these is titled ':n+' of these are titled ');
+  return '<div class="shelfnote"><b>Titles are not measurements:</b> '+lead+
+    words.join(' or ')+'. '+
+    (kinds.reverb?'Reverb is not something we can measure, so we never claim it. ':'')+
+    (kinds.bass?(n===1?'It did not measure as a bass boost against this clip. '
+                      :'None of them measured as a bass boost against this clip. '):'')+
+    'Those words are the uploaders\', not ours.</div>';}
+/* `tag` and `fresh` are only used by the live hunt list. `opt` carries the ranked-shelf
+   extras: {rank, conf, flag, held}. Every caller still gets one row builder, so a
+   streamed row and a final row can never drift apart. */
+function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
+  return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
+      '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
+    (opt.rank?'<span class="rkn">'+opt.rank+'</span>':'')+
     '<span class="pl">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
-    '<div class="mt">'+(src?'<span class="src '+src+'">'+(src==='soundcloud'?'SoundCloud':'YouTube')+'</span>':'')+
+    '<div class="mt">'+confChip(c.core)+
+      (src?'<span class="src '+src+'">'+(src==='soundcloud'?'SoundCloud':'YouTube')+'</span>':'')+
       (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
-      (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div></span>'+
-    '<span class="op">Open'+IC.open+'</span></a>';}
+      (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div>'+
+      ((opt.flag||opt.flagtag)?'<span class="flag'+(opt.flagtag?' tag':'')+'">'+
+        (opt.flagtag?'<b>'+esc(opt.flagtag)+'</b>':'')+esc(opt.flag||'')+'</span>':'')+
+    '</span>'+
+    '<span class="op">Open'+IC.open+'</span>'+confRule(c.core)+'</a>';}
 /* ---------- live edit hunt ----------
    The hunt used to be one blocking request: a bar crawling to 100% with nothing under
    it, and if it was slow, died, or the server had restarted under the page (every .py
@@ -1234,8 +1453,11 @@ function liveAdd(c){
   livePaint(c.url);}
 function livePaint(freshURL){
   var box=document.getElementById('livelist'); if(!box) return;
+  // "Best so far" is still a row presented as an answer, provisional or not, so it gets
+  // the same unmeasurable-claim sentence the final answer row gets.
   box.innerHTML=LIVE.slice(0,6).map(function(c,i){
-    return trackRow(c,i===0,i===0?'Best so far':'',c.url===freshURL);}).join('');
+    return trackRow(c,i===0,i===0?'Best so far':'',c.url===freshURL,
+      {rank:i+1,flag:i===0?(c.claim||''):''});}).join('');
   var t=document.getElementById('progtxt2');
   if(t&&LIVE.length) t.textContent=LIVE.length===1?'1 version verified':LIVE.length+' versions verified';}
 function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<b>'+esc(title)+'</b><span>'+esc(body)+'</span></div></div>';}
@@ -1357,30 +1579,131 @@ function renderResult(d,partial){
         return link ? '<a class="trk" href="'+esc(link)+'" target="_blank" rel="noopener">'+inner+'</a>'
                     : '<div class="trk">'+inner+'</div>';}).join('')+'</div>';
   }
-  var shelf='';
-  if(ex){shelf='<div class="sect">The exact version playing</div><div class="list">'+trackRow(ex,true)+'</div>';
+  /* ---------- THE VERSION SHELF ----------
+     One crown was never the whole answer and the payload always knew it: up to six
+     audio-verified candidates come back, each with its own `core`, and the screen used to
+     show a single row the user had to take on faith. Measured over the 452 saved results
+     in ~/crate/testruns: the runner-up is within 0.02 of the crown on core in 41 of the 95
+     crowned results that carry a second candidate, and in 10 of them the crown scores
+     BELOW the runner-up on audio alone (ranking also weighs speed fit, EQ fit and plays).
+     A screen that hides that is selling certainty the measurement does not have.
+
+     So: the crown keeps its heading and its treatment - it is still the answer - and
+     every row under it now carries the same score on the same scale, in the same ranked
+     order the engine returned. Never re-sorted here: the order is the engine's verdict,
+     and re-ranking in the page would be inventing a second opinion. */
+  var shelf='', plain=false;   // plain = the clip is the track itself, no edit to show
+  function shelfNote(list,crownCore){
+    if(!list.length||crownCore===null||crownCore===undefined) return '';
+    var bi=-1,bv=-1,i;
+    for(i=0;i<list.length;i++) if((list[i].core||0)>bv){bv=list[i].core||0; bi=i;}
+    // An upload further down that beats the crown on raw audio is the single most
+    // useful thing this screen can say, so it outranks every other note.
+    if(bv>crownCore+0.005)
+      return '<div class="shelfnote"><b>Worth a listen:</b> #'+(bi+2)+' scores higher on audio alone ('+
+        Math.round(bv*100)+'% vs '+Math.round(crownCore*100)+'%). The crown also weighs speed fit, EQ fit and plays.</div>';
+    var t=tieNote(list,crownCore); if(t) return t;
+    return '<div class="shelfnote">Leads the next version by '+
+      Math.round((crownCore-bv)*100)+' points on audio ('+Math.round(crownCore*100)+'% vs '+
+      Math.round(bv*100)+'%).'+(d.decisive?' Decisive pick.':'')+'</div>';}
+  /* Scores this close are a tie, and saying so is the whole product promise. It matters
+     most where there is no crown at all: "mr popular" comes back with six uploads at a
+     flat 1.000 each (testruns/r45/e_9.json), which is core saturating, not six perfect
+     answers. Six identical numbers already hint at it; one sentence removes the doubt. */
+  function tieNote(list,topCore){
+    if(topCore===null||topCore===undefined||!list.length) return '';
+    var tied=1;
+    for(var i=0;i<list.length;i++) if(Math.abs((list[i].core||0)-topCore)<=0.02) tied++;
+    if(tied<2) return '';
+    return '<div class="shelfnote"><b>Close call:</b> '+tied+' versions score within 2 points of '+
+      'each other on audio. The measurement cannot separate them, so check the top few by ear.</div>';}
+  if(ex){
+    // THE CROWN. Rank 1, its own heading, the gradient row - it still reads as the
+    // answer. Its caveat comes from the server's own `title_overclaims` and nowhere
+    // else, so the page can never argue with the engine about the crowned upload.
+    // `ex.claim` is the same server sentence carried on the row itself, and it is the
+    // fallback for a payload whose crown block did not set `title_overclaims`.
+    var xoc=d.title_overclaims||ex.claim||'';
+    shelf='<div class="sect">The exact version playing</div><div class="list">'+
+      trackRow(ex,true,'',false,{rank:1,flag:xoc,
+        flagtag:xoc?'unverified claim':''})+'</div>';
     var others=cands.filter(function(c){return c.url!==ex.url;});
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
-    if(others.length) shelf+='<div class="sect">More edits of this song</div><div class="list">'+
-      others.slice(0,12).map(function(c){return trackRow(c,false);}).join('')+'</div>';}
+    shelf+=shelfNote(others,ex.core);
+    if(others.length) shelf+='<div class="sect">Other versions we checked · '+others.length+'</div><div class="list">'+
+      others.slice(0,12).map(function(c,i){
+        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div>'+
+      claimNote(others.slice(0,12));}
+  // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
+  // bar, and the speed read says the clip is unedited - so there is no edit to show and
+  // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
+  // clip: the card said "Funkytown, Original" (right), then "WE DID NOT CROWN ONE - best
+  // audio match was 21%" under it, which reads as a failure attached to a correct answer.
+  // A held-back crown is different and keeps its shelf: there the engine has a real
+  // candidate and a real reason, and hiding that would be hiding evidence.
+  else if(d.unsure && cands.length && !d.crown_rejected
+          && (!cands[0] || (cands[0].core||0) < CORE_KEEP)
+          && (!d.speed || d.speed==='as posted')){ shelf=''; plain=true; }
   else if(d.unsure && cands.length){
-    // NOT CONFIDENT, BUT NOT EMPTY. Below CORE_KEEP we refuse to crown - a confident wrong
-    // answer is worse than an honest miss - but the near-misses used to be deleted, which
-    // left the user with nothing at all. Show them, say plainly that we are not sure, and
-    // let them pick.
-    shelf='<div class="sect">Not sure on the exact version - closest matches</div>'+
-      '<div class="list">'+cands.slice(0,12).map(function(c){return trackRow(c,false);}).join('')+'</div>'+
-      '<div class="trainnote">Audio match was '+Math.round((d.weak_exact||0)*100)+'%, under our bar to call it. '+
-      'One of these may still be it.</div>';}
+    // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
+    // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),
+    // and a gate REFUSING a crown that scored fine - a tempo mismatch, a title that
+    // contradicts the measurement, an official release, a time-reversed null. In the
+    // second case `weak_exact` is routinely 1.0, so the old line read "Audio match was
+    // 100%, under our bar to call it", which is both false and self-contradicting, and
+    // the engine's real reason - a good sentence it already wrote - was thrown away.
+    // Now the list IS the answer: say which of the two happened, in the engine's words,
+    // and rank the candidates the same way the crowned screen does.
+    var why=d.crown_rejected||'', held=!!why, w=Math.round((d.weak_exact||0)*100);
+    // THE GATE FIRED BEFORE THE FINAL SPEED READING. server.py runs `_crown_contradicts`
+    // (which can only reject on an "as posted" clip) well before the bass-robust
+    // consensus re-measures the clip and can rewrite `speed` to a pitch label. When those
+    // two disagree in one payload the reason on screen looks like nonsense next to the
+    // badge, so say which one is newer instead of quietly dropping either. Real case in
+    // the saved runs: testruns/r45/e_4.json - "Obsessed", held back for "clip measured as
+    // posted, candidate titles itself a speed edit", badge reads "Slowed ~0.93x".
+    var stale = held && /measured as posted/.test(why) &&
+                /slow|sped|speed|nightcore|daycore/i.test(d.speed||'');
+    shelf='<div class="sect">Closest versions - we did not crown one</div>'+
+      (held
+        ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload matched the clip '+
+            'audio at '+w+'%, but we would not crown it: '+esc(why)+'. Listed, not presented as '+
+            'the version.'+(stale?' Note: the final speed read came back '+esc(d.speed)+
+            ', after that check ran.':'')+'</span></div>'
+        : '<div class="heldcard"><b>Under our bar to call it</b><span>Best audio match was '+w+
+            '%, and we do not crown anything under '+Math.round(CORE_KEEP*100)+'%. These are the closest '+
+            'the search got - one of them may still be it.</span></div>')+
+      // Row 1 used to get the pill and NOTHING else, on the reasoning that the card above
+      // already carries the reason word for word. It carries the GATE's reason, which is
+      // a different sentence from "this title claims something we did not measure" - and
+      // row 1 of a no-crown shelf is what the user reads as the answer, so it was the one
+      // row on the screen that could lead with an unqualified "(Bass Boosted)". 36 of the
+      // 45 saved runs have no crown, so this was the common case, not the edge case.
+      // Both now show: the pill names the gate, the sentence names the claim.
+      '<div class="list">'+cands.slice(0,12).map(function(c,i){
+        return trackRow(c,false,'',false,{rank:i+1, held:held&&i===0,
+          flag:(held&&i===0)?(c.claim||''):candFlag(c,d,i===0),
+          flagtag:(held&&i===0)?'held back':''});}).join('')+'</div>'+
+      claimNote(cands.slice(1,12))+
+      tieNote(cands.slice(1), cands[0]&&cands[0].core)+
+      '<div class="trainnote">Open the top few and listen - your ear settles this faster than ours does.</div>';}
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
     '<span class="pct" id="progpct2">0%</span></div>'+
     '<div class="prog"><i id="progbar2"></i></div></div>'+
     // verified candidates stack up in here while the hunt runs
     '<div class="list" id="livelist" style="margin-top:11px"></div>';}
-  else{shelf='<div class="sect">No separate edit found. This looks like the track played straight.</div>';}
+  // NOTHING AT ALL WHEN THE CLIP IS JUST THE TRACK.
+  //
+  // This used to print "No separate edit found. This looks like the track played
+  // straight." Konnor, testing, on the Katy Perry "Hot N Cold" result: "This screen needs
+  // to fuckin go", and specifically "take that god damn sound bar in the middle out and
+  // the fuckin no separate found". He is right. The card already says Original. Saying it
+  // again in the negative reads as a failure on the one kind of clip that went perfectly,
+  // and a plain song is the most common thing anyone will ever scan.
+  else{shelf=''; plain=true;}
   // AUTO-PLAYLIST. Scan = saved. The screen CONFIRMS the save rather than asking for it,
   // so "add to other playlists" becomes the optional extra tap instead of the required
   // one. Honest wording when only the original exists: some edits live solely as IG
@@ -1417,7 +1740,12 @@ function renderResult(d,partial){
     '<div class="autonote">Auto-save is '+(on?'on':'off')+' · <button id="autobtn">change in settings</button></div>';
   var hints=(d.comment_hints||[]).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
-  result.innerHTML='<div class="card">'+head+clip+hero+'<canvas class="reccanvas" id="reccanvas"></canvas>'+mash+shelf+plat+quotes+'</div>';
+  // The waveform earns its place on an edit - it is where the shelf rows and the matched
+  // window are read against the clip. On a plain original there is no shelf to read it
+  // against, so it is just a band of decoration between the title and the save, which is
+  // the "sound bar in the middle" Konnor asked to have taken out.
+  var wavebar = plain ? '' : '<canvas class="reccanvas" id="reccanvas"></canvas>';
+  result.innerHTML='<div class="card">'+head+clip+hero+wavebar+mash+shelf+plat+quotes+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   paintRecCanvas();
@@ -1899,15 +2227,27 @@ urlEl.addEventListener('focus',function(){document.getElementById('form').classL
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
 function showErr(m){var e=document.getElementById('err'); e.hidden=false; e.textContent=m;
   clearTimeout(showErr._t); showErr._t=setTimeout(function(){e.hidden=true;},4500);}
-/* One button, both paths (brief): a link on the clipboard scans it - that IS the web
-   share path - and no link means they want to hear the room, so the same tap opens
-   listen mode instead of erroring. */
+/* SCAN LISTENS IMMEDIATELY. It used to read the clipboard first, so that a link sitting
+   there would scan without the user pasting it. On iOS that backfires badly: Safari
+   answers navigator.clipboard.readText() with its own native "Paste" confirmation button,
+   which the user has to tap SECOND before anything happens. Konnor, on a screen recording:
+   "the scan button gotta be fixed it says 'paste' and then start listening. Needs to
+   listen right away after u hit scan." One tap had quietly become two, and the delay
+   landed exactly where the app is meant to feel instant.
+
+   The clipboard path is not lost, it moves to the paste field, where tapping a control
+   labelled "paste" is what the user asked for and the OS prompt reads as expected. */
 document.getElementById('go').onclick=function(){
   if(urlEl.value.trim()) return run(urlEl.value);
-  if(!(navigator.clipboard&&navigator.clipboard.readText)) return startListen();
+  startListen();};
+/* Explicit paste, on the field itself - here the OS prompt is the point, not a surprise. */
+var pasteBtn=document.getElementById('pastebtn');
+if(pasteBtn) pasteBtn.onclick=function(){
+  if(!(navigator.clipboard&&navigator.clipboard.readText)){urlEl.focus();return;}
   navigator.clipboard.readText().then(function(t){
-    if(parseLink(t).host){urlEl.value=t; run(t);} else startListen();
-  }).catch(startListen);};
+    if(parseLink(t).host){urlEl.value=t; run(t);}
+    else {urlEl.focus(); showErr('No TikTok or Instagram link on the clipboard.');}
+  }).catch(function(){urlEl.focus();});};
 var phaseT=null, finishT=null;
 function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
   WIN=null; clipSecs=0;
@@ -1931,6 +2271,11 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   // the boundary between them. This timer only advances the WORDING; the bar itself still
   // moves on real milestones, and it backs off if the answer already landed.
   phaseT=setTimeout(function(){if(busy&&pgNow<40){headline('Listening'); say('Building the audio fingerprint');}},2400);
+  progPollOn(p.url);
+  // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
+  // it reports its own milestones now (one per candidate checked), so stopping here would
+  // hand the bar back to guesswork for the part of the lookup that takes the most time.
+  // finish() stops it.
   call('/base',p.url).then(function(d){
     clearTimeout(phaseT);
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
@@ -1941,29 +2286,50 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       if(d.handle) showChip(null,(p.host==='instagram'?'reel by @':'clip by @')+d.handle,d.thumb,true);
       headline(d.base_song);
       say('Matching versions &middot; slowed &middot; sped up &middot; remix &middot; original');
-      setProg(45, 58, 'Song identified');
+      setProg(pgNow, 58, 'Song identified');
       renderResult(d, d.edits_pending);
-      if(d.edits_pending){setState('scanning'); say('Locking in the exact version');
-        setProg(60, 94, 'Hunting the exact version');
+      // HAND THE SCREEN OVER THE MOMENT THE SONG IS KNOWN.
+      //
+      // This used to stay on the scan takeover and only switch when the FIRST candidate
+      // streamed back. On a clip where no candidate ever verifies - which is most of the
+      // hard ones - nothing ever streamed, so the takeover never lifted and the user
+      // watched an animation until the entire edit hunt finished. Measured across 13
+      // recorded lookups: the song was known at a 6.1s median and reached the screen at
+      // 12.4s, and on 4 of them not until the whole lookup ended, twice at 24s and once at
+      // 114.5s. Konnor's "that took 1 minute and 2 seconds" was exactly this - the engine
+      // had his answer in seconds and the UI sat on it.
+      //
+      // renderResult() has ALREADY built the card on the line above; it was just behind
+      // display:none. The version hunt keeps running and the list fills in underneath.
+      if(d.edits_pending){setState('locked'); say('Locking in the exact version');
+        // Raise the ceiling only. The old line assigned 60 outright, which is what put a
+        // 43-to-60 leap on screen at the handover; the engine reports 60 itself the
+        // moment the hunt starts, so the poll will carry the bar there smoothly.
+        setProg(pgNow, 94, 'Hunting the exact version');
         return huntEdits(p.url,function(c,n){
           liveAdd(c);
-          // a REAL milestone - one more candidate whose audio verified - so the bar
-          // steps on evidence instead of on a timer.
-          setProg(Math.min(90,62+n*5), 94);
+          // No setProg here any more. This fires only on candidates that VERIFY, and the
+          // engine now ticks on every candidate CHECKED, which is the honest denominator
+          // and covers the common case where nothing verifies at all. Two sources both
+          // writing the bar is what made it jump. This one just narrates.
           say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
-          // HAND THE SCREEN OVER on the first real hit. The scan takeover is right while
-          // there is genuinely nothing to show, but the partial result card - already
-          // rendered above, just on the screen behind - is where the list lives, and the
-          // whole point is that the user watches it fill instead of watching a bar.
-          // Only from 'scanning': if they walked off to Trending or Library, leave them.
-          if(n===1&&document.getElementById('app').getAttribute('data-state')==='scanning')
-            setState('locked');
-        }).then(function(full){if(full&&full.result&&full.result!=='engine_down'){if(full.wave)setWaveData(full.wave); if(full.win)setWindow(full.win,full.clip_secs); setSpeedFromLabel(full.speed); renderResult(full,false);} finish(full||d);});
+        }).then(function(full){
+          // FILL THE BAR THE USER IS WATCHING, THEN swap in the finished card. Doing it
+          // the other way round was why the hunt bar never showed 100: renderResult
+          // with partial=false deletes the progress element, so pgDone() was painting
+          // into nothing and the bar simply vanished somewhere in the 60s-90s. The
+          // percentage has to land before the thing displaying it is taken away.
+          return pgDone().then(function(){
+            if(full&&full.result&&full.result!=='engine_down'){
+              if(full.wave)setWaveData(full.wave);
+              if(full.win)setWindow(full.win,full.clip_secs);
+              setSpeedFromLabel(full.speed); renderResult(full,false);}
+            finish(full||d);});});
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
 }
-function finish(d){stopClock(); busy=false; pgDone(); clearTimeout(phaseT);
+function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeout(phaseT);
   document.getElementById('gobtn').removeAttribute('disabled');
   if(d&&d.result==='engine_down'&&curURL){
     // the scan is queued, not lost - boot retries it the moment the engine answers
