@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#150E33">
+<link rel="icon" href="/icon.svg">
+<title>Support - Addify</title>
+<style>
+/* Tokens are copied verbatim from crate.html so these pages read as the app, not as a
+   generic legal template. If the app's palette changes, change it here too. */
+:root{
+  --bg:#1B1140; --bg2:#241650;
+  --card:#3A2A78; --raise:#4A3894; --raise2:#5643A8;
+  --line:rgba(255,255,255,.13); --line2:rgba(255,255,255,.20);
+  --text:#FFFFFF; --muted:#CFC4F5; --faint:#A294DC;
+  --accent:#5B4BE8; --accent2:#8172FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
+  --signal:#A855F7; --cool:#2DD4BF; --good:#2ED8A7;
+  --warn:#F5B94D;
+  --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
+  --r-card:26px; --r-mid:18px; --r-pill:999px;
+  --spring:cubic-bezier(.2,.9,.25,1.15);
+  --shadow:0 24px 60px rgba(8,4,30,.55);
+}
+:root[data-theme="light"]{
+  --bg:#EFEBFF; --bg2:#F7F5FF;
+  --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
+  --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
+  --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
+  --accent:#5B4BE8; --accent2:#7360FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
+  --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+  --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
+  --shadow:0 20px 50px rgba(60,40,140,.16);
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#EFEBFF; --bg2:#F7F5FF; --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
+    --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
+    --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
+    --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+    --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
+    --shadow:0 20px 50px rgba(60,40,140,.16);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text); min-height:100vh;
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(80% 50% at 50% 0%, color-mix(in oklab,var(--accent) 30%,transparent), transparent 66%);
+  background-attachment:fixed;
+  display:flex; justify-content:center;
+  padding:22px 16px 40px;
+}
+::selection{background:var(--accent); color:#fff}
+:focus-visible{outline:2px solid var(--accent2); outline-offset:3px; border-radius:10px}
+/* The app inherits link colour on purpose (its links are styled rows). A document page is
+   the one place a plain link has to look like one, so colour it here. */
+a{color:var(--accent2); text-decoration:none; font-weight:600}
+a:hover{text-decoration:underline}
+.page{width:100%; max-width:640px}
+.top{display:flex; align-items:center; justify-content:space-between; margin-bottom:18px}
+.brand{display:flex; align-items:center; gap:9px; font-weight:750; font-size:19px; letter-spacing:-.02em; color:var(--text)}
+.brand svg{display:block}
+.back{font-size:13px; color:var(--muted); font-weight:600}
+h1{font-size:26px; font-weight:750; letter-spacing:-.02em; margin:0 0 6px; line-height:1.2}
+.lede{color:var(--muted); margin:0 0 6px}
+.eff{font-size:12.5px; color:var(--faint); margin:0 0 6px}
+.sect{font-size:11.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin:22px 0 9px}
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--r-card); padding:18px; box-shadow:var(--shadow); margin-bottom:12px}
+.card h2{font-size:16px; font-weight:680; letter-spacing:-.01em; margin:0 0 8px; color:var(--text)}
+.card p,.card li{color:var(--muted); margin:0 0 10px}
+.card ul{padding-left:19px; margin:0 0 10px}
+.card li{margin-bottom:6px}
+.card>:last-child{margin-bottom:0}
+.card b{color:var(--text); font-weight:650}
+.rows{display:flex; flex-direction:column; gap:8px}
+.row{display:flex; gap:12px; align-items:flex-start; background:var(--raise); border-radius:15px; padding:12px 14px}
+.row b{display:block; font-size:14px; font-weight:650; color:var(--text)}
+.row span{display:block; font-size:13px; color:var(--muted); margin-top:2px}
+.row .who{flex:none; width:118px; font-size:13.5px; font-weight:650; color:var(--text); padding-top:1px}
+.row .what{flex:1; min-width:0; font-size:13px; color:var(--muted)}
+.callout{background:color-mix(in oklab,var(--good) 14%,transparent); border:1px solid color-mix(in oklab,var(--good) 35%,transparent);
+  border-radius:15px; padding:12px 14px; font-size:13.5px; color:var(--text)}
+.callout b{color:var(--good)}
+/* Owner placeholders. Loud on purpose: they must never ship unnoticed, and a reviewer must
+   never read an invented company, address or jurisdiction. */
+.ph{color:var(--warn); font-weight:700; white-space:nowrap}
+code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.5px; color:var(--accent2)}
+.path{display:inline-block; background:var(--raise2); padding:3px 8px; border-radius:8px; font-size:12.5px; font-weight:650; color:var(--text)}
+.foot{display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; color:var(--faint); margin-top:24px}
+.foot .dot{opacity:.6}
+@media (max-width:480px){ body{padding:16px 12px 36px} .card{padding:16px} .row{flex-direction:column; gap:3px} .row .who{width:auto} }
+</style>
+<!-- Match whatever theme the app is showing. Same key and same fallback as crate.html:
+     an explicit choice in localStorage wins, otherwise the html tag's default. -->
+<script>try{var st=localStorage.getItem('crate-theme');if(st)document.documentElement.setAttribute('data-theme',st);}catch(e){}</script>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</a>
+    <a class="back" href="/">Open the app</a>
+  </div>
+  <h1>Support</h1>
+  <p class="lede">Addify finds the exact version of the song in a clip. Slowed, sped up, remix, or the original. Here's how to use it, and how to get hold of us.</p>
+
+  <div class="sect">How it works</div>
+  <div class="card">
+    <p>Share a clip and Addify names the song and reads its true speed in a few seconds. Then it hunts for the exact upload that matches the audio, and only crowns one when the audio really lines up.</p>
+  </div>
+
+  <div class="sect">Using it</div>
+  <div class="card">
+    <h2>Share a link</h2>
+    <p>Copy a TikTok or Instagram link and paste it on the home screen, or share the clip straight into Addify from your phone's share sheet. Public clips only.</p>
+  </div>
+  <div class="card">
+    <h2>Listen</h2>
+    <p>Tap the microphone and Addify listens for 12 seconds. It names the song and tells you if it's slowed or sped up. The recording is deleted as soon as the lookup ends.</p>
+  </div>
+  <div class="card">
+    <h2>Save it</h2>
+    <p>Every result links out to the song on the platform where it lives. Connect Spotify and matches can go straight into a "Found with Addify" playlist.</p>
+  </div>
+
+  <div class="sect">Your data</div>
+  <div class="card">
+    <h2>Delete everything</h2>
+    <p>Go to <span class="path">Profile &rsaquo; Delete account</span>. That erases any feedback you sent from our server, clears everything the app stored on your device, and reloads. No email, no call, no waiting.</p>
+    <p>If you cleared your browser data first and want feedback rows erased anyway, email <span class="ph">[[CONTACT_EMAIL]]</span> with the link you scanned and roughly when.</p>
+  </div>
+  <div class="card">
+    <h2>Disconnect Spotify</h2>
+    <p><span class="path">Profile &rsaquo; Sign out of Spotify</span>, or open Settings and tap Disconnect. Your Spotify tokens only ever live on your device, so signing out removes them completely. To revoke Addify on Spotify's side too, remove it under the apps section of your Spotify account settings.</p>
+    <p>The full picture is in the <a href="/privacy">privacy policy</a>.</p>
+  </div>
+
+  <div class="sect">Results</div>
+  <div class="card">
+    <h2>Why it says "closest match" instead of naming the exact version</h2>
+    <p>Addify only crowns an upload when the audio genuinely matches. If nothing clears that bar, it shows you the closest thing it found and says so. That's on purpose. A confident wrong answer is worse than an honest "not sure".</p>
+  </div>
+  <div class="card">
+    <h2>Known limits</h2>
+    <ul>
+      <li>Long Instagram share links (the ones with <code>?igsh=</code>) resolve as private. Open the reel and copy the plain link instead.</li>
+      <li>On a mashup, the multi-song pass only reads the first 12 seconds, so later songs in a long clip can come back wrong.</li>
+      <li>A clip with no lead at all, no fingerprint, no caption, no comments, is a genuine dead end.</li>
+      <li>Private clips can't be scanned.</li>
+    </ul>
+  </div>
+
+  <div class="sect">The iOS app</div>
+  <div class="card">
+    <p>The native iOS app isn't out yet. Today Addify runs as a web app you can add to your home screen.</p>
+  </div>
+
+  <div class="sect">Contact</div>
+  <div class="card">
+    <p>Email <span class="ph">[[CONTACT_EMAIL]]</span>. Include the link you scanned if it's about a result. We reply within <span class="ph">[[RESPONSE_TIME]]</span>.</p>
+    <p><b><span class="ph">[[COMPANY_LEGAL_NAME]]</span></b></p>
+  </div>
+
+  <div class="foot"><a href="/privacy">Privacy</a><span class="dot">&middot;</span><a href="/support">Support</a><span class="dot">&middot;</span><a href="/terms">Terms</a></div>
+</div>
+</body>
+</html>

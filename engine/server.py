@@ -144,6 +144,12 @@ def _cache_drop(key):
     _NO_SOUND_CACHE.add(key)
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
+# The legal/support pages (/privacy, /support, /terms). App Store Connect wants a privacy
+# policy URL and a support URL, and review wants both reachable from inside the app, so
+# they are served from the same origin the page and the API already share. Plain files
+# in engine/pages/, no templating: they are read from disk on every hit, like crate.html.
+PAGES = os.path.join(HERE, "pages")
+STATIC_PAGES = ("privacy", "support", "terms")
 
 
 def _page_build():
@@ -2387,6 +2393,21 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _send_static_page(self, name):
+        """One of STATIC_PAGES, by name. The name is matched against that fixed tuple
+        before it ever touches a path, so this branch cannot be steered at anything
+        else under engine/ (feedback.jsonl sits one directory up from these files).
+        no-store like the app page: the policy text has to be current the moment it is
+        edited, and a home-screen web app would otherwise keep an old copy."""
+        if name not in STATIC_PAGES:
+            return self._send(404, {"error": "not found"})
+        try:
+            with open(os.path.join(PAGES, name + ".html"), "rb") as f:
+                b = f.read()
+        except FileNotFoundError:
+            return self._send(404, {"error": "pages/%s.html not next to server.py" % name})
+        return self._send_raw(b, "text/html; charset=utf-8")
+
     def _send_raw(self, body, ctype):
         b = body.encode() if isinstance(body, str) else body
         self.send_response(200)
@@ -2430,6 +2451,13 @@ class H(BaseHTTPRequestHandler):
                 "image/svg+xml")
         if u.path == "/review":
             return self._send_review()
+        # /privacy, /support, /terms - the .html suffix is accepted too, so the same link
+        # works whether it points at the engine or at a static copy of the page.
+        name = u.path.strip("/")
+        if name.endswith(".html"):
+            name = name[:-5]
+        if name in STATIC_PAGES:
+            return self._send_static_page(name)
         if u.path == "/progress":
             # What the engine is doing on THIS clip, right now. Polled by the page while
             # it waits on /base, which is one long awaited call with no events of its own.

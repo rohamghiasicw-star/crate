@@ -683,6 +683,10 @@ button.savecard[disabled]{pointer-events:none}
 .hint2 code{display:inline-block;margin-top:5px;background:var(--raise2);padding:3px 7px;border-radius:6px;
   color:var(--accent2);font-size:11px;overflow-wrap:anywhere;max-width:100%}
 .setfield input{min-width:0}
+/* Privacy / Support / Terms at the foot of the sheet. Anchors inherit colour everywhere
+   else in the app (they are styled rows), so these get the accent explicitly. */
+.legal{display:flex;justify-content:center;align-items:center;gap:8px;font-size:12px;color:var(--faint);margin-top:2px}
+.legal a{color:var(--accent2);font-weight:600}
 .otherwrap{margin-top:14px}
 .otherwrap[hidden]{display:none}
 .prow{display:flex;align-items:center;gap:11px;background:var(--raise2);border-radius:14px;padding:12px 13px;
@@ -890,6 +894,9 @@ button.savecard[disabled]{pointer-events:none}
         <input id="spid" type="text" placeholder="paste from developer.spotify.com" spellcheck="false">
         <span class="hint2">Create an app at developer.spotify.com/dashboard and add this exact redirect URI:<br><code id="rdu"></code></span>
       </div>
+      <!-- hrefs are set in paintSheet() from ENGINE, not hard-coded: the GitHub Pages copy of
+           this page has no /privacy of its own and has to point at the engine host. -->
+      <div class="legal"><a id="lgpriv" target="_blank" rel="noopener">Privacy</a><span>&middot;</span><a id="lgsup" target="_blank" rel="noopener">Support</a><span>&middot;</span><a id="lgterms" target="_blank" rel="noopener">Terms</a></div>
     </div>
 </div>
 
@@ -2207,6 +2214,8 @@ function renderProf(){
       '<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
+      '<a class="setrow" id="pfpriv" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Privacy policy</span><span class="go2">'+IC.rchev+'</span></a>'+
+      '<a class="setrow" id="pfsup" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Support</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<button class="setrow danger" id="pfdel"><span class="st">Delete account</span></button></div>';
   document.getElementById('upbtn').onclick=function(){this.textContent='With the iOS app'; };
   document.getElementById('pfsp').onclick=function(){
@@ -2220,6 +2229,10 @@ function renderProf(){
   document.getElementById('pfdev').onclick=openSheet;
   document.getElementById('pfclear').onclick=function(){
     if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
+  // Review wants privacy + support reachable from inside the app, next to the deletion
+  // path, not buried behind Developer settings. Same engine-resolved URLs as the sheet.
+  document.getElementById('pfpriv').href=legalURL('privacy');
+  document.getElementById('pfsup').href=legalURL('support');
   var so=document.getElementById('pfout');
   if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
   document.getElementById('pfdel').onclick=function(){
@@ -2375,7 +2388,14 @@ function paintSheet(){
   var on=SP.connected();
   document.getElementById('spsub').textContent=on?'Connected · saving to Found with Addify':'Not connected';
   document.getElementById('spbtn').textContent=on?'Disconnect':'Connect';
+  document.getElementById('lgpriv').href=legalURL('privacy');
+  document.getElementById('lgsup').href=legalURL('support');
+  document.getElementById('lgterms').href=legalURL('terms');
 }
+/* The legal pages are served by the engine (server.py STATIC_PAGES). Resolve them the same
+   way every fetch does, off ENGINE, so a copy of this page hosted elsewhere still lands on
+   the engine's pages instead of a 404 on its own host. */
+function legalURL(name){return ENGINE+'/'+name;}
 function openSheet(){document.getElementById('sheet').hidden=false; paintSheet();}
 document.getElementById('sheetx').innerHTML=IC.x;
 document.getElementById('sheetx').onclick=function(){document.getElementById('sheet').hidden=true;};

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#150E33">
+<link rel="icon" href="/icon.svg">
+<title>Privacy policy - Addify</title>
+<style>
+/* Tokens are copied verbatim from crate.html so these pages read as the app, not as a
+   generic legal template. If the app's palette changes, change it here too. */
+:root{
+  --bg:#1B1140; --bg2:#241650;
+  --card:#3A2A78; --raise:#4A3894; --raise2:#5643A8;
+  --line:rgba(255,255,255,.13); --line2:rgba(255,255,255,.20);
+  --text:#FFFFFF; --muted:#CFC4F5; --faint:#A294DC;
+  --accent:#5B4BE8; --accent2:#8172FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
+  --signal:#A855F7; --cool:#2DD4BF; --good:#2ED8A7;
+  --warn:#F5B94D;
+  --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
+  --r-card:26px; --r-mid:18px; --r-pill:999px;
+  --spring:cubic-bezier(.2,.9,.25,1.15);
+  --shadow:0 24px 60px rgba(8,4,30,.55);
+}
+:root[data-theme="light"]{
+  --bg:#EFEBFF; --bg2:#F7F5FF;
+  --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
+  --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
+  --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
+  --accent:#5B4BE8; --accent2:#7360FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
+  --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+  --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
+  --shadow:0 20px 50px rgba(60,40,140,.16);
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --bg:#EFEBFF; --bg2:#F7F5FF; --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
+    --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
+    --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
+    --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+    --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
+    --shadow:0 20px 50px rgba(60,40,140,.16);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text); min-height:100vh;
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(80% 50% at 50% 0%, color-mix(in oklab,var(--accent) 30%,transparent), transparent 66%);
+  background-attachment:fixed;
+  display:flex; justify-content:center;
+  padding:22px 16px 40px;
+}
+::selection{background:var(--accent); color:#fff}
+:focus-visible{outline:2px solid var(--accent2); outline-offset:3px; border-radius:10px}
+/* The app inherits link colour on purpose (its links are styled rows). A document page is
+   the one place a plain link has to look like one, so colour it here. */
+a{color:var(--accent2); text-decoration:none; font-weight:600}
+a:hover{text-decoration:underline}
+.page{width:100%; max-width:640px}
+.top{display:flex; align-items:center; justify-content:space-between; margin-bottom:18px}
+.brand{display:flex; align-items:center; gap:9px; font-weight:750; font-size:19px; letter-spacing:-.02em; color:var(--text)}
+.brand svg{display:block}
+.back{font-size:13px; color:var(--muted); font-weight:600}
+h1{font-size:26px; font-weight:750; letter-spacing:-.02em; margin:0 0 6px; line-height:1.2}
+.lede{color:var(--muted); margin:0 0 6px}
+.eff{font-size:12.5px; color:var(--faint); margin:0 0 6px}
+.sect{font-size:11.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin:22px 0 9px}
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--r-card); padding:18px; box-shadow:var(--shadow); margin-bottom:12px}
+.card h2{font-size:16px; font-weight:680; letter-spacing:-.01em; margin:0 0 8px; color:var(--text)}
+.card p,.card li{color:var(--muted); margin:0 0 10px}
+.card ul{padding-left:19px; margin:0 0 10px}
+.card li{margin-bottom:6px}
+.card>:last-child{margin-bottom:0}
+.card b{color:var(--text); font-weight:650}
+.rows{display:flex; flex-direction:column; gap:8px}
+.row{display:flex; gap:12px; align-items:flex-start; background:var(--raise); border-radius:15px; padding:12px 14px}
+.row b{display:block; font-size:14px; font-weight:650; color:var(--text)}
+.row span{display:block; font-size:13px; color:var(--muted); margin-top:2px}
+.row .who{flex:none; width:118px; font-size:13.5px; font-weight:650; color:var(--text); padding-top:1px}
+.row .what{flex:1; min-width:0; font-size:13px; color:var(--muted)}
+.callout{background:color-mix(in oklab,var(--good) 14%,transparent); border:1px solid color-mix(in oklab,var(--good) 35%,transparent);
+  border-radius:15px; padding:12px 14px; font-size:13.5px; color:var(--text)}
+.callout b{color:var(--good)}
+/* Owner placeholders. Loud on purpose: they must never ship unnoticed, and a reviewer must
+   never read an invented company, address or jurisdiction. */
+.ph{color:var(--warn); font-weight:700; white-space:nowrap}
+code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.5px; color:var(--accent2)}
+.path{display:inline-block; background:var(--raise2); padding:3px 8px; border-radius:8px; font-size:12.5px; font-weight:650; color:var(--text)}
+.foot{display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; color:var(--faint); margin-top:24px}
+.foot .dot{opacity:.6}
+@media (max-width:480px){ body{padding:16px 12px 36px} .card{padding:16px} .row{flex-direction:column; gap:3px} .row .who{width:auto} }
+</style>
+<!-- Match whatever theme the app is showing. Same key and same fallback as crate.html:
+     an explicit choice in localStorage wins, otherwise the html tag's default. -->
+<script>try{var st=localStorage.getItem('crate-theme');if(st)document.documentElement.setAttribute('data-theme',st);}catch(e){}</script>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</a>
+    <a class="back" href="/">Open the app</a>
+  </div>
+  <h1>Privacy policy</h1>
+  <p class="lede">Addify names the exact version of the song playing in a clip. Here's what that takes, what it doesn't, and what happens to it. Written from what the code actually does.</p>
+  <p class="eff">Effective <span class="ph">[[EFFECTIVE_DATE]]</span></p>
+
+  <div class="card">
+    <h2>The short version</h2>
+    <ul>
+      <li><b>No accounts.</b> Your "account" is this browser's storage on your own device. No email, no password, no sign-up.</li>
+      <li><b>Audio is never kept.</b> A clip's audio lives in a temporary folder for one lookup, then it's deleted. Only fingerprints and text results exist after that.</li>
+      <li><b>The server keeps one thing about you:</b> feedback rows you chose to send. You can erase them from inside the app.</li>
+      <li><b>No analytics, no ad SDKs, no trackers.</b> Nothing on the page reports to a third party.</li>
+    </ul>
+    <div class="callout"><b>Data we do not collect:</b> your name, email, phone number, contacts, location, photos, payment details, device identifiers, advertising ID, or your microphone outside the 12 seconds you tap to listen.</div>
+  </div>
+
+  <div class="sect">What we process</div>
+  <div class="card">
+    <h2>When you share a link</h2>
+    <ul>
+      <li>The TikTok or Instagram link you share goes to our server.</li>
+      <li>The server fetches the clip's audio into a temporary folder, cuts it into short windows of about 12 seconds, and fingerprints those windows at several playback speeds. The folder is deleted when the lookup ends, whether it found the song or not.</li>
+      <li>The clip's public caption and comments may be read to help name the song. They're used for that lookup and not stored.</li>
+      <li>The result (song, artist, speed, links) comes back as text. The server holds it in memory so the same clip doesn't have to be scanned twice. That memory is wiped when the server restarts, and it never contains audio.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>When you tap to listen</h2>
+    <p>Your browser records 12 seconds of room audio after you tap the microphone, and only then. The recording goes to our server, is written to a temporary folder, fingerprinted, and deleted before the answer is sent back. It's never stored.</p>
+  </div>
+  <div class="card">
+    <h2>When you send feedback</h2>
+    <p>On a no-match screen you can tap to confirm or reject a guess. That sends the clip link, the guessed song and artist, and your yes or no. The server stores that row with a random id and a timestamp. Nothing in it identifies you. Your device remembers the id so the row can be erased later.</p>
+  </div>
+
+  <div class="sect">What stays on your device</div>
+  <div class="card">
+    <p>Stored in your browser only. Never uploaded to us.</p>
+    <ul>
+      <li>Your library of saved finds</li>
+      <li>Your scan history (the last 500 scans) and clips that didn't match</li>
+      <li>The free-scan counter for the month</li>
+      <li>Spotify, only after you connect: your access token, refresh token, expiry, the playlist id and your Spotify display name. We use PKCE, so there's no client secret anywhere.</li>
+      <li>The ids of feedback rows you sent</li>
+      <li>Settings: auto-save, monthly playlists, onboarding done, and your theme</li>
+    </ul>
+    <p>Our server never sees your Spotify tokens. Calls to Spotify go straight from your device to Spotify.</p>
+  </div>
+
+  <div class="sect">Where data goes</div>
+  <div class="card">
+    <h2>Third parties that receive something during a lookup</h2>
+    <p>None of them receive anything about you. They receive a link you chose to share, or a song title.</p>
+    <div class="rows">
+      <div class="row"><div class="who">Shazam</div><div class="what">Receives an audio signature computed on our server from a window of the clip, not the recording itself. This is how the base song gets named.</div></div>
+      <div class="row"><div class="who">TikTok, Instagram</div><div class="what">Receive the link you shared, so the clip's public page, caption and comments can be read.</div></div>
+      <div class="row"><div class="who">tikwm.com</div><div class="what">A third-party TikTok mirror our server may use as a fallback to fetch a clip or its comments. It receives the link you shared.</div></div>
+      <!-- OWNER: the review audit (review/appstore-review-audit.md, 5.1.2(i)) says this host must be
+           disclosed or removed, and that removing it is better. This line is the disclosure. Delete
+           the line if the tikwm path is removed from crate_engine.py. -->
+      <div class="row"><div class="who">SoundCloud, YouTube</div><div class="what">Receive search queries built from the song title, the artist and the uploader's handle. Candidate uploads are downloaded to the temporary folder for comparison, then deleted.</div></div>
+      <div class="row"><div class="who">Google, Brave, DuckDuckGo</div><div class="what">May receive the same title-based queries when the engine looks for an edit's name.</div></div>
+      <div class="row"><div class="who">Apple Music, Deezer</div><div class="what">Receive the song title and artist to build the official links shown under a result.</div></div>
+      <div class="row"><div class="who">Spotify</div><div class="what">Called from your own device with your own token, only after you connect, to create and fill the "Found with Addify" playlist.</div></div>
+    </div>
+    <p style="margin-top:10px">The trending screen is built by our server from public TikTok data and tokchart.com. Nothing about you is sent to either.</p>
+    <p>When the developer runs the engine on their own machine, it can use the developer's own Instagram login to read a public reel. That is the developer's account, never yours, and it's off by default.</p>
+  </div>
+
+  <div class="sect">Retention</div>
+  <div class="card">
+    <ul>
+      <li><b>Audio:</b> deleted at the end of each lookup. Never written anywhere else.</li>
+      <li><b>Results:</b> server memory only. Gone when the server restarts.</li>
+      <li><b>Feedback rows:</b> kept until you erase them.</li>
+      <li><b>Server logs:</b> the server doesn't write an access log, so it doesn't record IP addresses or request history. Traffic reaches it through a Cloudflare tunnel, which handles the connection the way any network carrier does. We don't receive or keep IP addresses from it.</li>
+      <li><b>Tuning log:</b> the developer can switch on a timing log while tuning the engine. It holds stage timings and the clip link, not audio and nothing about you. It's off by default.</li>
+    </ul>
+  </div>
+
+  <div class="sect">Deleting your data</div>
+  <div class="card">
+    <ul>
+      <li><span class="path">Profile &rsaquo; Delete account</span> erases your feedback rows on the server, clears everything stored on your device, and reloads the app. No email, no call.</li>
+      <li><span class="path">Profile &rsaquo; Sign out of Spotify</span> (or Settings &rsaquo; Disconnect) drops the Spotify tokens from your device. To revoke Addify on Spotify's side as well, remove it under the apps section of your Spotify account settings.</li>
+      <li>Cleared your browser first, so the app no longer has your feedback ids? Email <span class="ph">[[CONTACT_EMAIL]]</span> with the link you scanned and roughly when. We'll erase the matching rows.</li>
+    </ul>
+  </div>
+
+  <div class="sect">Things we don't do</div>
+  <div class="card">
+    <ul>
+      <li>No third-party SDKs: no analytics, no ads, no crash reporting, no data brokers.</li>
+      <li>No tracking across apps or websites.</li>
+      <li>No selling or sharing of data for advertising.</li>
+      <li>No in-app playback or download of the clips or the songs. Results link out to the platforms.</li>
+    </ul>
+  </div>
+
+  <div class="sect">Children</div>
+  <div class="card">
+    <p>Addify isn't directed at children under <span class="ph">[[MINIMUM_AGE]]</span>, and we don't knowingly process their data. If you think a child has used it, email <span class="ph">[[CONTACT_EMAIL]]</span>.</p>
+  </div>
+
+  <div class="sect">Changes</div>
+  <div class="card">
+    <p>If this policy changes, the new version is posted here with a new effective date.</p>
+  </div>
+
+  <div class="sect">Contact</div>
+  <div class="card">
+    <p><b><span class="ph">[[COMPANY_LEGAL_NAME]]</span></b><br><span class="ph">[[POSTAL_ADDRESS]]</span><br><span class="ph">[[CONTACT_EMAIL]]</span></p>
+    <p>This policy is governed by the laws of <span class="ph">[[JURISDICTION]]</span>.</p>
+  </div>
+
+  <div class="foot"><a href="/privacy">Privacy</a><span class="dot">&middot;</span><a href="/support">Support</a><span class="dot">&middot;</span><a href="/terms">Terms</a><span class="dot">&middot;</span><span>Effective <span class="ph">[[EFFECTIVE_DATE]]</span></span></div>
+</div>
+</body>
+</html>
