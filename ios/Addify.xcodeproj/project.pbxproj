@@ -1,0 +1,448 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AD00B001000000000000B001 /* AddifyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F001000000000000F001 /* AddifyApp.swift */; };
+		AD00B002000000000000B002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F002000000000000F002 /* ContentView.swift */; };
+		AD00B003000000000000B003 /* EngineWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F003000000000000F003 /* EngineWebView.swift */; };
+		AD00B004000000000000B004 /* EngineConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F004000000000000F004 /* EngineConfig.swift */; };
+		AD00B005000000000000B005 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F005000000000000F005 /* SharedInbox.swift */; };
+		AD00B006000000000000B006 /* ResultToast.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F006000000000000F006 /* ResultToast.swift */; };
+		AD00B007000000000000B007 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F007000000000000F007 /* SettingsView.swift */; };
+		AD00B008000000000000B008 /* EngineBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F008000000000000F008 /* EngineBridge.swift */; };
+		AD00B009000000000000B009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AD00F00A000000000000F00A /* Assets.xcassets */; };
+		AD00B00A000000000000B00A /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F00B000000000000F00B /* ShareViewController.swift */; };
+		AD00B00B000000000000B00B /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F005000000000000F005 /* SharedInbox.swift */; };
+		AD00B00C000000000000B00C /* AddifyShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AD00A002000000000000A002 /* AddifyShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AD00E001000000000000E001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD00EE00000000000000EE00 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD0070020000000000007002;
+			remoteInfo = AddifyShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AD0050040000000000005004 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AD00B00C000000000000B00C /* AddifyShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		AD00A001000000000000A001 /* Addify.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Addify.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD00A002000000000000A002 /* AddifyShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AddifyShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD00F001000000000000F001 /* AddifyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddifyApp.swift; sourceTree = "<group>"; };
+		AD00F002000000000000F002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AD00F003000000000000F003 /* EngineWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineWebView.swift; sourceTree = "<group>"; };
+		AD00F004000000000000F004 /* EngineConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineConfig.swift; sourceTree = "<group>"; };
+		AD00F005000000000000F005 /* SharedInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedInbox.swift; sourceTree = "<group>"; };
+		AD00F006000000000000F006 /* ResultToast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultToast.swift; sourceTree = "<group>"; };
+		AD00F007000000000000F007 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AD00F008000000000000F008 /* EngineBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineBridge.swift; sourceTree = "<group>"; };
+		AD00F009000000000000F009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AD00F00A000000000000F00A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AD00F00B000000000000F00B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		AD00F00C000000000000F00C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AD00F00D000000000000F00D /* AddifyShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AddifyShare.entitlements; sourceTree = "<group>"; };
+		AD00F00E000000000000F00E /* Addify.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Addify.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AD0050020000000000005002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD0050060000000000005006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AD0060010000000000006001 = {
+			isa = PBXGroup;
+			children = (
+				AD0060020000000000006002 /* Addify */,
+				AD0060030000000000006003 /* AddifyShare */,
+				AD0060040000000000006004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AD0060020000000000006002 /* Addify */ = {
+			isa = PBXGroup;
+			children = (
+				AD00F001000000000000F001 /* AddifyApp.swift */,
+				AD00F002000000000000F002 /* ContentView.swift */,
+				AD00F003000000000000F003 /* EngineWebView.swift */,
+				AD00F008000000000000F008 /* EngineBridge.swift */,
+				AD00F004000000000000F004 /* EngineConfig.swift */,
+				AD00F005000000000000F005 /* SharedInbox.swift */,
+				AD00F006000000000000F006 /* ResultToast.swift */,
+				AD00F007000000000000F007 /* SettingsView.swift */,
+				AD00F00A000000000000F00A /* Assets.xcassets */,
+				AD00F009000000000000F009 /* Info.plist */,
+				AD00F00E000000000000F00E /* Addify.entitlements */,
+			);
+			path = Addify;
+			sourceTree = "<group>";
+		};
+		AD0060030000000000006003 /* AddifyShare */ = {
+			isa = PBXGroup;
+			children = (
+				AD00F00B000000000000F00B /* ShareViewController.swift */,
+				AD00F00C000000000000F00C /* Info.plist */,
+				AD00F00D000000000000F00D /* AddifyShare.entitlements */,
+			);
+			path = AddifyShare;
+			sourceTree = "<group>";
+		};
+		AD0060040000000000006004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AD00A001000000000000A001 /* Addify.app */,
+				AD00A002000000000000A002 /* AddifyShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AD0070010000000000007001 /* Addify */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD00C002000000000000C002 /* Build configuration list for PBXNativeTarget "Addify" */;
+			buildPhases = (
+				AD0050010000000000005001 /* Sources */,
+				AD0050020000000000005002 /* Frameworks */,
+				AD0050030000000000005003 /* Resources */,
+				AD0050040000000000005004 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD00D001000000000000D001 /* PBXTargetDependency */,
+			);
+			name = Addify;
+			productName = Addify;
+			productReference = AD00A001000000000000A001 /* Addify.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AD0070020000000000007002 /* AddifyShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD00C003000000000000C003 /* Build configuration list for PBXNativeTarget "AddifyShare" */;
+			buildPhases = (
+				AD0050050000000000005005 /* Sources */,
+				AD0050060000000000005006 /* Frameworks */,
+				AD0050070000000000005007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AddifyShare;
+			productName = AddifyShare;
+			productReference = AD00A002000000000000A002 /* AddifyShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AD00EE00000000000000EE00 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AD0070010000000000007001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					AD0070020000000000007002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = AD00C001000000000000C001 /* Build configuration list for PBXProject "Addify" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AD0060010000000000006001;
+			productRefGroup = AD0060040000000000006004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AD0070010000000000007001 /* Addify */,
+				AD0070020000000000007002 /* AddifyShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AD0050030000000000005003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD00B009000000000000B009 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD0050070000000000005007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AD0050010000000000005001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD00B001000000000000B001 /* AddifyApp.swift in Sources */,
+				AD00B002000000000000B002 /* ContentView.swift in Sources */,
+				AD00B003000000000000B003 /* EngineWebView.swift in Sources */,
+				AD00B008000000000000B008 /* EngineBridge.swift in Sources */,
+				AD00B004000000000000B004 /* EngineConfig.swift in Sources */,
+				AD00B005000000000000B005 /* SharedInbox.swift in Sources */,
+				AD00B006000000000000B006 /* ResultToast.swift in Sources */,
+				AD00B007000000000000B007 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD0050050000000000005005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD00B00A000000000000B00A /* ShareViewController.swift in Sources */,
+				AD00B00B000000000000B00B /* SharedInbox.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AD00D001000000000000D001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD0070020000000000007002 /* AddifyShare */;
+			targetProxy = AD00E001000000000000E001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AD00C011000000000000C011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AD00C012000000000000C012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AD00C021000000000000C021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Addify/Addify.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Addify/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD00C022000000000000C022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Addify/Addify.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Addify/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AD00C031000000000000C031 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = AddifyShare/AddifyShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AddifyShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD00C032000000000000C032 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = AddifyShare/AddifyShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AddifyShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AD00C001000000000000C001 /* Build configuration list for PBXProject "Addify" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00C011000000000000C011 /* Debug */,
+				AD00C012000000000000C012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD00C002000000000000C002 /* Build configuration list for PBXNativeTarget "Addify" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00C021000000000000C021 /* Debug */,
+				AD00C022000000000000C022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD00C003000000000000C003 /* Build configuration list for PBXNativeTarget "AddifyShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD00C031000000000000C031 /* Debug */,
+				AD00C032000000000000C032 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AD00EE00000000000000EE00 /* Project object */;
+}

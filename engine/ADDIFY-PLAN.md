@@ -68,7 +68,7 @@ J - **Share plumbing**: share endpoint, Android share target, iOS Shortcut recip
 | What | Blocked on | Owner |
 |---|---|---|
 | SoundCloud save | API access - being confirmed now | C |
-| Native iOS app + share-sheet icon | Xcode Share Extension build | C |
+| Native iOS app + share-sheet icon | Project committed under `ios/` (app + Share Extension), never compiled: no Xcode on the build Mac. Needs a Mac with Xcode 15+ to build, then a device with TikTok/IG to test the sheet | C |
 | Hosted backend | Currently one Mac behind a tunnel | C |
 | Payments / paywall | Free-scan counter is real, paywall is not | C |
 | Incorporation | Needed for Spotify quota past 5 users | R |

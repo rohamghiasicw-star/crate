@@ -2349,6 +2349,13 @@ function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeou
     setState('locked'); document.getElementById('matchttl').textContent='No match'; return;}
   if(!d.cached) useScan();
   logScan(d);
+  // NATIVE BRIDGE. Inside the iOS app (ios/) the page runs in a WKWebView that registers a
+  // message handler named 'addify'; the app turns this into a haptic + toast, and a local
+  // notification when the scan was started from TikTok's share sheet and the app is not in
+  // front. Feature-detected and swallowed so plain Safari / Chrome never sees it.
+  try{var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
+    if(_wk) _wk.postMessage({type:'result',song:d.base_song||'',artist:d.base_artist||'',speed:d.speed||'',
+      exact:d.exact?{url:d.exact.url||'',uploader:d.exact.uploader||''}:null});}catch(e){}
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
   document.getElementById('dial').classList.add('done');
