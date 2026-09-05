@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<!-- The bridge ships as a .app, not a bare binary, because only a bundle can carry
+     embedded.provisionprofile, and only a provisioning profile grants
+     com.apple.developer.shazamkit. The identifier below must match the App ID that has
+     the ShazamKit App Service enabled (see README.md). -->
+<key>CFBundleIdentifier</key><string>com.addify.shazambridge</string>
+<key>CFBundleName</key><string>ShazamBridge</string>
+<key>CFBundleExecutable</key><string>ShazamBridge</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1</string>
+<key>CFBundleVersion</key><string>1</string>
+<!-- 13.0: SHSession.result(from:) async is @available(macOS 13.0) in the SDK's
+     swiftinterface. 12.0 is reachable only with the SHSessionDelegate rewrite. -->
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<!-- Never shows a window; keeps it out of the Dock if launched by hand. -->
+<key>LSUIElement</key><true/>
+</dict></plist>

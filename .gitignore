@@ -11,3 +11,7 @@ engine/timing.jsonl
 engine/eval/review_feed.json      # a build artifact, regenerate with eval/build_feed.py
 engine/eval/resolved.json         # a link-resolution cache, regenerates itself
 .DS_Store
+
+# Built bridge bundle; rebuild with engine/shazamkit_bridge/build.sh
+engine/shazamkit_bridge/ShazamBridge.app/
+engine/shazamkit_bridge/embedded.provisionprofile
