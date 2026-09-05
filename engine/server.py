@@ -819,7 +819,16 @@ def _phase1(url, key, t0):
                 shazam=fp.get("url"), art=fp.get("art"),
                 edit_label=fp["edit_label"], probes=fp["probes"],
             )
-            if fp.get("multi"):
+            # ONE DISSENTING WINDOW IS NOT A SECOND SONG.
+            # `multi` is set in _fingerprint_core purely by de-duping the phase-1 scan hits
+            # on title, with NO support requirement - one window out of six naming
+            # something else is enough to invent a second song, and the earliest window by
+            # time becomes the base. That put a phantom second track on The Scientist and
+            # on Cheri Cheri Lady, both of which Roham graded "there isn't a second audio
+            # clip". `mashup` is the flag that survived tier 2, i.e. the one the audio
+            # actually corroborated, and it already gates res["sections"] two lines below.
+            # Gate the song list on the same fact so the screen and the evidence agree.
+            if fp.get("mashup") and fp.get("multi"):
                 res["songs"] = [{"song": h["title"], "artist": h["artist"],
                                  "at": round(h.get("at", 0)), "shazam": h.get("url"),
                                  "art": h.get("art")} for h in fp["songs"]]
@@ -1303,8 +1312,15 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core):
     Returns a reason string to refuse the crown, or None. Any failure returns None: a
     control that cannot be measured must never cost the user their answer.
     """
-    if not clip_audio or not cand_url or fwd_core is None or fwd_core < E.CORE_SAME:
-        return None                    # only ever second-guesses a "provably same" claim
+    # ONLY SECOND-GUESS A CLAIM OF *PROVABLE* SAMENESS.
+    # This entry used to fire from CORE_SAME (0.95) up, but all four cases the control was
+    # built and calibrated on (STRUCT, Omens, ur LYING, GALE) have a forward core of
+    # exactly 1.000. In the 0.95-0.999 band the control is out of calibration and it
+    # destroyed a correct crown: Chief Keef "I Dont Like Bass Boosted" at core 0.961,
+    # vspeed 0.9997 and 0.2 dB off the clip's tilt cleared every other gate and this one
+    # refused it, leaving a shelf whose top rows are a different song entirely.
+    if not clip_audio or not cand_url or fwd_core is None or fwd_core < 0.999:
+        return None
     import shutil
     import subprocess
     import verify as _verify
@@ -1759,35 +1775,51 @@ def _phase2(ctx, on_cand=None):
             # its title is a lie, and repeating that lie as "the exact edit" is the same
             # error one step removed.
             _source_v = None            # set when the crown is the SOURCE, not the edit
-            if top:
-                _why, _source_v = _crown_tempo_mismatch(top, measured)
+            # ONE REFUSAL AT ROW 1 USED TO THROW AWAY THE WHOLE SHELF.
+            # The gates below ran against `verified[0]` and nothing else, so when row 1 was
+            # refused `top` went None and server fell back to presenting no crown at all -
+            # even when row 2 was gate-clean and above the bar. Measured on Roham's grading
+            # set: clip 4 (Love Sosa) and clip 20 (Mist) each had a clean row sitting
+            # directly under a refused one, and both reported "we did not crown one".
+            # A refusal is a statement about THAT upload, not about the shelf, so walk down.
+            # The gates themselves are unchanged; only how many rows they are offered is.
+            _gate_pool = [c for c in (verified or [])
+                          if (c.get("core") or 0) >= E.CORE_KEEP] if top else []
+            _first_reject = None
+            for _cand in (_gate_pool or []):
+                _source_v = None
+                _why, _source_v = _crown_tempo_mismatch(_cand, measured)
+                if not _why:
+                    _why = _crown_contradicts(_cand, res.get("speed"), mdir,
+                                              measured=measured,
+                                              tilt_readable=(_source_v is None))
+                if not _why:
+                    _why = _time_reversed_null(src.get("audio"), _cand.get("url"),
+                                               _cand.get("core"))
                 if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
+                    if _first_reject is None:
+                        _first_reject = (_why, _cand)
+                    continue
+                top = _cand
+                break
+            else:
+                # every row above the bar was refused - report the FIRST refusal, which is
+                # the one about the strongest candidate and the one worth showing.
+                if _first_reject:
+                    res["crown_rejected"] = _first_reject[0]
+                    res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
-                    top = None
-            if top:
-                _why = _crown_contradicts(top, res.get("speed"), mdir,
-                                          measured=measured,
-                                          tilt_readable=(_source_v is None))
-                if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
-                    res["unsure"] = True
-                    top = None
+                top = None
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.
             if top:
-                _why = _time_reversed_null(src.get("audio"), top.get("url"),
-                                           top.get("core"))
-                if _why:
-                    res["crown_rejected"] = _why
-                    res["weak_exact"] = round(top.get("core") or 0, 3)
-                    res["unsure"] = True
-                    top = None
-            if top:
-                exact = candidates[0]
+                # THE ROW THE GATES APPROVED, not always row 1. With the fall-through
+                # loop above, `top` can be verified[1] or lower; candidates[] is the
+                # display list built from the same `verified` order, so match by url
+                # rather than assuming index 0.
+                exact = next((c for c in candidates
+                              if c.get("url") == top.get("url")), candidates[0])
                 res["decisive"] = bool(edit.get("decisive"))
                 if _source_v is not None:
                     # Say what this crown IS. Not "the exact edit" - the SOURCE, with the

@@ -1,0 +1,33 @@
+{"n":1,"url":"https://www.instagram.com/reel/DcbOiKoB0hX/","verdict":"right","note":"It's right"}
+{"n":2,"url":"https://vt.tiktok.com/ZSVc68AqN/","verdict":"right","note":"It's right"}
+{"n":3,"url":"https://vt.tiktok.com/ZSVc6dkVh/","verdict":"wrong_transform","note":"original song, NOT bass boosted. would know if you staged the audio waves against each other","theme":"overclaim_bass"}
+{"n":4,"url":"https://vt.tiktok.com/ZSVcjsfQw/","verdict":"wrong_speed","note":"even more slowed than you thought. maybe ultra slowed","theme":"underread_slow"}
+{"n":5,"url":"https://vt.tiktok.com/ZSVcjsuJw/","verdict":"wrong_version","note":"should be the START of the song, intro, just instrumental","theme":"instrumental_and_offset"}
+{"n":6,"url":"https://vt.tiktok.com/ZSVcjcVDU/","verdict":"right","note":"this is right"}
+{"n":7,"url":"https://vt.tiktok.com/ZSVc6NF7C/","verdict":"false_mashup","note":"just the scientist, there isnt a second audio clip. got the song right tho","theme":"false_mashup"}
+{"n":8,"url":"https://vt.tiktok.com/ZSVcjocnM/","verdict":"wrong_version","note":"heaven by bryan adams, should just be the original, probably a slowed version. you found weird clips and matched them up wrong","theme":"knockoff_or_weird_upload"}
+{"n":9,"url":"https://vt.tiktok.com/ZSVcjpxuc/","verdict":"wrong_version","note":"should be lollipop lil wayne INSTRUMENTAL, not lollipop lil wayne","theme":"instrumental"}
+{"n":10,"url":"https://vt.tiktok.com/ZSVc6JXN6/","verdict":"knockoff","note":"fetty wap trap queen, should be slowed and maybe reverb. make sure a match is not a knockoff, soundcloud is full of them","theme":"knockoff"}
+{"n":11,"url":"https://vt.tiktok.com/ZSVcjcd6p/","verdict":"false_100","note":"fades in and out, there is a sound effect. this is talking body tove lo. your 100% match doesnt even match","theme":"false_positive_100"}
+{"n":12,"url":"https://vt.tiktok.com/ZSVc6NJ3E/","verdict":"wrong_version","note":"should just be dont like chief keef bass boosted, why are you doing a remix","theme":"remix_over_simple"}
+{"n":13,"url":"https://vt.tiktok.com/ZSVcjWwVF/","verdict":"wrong_version","note":"https://soundcloud.com/wanhuten/wjjhascop0ri is the right version but a bit slowed","theme":"right_family_wrong_speed"}
+{"n":14,"url":"https://vt.tiktok.com/ZSVcjvQtn/","verdict":"wrong_transform","note":"its not slowed or reverb, its just the original song","theme":"overclaim_transform"}
+{"n":15,"url":"https://vt.tiktok.com/ZSVc6JUGh/","verdict":"wrong_version","note":"idek but its not the right version","theme":"wrong_version"}
+{"n":16,"url":"https://vt.tiktok.com/ZSVc61jhh/","verdict":"right","note":"right"}
+{"n":17,"url":"https://vt.tiktok.com/ZSVcjWPQ5/","verdict":"missed_mashup","note":"you had no pole, but it shouldve been mashup of rhythm of the night x no pole. close to https://www.youtube.com/watch?v=BLV5f32Qr08","theme":"missed_mashup"}
+{"n":18,"url":"https://vt.tiktok.com/ZSVcj3Gcj/","verdict":"false_mashup","note":"not two songs. just MONTAGEM BAIXA YOLANDA (Slowed) 0:12 TURQUI4-M3ME, DJ NRM & SoulFusi","theme":"false_mashup"}
+{"n":19,"url":"https://vt.tiktok.com/ZSVcjWtxB/","verdict":"right","note":"this is right"}
+{"n":20,"url":"https://vt.tiktok.com/ZSVc6mjtv/","verdict":"wrong_pick","note":"https://soundcloud.com/k6edxqtrlpcq/esdeekid-mist-speeds-reverb shouldve won over the other versions","theme":"ranking"}
+{"n":21,"url":"https://vt.tiktok.com/ZSVc6AtNm/","verdict":"partial_transform","note":"yes bass boosted, but should be slowed as well. careful with soundcloud knockoffs","theme":"missed_second_transform"}
+{"n":22,"url":"https://vt.tiktok.com/ZSVc6SNfc/","verdict":"right","note":"this is right, good shit"}
+{"n":23,"url":"https://www.instagram.com/reel/DbdVtlPPxuN/","verdict":"wrong_version","note":"holla back INSTRUMENTAL but you found some weird version of it","theme":"instrumental_and_knockoff"}
+{"n":24,"url":"https://www.instagram.com/reel/Dcoj3r_PxDU/","verdict":"wrong_version","note":"normal version bro, cant be getting that wrong","theme":"overclaim_transform"}
+{"n":25,"url":"https://www.instagram.com/reel/Dcneb8VzmDN/","verdict":"wrong_transform","note":"yeah usher, but whyd you say bass boosted, its just the og","theme":"overclaim_bass"}
+{"n":26,"url":"https://www.instagram.com/reel/DcoQtZ4zWag/","verdict":"wrong_transform","note":"i think its just slowed","theme":"transform_label"}
+{"n":27,"url":"https://www.instagram.com/reel/DcUXmE6P12S/","verdict":"right","note":"its right"}
+{"n":28,"url":"https://www.instagram.com/reel/DcjRIMWxMSQ/","verdict":"right","note":"right"}
+{"n":29,"url":"https://www.instagram.com/reel/Dcq88AANXWq/","verdict":"right","note":"right"}
+{"n":30,"url":"https://www.instagram.com/reel/Dcm70sJuJVu/","verdict":"wrong_transform","note":"should be SUPER slowed and HEAVY bass boost","theme":"underread_both"}
+{"n":31,"url":"https://www.instagram.com/reel/DcXZ4XKxKsF/","verdict":"right","note":"yes"}
+{"n":32,"url":"https://www.instagram.com/reel/DcmcEP0BuBz/","verdict":"right","note":"yes"}
+{"n":33,"url":"https://www.instagram.com/reel/DbI8Fh8iZa4/","verdict":"right","note":"bang"}

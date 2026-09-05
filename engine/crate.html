@@ -1345,6 +1345,9 @@ function editBadge(d){
    transform fit, so two rows can differ on it for reasons that are not "does this sound
    like the clip". CORE_KEEP mirrors crate_engine.CORE_KEEP - keep them in step. */
 var CORE_KEEP=0.50, CORE_SAME=0.95;
+// Below this the verifier is saying "not this recording". Such a row is never shown,
+// crowned or not - see the shelf filter in renderResult.
+var SHELF_FLOOR=0.15;
 /* Tiers off the ROUNDED percentage, the number actually on screen - core 0.796 prints
    "80%" and must not then be coloured as the sub-80 tier. */
 function confTier(v){var p=Math.round(v*100);
@@ -1674,6 +1677,23 @@ function renderResult(d,partial){
     // posted, candidate titles itself a speed edit", badge reads "Slowed ~0.93x".
     var stale = held && /measured as posted/.test(why) &&
                 /slow|sped|speed|nightcore|daycore/i.test(d.speed||'');
+    // A 0% ROW IS NOT A CLOSE VERSION, IT IS A REJECTED ONE.
+    // Roham, on a Bobby Shmurda shelf that led with "0% match": "if its a 0% match, why
+    // even put it there?" He is right. core is the audio verdict; at or near zero the
+    // verifier is saying "this is not the recording", and printing it under the heading
+    // "closest versions" tells the user the opposite. Rows under SHELF_FLOOR are dropped;
+    // if that empties the shelf we say plainly that nothing came close rather than pad
+    // the screen with rows the audio already rejected.
+    var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
+    var _dropped = cands.length - _kept.length;
+    if(!_kept.length){
+      shelf='<div class="sect">Closest versions - we did not crown one</div>'+
+        '<div class="heldcard"><b>Nothing came close</b><span>The search found '+
+        cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
+        'matched the clip audio, so there is nothing worth listing. The song above is '+
+        'still the answer.</span></div>';
+    } else {
+    cands = _kept;
     shelf='<div class="sect">Closest versions - we did not crown one</div>'+
       (held
         ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload matched the clip '+
@@ -1696,7 +1716,11 @@ function renderResult(d,partial){
           flagtag:(held&&i===0)?'held back':''});}).join('')+'</div>'+
       claimNote(cands.slice(1,12))+
       tieNote(cands.slice(1), cands[0]&&cands[0].core)+
-      '<div class="trainnote">Open the top few and listen - your ear settles this faster than ours does.</div>';}
+      (_dropped?'<div class="trainnote">'+_dropped+' more upload'+(_dropped===1?' was':'s were')+
+        ' checked and did not match the clip audio, so '+(_dropped===1?'it is':'they are')+
+        ' not listed.</div>':'')+
+      '<div class="trainnote">Open the top few and listen - your ear settles this faster than ours does.</div>';
+    }}
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
     '<span class="pct" id="progpct2">0%</span></div>'+
