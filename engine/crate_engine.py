@@ -442,7 +442,10 @@ _C_ASK = re.compile(
     r"|(\b(what'?s?|whats|wats|which|name of|anyone know|does anyone|"
     r"sauce|song|sound|track)\b[^?]{0,24}\?)|(^\s*(song|sound|audio)\s*\??\s*$)", re.I)
 # "Artist - Title" / "Artist – Title", the way people actually paste an ID
-_C_DASH = re.compile(r"^[^\-–—]{2,44}\s[-–—]\s[^\-–—]{2,44}$")
+# Spaces around the dash are OPTIONAL. "Lollipop-lil wayne" is how the answer to "what
+# name song" was actually typed on the Scientist clip, and requiring " - " threw it away
+# while "Lollipop - lil wayne" would have passed. People glue the dash on phones.
+_C_DASH = re.compile(r"^[^\-–—]{2,44}\s?[-–—]\s?[^\-–—]{2,44}$")
 _C_QUOTED = re.compile(r"[\"“'‘]([^\"”'’]{2,50})[\"”'’]")
 # clear opinions only - a comment ABOUT the song ("song is dogshit") isn't NAMING
 # one. Kept narrow so real titles ("Bad Guy", "Good Days") still pass.
