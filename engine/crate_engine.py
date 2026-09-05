@@ -429,8 +429,18 @@ _C_SONGIS = re.compile(r"\b(song|sound|track|beat|audio)\b[\s:=,-]{0,4}"
 _C_BY = re.compile(r"\bby\b", re.I)
 # somebody ASKING for the ID. Not a hint itself - it's a signpost that the answer is
 # in the replies, so tiktok_comments() chases those.
-_C_ASK = re.compile(r"(\b(what'?s?|whats|wats|which|name of|anyone know|does anyone|"
-                    r"sauce|song|sound|track)\b[^?]{0,24}\?)|(^\s*song\s*\??\s*$)", re.I)
+# THE QUESTION MARK IS OPTIONAL. This used to require a literal "?" to call a comment an
+# ask, so "what name song" (no mark, 4 likes, answered "Lollipop-lil wayne" right under
+# it) was never treated as a question, its reply was never fetched, and the engine named
+# the clip "The Scientist" with zero comment hints while the answer sat one reply deep.
+# Half of TikTok does not type the mark. An ask now needs an ask-lead word AND a
+# song-noun within a short span, mark or no mark; the old mark-terminated form and the
+# bare "song?" stay. A false ask costs one reply fetch; a missed ask costs the answer.
+_C_ASK = re.compile(
+    r"(\b(what'?s?|whats|wats|which|name of|anyone know|does anyone|who knows|"
+    r"name|sauce)\b[^?\n]{0,24}\b(song|sound|track|audio|music|name)\b)"
+    r"|(\b(what'?s?|whats|wats|which|name of|anyone know|does anyone|"
+    r"sauce|song|sound|track)\b[^?]{0,24}\?)|(^\s*(song|sound|audio)\s*\??\s*$)", re.I)
 # "Artist - Title" / "Artist – Title", the way people actually paste an ID
 _C_DASH = re.compile(r"^[^\-–—]{2,44}\s[-–—]\s[^\-–—]{2,44}$")
 _C_QUOTED = re.compile(r"[\"“'‘]([^\"”'’]{2,50})[\"”'’]")
