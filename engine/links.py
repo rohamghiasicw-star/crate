@@ -102,8 +102,11 @@ def official_links(song, artist=None):
     ex = ThreadPoolExecutor(max_workers=2)
     try:
         futs = {"apple": ex.submit(_itunes, song, artist),
-                "deezer": ex.submit(_deezer, song, artist)}
-        for key in ("apple", "deezer"):
+                }
+        # Deezer dropped (Roham 2026-09-04): nobody here uses it, and the row is four
+        # chips wide on a phone. SoundCloud replaces it below - it is where the edits
+        # actually live, which is the whole product.
+        for key in ("apple",):
             try:
                 hit = futs[key].result(timeout=TIMEOUT + 1)
             except Exception:
@@ -117,6 +120,8 @@ def official_links(song, artist=None):
         ex.shutdown(wait=False)
 
     q = urllib.parse.quote(("%s %s" % (artist or "", song)).strip())
+    out.append({"name": "SoundCloud", "kind": "soundcloud", "exact": False,
+                "url": "https://soundcloud.com/search?q=" + q})
     out.append({"name": "Spotify", "kind": "spotify", "exact": False,
                 "url": "https://open.spotify.com/search/" + q})
     out.append({"name": "YouTube", "kind": "youtube", "exact": False,

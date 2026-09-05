@@ -146,6 +146,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
 
 
+def _page_build():
+    """The page's build id = crate.html's mtime. Changes on every edit, costs one stat."""
+    try:
+        return str(int(os.path.getmtime(PAGE)))
+    except OSError:
+        return "0"
+
+
 # ---------------------------------------------------------------- creator evidence
 # NEW 2026-08-13. Both helpers are additive: they attach fields and never feed anything
 # that ranks, searches or crowns, so no regression gate is owed on them.
@@ -2323,6 +2331,14 @@ class H(BaseHTTPRequestHandler):
                 b = f.read()
         except FileNotFoundError:
             return self._send(404, {"error": "crate.html not next to server.py"})
+        # STAMP THE PAGE WITH ITS OWN BUILD. no-store below stops an ordinary browser from
+        # caching this file, but it does nothing for an installed home-screen web app,
+        # which keeps the shell it was installed with. Konnor's "it stops at 33% again"
+        # was a fixed bug still running on his phone. The page compares this stamp to
+        # /health's `build` before every scan and reloads itself when they differ, so a
+        # stale shell can never run a scan on old code.
+        b = b.replace(b"<script>", ('<script>window.ADDIFY_BUILD="%s";</script><script>'
+                                    % _page_build()).encode(), 1)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -2423,6 +2439,7 @@ class H(BaseHTTPRequestHandler):
                                     "label": p.get("label") or ""})
         if u.path == "/health":
             return self._send(200, {"ok": True, "service": "crate engine",
+                                    "build": _page_build(),
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
         if u.path == "/trending":
             try:
