@@ -15,7 +15,7 @@ local server, which does the whole job:
 
 Run:  python3 server.py            # -> http://127.0.0.1:8788
 """
-import asyncio, json, os, queue, re, tempfile, threading, time, unicodedata, uuid
+import asyncio, json, math, os, queue, re, tempfile, threading, time, unicodedata, uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -1353,9 +1353,13 @@ _TEMPO_TOL = 0.06          # |log2(vspeed)|, about +-4%
 # that IS right is kept below: the ratio is still returned as a speed READING while the
 # crown stays refused.
 _SOFT_TEMPO_TOL = float(os.environ.get("CRATE_SOFT_TEMPO_TOL", 0.0))
+# How closely the pairwise vspeed must match the clip's independently measured speed
+# before the candidate is called the SOURCE rather than a different edit. 0.06 in log2 is
+# about +-4%, the same window _TEMPO_TOL uses to call two tempos equal.
+_SOURCE_AGREE_TOL = float(os.environ.get("CRATE_SOURCE_AGREE_TOL", 0.06))
 
 
-def _crown_tempo_mismatch(top):
+def _crown_tempo_mismatch(top, measured=None):
     """The crowned upload is the same recording but not at the speed that played.
 
     Distinct from `_crown_contradicts`, which reads TITLES. This reads the measurement, so
@@ -1374,12 +1378,29 @@ def _crown_tempo_mismatch(top):
         v = top.get("vspeed")
     if not v or v <= 0:
         return None, None
-    import math
     v = float(v)
     d = abs(math.log2(v))
     if d <= _TEMPO_TOL:
         return None, None
     title = "%s %s" % (top.get("title") or "", top.get("uploader") or "")
+    # THE CLIP'S OWN SPEED READING GETS A VOTE.
+    #
+    # This gate refuses a candidate whose tempo differs from the clip. On a clip that was
+    # INDEPENDENTLY measured as slowed or sped, that difference is the expected finding,
+    # not a disqualification: EMOTIONS measured "sped up ~1.11x" and the top candidate sat
+    # at vspeed 1.132, so the engine found the original, computed the very ratio it had
+    # already put on the card, and threw it away. Roham, on that row: "bruh". Eastside is
+    # the same shape at 0.93x measured / 0.900 vspeed.
+    #
+    # This is NOT the old _SOFT_TEMPO_TOL, which admitted any high-core candidate on the
+    # absence of a speed word in its title and re-crowned ski slopes. It requires two
+    # measurements that were taken different ways to AGREE: the bass-robust consensus
+    # against real reference audio, and this pair's own vspeed. A candidate that is simply
+    # a different edit does not corroborate the clip's measured ratio, so it still fails.
+    m_speed = (measured or {}).get("speed") if (measured or {}).get("confident") else None
+    if m_speed and m_speed > 0 and not _SPEED_CLAIM.search(title):
+        if abs(math.log2(float(v) / float(m_speed))) <= _SOURCE_AGREE_TOL:
+            return None, v          # this upload is the SOURCE; clip is it re-pitched
     if (_SOFT_TEMPO_TOL > 0 and d <= _SOFT_TEMPO_TOL
             and (top.get("core") or 0) >= E.CORE_SAME
             and not _SPEED_CLAIM.search(title)):
@@ -1731,7 +1752,7 @@ def _phase2(ctx, on_cand=None):
             # error one step removed.
             _source_v = None            # set when the crown is the SOURCE, not the edit
             if top:
-                _why, _source_v = _crown_tempo_mismatch(top)
+                _why, _source_v = _crown_tempo_mismatch(top, measured)
                 if _why:
                     res["crown_rejected"] = _why
                     res["weak_exact"] = round(top.get("core") or 0, 3)
