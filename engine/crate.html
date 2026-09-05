@@ -1022,7 +1022,7 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
       // If the engine reports a newer build than the one this page was stamped with, park
       // the link the user just shared and reload onto current code before scanning.
       if(j&&j.build&&window.ADDIFY_BUILD&&j.build!==window.ADDIFY_BUILD){
-        try{sessionStorage.setItem('addify-pending',curURL||urlEl.value||'');}catch(e){}
+        try{var _pu=curURL||urlEl.value||''; if(_pu) sessionStorage.setItem('addify-pending',_pu);}catch(e){}
         location.reload(); return false;}
       var o=!!j; engineUp=o?true:null; return o;})
     .catch(function(){engineUp=null; return false;});}
@@ -2614,7 +2614,7 @@ paintHome(); renderLib(); nav('idle');
 fetchTrending();
 var _shared=sharedLink();
 // a link parked by the stale-shell reload above resumes here, so the reload is invisible
-if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); if(_pend){sessionStorage.removeItem('addify-pending'); if(parseLink(_pend).host) _shared=_pend;}}catch(e){}}
+if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); sessionStorage.removeItem('addify-pending'); if(_pend&&parseLink(_pend).host) _shared=_pend;}catch(e){}}
 if(_shared){
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
   urlEl.value=_shared;
