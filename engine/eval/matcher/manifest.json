@@ -1,0 +1,4034 @@
+[
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "hotncold clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "hotncold clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "hotncold clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "hotncold clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "hotncold clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "hotncold clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "hotncold clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "intoyou clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "intoyou clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "intoyou clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "intoyou clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "intoyou clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "intoyou clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "intoyou clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "scientist clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "scientist clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "scientist clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "scientist clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "scientist clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "scientist clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "scientist clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "scientist clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "scientist clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "lollipop clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "lollipop clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "lollipop clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "lollipop clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "lollipop clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "lollipop clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "lollipop clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "myhouse clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "myhouse clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "myhouse clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "myhouse clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "myhouse clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "myhouse clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "myhouse clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": true,
+  "kind": "slow85",
+  "prov": "eastside clip vs own slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": true,
+  "kind": "slow70",
+  "prov": "eastside clip vs own slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": true,
+  "kind": "fast115",
+  "prov": "eastside clip vs own fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": true,
+  "kind": "bass10",
+  "prov": "eastside clip vs own bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": true,
+  "kind": "bass18",
+  "prov": "eastside clip vs own bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": true,
+  "kind": "reverb",
+  "prov": "eastside clip vs own reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": true,
+  "kind": "loudstep",
+  "prov": "eastside clip vs own loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": true,
+  "kind": "bandlim",
+  "prov": "eastside clip vs own bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": true,
+  "kind": "quiet",
+  "prov": "eastside clip vs own quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "hotncold clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "hotncold clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "hotncold clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "hotncold clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "hotncold clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "hotncold clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "hotncold clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "hotncold clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "hotncold clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "rudeboy clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "rudeboy clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "rudeboy clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "rudeboy clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "rudeboy clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "rudeboy clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "rudeboy clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "rudeboy clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "rudeboy clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "intoyou clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "intoyou clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "intoyou clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "intoyou clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "intoyou clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "intoyou clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "intoyou clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "intoyou clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "intoyou clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "trapqueen clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "trapqueen clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "trapqueen clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "trapqueen clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "trapqueen clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "trapqueen clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "trapqueen clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "trapqueen clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "trapqueen clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "scientist clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "scientist clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "scientist clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "scientist clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "scientist clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "scientist clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "scientist clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "scientist clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "scientist clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs myhouse quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "lollipop clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "lollipop clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "lollipop clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "lollipop clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "lollipop clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "lollipop clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "lollipop clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "lollipop clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "lollipop clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "myhouse clip vs eastside slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "myhouse clip vs eastside slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "myhouse clip vs eastside fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "myhouse clip vs eastside bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "myhouse clip vs eastside bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "myhouse clip vs eastside reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "myhouse clip vs eastside loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "myhouse clip vs eastside bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "myhouse clip vs eastside quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs hotncold slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs hotncold slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs hotncold fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs hotncold bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs hotncold bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs hotncold reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs hotncold loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs hotncold bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/hotncold_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs hotncold quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs rudeboy slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs rudeboy slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs rudeboy fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs rudeboy bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs rudeboy bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs rudeboy reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs rudeboy loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs rudeboy bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/rudeboy_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs rudeboy quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs intoyou slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs intoyou slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs intoyou fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs intoyou bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs intoyou bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs intoyou reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs intoyou loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs intoyou bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/intoyou_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs intoyou quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs trapqueen slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs trapqueen slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs trapqueen fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs trapqueen bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs trapqueen bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs trapqueen reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs trapqueen loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs trapqueen bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/trapqueen_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs trapqueen quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs scientist slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs scientist slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs scientist fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs scientist bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs scientist bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs scientist reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs scientist loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs scientist bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/scientist_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs scientist quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs lollipop slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs lollipop slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs lollipop fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs lollipop bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs lollipop bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs lollipop reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs lollipop loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs lollipop bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/lollipop_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs lollipop quiet"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow85.wav",
+  "truth": false,
+  "kind": "slow85",
+  "prov": "eastside clip vs myhouse slow85"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_slow70.wav",
+  "truth": false,
+  "kind": "slow70",
+  "prov": "eastside clip vs myhouse slow70"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_fast115.wav",
+  "truth": false,
+  "kind": "fast115",
+  "prov": "eastside clip vs myhouse fast115"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass10.wav",
+  "truth": false,
+  "kind": "bass10",
+  "prov": "eastside clip vs myhouse bass10"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bass18.wav",
+  "truth": false,
+  "kind": "bass18",
+  "prov": "eastside clip vs myhouse bass18"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_reverb.wav",
+  "truth": false,
+  "kind": "reverb",
+  "prov": "eastside clip vs myhouse reverb"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_loudstep.wav",
+  "truth": false,
+  "kind": "loudstep",
+  "prov": "eastside clip vs myhouse loudstep"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_bandlim.wav",
+  "truth": false,
+  "kind": "bandlim",
+  "prov": "eastside clip vs myhouse bandlim"
+ },
+ {
+  "clip": "/Users/rohamghiasi/crate/eval/matcher/audio/eastside_clip.wav",
+  "cand": "/Users/rohamghiasi/crate/eval/matcher/audio/myhouse_quiet.wav",
+  "truth": false,
+  "kind": "quiet",
+  "prov": "eastside clip vs myhouse quiet"
+ }
+]
