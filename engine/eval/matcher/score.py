@@ -24,6 +24,10 @@ for i, p in enumerate(pairs):
         rows.append({**p, "core": 0.0, "err": str(e)[:60]})
     if (i+1) % 40 == 0: print("  scored %d/%d" % (i+1, len(pairs)), file=sys.stderr, flush=True)
 
+# Report the two sets SEPARATELY. `matcher` uses an early excerpt that sits inside the 20s
+# the verifier decodes, so a true pair is reachable without solving the decode window - it
+# isolates the scoring core. `window` uses a late excerpt, which legitimately requires
+# locating the clip inside a long candidate. Mixing them hides which defect a change fixed.
 T = sorted([r["core"] for r in rows if r["truth"]], reverse=True)
 F = sorted([r["core"] for r in rows if not r["truth"]], reverse=True)
 
@@ -51,6 +55,17 @@ print("saturation : %.3f  (share of TRUE pairs >= 0.995)" % (sum(1 for t in T if
 print("true  mean : %.3f   median %.3f" % (statistics.mean(T), statistics.median(T)))
 print("false mean : %.3f   median %.3f" % (statistics.mean(F), statistics.median(F)))
 print("false >=0.50: %d of %d   (these would clear the crown floor)" % (sum(1 for f in F if f>=0.50), len(F)))
+for setname in ("matcher","window"):
+    st=sorted([r["core"] for r in rows if r["truth"] and r.get("set")==setname], reverse=True)
+    sf=sorted([r["core"] for r in rows if not r["truth"] and r.get("set")==setname], reverse=True)
+    if not st or not sf: continue
+    print("\n[set=%s]  %d true / %d false" % (setname, len(st), len(sf)))
+    print("  AUC        : %.4f" % auc(st,sf))
+    print("  TP@1%%FP    : %.3f" % tp_at_fp(st,sf,0.01))
+    print("  TP@5%%FP    : %.3f" % tp_at_fp(st,sf,0.05))
+    print("  saturation : %.3f" % (sum(1 for t in st if t>=0.995)/max(1,len(st))))
+    print("  false>=0.50: %d of %d" % (sum(1 for f in sf if f>=0.50), len(sf)))
+
 print("\nworst false positives:")
 for r in sorted([r for r in rows if not r["truth"]], key=lambda r:-r["core"])[:10]:
     print("  %.3f  %s" % (r["core"], r["prov"]))
