@@ -1224,6 +1224,17 @@ function headline(t){document.getElementById('listening').textContent=t;}
    done. Between milestones it creeps slowly toward the next one and stops there, so it
    keeps moving without ever claiming progress the engine has not actually made. */
 var pgNow=0, pgCap=0, pgTimer=null;
+/* THE FINISHING RUN OWNS THE BAR. pgDone() used to drive the same pgTimer everything
+   else uses, so the /progress poll - which is still running when the song lands, and
+   which reports 60 the instant the edit hunt starts - would clearInterval() the run to
+   100 mid-flight. The bar stopped dead in the forties and pgDone's promise NEVER
+   RESOLVED, so setState('locked') never fired and the screen never handed over.
+   Measured in the live page: poll tick at +0ms into the run leaves pgNow=44.9 forever.
+   That is Roham's "it needs to hit 100 if it is finding the song" and Konnor's stall,
+   and it was introduced by the fix for the stall before it. The finishing run now has
+   its OWN timer that nothing else can clear, a lock that makes every other writer a
+   no-op while it runs, and a hard deadline so the caller can never be left hanging. */
+var pgFin=null, pgFinP=null, pgLock=false, pgFinTok=0;
 var DASH=2*Math.PI*86;          // r=86 inside the dial's 200x200 viewBox
 function pgPaint(){
   var n=Math.round(pgNow), v=n+'%';
@@ -1235,6 +1246,7 @@ function pgPaint(){
   var d=document.getElementById('dnum'); if(d) d.setAttribute('aria-valuenow',n);
 }
 function setProg(pct, cap, label){
+  if(pgLock) return;                 // a finishing run is in flight; it owns the number
   pgNow=Math.max(pgNow,pct); pgCap=cap;
   if(label){['progtxt','progtxt2'].forEach(function(id){var l=document.getElementById(id); if(l) l.textContent=label;});}
   pgPaint();
@@ -1245,7 +1257,13 @@ function setProg(pct, cap, label){
     if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }
   }, 400);
 }
-function pgReset(){clearInterval(pgTimer); pgNow=0; pgCap=0; pgPaint();}
+function pgReset(){clearInterval(pgTimer); if(pgFin) clearInterval(pgFin);
+  // Retire the finishing run BY TOKEN, not just by clearing its timer. Phase one's run
+  // also arms a deadline timer, and a reset does not reach into a pending setTimeout -
+  // measured live, phase one's deadline fired 1s into the edit hunt and slammed phase
+  // two's bar to 100, where it sat for the remaining 15 seconds of a real lookup while
+  // the hunt was still going. A retired run must not touch a bar it no longer owns.
+  pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0; pgPaint();}
 /* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
    Naming the song is one awaited call, so between "reading the clip" and "song
    identified" the page had no event to move on: the bar parked at 30% for the whole
@@ -1279,18 +1297,36 @@ function progPollOff(){clearInterval(progT); progT=null;}
    remaining gap in ~450ms and returns a promise so the caller can let the bar actually
    ARRIVE before the finished card replaces the element it lives in. */
 function pgDone(){
-  clearInterval(pgTimer);
-  return new Promise(function(done){
-    var t0=Date.now(), from=pgNow, span=Math.max(0,100-from), ms=450;
-    if(span<0.5){pgNow=100; pgPaint(); return done();}
-    clearInterval(pgTimer);
-    pgTimer=setInterval(function(){
+  if(pgFinP) return pgFinP;                 // already finishing - never start a second run
+  pgLock=true; clearInterval(pgTimer); pgTimer=null;
+  var tok=++pgFinTok, from=pgNow, span=Math.max(0,100-from);
+  if(span<0.5){pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP;}
+  // TIME IT BY THE DISTANCE, not a fixed 450ms. The engine often names the song while
+  // the bar is still in single digits (measured: 6% on a cached clip), and covering
+  // 6 -> 100 in 450ms is not a climb, it is the jump Roham has called out twice.
+  // Long gaps get a real sweep, short ones stay snappy. Capped so the handover is
+  // never held up by more than a beat.
+  var ms=Math.min(1000, Math.round(380+span*7));
+  var t0=Date.now(), guard=null;
+  pgFinP=new Promise(function(done){
+    var end=function(){
+      if(pgFin){clearInterval(pgFin); pgFin=null;}
+      if(guard){clearTimeout(guard); guard=null;}   // or it fires again into the next phase
+      if(tok===pgFinTok){ pgNow=100; pgPaint(); }   // only if this run still owns the bar
+      done();
+    };
+    pgFin=setInterval(function(){
+      if(tok!==pgFinTok){ clearInterval(pgFin); pgFin=null; return done(); }
       var k=Math.min(1,(Date.now()-t0)/ms);
-      pgNow=from+span*(1-Math.pow(1-k,2));      // ease out, never backwards
+      pgNow=from+span*(1-Math.pow(1-k,2));    // ease out, never backwards
       pgPaint();
-      if(k>=1){clearInterval(pgTimer); pgNow=100; pgPaint(); done();}
+      if(k>=1) end();
     }, 16);
+    // Backstop: a throttled or backgrounded tab clamps timers, so the caller must not be
+    // able to wait on this forever. The handover happens either way.
+    guard=setTimeout(end, ms+1500);
   });
+  return pgFinP;
 }
 /* Source card. Repainted in place as facts arrive (thumbnail, handle, audio confirmed),
    so pass null for anything you are not changing. The audio tick only goes green once
@@ -2551,7 +2587,13 @@ function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeou
   // land on the result card), there is no ring to land on and no reason to make them
   // wait a beat for the crown.
   var handed=document.getElementById('app').getAttribute('data-state')==='locked';
-  finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},handed?0:1000);}
+  // Wait for the RING, not for a guessed 1000ms. The old fixed pause was set when the
+  // run to 100 took a fixed 450ms; now that the sweep is timed by the distance it has
+  // to cover, a blind timer can cut the number off before it arrives - the exact
+  // failure being fixed. Landing first, then handing over, is the whole point.
+  if(handed){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas(); return;}
+  pgDone().then(function(){
+    finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},260);});}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
