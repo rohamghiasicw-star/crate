@@ -545,8 +545,13 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .trk .mt{display:flex;align-items:center;flex-wrap:wrap;gap:3px 7px;margin-top:3px;font-size:11.5px;color:var(--muted)}
 .trk .mt .mono{white-space:nowrap}
 .src{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em}
-.src.soundcloud{background:rgba(255,85,0,.2);color:#FF8A4C}
-.src.youtube{background:rgba(255,60,60,.2);color:#FF7A7A}
+/* with a real mark the pill carries the brand, so the tint drops to a neutral surface and
+   the logo does the identifying - the same treatment the platform buttons above use. */
+.src.hasmark{display:inline-flex;align-items:center;gap:4px;padding:2px 8px 2px 5px;
+  background:var(--raise2);color:var(--text)}
+.src.hasmark svg{width:13px;height:13px;display:block;flex:none}
+.src.soundcloud:not(.hasmark){background:rgba(255,85,0,.2);color:#FF8A4C}
+.src.youtube:not(.hasmark){background:rgba(255,60,60,.2);color:#FF7A7A}
 .trk .op{font-size:12px;color:var(--faint);display:flex;align-items:center;gap:4px;flex:none}
 /* live edit hunt: each row lands the moment that candidate's audio verifies, so the
    arrival has to be visible or the whole point is lost. Killed by the global
@@ -1431,6 +1436,22 @@ function claimNote(list){
 /* `tag` and `fresh` are only used by the live hunt list. `opt` carries the ranked-shelf
    extras: {rank, conf, flag, held}. Every caller still gets one row builder, so a
    streamed row and a final row can never drift apart. */
+/* THE REAL BRAND MARK, NOT A COLOURED WORD.
+   The result card's own platform buttons already use the actual logos (IC.youtube etc);
+   the candidate rows were rendering a tinted text pill instead, so one screen carried two
+   different visual languages for the same thing. Roham: "add the youtube logo real one
+   instead of that ai card thing". Driven off the IC set so SoundCloud, Apple Music and
+   Spotify follow suit automatically, and any source with no mark falls back to its name
+   rather than disappearing. */
+var SRC_NAME={youtube:'YouTube', soundcloud:'SoundCloud', apple:'Apple Music',
+              spotify:'Spotify', bandcamp:'Bandcamp', audiomack:'Audiomack'};
+function srcChip(src){
+  src=(src||'').toLowerCase();
+  var label=SRC_NAME[src]||(src.charAt(0).toUpperCase()+src.slice(1));
+  var mark=IC[src]||'';
+  return '<span class="src '+esc(src)+(mark?' hasmark':'')+'">'+mark+
+         '<span>'+esc(label)+'</span></span>';
+}
 function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
       '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
@@ -1438,7 +1459,7 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
     '<span class="pl">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
     '<div class="mt">'+confChip(c.core)+
-      (src?'<span class="src '+src+'">'+(src==='soundcloud'?'SoundCloud':'YouTube')+'</span>':'')+
+      (src?srcChip(src):'')+
       (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
       (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div>'+
       ((opt.flag||opt.flagtag)?'<span class="flag'+(opt.flagtag?' tag':'')+'">'+
