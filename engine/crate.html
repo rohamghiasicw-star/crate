@@ -1026,8 +1026,21 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
       // with, so a fixed bug keeps running on the phone until something forces a reload.
       // If the engine reports a newer build than the one this page was stamped with, park
       // the link the user just shared and reload onto current code before scanning.
-      if(j&&j.build&&window.ADDIFY_BUILD&&j.build!==window.ADDIFY_BUILD){
-        try{var _pu=curURL||urlEl.value||''; if(_pu) sessionStorage.setItem('addify-pending',_pu);}catch(e){}
+      // A PAGE WITH NO STAMP IS THE STALEST PAGE THERE IS.
+      // This used to require window.ADDIFY_BUILD to exist before comparing, so a shell
+      // installed BEFORE stamping shipped - the oldest copy anyone could be running, and
+      // the exact one that needs replacing - fell straight through and never reloaded.
+      // Konnor was still seeing the 30% freeze days after it was fixed for this reason.
+      // Every page the server hands out now carries a stamp, so its absence is proof of
+      // staleness, not a reason to skip the check.
+      if(j&&j.build&&j.build!==(window.ADDIFY_BUILD||'')){
+        var _seen=null; try{_seen=sessionStorage.getItem('addify-reloaded-for');}catch(e){}
+        if(_seen===j.build){                  // already reloaded for this build - do not loop
+          engineUp=true; return true;}
+        try{
+          sessionStorage.setItem('addify-reloaded-for', j.build);
+          var _pu=curURL||urlEl.value||''; if(_pu) sessionStorage.setItem('addify-pending',_pu);
+        }catch(e){}
         location.reload(); return false;}
       var o=!!j; engineUp=o?true:null; return o;})
     .catch(function(){engineUp=null; return false;});}
