@@ -568,17 +568,38 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 
 .sect{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:20px 0 9px}
 .list{display:flex;flex-direction:column;gap:7px}
-.trk{display:flex;align-items:center;gap:11px;background:var(--raise2);border-radius:14px;padding:11px 12px;
-  border:1px solid transparent;transition:transform .12s,border-color .15s}
-.trk:hover{transform:translateY(-1px);border-color:var(--line2)}
-.trk.top{background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 40%,var(--raise2)),var(--raise2));
-  box-shadow:inset 3px 0 0 var(--accent2)}
-.trk .pl{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;flex:none}
+/* CANDIDATE ROWS.
+   These were five identical filled boxes stacked down the screen: every row the same
+   weight, the meta sprawling over three lines, a full-width stripe under each one, and
+   the honest-claim note rendered as a wall of orange inside the card. Nothing told you
+   where to look. Now the crowned row is a raised card and the rest are quiet list rows
+   on the page ground, the meta collapses to a single line, and the score is a figure on
+   the right where the eye scans, not a bar. Same information, one third the height. */
+.trk{display:flex;align-items:center;gap:11px;background:transparent;border-radius:12px;
+  padding:9px 10px;border:1px solid transparent;transition:background .14s,border-color .14s}
+.trk+.trk{margin-top:2px}
+.trk:hover{background:var(--raise);border-color:var(--line)}
+/* the crown is the only card on the shelf - it earns elevation, the others do not */
+.trk.top{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 30%,var(--raise2)),var(--raise2));
+  border-color:color-mix(in oklab,var(--accent2) 45%,transparent);border-radius:16px;padding:13px 14px;
+  box-shadow:0 10px 26px rgba(8,4,30,.32)}
+.trk .pl{width:28px;height:28px;border-radius:50%;background:color-mix(in oklab,var(--accent) 55%,var(--raise2));
+  color:#fff;display:grid;place-items:center;flex:none;transition:transform .14s,background .14s}
+.trk.top .pl{width:34px;height:34px;background:var(--accent);
+  box-shadow:0 4px 14px color-mix(in oklab,var(--accent) 55%,transparent)}
+.trk:hover .pl{transform:scale(1.07);background:var(--accent)}
+.trk .pl svg{width:11px;height:11px}
+.trk.top .pl svg{width:13px;height:13px}
 .trk .tt{min-width:0;flex:1}
-.trk .nm{font-size:13.5px;font-weight:640;line-height:1.3;overflow:hidden;
+.trk .nm{font-size:13px;font-weight:600;line-height:1.32;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.trk .mt{display:flex;align-items:center;flex-wrap:wrap;gap:3px 7px;margin-top:3px;font-size:11.5px;color:var(--muted)}
-.trk .mt .mono{white-space:nowrap}
+.trk.top .nm{font-size:15px;font-weight:700;letter-spacing:-.01em}
+/* one meta line, not three */
+/* one line where it fits, wrapping rather than overflowing when it does not. Forcing a
+   single line with flex:none pushed the play count off the right edge at 375px. */
+.trk .mt{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin-top:4px;
+  font-size:11.5px;color:var(--muted);min-width:0}
+.trk .mt .mono{white-space:nowrap;font-variant-numeric:tabular-nums;opacity:.75}
 .src{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em}
 /* with a real mark the pill carries the brand, so the tint drops to a neutral surface and
    the logo does the identifying - the same treatment the platform buttons above use. */
@@ -587,7 +608,21 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .src.hasmark svg{width:13px;height:13px;display:block;flex:none}
 .src.soundcloud:not(.hasmark){background:rgba(255,85,0,.2);color:#FF8A4C}
 .src.youtube:not(.hasmark){background:rgba(255,60,60,.2);color:#FF7A7A}
-.trk .op{font-size:12px;color:var(--faint);display:flex;align-items:center;gap:4px;flex:none}
+/* the score belongs where the eye lands, on the right, as a number - not as a bar the
+   width of the card. Colour still carries the tier the .cf classes already define. */
+.trk .op{font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:3px;flex:none;
+  opacity:0;transform:translateX(-3px);transition:opacity .14s,transform .14s}
+.trk:hover .op,.trk.top .op{opacity:1;transform:none}
+.trk .op svg{width:11px;height:11px}
+/* THE CROWN DOES NOT NEED TO BE NUMBERED "1". It is the only row under "the exact version
+   playing", so the digit is noise - and on a 375px card the rank column plus the word
+   "Open" were squeezing the meta into three stacked lines. Reclaiming both puts the
+   score, the platform and the play count back on one line where they belong. */
+.trk.top .rkn{display:none}
+@media (max-width:430px){
+  .trk .op span,.trk .op{font-size:0}          /* keep the arrow, drop the word */
+  .trk .op svg{width:13px;height:13px}
+}
 /* live edit hunt: each row lands the moment that candidate's audio verifies, so the
    arrival has to be visible or the whole point is lost. Killed by the global
    prefers-reduced-motion rule at the top of this sheet. */
@@ -618,7 +653,8 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
    have to be read one at a time, six bars of different length are one glance. A 30px
    inline meter was tried first and could not tell 72% from 93%. */
 .cf{font-size:11px;font-weight:750;font-variant-numeric:tabular-nums;flex:none}
-.cfl{position:absolute;left:0;right:0;bottom:0;height:3px;
+.cfl{display:none}                       /* the stripe is gone - the figure carries it */
+.cfl-unused{position:absolute;left:0;right:0;bottom:0;height:3px;
   background:color-mix(in oklab,var(--text) 9%,transparent)}
 .cfl i{display:block;height:100%;background:currentColor;border-radius:0 3px 3px 0}
 /* The ramp has to READ as a ramp: brighter = stronger, all the way down. An earlier pass
@@ -645,7 +681,9 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
    on that row and not as a second headline. Only the two the ENGINE itself flagged - the
    crowned upload's `title_overclaims` and a held-back crown - get the shouting pill; the
    rest are quiet, because four loud rows out of six is noise, not a warning. */
-.flag{display:block;margin-top:5px;font-size:11px;line-height:1.4;
+.flag{display:block;margin-top:7px;font-size:10.5px;line-height:1.45;padding:6px 9px;
+  border-radius:8px;background:color-mix(in oklab,var(--warn) 9%,transparent);
+  border-left:2px solid color-mix(in oklab,var(--warn) 55%,transparent);
   color:color-mix(in oklab,var(--warn) 82%,var(--text));font-weight:600}
 .flag:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
   background:var(--warn);margin:0 6px 1.5px 1px;vertical-align:middle}
@@ -2445,7 +2483,19 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       //
       // renderResult() has ALREADY built the card on the line above; it was just behind
       // display:none. The version hunt keeps running and the list fills in underneath.
-      if(d.edits_pending){setState('locked'); say('Locking in the exact version');
+      // CLOSE THE RING BEFORE HANDING OVER.
+      // Naming the song only reaches ~44% of the dial, because the remaining budget belongs
+      // to the edit hunt. Handing the screen over at that instant - which is what makes the
+      // answer feel fast - left the dial abandoned mid-sweep, and Konnor read that exactly
+      // as it looks: "skips from 30% and then straight to the song without showing up to
+      // 100%". Both things can be true. The dial now completes first (a ~380ms run to 100,
+      // the same animated finish the end of a lookup uses), THEN the card takes the screen,
+      // and the edit hunt starts its own bar from zero on the card. Naming the song is a
+      // finished job and now looks like one; the cost is under half a second.
+      if(d.edits_pending){
+        return pgDone().then(function(){
+        setState('locked'); say('Locking in the exact version');
+        pgReset();                       // phase 2 owns the inline bar, starting at zero
         // Raise the ceiling only. The old line assigned 60 outright, which is what put a
         // 43-to-60 leap on screen at the handover; the engine reports 60 itself the
         // moment the hunt starts, so the poll will carry the bar there smoothly.
@@ -2469,6 +2519,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               if(full.win)setWindow(full.win,full.clip_secs);
               setSpeedFromLabel(full.speed); renderResult(full,false);}
             finish(full||d);});});
+        });
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
