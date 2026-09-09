@@ -506,12 +506,47 @@ button.plcard:hover{filter:brightness(1.07)}
 canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 
-/* ---------- result card ---------- */
+/* ---------- result card ----------
+   THE FOUND-IT MOMENT. Everything used to arrive in one 0.4s fade, which reads as a page
+   swap rather than an answer landing. Now the card stages: a soft bloom behind the
+   artwork, the art settling in with a slight lift, then title, artist, badge and actions
+   each following a beat later. It is the one moment the whole product exists for, so it
+   gets choreography instead of a transition. All of it collapses to nothing under
+   prefers-reduced-motion (the global rule near the top of this sheet). */
 .card{animation:fade .4s var(--spring) both}
-.hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px}
+.hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;
+  position:relative}
+/* the bloom: the artwork's own dominant colour, pulled at runtime, washing outward once */
+.hero::before{content:'';position:absolute;top:-18px;left:50%;width:300px;height:300px;
+  transform:translateX(-50%);border-radius:50%;pointer-events:none;z-index:0;
+  background:radial-gradient(circle,var(--bloom,color-mix(in oklab,var(--accent) 55%,transparent)),transparent 68%);
+  opacity:0;animation:bloom 1.5s cubic-bezier(.16,1,.3,1) .04s both}
+@keyframes bloom{0%{opacity:0;transform:translateX(-50%) scale(.55)}
+  38%{opacity:.55}100%{opacity:.22;transform:translateX(-50%) scale(1)}}
+.hero>*{position:relative;z-index:1}
 .art{width:150px;height:150px;border-radius:20px;object-fit:cover;display:block;
-  box-shadow:0 14px 34px rgba(8,4,30,.4);animation:pop .4s var(--spring) both}
-.art.ph{display:grid;place-items:center;background:linear-gradient(155deg,var(--accent2),var(--accent))}
+  box-shadow:0 18px 44px rgba(8,4,30,.5), 0 0 0 1px rgba(255,255,255,.07) inset;
+  animation:artin .72s cubic-bezier(.16,1,.3,1) both}
+@keyframes artin{from{opacity:0;transform:scale(.86) translateY(14px)}
+  to{opacity:1;transform:none}}
+/* each line follows the artwork rather than arriving with it */
+.rtitle{animation:risein .5s cubic-bezier(.16,1,.3,1) .16s both}
+.rartist{animation:risein .5s cubic-bezier(.16,1,.3,1) .23s both}
+.badge{animation:risein .5s cubic-bezier(.16,1,.3,1) .30s both}
+.lrow{animation:risein .5s cubic-bezier(.16,1,.3,1) .37s both}
+@keyframes risein{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+/* FALLBACK ARTWORK, not a flat gradient with a note glyph on it. A generated sleeve
+   derived from the track's own name, so two different songs never look identical and a
+   missing cover still reads as a designed object rather than a placeholder. */
+.art.ph{display:grid;place-items:center;position:relative;overflow:hidden;
+  background:
+    radial-gradient(120% 90% at 22% 14%, color-mix(in oklab,var(--phc,#7B6BFF) 78%,#fff 12%), transparent 62%),
+    radial-gradient(110% 100% at 82% 88%, color-mix(in oklab,var(--phc2,#5B4BE8) 82%,#000 16%), transparent 60%),
+    linear-gradient(155deg,var(--phc,#7B6BFF),var(--phc2,#5B4BE8))}
+.art.ph::after{content:'';position:absolute;inset:0;
+  background:repeating-linear-gradient(115deg,rgba(255,255,255,.055) 0 2px,transparent 2px 9px);
+  mix-blend-mode:overlay}
+.art.ph svg{width:52px;height:52px;opacity:.9;filter:drop-shadow(0 3px 10px rgba(0,0,0,.35))}
 .rtitle{margin:14px 0 0;font-size:26px;line-height:1.15;font-weight:750;letter-spacing:-.02em;text-wrap:balance}
 .rartist{margin:2px 0 0;font-size:15px;color:var(--muted)}
 .badge{margin-top:13px;display:inline-block;background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);
@@ -1465,6 +1500,34 @@ function srcChip(src){
   return '<span class="src '+esc(src)+(mark?' hasmark':'')+'">'+mark+
          '<span>'+esc(label)+'</span></span>';
 }
+/* THE BLOOM TAKES ITS COLOUR FROM THE COVER ITSELF.
+   A fixed accent glow behind every result looks like a template. Sampling the artwork
+   means a Metallica sleeve and a Katy Perry sleeve produce different rooms, which is the
+   difference between a designed screen and a generated one. Cheap: one downscale to 8x8
+   on a canvas, average the saturated pixels. Silently skipped if the host blocks reads. */
+function bloomFrom(url){
+  if(!url) return;
+  var probe=new Image();
+  probe.crossOrigin='anonymous';            // separate load; failure costs nothing visible
+  probe.onload=function(){ _paintBloom(probe); };
+  probe.src=url;
+}
+function _paintBloom(img){
+  try{
+    var c=document.createElement('canvas'); c.width=c.height=8;
+    var x=c.getContext('2d',{willReadFrequently:true});
+    x.drawImage(img,0,0,8,8);
+    var p=x.getImageData(0,0,8,8).data, r=0,g=0,b=0,n=0;
+    for(var i=0;i<p.length;i+=4){
+      var mx=Math.max(p[i],p[i+1],p[i+2]), mn=Math.min(p[i],p[i+1],p[i+2]);
+      if(mx-mn<22) continue;                       // skip greys, they muddy the average
+      r+=p[i]; g+=p[i+1]; b+=p[i+2]; n++;
+    }
+    if(!n) return;
+    var hero=document.querySelector('.hero'); if(!hero) return;
+    hero.style.setProperty('--bloom','rgba('+Math.round(r/n)+','+Math.round(g/n)+','+Math.round(b/n)+',.55)');
+  }catch(e){}                                       // tainted canvas / CORS - keep the default
+}
 function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
       '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
@@ -1580,7 +1643,21 @@ function renderResult(d,partial){
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
-  var art=d.art? '<img class="art" src="'+esc(d.art)+'" alt="Cover art">' : '<div class="art ph">'+IC.bignote+'</div>';
+  // The fallback sleeve is DERIVED FROM THE TRACK, so two songs never render identically:
+  // the title hashes to a hue, giving each missing-cover result its own recognisable
+  // object instead of the same purple square every time.
+  var _seed=(String(d.base_song||'')+String(d.base_artist||''));
+  var _hu=0; for(var _i=0;_i<_seed.length;_i++) _hu=(_hu*31+_seed.charCodeAt(_i))%360;
+  var _phc='hsl('+_hu+' 68% 62%)', _phc2='hsl('+((_hu+38)%360)+' 62% 44%)';
+  // The visible <img> carries NO crossorigin attribute on purpose: setting it makes the
+  // browser refuse the image outright on any host that does not send CORS headers, which
+  // would trade real cover art for a background glow. The bloom is sampled from a second,
+  // hidden CORS-enabled load instead - if that one fails, the artwork is unaffected and
+  // the bloom simply keeps its default accent.
+  var art=d.art
+    ? '<img class="art" src="'+esc(d.art)+'" alt="Cover art" '+
+      'onerror="this.className=\'art ph\';this.removeAttribute(\'src\')">'
+    : '<div class="art ph" style="--phc:'+_phc+';--phc2:'+_phc2+'">'+IC.bignote+'</div>';
   var clip = d.handle ? '<div class="clip">'+(d.thumb?'<img src="'+esc(d.thumb)+'" alt="" onerror="this.remove()">':'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
@@ -1814,6 +1891,7 @@ function renderResult(d,partial){
   result.innerHTML='<div class="card">'+head+clip+hero+wavebar+mash+shelf+plat+quotes+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
+  if(d.art) bloomFrom(d.art);
   paintRecCanvas();
   autoSave(d);                                   // scan = saved, no tap required
   var ob=document.getElementById('otherbtn');
