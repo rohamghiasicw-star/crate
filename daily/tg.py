@@ -108,7 +108,17 @@ def _offset(v=None):
 
 
 def collect():
-    """Drain taps. Each becomes a verdict row and the card is edited to show the answer."""
+    """DO NOT USE. tg_listen.py is the single getUpdates consumer now.
+
+    Telegram allows exactly one caller of getUpdates per bot; a second one makes both
+    return 409 and updates go missing, which looks identical to a dead bot. Kept only so
+    an old habit fails loudly instead of quietly stealing the listener's updates.
+    """
+    raise SystemExit("tg.py --collect is retired. The listener runs under launchd as "
+                     "com.rohamghiasi.addify.tglisten and is the only getUpdates consumer.")
+
+
+def _retired_collect():
     got = 0
     while True:
         r = api("getUpdates", {"offset": _offset() + 1, "timeout": 0, "limit": 100})
