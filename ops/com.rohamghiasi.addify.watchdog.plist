@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.rohamghiasi.addify.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/rohamghiasi/crate/tunnel_watchdog.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>WorkingDirectory</key><string>/Users/rohamghiasi/crate</string>
+  <key>StandardOutPath</key><string>/Users/rohamghiasi/crate/launchd_watchdog.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/rohamghiasi/crate/launchd_watchdog.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>IG_LOCAL_SESSION</key><string>1</string>
+    <key>BIND</key><string>0.0.0.0</string>
+  </dict>
+</dict>
+</plist>
