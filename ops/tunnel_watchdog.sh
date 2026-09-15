@@ -42,10 +42,17 @@ while true; do
     sleep $backoff
   fi
   # ---- (RE)START THE TUNNEL ----
-  pkill -f "cloudflared tunnel --url http://127.0.0.1:8788" 2>/dev/null
+  pkill -f "cloudflared tunnel .*--url http://127.0.0.1:8788" 2>/dev/null
   sleep 1
   : > "$CFLOG"
-  cloudflared tunnel --url http://127.0.0.1:8788 >> "$CFLOG" 2>&1 &
+  # FORCE http2. cloudflared prefers QUIC (UDP) and on this network QUIC registers and then
+  # dies: "failed to run the datagram handler", "accept stream listener encountered a failure",
+  # edge terminates, tunnel never serves. The UDP precheck PASSES, which is why this hid for so
+  # long - the failure is in sustained QUIC, not in reachability. Measured back to back on
+  # 2026-09-15: nine consecutive quic tunnels never served a single request, and the first
+  # http2 tunnel answered 200 within 20 seconds. This is the likeliest cause of the historical
+  # churn as well (198 URLs in 7.2 days, 35 minute median life).
+  cloudflared tunnel --protocol http2 --url http://127.0.0.1:8788 >> "$CFLOG" 2>&1 &
   CFPID=$!
 
   URL=""
