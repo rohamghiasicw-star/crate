@@ -50,6 +50,10 @@ QUEUE = os.path.join(HERE, "queue.jsonl")
 # really one test repeated, so spread across sounds instead.
 PER_SOUND = 3
 MIN_PLAYS = 5000
+# Named tracks kept per batch purely as a regression tripwire. Two is enough to notice the
+# engine falling over on easy material and few enough that the batch is still mostly the
+# hard case Roham actually wants graded.
+CONTROLS_PER_BATCH = 2
 
 
 def _seen_ids():
@@ -148,13 +152,25 @@ def main():
         print("ERROR %s" % err, file=sys.stderr)
         return 1
     auto = [c for c in clips if c["expect"]]
-    print("found %d fresh clips  (%d grade themselves, %d need a human)"
-          % (len(clips), len(auto), len(clips) - len(auto)))
+    print("found %d fresh clips  (%d unnamed creator audio, %d named tracks usable as controls)"
+          % (len(clips), len(clips) - len(auto), len(auto)))
     if not a.take:
         for c in clips[:20]:
             print("  %-22s %8d plays  %s" % (c["clip_id"], c["plays"],
                                              (c["sound_title"] or "")[:40]))
         return 0
+
+    # UNNAMED CREATOR AUDIO FIRST. Roham's instruction: send the clips whose audio is the
+    # creator's own original sound and is not already named, because that is the case the
+    # product exists for and the only one where his ear tells us something we cannot get
+    # for free. Named tracks are not dropped entirely though - CONTROLS_PER_BATCH of them
+    # ride along, because a clip with a knowable answer catches an engine regression with
+    # no human cost. If the engine starts missing the easy ones, that shows up here rather
+    # than in a bug report from Konnor.
+    unnamed = [c for c in clips if not c["expect"]]
+    named = [c for c in clips if c["expect"]]
+    controls = named[:CONTROLS_PER_BATCH] if a.take > CONTROLS_PER_BATCH else []
+    clips = unnamed + controls + [c for c in named if c not in controls]
 
     # Interleave so one sound cannot fill a whole batch even when others are thin.
     by_sound, order = {}, []
