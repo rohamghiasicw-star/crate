@@ -26,7 +26,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import evallib as E
 
 CHATDB = os.path.expanduser("~/Library/Messages/chat.db")
-KONNOR = "+19022791735"
+
+def _tester(name, default=None):
+    """A tester's phone number, read from a LOCAL file that is never committed.
+
+    This used to be a literal in the source. The repo is public, so that published a real
+    person's mobile number to anyone who looked, for two months. It is also simply the
+    wrong place for it: the number is configuration about who is testing today, not part
+    of how the harvester works. Missing file or missing name returns None, and the caller
+    reports that plainly rather than silently harvesting nothing.
+    """
+    import json as _json
+    import os as _os
+    p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "tester_contacts.json")
+    try:
+        with open(p) as f:
+            return _json.load(f).get(name) or default
+    except Exception:
+        return default
+
+KONNOR = _tester("konnor")
 APPLE_EPOCH = 978307200
 
 # Closed vocabulary. Binary-ish on purpose: a scale invites hedging, and a hedged label is
@@ -180,3 +199,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

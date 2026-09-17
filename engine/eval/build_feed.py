@@ -25,7 +25,26 @@ import evallib as E
 TR = os.path.expanduser("~/crate/testruns")
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_feed.json")
 CHATDB = os.path.expanduser("~/Library/Messages/chat.db")
-KONNOR = "+19022791735"
+
+def _tester(name, default=None):
+    """A tester's phone number, read from a LOCAL file that is never committed.
+
+    This used to be a literal in the source. The repo is public, so that published a real
+    person's mobile number to anyone who looked, for two months. It is also simply the
+    wrong place for it: the number is configuration about who is testing today, not part
+    of how the harvester works. Missing file or missing name returns None, and the caller
+    reports that plainly rather than silently harvesting nothing.
+    """
+    import json as _json
+    import os as _os
+    p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "tester_contacts.json")
+    try:
+        with open(p) as f:
+            return _json.load(f).get(name) or default
+    except Exception:
+        return default
+
+KONNOR = _tester("konnor")
 PATS = [
     (re.compile(r'(?:vt|vm)\.tiktok\.com/([A-Za-z0-9]{6,14})'), "https://vt.tiktok.com/%s/"),
     (re.compile(r'tiktok\.com/@[\w.\-]+/(?:video|photo)/(\d{15,25})'),
@@ -286,3 +305,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

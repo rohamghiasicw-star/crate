@@ -11,3 +11,6 @@ engine/timing.jsonl
 engine/eval/review_feed.json      # a build artifact, regenerate with eval/build_feed.py
 engine/eval/resolved.json         # a link-resolution cache, regenerates itself
 .DS_Store
+
+# real phone numbers of testers, never committed
+engine/eval/tester_contacts.json
