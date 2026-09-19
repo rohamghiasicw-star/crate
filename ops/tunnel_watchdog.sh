@@ -36,65 +36,87 @@ ensure_engine
 # because its own retry rate is the cause. Backoff grows per consecutive failure and
 # resets once a tunnel has held for a while.
 backoff=0
-while true; do
-  if [ $backoff -gt 0 ]; then
-    log "waiting ${backoff}s before building another tunnel (consecutive failures)"
-    sleep $backoff
-  fi
-  # ---- (RE)START THE TUNNEL ----
+# WHICH PROVIDER. Cloudflare quick tunnels stopped working from this network entirely:
+# nine in a row registered and were then dropped by the edge, and it did not come back
+# after two days or after upgrading cloudflared from 2026.7.2 to 2026.9.1, so it is the
+# network path and not the client. The registered edge was sin (Singapore) from Halifax,
+# which says the traffic is not going out the way you would expect. Rather than sit there
+# broken, the watchdog now walks a ladder and keeps whichever provider actually SERVES a
+# request. Cloudflare is still tried first every cycle, so the moment it recovers we are
+# back on it without anyone doing anything.
+start_cloudflared(){
   pkill -f "cloudflared tunnel .*--url http://127.0.0.1:8788" 2>/dev/null
   sleep 1
   : > "$CFLOG"
-  # FORCE http2. cloudflared prefers QUIC (UDP) and on this network QUIC registers and then
-  # dies: "failed to run the datagram handler", "accept stream listener encountered a failure",
-  # edge terminates, tunnel never serves. The UDP precheck PASSES, which is why this hid for so
-  # long - the failure is in sustained QUIC, not in reachability. Measured back to back on
-  # 2026-09-15: nine consecutive quic tunnels never served a single request, and the first
-  # http2 tunnel answered 200 within 20 seconds. This is the likeliest cause of the historical
-  # churn as well (198 URLs in 7.2 days, 35 minute median life).
   cloudflared tunnel --protocol http2 --url http://127.0.0.1:8788 >> "$CFLOG" 2>&1 &
   CFPID=$!
-
   URL=""
   for i in $(seq 1 25); do
     URL=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" "$CFLOG" 2>/dev/null | head -1)
     [ -n "$URL" ] && break
     sleep 1
   done
+}
 
-  if [ -z "$URL" ]; then
-    log "FAILED to get a URL from cloudflared (pid $CFPID)"
+start_pinggy(){
+  pkill -f "R0:localhost:8788 qr@a.pinggy.io" 2>/dev/null
+  sleep 1
+  : > "$CFLOG"
+  ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 \
+      -o ExitOnForwardFailure=yes -p 443 -R0:localhost:8788 qr@a.pinggy.io >> "$CFLOG" 2>&1 &
+  CFPID=$!
+  URL=""
+  for i in $(seq 1 30); do
+    URL=$(grep -oE "https://[a-z0-9.-]+\.(pinggy-free\.link|free\.pinggy\.net)" "$CFLOG" 2>/dev/null | head -1)
+    [ -n "$URL" ] && break
+    sleep 1
+  done
+}
+
+# Does the PUBLIC url actually answer? This is the only test that counts; a registered
+# tunnel that the edge never routes looks perfectly healthy from this side.
+serves(){
+  for i in $(seq 1 18); do
+    [ "$(curl -s -o /dev/null -w "%{http_code}" -m 8 "$1/health" 2>/dev/null)" = "200" ] && return 0
+    sleep 5
+  done
+  return 1
+}
+
+while true; do
+  if [ $backoff -gt 0 ]; then
+    log "waiting ${backoff}s before building another tunnel (consecutive failures)"
+    sleep $backoff
+  fi
+
+  PROVIDER=""
+  for try in cloudflared pinggy; do
+    log "trying $try"
+    start_$try
+    if [ -z "$URL" ]; then
+      log "$try gave no URL"
+      kill $CFPID 2>/dev/null
+      continue
+    fi
+    if serves "$URL"; then
+      PROVIDER=$try
+      break
+    fi
+    log "$try produced $URL but the edge never served it"
     kill $CFPID 2>/dev/null
+    URL=""
+  done
+
+  if [ -z "$PROVIDER" ]; then
     backoff=$(( backoff == 0 ? 15 : (backoff >= 300 ? 300 : backoff * 2) ))
+    log "every provider failed - next attempt in ${backoff}s"
     continue
   fi
 
   echo "$URL" > "$URLFILE"
   born=$(date +%s)
-  log "UP -> $URL (cloudflared pid $CFPID)"
-
-  # LET THE EDGE CATCH UP BEFORE JUDGING IT. cloudflared prints the hostname the moment
-  # it registers, but Cloudflare's edge can take another 30-60s to actually route it. The
-  # strike loop below starts 20s later, so a brand new tunnel could collect all three
-  # strikes and be torn down while it was merely still warming up. Measured 2026-09-15:
-  # a healthy tunnel was discarded 71s after creation and replaced, which rotates the
-  # public URL for no reason - the one thing this script exists to avoid.
-  served=0
-  for i in $(seq 1 18); do
-    if [ "$(curl -s -o /dev/null -w "%{http_code}" -m 8 "$URL/health" 2>/dev/null)" = "200" ]; then
-      served=1; break
-    fi
-    sleep 5
-  done
-  if [ $served -eq 1 ]; then
-    [ $backoff -ne 0 ] && log "edge is serving again, backoff cleared"
-    backoff=0
-  else
-    backoff=$(( backoff == 0 ? 15 : (backoff >= 300 ? 300 : backoff * 2) ))
-    log "edge never served $URL in 90s - tearing it down, next attempt in ${backoff}s"
-    kill $CFPID 2>/dev/null
-    continue
-  fi
+  backoff=0
+  log "UP via $PROVIDER -> $URL (pid $CFPID)"
 
   # ---- WATCH IT: both the engine locally and the public route through the tunnel ----
   fails=0
@@ -102,7 +124,7 @@ while true; do
     sleep 20
     ensure_engine
     if ! kill -0 $CFPID 2>/dev/null; then
-      log "DOWN - cloudflared process (pid $CFPID) died, restarting"
+      log "DOWN - $PROVIDER process (pid $CFPID) died, restarting"
       break
     fi
     code=$(curl -s -o /dev/null -w "%{http_code}" -m 12 "$URL/health" 2>/dev/null)
