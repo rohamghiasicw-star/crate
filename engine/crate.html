@@ -504,7 +504,8 @@ button.plcard:hover{filter:brightness(1.07)}
 
 /* ---------- waveform ---------- */
 canvas#wave{width:100%;height:56px;display:block;opacity:.9}
-canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
+/* canvas.reccanvas is gone with the result-card waveform. See the note at `var wavebar`.
+   The SCANNING screen's timeline stays - that one is a measurement, not decoration. */
 
 /* ---------- result card ----------
    THE FOUND-IT MOMENT. Everything used to arrive in one 0.4s fade, which reads as a page
@@ -533,7 +534,7 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 .rtitle{animation:risein .5s cubic-bezier(.16,1,.3,1) .16s both}
 .rartist{animation:risein .5s cubic-bezier(.16,1,.3,1) .23s both}
 .badge{animation:risein .5s cubic-bezier(.16,1,.3,1) .30s both}
-.lrow{animation:risein .5s cubic-bezier(.16,1,.3,1) .37s both}
+.openin{animation:risein .5s cubic-bezier(.16,1,.3,1) .37s both}
 @keyframes risein{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 /* FALLBACK ARTWORK, not a flat gradient with a note glyph on it. A generated sleeve
    derived from the track's own name, so two different songs never look identical and a
@@ -547,24 +548,55 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
   background:repeating-linear-gradient(115deg,rgba(255,255,255,.055) 0 2px,transparent 2px 9px);
   mix-blend-mode:overlay}
 .art.ph svg{width:52px;height:52px;opacity:.9;filter:drop-shadow(0 3px 10px rgba(0,0,0,.35))}
-.rtitle{margin:14px 0 0;font-size:26px;line-height:1.15;font-weight:750;letter-spacing:-.02em;text-wrap:balance}
+/* PREVIEW MOVED ONTO THE COVER (layout spec item 7), out of the button row underneath.
+   The triangle means exactly one thing across this whole app: it plays here, in the sheet,
+   on the platform's own player. So the corner control is a triangle ONLY when the version
+   can actually be embedded. When it cannot it is an open arrow, because leaving the app is
+   a different promise and the glyph should not blur the two. */
+.artwrap{position:relative;display:inline-block;line-height:0}
+.artplay{position:absolute;right:-7px;bottom:-7px;width:46px;height:46px;border-radius:50%;
+  background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer;z-index:3;
+  box-shadow:0 8px 22px rgba(8,4,30,.42), 0 0 0 4px var(--card);
+  transition:transform .14s,filter .15s}
+.artplay:hover{transform:scale(1.06);filter:brightness(1.06)}
+.artplay svg{width:18px;height:18px}
+.artplay.out svg{width:19px;height:19px}
+.artplay:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
+.rtitle{margin:22px 0 0;font-size:26px;line-height:1.15;font-weight:750;letter-spacing:-.02em;text-wrap:balance}
 .rartist{margin:2px 0 0;font-size:15px;color:var(--muted)}
 .badge{margin-top:13px;display:inline-block;background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);
   padding:10px 18px;font-size:13.5px;font-weight:600;line-height:1.35;max-width:100%}
+/* MINT FOR ORIGINALS, PURPLE FOR EDITS (layout spec item 2). Now that mint has been given
+   that meaning, it can no longer also carry the two WEAKEST states in the app: a caption
+   claim and an on-screen-text guess are not a measured "this is the original", and the
+   hunt is not finished during "Checking versions". Those three get a neutral surface, so
+   hardening mint never silently upgrades a guess into a verdict. */
 .badge.orig{background:color-mix(in oklab,var(--good) 22%,transparent);color:var(--good)}
+.badge.soft{background:var(--raise2);color:var(--muted);border:1px solid var(--line)}
 .clip{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:12.5px;color:var(--muted)}
 .clip img{width:30px;height:30px;border-radius:8px;object-fit:cover;flex:none}
 .clip .h{font-weight:600;color:var(--text)}
 
-/* base-track destinations - verified pages solid, search fallbacks visibly lighter */
-.lrow{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:14px}
-.lchip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:var(--r-pill);
-  background:var(--raise);border:1px solid var(--line);font-size:12.5px;font-weight:640;
+/* OPEN IN (layout spec item 4). One row of four, brand mark on top, name under it. These
+   used to be horizontal pills sitting inside the hero, directly under the version pill;
+   the spec wants the pill to stand alone and these to be their own labelled block.
+   THE SEARCH MARKER SURVIVES THE REDESIGN. links.py marks a destination exact only for
+   Apple Music and only when the iTunes lookup actually hit; SoundCloud, Spotify and
+   YouTube are always search urls. Four clean logo buttons with nothing on them would
+   assert four verified track pages we do not have, so the word stays on the cell it
+   belongs to. A tap never lies about where it lands. */
+.openin{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:2px}
+.opl{display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px 9px;
+  border-radius:14px;background:var(--raise);border:1px solid var(--line);text-align:center;
   transition:border-color .15s,filter .15s}
-.lchip:hover{filter:brightness(1.1);border-color:var(--line2)}
-.lchip.ex{background:var(--raise2);border-color:var(--line2)}
-.lchip svg{width:15px;height:15px;flex:none}
-.lchip i{font-style:normal;font-weight:600;color:var(--faint);font-size:11px}
+.opl:hover{filter:brightness(1.1);border-color:var(--line2)}
+.opl.ex{background:var(--raise2);border-color:var(--line2)}
+.opl svg{width:24px;height:24px;flex:none}
+/* break-word, never `anywhere`: `anywhere` split "SoundCloud" across two lines at 375px. */
+.opl b{font-size:10px;font-weight:650;color:var(--text);line-height:1.25;overflow-wrap:break-word;
+  letter-spacing:-.01em}
+.opl i{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--faint);line-height:1}
 
 .sect{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:20px 0 9px}
 .list{display:flex;flex-direction:column;gap:7px}
@@ -575,8 +607,11 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
    where to look. Now the crowned row is a raised card and the rest are quiet list rows
    on the page ground, the meta collapses to a single line, and the score is a figure on
    the right where the eye scans, not a bar. Same information, one third the height. */
-.trk{display:flex;align-items:center;gap:11px;background:transparent;border-radius:12px;
-  padding:9px 10px;border:1px solid transparent;transition:background .14s,border-color .14s}
+/* gap and side padding were 11/10 before the covers arrived. A 40px cover costs the meta
+   line real width at 375px, and the meta going from one line to three is a worse trade
+   than three pixels of air, so both were pulled in to pay for it. */
+.trk{display:flex;align-items:center;gap:8px;background:transparent;border-radius:12px;
+  padding:9px 7px;border:1px solid transparent;transition:background .14s,border-color .14s}
 .trk+.trk{margin-top:2px}
 .trk:hover{background:var(--raise);border-color:var(--line)}
 /* the crown is the only card on the shelf - it earns elevation, the others do not */
@@ -585,11 +620,36 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
   box-shadow:0 10px 26px rgba(8,4,30,.32)}
 .trk .pl{width:28px;height:28px;border-radius:50%;background:color-mix(in oklab,var(--accent) 55%,var(--raise2));
   color:#fff;display:grid;place-items:center;flex:none;transition:transform .14s,background .14s}
-.trk.top .pl{width:34px;height:34px;background:var(--accent);
-  box-shadow:0 4px 14px color-mix(in oklab,var(--accent) 55%,transparent)}
+/* THE CROWN IS A CARD, NOT A ROW (layout spec item 5). The mock stacks it: a big play
+   control on top, then the title, then the match figure and the source chip under it. Done
+   by letting the row wrap and giving the title block the full width, so the shelf still
+   has exactly ONE row builder and a streamed row can never drift from a final one. The
+   title needed the width anyway: with a cover, a 46px button and a caveat all competing on
+   one line, a two-line title was being squeezed into a 180px column at 375px. */
+.trk.top{flex-wrap:wrap;row-gap:12px;align-items:center}
+.trk.top .tt{flex-basis:100%;width:100%}
+.trk.top .op{position:absolute;top:13px;right:14px}
+.trk.top .pl{width:46px;height:46px;background:var(--accent);
+  box-shadow:0 6px 18px color-mix(in oklab,var(--accent) 55%,transparent)}
 .trk:hover .pl{transform:scale(1.07);background:var(--accent)}
 .trk .pl svg{width:11px;height:11px}
-.trk.top .pl svg{width:13px;height:13px}
+.trk.top .pl svg{width:17px;height:17px}
+/* KONNOR: "for the 'exact version' and for the other version make sure there's a photo
+   cover on the song somewhere (can be small) ... to the left of the title, just above the
+   triangle thing". Sits left of the triangle, so it reads as the row's own object without
+   taking the triangle's job away from it. DISPLAY ONLY: no ranking, no gate and no claim
+   string reads this, and a cover next to a row never implies it was verified any harder
+   than its score says. */
+.trk .tart{width:40px;height:40px;border-radius:9px;object-fit:cover;flex:none;display:block;
+  background:var(--raise2)}
+.trk.top .tart{width:62px;height:62px;border-radius:14px}
+.tart.ph{display:grid;place-items:center;overflow:hidden;
+  background:linear-gradient(155deg,var(--phc,#7B6BFF),var(--phc2,#5B4BE8))}
+.tart.ph svg{width:17px;height:17px;opacity:.92}
+.trk.top .tart.ph svg{width:23px;height:23px}
+@media (max-width:400px){
+  .trk .tart{width:36px;height:36px}
+}
 .trk .tt{min-width:0;flex:1}
 .trk .nm{font-size:13px;font-weight:600;line-height:1.32;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -622,6 +682,14 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
 @media (max-width:430px){
   .trk .op span,.trk .op{font-size:0}          /* keep the arrow, drop the word */
   .trk .op svg{width:13px;height:13px}
+  /* The cover took width off the meta line. Buying it back here keeps score, platform and
+     play count on ONE line at 375px, which is the whole reason the meta was collapsed. */
+  .trk .rkn{width:13px}
+  .trk .mt{gap:4px 7px}
+  .trk .cf{font-size:10.5px}
+  .trk .src{font-size:10px}
+  .trk .src.hasmark{padding:2px 6px 2px 4px;gap:3px}
+  .trk .src.hasmark svg{width:12px;height:12px}
 }
 /* live edit hunt: each row lands the moment that candidate's audio verifies, so the
    arrival has to be visible or the whole point is lost. Killed by the global
@@ -695,6 +763,26 @@ canvas.reccanvas{width:100%;height:86px;display:block;margin:14px 0 4px}
    beats the crown on raw audio. */
 .shelfnote{margin-top:9px;font-size:11.5px;line-height:1.45;color:var(--faint)}
 .shelfnote b{color:var(--muted);font-weight:700}
+/* OTHER VERSIONS, COLLAPSED BY DEFAULT (layout spec item 6). CROWNED RESULTS ONLY. On a
+   shelf with no crown the list IS the answer and it never collapses; the live hunt list is
+   the progress indicator and it never collapses either.
+   Every honest-claim note stays OUTSIDE this fold. shelfNote above it, claimNote and
+   tieNote below it. Folding the caveats away while the crown's number sits on screen would
+   sell more certainty than the measurement has, which is the one thing this shelf exists
+   to stop. Native <details>, so it is reachable with a tap, Enter and a screen reader, and
+   there is nothing animated but a 15px chevron the global reduced-motion rule kills. */
+.othv{margin:0}
+.othv>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
+  font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--faint);margin:20px 0 9px;padding:3px 0;transition:color .14s}
+.othv>summary::-webkit-details-marker{display:none}
+.othv>summary::marker{content:""}
+.othv>summary:hover{color:var(--muted)}
+.othv>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.othv>summary .cv{margin-left:auto;display:grid;place-items:center;flex:none;
+  transition:transform .18s}
+.othv>summary .cv svg{width:15px;height:15px;display:block}
+.othv[open]>summary .cv{transform:rotate(180deg)}
 /* HELD BACK. A gate refused to crown anything, so the list is the whole answer. It gets
    a proper heading and the engine's own reason, because "we found six versions and will
    not pick" is a result, not an error. */
@@ -1475,8 +1563,10 @@ function editBadge(d){
   // catalogue is commercial releases, so a local artist's track is simply absent from it;
   // the caption is a strong claim but it is a claim, and the badge should not dress it up
   // as a fingerprint match. The exact version underneath IS still audio-verified.
+  // `soft`, not `orig`: mint now means "measured as the original" (layout spec item 2) and
+  // a caption claim is not that. Same words, a surface that does not promote them.
   if(d.from_caption && (!sp || sp==='as posted'))
-    return '<span class="badge orig">From the caption'+(who?' · '+esc(who):'')+'</span>';
+    return '<span class="badge soft">From the caption'+(who?' · '+esc(who):'')+'</span>';
   // A LYRIC SEED IS WEAKER THAN A CAPTION CLAIM AND MUST READ THAT WAY. `lyric_guess` is
   // set when the only lead was on-screen text naming no artist - "ur LYING" on a cooking
   // reel, "You'll be that!". That text is usually a lyric, which is a fine thing to search
@@ -1484,7 +1574,7 @@ function editBadge(d){
   // core has been measured to saturate on exactly this kind of clip (see the engine
   // skill's core-saturation finding). Keep the result, drop the certainty.
   if(d.lyric_guess)
-    return '<span class="badge orig">Matched from on-screen text'+(who?' · '+esc(who):'')+'</span>';
+    return '<span class="badge soft">Matched from on-screen text'+(who?' · '+esc(who):'')+'</span>';
   if(!sp||sp==='as posted'){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);
@@ -1507,10 +1597,23 @@ function confTier(v){var p=Math.round(v*100);
    perfect 1.000 on the same slowed clip - so a 100% here means "nothing in the audio
    rules it out", not "proven". The tooltip says so in as many words. */
 function confPct(v){return Math.max(0,Math.min(100,Math.round(v*100)));}
-function confChip(v){
+/* `full` spells the crown's chip out as "N% audio match" (layout spec item 5). The MOCK
+   prints a flat "100% audio match" and that is the one thing it cannot have: the number is
+   always the rendered value of confPct(core), never a fixed string.
+     - core saturates at 1.000 on low-transient audio (see the note above), so 100% means
+       "nothing in the audio rules it out", not "proven".
+     - server.py's _cand_row writes core:null when the engine has no value, and this
+       function then prints nothing rather than a zero.
+     - the crown is ranked on more than core, which is why shelfNote right underneath can
+       legitimately say a lower row scores higher on audio alone. A static 100% would
+       contradict that sentence on the same screen.
+   The tooltip is unchanged, word for word. Rows keep the short "N% match" so the meta line
+   still fits on one line at 375px. */
+function confChip(v,full){
   if(v===null||v===undefined) return '';
   return '<span class="cf s'+confTier(v)+'" title="Audio match '+confPct(v)+'% - how closely this '+
-    'upload lines up with the clip. High is good evidence, not proof.">'+confPct(v)+'% match</span>';}
+    'upload lines up with the clip. High is good evidence, not proof.">'+confPct(v)+
+    (full?'% audio match':'% match')+'</span>';}
 function confRule(v){
   if(v===null||v===undefined) return '';
   return '<span class="cfl s'+confTier(v)+'"><i style="width:'+Math.max(2,confPct(v))+'%"></i></span>';}
@@ -1625,10 +1728,61 @@ function _paintBloom(img){
     hero.style.setProperty('--bloom','rgba('+Math.round(r/n)+','+Math.round(g/n)+','+Math.round(b/n)+',.55)');
   }catch(e){}                                       // tainted canvas / CORS - keep the default
 }
+/* ---------- per-row cover art ----------
+   Konnor asked for a cover on the exact version and on the other versions. Two sources,
+   both free:
+     - `c.art`, the engine's own display-only field, when the payload carries one.
+     - a YouTube row needs no field at all. The 11-char id is already in the row's own url,
+       and i.ytimg.com/vi/<id>/mqdefault.jpg is derived from it with ZERO requests and no
+       API key. Never the signed thumbnail url from search metadata: those carry sqp= and
+       rs= params that expire, which would rot every saved library payload.
+   Anything else (a SoundCloud row from a payload with no art, a DuckDuckGo or comment
+   lane) gets the generated sleeve. We never invent artwork for a row that has none and we
+   never fire a per-row network probe from the page. */
+function ytid(u){
+  var m=String(u||'').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/);
+  return m?m[1]:'';}
+function rowArt(c){
+  if(c.art) return String(c.art);
+  var v=ytid(c.url);
+  return v?'https://i.ytimg.com/vi/'+v+'/mqdefault.jpg':'';}
+/* The same trick the hero's fallback sleeve uses, seeded per ROW so seventeen artless rows
+   are seventeen recognisable objects instead of seventeen identical squares. */
+function phVars(seed){
+  seed=String(seed||''); var h=0;
+  for(var i=0;i<seed.length;i++) h=(h*31+seed.charCodeAt(i))%360;
+  return '--phc:hsl('+h+' 68% 62%);--phc2:hsl('+((h+38)%360)+' 62% 44%)';}
+function _phSpan(style){return '<span class="tart ph" style="'+style+'">'+IC.bignote+'</span>';}
+function rowThumb(c){
+  var u=rowArt(c), st=phVars((c.title||'')+'|'+(c.uploader||''));
+  if(!u) return _phSpan(st);
+  // No crossorigin, for the reason documented on the hero <img>: it makes a non-CORS host
+  // refuse the image outright. lazy + async so a shelf of covers never blocks paint.
+  return '<img class="tart" src="'+esc(u)+'" alt="" loading="lazy" decoding="async" '+
+    'data-ph="'+esc(st)+'">';}
+/* One delegated pair of listeners instead of an inline onerror per row. `error` and `load`
+   do not bubble, so both are registered in the CAPTURE phase. */
+function _tartFallback(img){
+  if(!img||!img.parentNode) return;
+  var tmp=document.createElement('div');
+  tmp.innerHTML=_phSpan(img.getAttribute('data-ph')||'');
+  img.parentNode.replaceChild(tmp.firstChild,img);}
+document.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&t.tagName==='IMG'&&t.className==='tart') _tartFallback(t);
+},true);
+document.addEventListener('load',function(e){
+  var t=e.target;
+  // A dead or private YouTube id answers 404 with a DECODABLE 120x90 grey jpeg, so onerror
+  // never fires for it. A real mqdefault is 320 wide; anything at or under 120 is the grey.
+  if(t&&t.tagName==='IMG'&&t.className==='tart'&&t.naturalWidth&&t.naturalWidth<=120)
+    _tartFallback(t);
+},true);
 function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
       '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
     (opt.rank?'<span class="rkn">'+opt.rank+'</span>':'')+
+    rowThumb(c)+
     // KONNOR: "when you click only on the triangle it plays it right into the app rather
     // than taking it to soundcloud, but keep when you click anywhere else it takes you
     // into SoundCloud". The row is one <a>, so the triangle inherited the navigation.
@@ -1637,7 +1791,7 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
       ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
       ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
-    '<div class="mt">'+confChip(c.core)+
+    '<div class="mt">'+confChip(c.core,!!top)+
       (src?srcChip(src):'')+
       (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
       (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div>'+
@@ -1746,6 +1900,32 @@ function renderResult(d,partial){
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
+  /* ---------- THE SAVE CARD, HOISTED (layout spec item 3) ----------
+     It has to sit directly under the version pill now, which means it is built before the
+     hero rather than after the shelf. It depends on `ex`, so this block moves up here as a
+     whole - reordering the string concat alone would read `ex` before it exists.
+     Unchanged otherwise, deliberately: songs(loadCrate().length) still counts the crate as
+     it stands BEFORE autoSave(d) writes this scan, exactly as it did when this ran lower
+     down, and the wording still never claims a save that did not happen. */
+  // AUTO-PLAYLIST. Scan = saved. The screen CONFIRMS the save rather than asking for it,
+  // so "add to other playlists" becomes the optional extra tap instead of the required
+  // one. Honest wording when only the original exists: some edits live solely as IG
+  // audio or an unofficial SoundCloud upload and cannot be written to a music service,
+  // so we say plainly that the exact version was identified and the original was saved.
+  var exactSavable = !!(ex && (ex.source||'').toLowerCase()!=='soundcloud');
+  var savedLine = (ex && !exactSavable)
+      ? 'Exact version identified, original saved'
+      : 'Your playlist';
+  // If the user turned auto-save off, nothing was written - so the card must not claim
+  // it was. It becomes a neutral one-tap Save instead of a green confirmation.
+  var on = autoOn();
+  var card = on
+    ? '<div class="savecard"><span class="tick">'+IC.tick+'</span><div>'+
+        '<b>Saved to Found with Addify</b>'+
+        '<span id="savesub">'+esc(savedLine)+' · '+songs(loadCrate().length)+'</span></div></div>'
+    : '<button class="savecard off" id="savebtn"><span class="tick">'+IC.plus+'</span><div>'+
+        '<b>Save to Found with Addify</b>'+
+        '<span id="savesub">Auto-save is off</span></div></button>';
   // The fallback sleeve is DERIVED FROM THE TRACK, so two songs never render identically:
   // the title hashes to a hue, giving each missing-cover result its own recognisable
   // object instead of the same purple square every time.
@@ -1769,18 +1949,45 @@ function renderResult(d,partial){
   // (Spotify and YouTube need auth) falls back to search and is labelled as a search, so
   // a tap never lies about where it lands.
   var lk=(d.links||[]);
-  var linkrow = lk.length ? '<div class="lrow">'+lk.map(function(l){
-      return '<a class="lchip'+(l.exact?' ex':'')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener">'+
-        (IC[l.kind]||'')+'<span>'+esc(l.name)+(l.exact?'':' <i>search</i>')+'</span></a>';}).join('')+'</div>' : '';
+  var openin = lk.length ? '<div class="sect">Open in</div><div class="openin">'+lk.map(function(l){
+      return '<a class="opl'+(l.exact?' ex':'')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener">'+
+        (IC[l.kind]||'')+'<b>'+esc(l.name)+'</b>'+(l.exact?'':'<i>search</i>')+'</a>';}).join('')+'</div>' : '';
   // The badge is a VERDICT ("Original" / "Slowed ~0.71x + bass boosted"), and while the
   // hunt is still running there isn't one yet - /base's speed call is provisional and the
   // crowned edit can change it. Now that this card is on screen DURING the hunt (versions
   // land in the list below it), asserting "Original" over a list of bass-boosted matches
   // would be showing a measurement we have not finished making. Hold the slot, don't fill
   // it: same shape, no layout jump when the real badge arrives.
-  var badge = partial ? '<span class="badge orig">Checking versions</span>' : editBadge(d);
-  var hero='<div class="hero">'+art+'<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
-    '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+linkrow+'</div>';
+  // `soft`, not `orig`: the hunt has not finished, so this is a held slot, not a mint
+  // "measured as the original". Same words, same shape, no verdict implied.
+  var badge = partial ? '<span class="badge soft">Checking versions</span>' : editBadge(d);
+  /* ---------- PREVIEW ON THE COVER (layout spec item 7) ----------
+     Two honesty guards, both of them real failure modes:
+     1. WHAT IS PLAYING. The sleeve is the BASE song's cover while the thing this button
+        plays is the exact version, which is usually an edit of it. A triangle on the
+        original's sleeve that starts a slowed edit would misstate what you are hearing,
+        so the control names what it will play - and the player sheet it opens prints that
+        title and its source chip the moment it appears.
+     2. WHAT IT DOES. With no crown, `pv` falls back to d.shazam, and embedFor only handles
+        SoundCloud and YouTube - so a triangle there would silently open a tab, which is
+        the exact behaviour Konnor filed his first ask against. The triangle renders ONLY
+        when embedFor can actually embed it. Otherwise the corner carries the open arrow,
+        the same glyph the rest of the row uses for leaving the app.
+     It reuses the [data-play] attributes trackRow sets, so the existing delegated handler
+     picks it up and there is no second listener anywhere. */
+  var pv=(ex&&ex.url)||d.shazam||'';
+  var pvsrc=(ex&&(ex.source||'').toLowerCase())||'';
+  var pvttl=(ex&&ex.title)||d.base_song||'';
+  var pvlbl=ex?'Play the exact version':'Play this track';
+  var corner = !pv ? ''
+    : embedFor(pv,pvsrc)
+      ? '<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
+        ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>'
+      : '<a class="artplay out" href="'+esc(pv)+'" target="_blank" rel="noopener"'+
+        ' title="Opens this version at the source" aria-label="Open this version at the source">'+IC.open+'</a>';
+  var hero='<div class="hero"><span class="artwrap">'+art+corner+'</span>'+
+    '<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
+    '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
   // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of
   // it was ever rendered, so a two-song clip displayed as one song and looked like a
@@ -1857,9 +2064,17 @@ function renderResult(d,partial){
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
     shelf+=shelfNote(others,ex.core);
-    if(others.length) shelf+='<div class="sect">Other versions we checked · '+others.length+'</div><div class="list">'+
+    // COLLAPSED BY DEFAULT (layout spec item 6), and ONLY HERE - the crowned case, where
+    // there is already an answer on screen and this list is the supporting evidence. Note
+    // what stays outside the fold: shelfNote above it ("#3 scores higher on audio alone"),
+    // claimNote below it ("Titles are not measurements"). Those are the caveats on the
+    // crown's certainty, so folding them away with the rows would leave the confident half
+    // visible and hide the honest half. The heading string itself is unchanged.
+    if(others.length) shelf+='<details class="othv"><summary>'+
+      '<span>Other versions we checked · '+others.length+'</span>'+
+      '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       others.slice(0,12).map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div>'+
+        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div></details>'+
       claimNote(others.slice(0,12));}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
@@ -1950,30 +2165,11 @@ function renderResult(d,partial){
   // again in the negative reads as a failure on the one kind of clip that went perfectly,
   // and a plain song is the most common thing anyone will ever scan.
   else{shelf=''; plain=true;}
-  // AUTO-PLAYLIST. Scan = saved. The screen CONFIRMS the save rather than asking for it,
-  // so "add to other playlists" becomes the optional extra tap instead of the required
-  // one. Honest wording when only the original exists: some edits live solely as IG
-  // audio or an unofficial SoundCloud upload and cannot be written to a music service,
-  // so we say plainly that the exact version was identified and the original was saved.
-  var exactSavable = !!(ex && (ex.source||'').toLowerCase()!=='soundcloud');
-  var savedLine = (ex && !exactSavable)
-      ? 'Exact version identified, original saved'
-      : 'Your playlist';
-  // If the user turned auto-save off, nothing was written - so the card must not claim
-  // it was. It becomes a neutral one-tap Save instead of a green confirmation.
-  var on = autoOn();
-  var card = on
-    ? '<div class="savecard"><span class="tick">'+IC.tick+'</span><div>'+
-        '<b>Saved to Found with Addify</b>'+
-        '<span id="savesub">'+esc(savedLine)+' · '+songs(loadCrate().length)+'</span></div></div>'
-    : '<button class="savecard off" id="savebtn"><span class="tick">'+IC.plus+'</span><div>'+
-        '<b>Save to Found with Addify</b>'+
-        '<span id="savesub">Auto-save is off</span></div></button>';
-  var pv = (ex&&ex.url) || d.shazam || '';
-  var plat=card+
+  // The save card and `pv` are built further up now - see the hoist note next to `var ex`.
+  // Preview has left this row for the cover's own corner control (layout spec item 7), so
+  // what is left is the two the spec keeps: Other playlist, and Like.
+  var plat=
     '<div class="secrow">'+
-      (pv ? '<a class="secbtn" id="prevbtn" href="'+esc(pv)+'" target="_blank" rel="noopener">'+IC.play+'<span>Preview</span></a>'
-          : '<span class="secbtn dim">'+IC.play+'<span>No preview</span></span>')+
       '<button class="secbtn" id="otherbtn">'+IC.plus+'<span>Other playlist</span></button>'+
       '<button class="secbtn" id="likebtn">'+IC.heart+'<span>Like</span></button>'+
     '</div>'+
@@ -1986,12 +2182,24 @@ function renderResult(d,partial){
     '<div class="autonote">Auto-save is '+(on?'on':'off')+' · <button id="autobtn">change in settings</button></div>';
   var hints=(d.comment_hints||[]).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
-  // The waveform earns its place on an edit - it is where the shelf rows and the matched
-  // window are read against the clip. On a plain original there is no shelf to read it
-  // against, so it is just a band of decoration between the title and the save, which is
-  // the "sound bar in the middle" Konnor asked to have taken out.
-  var wavebar = plain ? '' : '<canvas class="reccanvas" id="reccanvas"></canvas>';
-  result.innerHTML='<div class="card">'+head+clip+hero+wavebar+mash+shelf+plat+quotes+'</div>';
+  /* ---------- THE WAVEFORM IS GONE (layout spec item 1) ----------
+     It used to draw on every edit result. Its stated job was to be the thing the shelf
+     rows and the matched window are read against, and on a plain original there was
+     nothing to read it against, which is the "sound bar in the middle" Konnor asked to
+     have taken out. The updated layout removes it on edits too.
+     RECORDED SO IT IS NOT REINSTATED AS A BUG FIX: this is a design call, not a
+     regression, and nothing dishonest follows from it. The claim was never carried by the
+     drawing - it is carried by the score on the row and by that score's tooltip, both of
+     which are still on screen. The SCANNING screen's clip timeline is a different thing
+     and stays: that one brackets a window we actually measured.
+     paintRecCanvas() is left in place on purpose. It returns early when the canvas is
+     absent, so the theme switcher, the resize listener and the scan-finish callers all
+     become harmless no-ops rather than four edits in four unrelated places. */
+  var wavebar='';
+  // ORDER, top to bottom: the clip it came from, the song with its cover and the version
+  // pill standing alone, the save confirmation directly under that pill, where to open it,
+  // then the evidence.
+  result.innerHTML='<div class="card">'+head+clip+hero+card+openin+wavebar+mash+shelf+plat+quotes+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
