@@ -956,8 +956,11 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
         up = slug(e.get("uploader") or e.get("channel") or "")
         if not up or (hs not in up and up not in hs):
             continue
+        _th = (e.get("thumbnails") or [])
         rows.append({"url": e.get("webpage_url") or e.get("url") or "",
-                     "title": e.get("title") or ""})
+                     "title": e.get("title") or "",
+                     # already-parsed JSON, zero extra requests. Display only.
+                     "thumb": _thumb((_th[-1] or {}).get("url") if _th else "")})
     if base_title:
         toks = [t for t in re.split(r'[^a-z0-9]+', base_title.lower()) if len(t) > 2]
         hit = lambda r: sum(1 for t in toks if t in (r["title"] or "").lower())
@@ -978,7 +981,7 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
                 pass
         if u:
             out_rows.append({"url": u, "likes": 0, "from_creator": False,
-                             "reply": True, "handle": handle})
+                             "reply": True, "handle": handle, "thumb": r.get("thumb")})
     return out_rows
 
 
@@ -3169,7 +3172,10 @@ def comment_candidates(links):
                     "comment_link": True,
                     "comment_likes": int((L or {}).get("likes") or 0)
                                      if isinstance(L, dict) else 0,
-                    "creator_link": bool(isinstance(L, dict) and L.get("from_creator"))})
+                    "creator_link": bool(isinstance(L, dict) and L.get("from_creator")),
+                    # carried through when the link came from producer_handle_tracks,
+                    # which reads it out of the JSON it already fetched. Display only.
+                    "thumb": (L.get("thumb") if isinstance(L, dict) else None)})
     return out
 
 
@@ -3185,13 +3191,15 @@ def _comment_meta(cands):
         return cands
     try:
         with ThreadPoolExecutor(max_workers=min(3, len(cands))) as ex:
-            for c, (pl, ti, up) in zip(cands, ex.map(_meta, [c["url"] for c in cands])):
+            for c, (pl, ti, up, th) in zip(cands, ex.map(_meta, [c["url"] for c in cands])):
                 if pl:
                     c["plays"] = pl
                 if ti:
                     c["title"] = ti
                 if up:
                     c["uploader"] = up
+                if th and not c.get("thumb"):
+                    c["thumb"] = th
                 c["link_alive"] = bool(ti or pl)
     except Exception:
         pass
@@ -3382,7 +3390,22 @@ def _num(s):
         return 0
 
 
-_SEARCH_FMT = "%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s\t%(view_count)s\t%(like_count)s"
+# COVER ART RIDES THE SEARCH WE ALREADY RUN. `thumbnails.-1.url` is the largest entry
+# in the thumbnails array yt-dlp already parsed out of the SAME flat-playlist
+# response, so it costs ZERO extra requests and zero measurable time (scsearch60
+# timed with the field: 7.65s / 7.00s, without it: 15.55s / 7.29s, i.e. inside
+# SoundCloud's own run-to-run noise). It is APPENDED so every existing parts[]
+# index in _run_search stays where it was. yt-dlp prints the literal string "NA"
+# when a field is absent, which is why _thumb maps it to None - a naive parse would
+# put "NA" in the payload and the browser would request https://NA.
+_SEARCH_FMT = ("%(title)s\t%(uploader)s\t%(webpage_url)s\t%(duration)s"
+               "\t%(view_count)s\t%(like_count)s\t%(thumbnails.-1.url)s")
+
+
+def _thumb(v):
+    """A yt-dlp thumbnail field -> a usable URL or None. Display only."""
+    v = (v or "").strip()
+    return v if v.startswith("http") else None
 
 
 def _run_search(spec):
@@ -3400,7 +3423,9 @@ def _run_search(spec):
         rows.append({"title": parts[0], "uploader": parts[1], "url": parts[2],
                      "source": src, "duration": parts[3] if len(parts) > 3 else "",
                      "plays": _num(parts[4]) if len(parts) > 4 else 0,
-                     "likes": _num(parts[5]) if len(parts) > 5 else 0, "query": q})
+                     "likes": _num(parts[5]) if len(parts) > 5 else 0, "query": q,
+                     # display-only cover art. Never read by ranking or by any claim.
+                     "thumb": _thumb(parts[6]) if len(parts) > 6 else None})
     return rows
 
 
@@ -3646,12 +3671,16 @@ def _meta(url):
     """plays + title for a single URL (web results don't carry play counts)."""
     try:
         out = subprocess.run(YTDLP + [url, "--skip-download", "--print",
-                                      "%(view_count)s\t%(title)s\t%(uploader)s"],
+                                      "%(view_count)s\t%(title)s\t%(uploader)s\t%(thumbnail)s"],
                              capture_output=True, text=True, timeout=30).stdout.strip()
-        v, t, up = (out.split("\t") + ["", "", ""])[:3]
-        return _num(v), t, up
+        v, t, up, th = (out.split("\t") + ["", "", "", ""])[:4]
+        # The thumbnail rides the SAME spawn, so it is free here too. This is the only
+        # lane that can give art to a candidate found by DuckDuckGo, the Google worker or
+        # a comment link, none of which carry search metadata - and it only ever runs on
+        # the handful of rows we are about to SHOW.
+        return _num(v), t, up, _thumb(th)
     except Exception:
-        return 0, "", ""
+        return 0, "", "", None
 
 
 def _enrich_top(cands, n=6):
@@ -3665,13 +3694,15 @@ def _enrich_top(cands, n=6):
         return
     try:
         with ThreadPoolExecutor(max_workers=min(6, len(top))) as ex:
-            for c, (pl, ti, up) in zip(top, ex.map(_meta, [c["url"] for c in top])):
+            for c, (pl, ti, up, th) in zip(top, ex.map(_meta, [c["url"] for c in top])):
                 if pl:
                     c["plays"] = pl
                 if ti:
                     c["title"] = ti
                 if up:
                     c["uploader"] = up
+                if th and not c.get("thumb"):
+                    c["thumb"] = th
     except Exception:
         pass
 
