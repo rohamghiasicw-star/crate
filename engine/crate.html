@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Addify">
-<title>Addify — name the sound in any clip</title>
+<title>Addify. Name the sound in any clip</title>
 <style>
 :root{
   --bg:#1B1140; --bg2:#241650;
@@ -1739,8 +1739,13 @@ function _paintBloom(img){
    Anything else (a SoundCloud row from a payload with no art, a DuckDuckGo or comment
    lane) gets the generated sleeve. We never invent artwork for a row that has none and we
    never fire a per-row network probe from the page. */
+/* KEPT IN STEP WITH THE SERVER. server.py's `_YT_ID` is the authority now that the engine
+   fills `c.art` itself; this regex is only the fallback for a payload saved BEFORE the art
+   field existed. The two used to disagree on /v/, /live/ and a youtu.be url carrying a
+   query, so an old saved row of those shapes fell to a placeholder while a fresh one of
+   the same shape got a cover. Same alternation, same 11-char id, same derived url. */
 function ytid(u){
-  var m=String(u||'').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/);
+  var m=String(u||'').match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/);
   return m?m[1]:'';}
 function rowArt(c){
   if(c.art) return String(c.art);
