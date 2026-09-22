@@ -90,6 +90,58 @@ SWEEP_PROBE_TIMEOUT = float(os.environ.get("CRATE_SWEEP_PROBE_TIMEOUT", 3.0))
 # affords ~5 stalled rates or ~15 answering ones, and the sweep exits earlier than this
 # whenever two speeds agree.
 SWEEP_BUDGET = float(os.environ.get("CRATE_SWEEP_BUDGET", 75.0))
+
+# ------------------------------------------------------- SPEED PASS (2026-09-22)
+# Every lever from research/SPEED-PASS.md has a switch here, so any one of them can be
+# reverted in one line without touching the code that implements it.
+#
+# FREE levers default ON. They cost no accuracy at all: each one only stops the process
+# WAITING on work that had no dependency on what came before. Same requests, same pools,
+# same decisions, same numbers.
+#
+# PAID levers default OFF, and the measured accuracy cost in CLIPS is written on the line.
+# CRATE_FAST=1 turns the paid set on in one go. Nothing here was measured on this machine
+# - the seconds are the analyst's medians over 6 complete lookups in /tmp/tlog.jsonl.
+def _speed_flag(name, default):
+    v = os.environ.get(name)
+    if v is None or not v.strip():
+        return default
+    return v.strip().lower() not in ("0", "false", "no", "off")
+
+# --- free ---
+# ONE tikwm request per lookup instead of two colliding on its 1 req/s wall.  ~0.8s
+SPEED_TIKWM_SINGLEFLIGHT = _speed_flag("CRATE_TIKWM_SINGLEFLIGHT", True)
+# get_source hands back the audio with the credit cross-check still pending, so the
+# caller can start the comment, sound-page and creator threads inside the mp4 wait.
+# Opt-in per call - every caller that does not ask still gets a fully settled source.
+SPEED_DEFER_XCHECK = _speed_flag("CRATE_DEFER_XCHECK", True)
+# Submit the broad SC/YT search BEFORE the fast path runs, not after it misses.  ~1.5s
+SPEED_EARLY_BROAD_SEARCH = _speed_flag("CRATE_EARLY_BROAD_SEARCH", True)
+
+# --- paid ---
+_SPEED_FAST = _speed_flag("CRATE_FAST", False)
+# Phase 1 scan windows 6 -> 3. Saves ~1.6s and it is the ONLY lever that moves phase 1
+# off its 7.0s floor toward Shazam's 3-5s.
+# COSTS 5 CLIPS: the 4 tagged mashup, the inside-song mashup, and CLIP-FORENSICS clip 17.
+# The scan spreads windows across the whole clip so a second song lands in its own
+# window; at cap 3 the sampling is head/middle/end and a song at 1/6 or 5/6 of the
+# runtime loses its only window, so the tier-2 pass never fires. It also moves
+# hits[0]["at"], the anchor CORROB corroborates against.
+SCAN_CAP = int(os.environ.get("CRATE_SCAN_CAP", "3" if _SPEED_FAST else "6"))
+# CORROB 3 rates -> 1. Saves ~1.1s, and it is a tax on the common case: it fires on
+# every clip that got any 1.0x hit.
+# COSTS 18 CLIPS: 16 tagged slowed and 2 tagged sped_up. The slice keeps the SLOW rate
+# (1.12) on purpose - keeping the fast one instead would leave the 16 slowed clips with
+# no cover at all, which is the failure CORROB was built for (a slowed clip matching
+# "Two rap phones - FulFah" at 1.0x while 1.10/1.15/1.20x all named the real song).
+CORROB_N = int(os.environ.get("CRATE_CORROB_N", "1" if _SPEED_FAST else "3"))
+# Drop the 1.50 tail rate from the 14-rate sweep. ~0.23s amortised, ~0.6s on the 38% of
+# clips that sweep at all.
+# COSTS 0 CLIPS TODAY: it only reaches clips slowed below 0.67x and the corpus has none.
+# 1.40 is NOT droppable - tt:7648736728290790688 (cult member, three, super slowed and
+# reverb) has truth speed_ratio 0.71, which is exactly counter-rate 1.40, and it is a
+# reg-tier clip.
+SWEEP_DROP_TAIL = _speed_flag("CRATE_SWEEP_DROP_TAIL", _SPEED_FAST)
 # How many independent speeds must name the same title before the sweep stops early.
 #
 # 2 IS NOT ENOUGH AND IT SHIPPED WRONG. Two rates agreeing is a coincidence the full sweep
@@ -1176,14 +1228,87 @@ def _remember_sound_credit(mi, *urls):
             _TT_SOUND_CREDIT[u] = {"title": t, "author": (mi or {}).get("author")}
 
 
+_TIKWM_LOCK = threading.Lock()
+_TIKWM_WAIT = {}          # resolved url -> threading.Event for the request in flight
+_TIKWM_MEMO = {}          # resolved url -> (finished_at, parsed json or None)
+_TIKWM_TTL = 90.0         # long enough to cover one lookup, short enough not to be a cache
+
+
+def _tikwm_api(full_url, force=False):
+    """ONE tikwm request per url per lookup, shared by everyone who asks for it.
+
+    get_source submits tt_video_audio and then runs tiktok_fetch, and when embed/v2 fails
+    tiktok_fetch falls through to tt_tikwm - so both legs hit
+    `tikwm.com/api/?url=<same url>&hd=1` at the same instant. The code already admitted
+    it: tikwm's free tier is 1 req/s, it bounces one of the two, and the loser sleeps
+    1.2s (tt_tikwm) or 1.3s (tt_video_audio) before retrying. Measured tt_fetch splits
+    into a fast group at 0.91-1.97s and a slow group at 3.72-4.33s, 4 of 12 runs carrying
+    roughly 2.4s of forced sleep.
+
+    Identical url, identical response, and both callers already memoise what they parse
+    out of it into _TT_VIDEO_URL / _TT_MUSIC_ID / _TT_SOUND_CREDIT - so the second caller
+    joins the first's request instead of racing it and gets the same dict. `force` skips
+    the memo for an explicit retry, which is the one case where a fresh answer is the
+    point. This is a single-flight, not a cache: the TTL exists to collapse one lookup's
+    duplicate, never to answer the next lookup from memory.
+    """
+    if not SPEED_TIKWM_SINGLEFLIGHT:
+        try:
+            return json.loads(_cffi_get(
+                "https://www.tikwm.com/api/?url=%s&hd=1"
+                % urllib.parse.quote(full_url, safe="")).text)
+        except Exception:
+            return None
+    for _round in range(3):       # bounded: never spin waiting on a holder that hung
+        ev = None
+        with _TIKWM_LOCK:
+            hit = _TIKWM_MEMO.get(full_url)
+            if hit and not force and (time.time() - hit[0]) < _TIKWM_TTL:
+                return hit[1]
+            ev = _TIKWM_WAIT.get(full_url)
+            if ev is None or force:
+                ev = threading.Event()
+                _TIKWM_WAIT[full_url] = ev
+                mine = True
+            else:
+                mine = False
+        if not mine:
+            ev.wait(30)
+            force = False
+            with _TIKWM_LOCK:
+                hit = _TIKWM_MEMO.get(full_url)
+            if hit and (time.time() - hit[0]) < _TIKWM_TTL:
+                return hit[1]
+            continue                      # the holder died without an answer; go ourselves
+        try:
+            d = json.loads(_cffi_get(
+                "https://www.tikwm.com/api/?url=%s&hd=1"
+                % urllib.parse.quote(full_url, safe="")).text)
+        except Exception:
+            d = None
+        with _TIKWM_LOCK:
+            if len(_TIKWM_MEMO) > 256:
+                _TIKWM_MEMO.clear()
+            _TIKWM_MEMO[full_url] = (time.time(), d)
+            _TIKWM_WAIT.pop(full_url, None)
+        ev.set()
+        return d
+    # three rounds of waiting on someone else's request and still no answer: stop
+    # coordinating and just ask, which is exactly what the code did before this existed.
+    try:
+        return json.loads(_cffi_get(
+            "https://www.tikwm.com/api/?url=%s&hd=1"
+            % urllib.parse.quote(full_url, safe="")).text)
+    except Exception:
+        return None
+
+
 def tt_tikwm(full_url):
     """Third-party resolver: returns the isolated sound mp3 + rich credit. Hard
     1 req/s limit, so it's a fallback, not the front line."""
     for attempt in range(2):
-        try:
-            r = _cffi_get("https://www.tikwm.com/api/?url=%s&hd=1" % urllib.parse.quote(full_url, safe=""))
-            d = json.loads(r.text)
-        except Exception:
+        d = _tikwm_api(full_url, force=(attempt > 0))
+        if d is None:
             return None
         if d.get("code") == 0 and d.get("data"):
             data = d["data"]; mi = data.get("music_info") or {}
@@ -1227,9 +1352,10 @@ def tt_video_audio(full_url, tmp, seconds=30):
         # bounce exactly one of them - a single spaced retry absorbs that.
         for attempt in range(2):
             try:
-                r = _cffi_get("https://www.tikwm.com/api/?url=%s&hd=1"
-                              % urllib.parse.quote(full_url, safe=""))
-                d = (json.loads(r.text).get("data") or {})
+                _j = _tikwm_api(full_url, force=(attempt > 0))
+                if _j is None:
+                    return None
+                d = (_j.get("data") or {})
                 vu = d.get("play") or d.get("hdplay")
                 # THE SOUND CREDIT WAS BEING THROWN AWAY HERE. This leg calls tikwm on
                 # essentially every TikTok lookup (it is the only route to the video's own
@@ -1662,8 +1788,74 @@ def viral_sound_comments(full_url, top=3, per=60):
 
 
 # ---------------------------------------------------------------- sources
-def get_source(url):
-    """-> {platform, audio, credit_title, credit_author, is_original, desc, tmp}."""
+def _apply_xcheck(out, vid_audio):
+    """TRUST THE VIDEO, NOT THE CREDIT - the decision, unchanged, lifted into a function.
+
+    TikTok's attributed sound is usually the exact audio in the video, and it's the
+    cleaner source (no voiceover, no SFX), so it stays the default. But it is NOT
+    guaranteed: on the @elwho19 Broly edit every one of TikTok's own routes (embed/v2,
+    tikwm, oEmbed) credits "Embergrass - Kurua" while the video actually plays a two-part
+    mashup - Broly X Lonely Hardstyle, then grindgwap's "WAKE UP. (SUPER SLOWED)", which
+    is exactly what the comments said. Measured verify() of the video audio against the
+    credited sound: 0.110 there, against 1.000 on four other clips (kelthraxx flipp, kyks,
+    bouch.szn, masonxantal). That is a ~0.9 gap, so CORE_KEEP separates them with room to
+    spare. Below it the credited sound is a DIFFERENT recording and everything downstream
+    - Shazam, the search queries built from the credit, verify()'s reference - is being
+    fed audio the viewer never heard. The credit goes with it: it names a track that isn't
+    in the video, so keeping it would only poison build_queries.
+    """
+    if not vid_audio:
+        return
+    core = 0.0
+    _gv0 = time.time()
+    try:
+        core = _verify.verify(vid_audio, out.get("audio"), 20).get("core", 0.0)
+    except Exception:
+        core = 1.0                      # can't measure -> don't second-guess TikTok
+    tlog("sound_match_verify", time.time() - _gv0)
+    out["sound_match_core"] = round(float(core), 3)
+    if core < CORE_KEEP:
+        out["audio"] = vid_audio
+        out["sound_mismatch"] = True
+        out["credited_title"] = out["credit_title"]
+        out["credited_author"] = out["credit_author"]
+        out["credit_title"] = out["credit_author"] = None
+        out["is_original"] = True       # platform names nothing we can trust
+
+
+def settle_source(out):
+    """Join the credit cross-check that get_source(defer_crosscheck=True) left pending.
+
+    Returns True when the credited sound turned out NOT to be the audio in the video and
+    out["audio"] was swapped, so the caller can redo anything it computed off the old
+    path (peaks, wave, clip_secs - about 0.2s of work).
+
+    Idempotent, safe to call on any source dict from any platform, and it keeps the SAME
+    12s ceiling the inline wait had: the deadline is measured from the moment the sound
+    mp3 finished downloading, which is where the old wait started. Nothing about the
+    decision moved, only the waiting.
+    """
+    h = (out or {}).pop("_xcheck", None)
+    if not h:
+        return False
+    fut, started = h
+    try:
+        vid_audio = fut.result(timeout=max(0.0, 12.0 - (time.time() - started)))
+    except Exception:
+        vid_audio = None
+    tlog("tt_audio_xcheck", time.time() - started, vid_ok=bool(vid_audio))
+    before = out.get("audio")
+    _apply_xcheck(out, vid_audio)
+    return out.get("audio") != before
+
+
+def get_source(url, defer_crosscheck=False):
+    """-> {platform, audio, credit_title, credit_author, is_original, desc, tmp}.
+
+    `defer_crosscheck=True` returns as soon as the ANSWER-BEARING audio is on disk, with
+    the TikTok-credit cross-check still running behind `out["_xcheck"]`; the caller must
+    then call settle_source(out) before it reads sound_match_core, trusts the credit, or
+    fingerprints. Defaults False so every other caller is byte-identical to before."""
     tmp = tempfile.mkdtemp()
     if "instagram.com" in url:
         r = ig.fetch_reel(url)
@@ -1733,12 +1925,26 @@ def get_source(url):
         # measured on five cold clips tonight it burned 24-26s each with vid_ok False,
         # which was more than half of a 50s lookup. When it succeeds it takes 4-6s.
         # 12s keeps every success seen and stops paying for the failures.
-        try:
-            vid_audio = _fv.result(timeout=12)
-        except Exception:
-            vid_audio = None
-        tlog("tt_audio", _ga1 - _ga0, vid_wait=round(time.time() - _ga1, 3),
-             vid_ok=bool(vid_audio))
+        #
+        # AND DO NOT SIT HERE DOING NOTHING. Measured vid_wait: 0.75, 2.80, 3.01, 3.74,
+        # 6.23s, median 3.01s, and during that window exactly one thread in the whole
+        # process is doing work - no probes, no comment fetch, no waveform. When the
+        # caller asks for it, hand back the audio with the cross-check still pending and
+        # let the caller spend that window starting the comment, sound-page and creator
+        # threads. The 12s ceiling, the CORE_KEEP test and the swap are all unchanged;
+        # settle_source() runs the identical block, just later.
+        vid_audio = None
+        _xcheck = None
+        if defer_crosscheck and SPEED_DEFER_XCHECK:
+            _xcheck = (_fv, _ga1)
+            tlog("tt_audio", _ga1 - _ga0, vid_wait=0.0, deferred=True)
+        else:
+            try:
+                vid_audio = _fv.result(timeout=12)
+            except Exception:
+                vid_audio = None
+            tlog("tt_audio", _ga1 - _ga0, vid_wait=round(time.time() - _ga1, 3),
+                 vid_ok=bool(vid_audio))
     finally:
         _ex.shutdown(wait=False)
 
@@ -1778,35 +1984,13 @@ def get_source(url):
     if out.get("sound_creator") and out.get("poster"):
         out["sound_is_posters"] = (out["sound_creator"].lower() == out["poster"].lower())
 
-    # TRUST THE VIDEO, NOT THE CREDIT. TikTok's attributed sound is usually the exact
-    # audio in the video, and it's the cleaner source (no voiceover, no SFX), so it
-    # stays the default. But it is NOT guaranteed: on the @elwho19 Broly edit every one
-    # of TikTok's own routes (embed/v2, tikwm, oEmbed) credits "Embergrass - Kurua"
-    # while the video actually plays a two-part mashup - Broly X Lonely Hardstyle, then
-    # grindgwap's "WAKE UP. (SUPER SLOWED)", which is exactly what the comments said.
-    # Measured verify() of the video audio against the credited sound: 0.110 there,
-    # against 1.000 on four other clips (kelthraxx flipp, kyks, bouch.szn, masonxantal).
-    # That is a ~0.9 gap, so CORE_KEEP separates them with room to spare. Below it the
-    # credited sound is a DIFFERENT recording and everything downstream - Shazam, the
-    # search queries built from the credit, verify()'s reference - is being fed audio
-    # the viewer never heard. The credit goes with it: it names a track that isn't in
-    # the video, so keeping it would only poison build_queries.
-    if vid_audio:
-        core = 0.0
-        _gv0 = time.time()
-        try:
-            core = _verify.verify(vid_audio, audio, 20).get("core", 0.0)
-        except Exception:
-            core = 1.0                      # can't measure -> don't second-guess TikTok
-        tlog("sound_match_verify", time.time() - _gv0)
-        out["sound_match_core"] = round(float(core), 3)
-        if core < CORE_KEEP:
-            out["audio"] = vid_audio
-            out["sound_mismatch"] = True
-            out["credited_title"] = out["credit_title"]
-            out["credited_author"] = out["credit_author"]
-            out["credit_title"] = out["credit_author"] = None
-            out["is_original"] = True       # platform names nothing we can trust
+    # TRUST THE VIDEO, NOT THE CREDIT - see _apply_xcheck, which holds the whole
+    # decision and the measurements behind it. Applied here when we waited for the mp4,
+    # and by settle_source() when the caller asked to be handed the audio early.
+    if _xcheck is None:
+        _apply_xcheck(out, vid_audio)
+    else:
+        out["_xcheck"] = _xcheck
     return out
 
 
@@ -1822,6 +2006,9 @@ FINE_SWEEP = [
     (1.18, "slowed ~0.85x"), (1.20, "slowed ~0.83x"), (1.25, "slowed ~0.80x"),
     (1.30, "slowed ~0.77x"), (1.40, "slowed ~0.71x"), (1.50, "slowed ~0.67x"),
 ]
+# PAID LEVER, default off. See SWEEP_DROP_TAIL above for the cost. 1.40 stays.
+if SWEEP_DROP_TAIL:
+    FINE_SWEEP = [r for r in FINE_SWEEP if r[0] != 1.50]
 
 # A cheap spread of counter-speeds used to CORROBORATE an as-posted match. One hit at
 # 1.0x is not evidence when the clip might be pitched - a slowed clip can match a
@@ -2272,7 +2459,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
             *[probe(o, r, l, span=s) for (o, r, l, s) in redo]) if h]
 
     # Phase 1: all windows at once -> distinct songs
-    scan = _scan_windows(dur)
+    scan = _scan_windows(dur, cap=SCAN_CAP)   # PAID LEVER: see SCAN_CAP, default 6
     span = 12 if len(scan) > 1 else 20
     _scan_to = []
     res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span, t_sink=_scan_to)
@@ -2313,7 +2500,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     if hits:
         off0 = hits[0]["at"]
         extra = [h for h in await asyncio.gather(
-            *[probe(off0, r, lbl) for r, lbl in CORROB]) if h]
+            *[probe(off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
         groups = {}
         for h in [x for x in hits if x.get("at") == off0] + extra:
             k = _title_key(h.get("title"))
@@ -4185,6 +4372,29 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             f_cm.result(timeout=max(0.1, budget))
         except Exception:
             pass                       # slug titles are the fallback, see _slug_title
+
+    # ------------------------------------------- THE BROAD SEARCH STARTS NOW
+    # It never depended on the fast path. The fast path runs its own small search and
+    # download-and-score, and ONLY when that fails to clear FAST_EXIT_CORE does the broad
+    # SC/YT search get submitted - so on a fast-path miss the broad search starts several
+    # seconds after it could have. Measured on the two complete runs that took the fast
+    # path and missed: 4.69s and 5.19s of search plus score paid strictly before
+    # search_scyt (4.55s and 6.79s) even began. Amortised over six complete runs that is
+    # about 1.5s; on a fast-path miss it is 4.6s.
+    #
+    # Nothing about the pool, the head or the ranking changes: `queries` is already built
+    # above and is read-only from here, and on a fast-path EXIT the result is simply
+    # dropped, which is exactly what happens today by never having run it. Its own
+    # executor, shut down immediately with wait=False for the same reason _cm_ex is: the
+    # queued job runs to completion and the worker exits, so find_edit can raise from any
+    # of the dozen places below without leaking an idle thread into a long-lived server.
+    f_sc, _sc_t0 = None, None
+    if SPEED_EARLY_BROAD_SEARCH:
+        _sc_t0 = time.time()
+        _sc_ex = ThreadPoolExecutor(max_workers=1)
+        f_sc = _sc_ex.submit(search_edits, queries, 8)
+        _sc_ex.shutdown(wait=False)
+
     # ---------------------------------------------------------------- FAST PATH
     # COMMENTS FIRST. When the crowd has already named the edit in the comments, the
     # entire broad hunt is wasted work: measured on @kyks.edits7's clip the comment read
@@ -4348,7 +4558,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     ex = ThreadPoolExecutor(max_workers=3)
     f_cre = (ex.submit(creator_search, _cre_handle, _cre_nick, prod_title)
              if _cre_handle else None)
-    f_sc = ex.submit(search_edits, queries, 8)
+    if f_sc is None:                      # SPEED_EARLY_BROAD_SEARCH off: same as before
+        _sc_t0 = _t_main
+        f_sc = ex.submit(search_edits, queries, 8)
     # WEB SEARCH IS BOUNDED, NOT AWAITED. It runs on a real headless Chromium (Google
     # hard-gates non-JS clients), which is inherently slow: MEASURED 28.6s of a 44.2s
     # hunt, and because the code blocked on .result() it set the floor for the whole
@@ -4360,7 +4572,11 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     f_web = ex.submit(web_search_edits, web_q)
     try:
         cands = f_sc.result()
-        tlog("search_scyt", time.time() - _t_main, nq=len(queries), nc=len(cands))
+        # `search_scyt` still measures the search itself, from submit to answer, so it
+        # stays comparable to every number already in tlog. `wait` is the new one worth
+        # reading: how long this line actually BLOCKED, which is the thing that moved.
+        tlog("search_scyt", time.time() - _sc_t0, nq=len(queries), nc=len(cands),
+             wait=round(time.time() - _t_main, 3))
         # Fire the producer chase NOW, from the main-search titles - it used to run
         # only after the web deadline had been paid in full, adding its 2-2.5s on top.
         spec_handles = _prod_handles_now(cands) if (prod_title and cands) else []

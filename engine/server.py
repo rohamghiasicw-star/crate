@@ -497,7 +497,7 @@ def _phase1(url, key, t0):
     _prog_set(key, 6, "Reading the clip")
     _p0 = time.time()
     try:
-        src = E.get_source(url)
+        src = E.get_source(url, defer_crosscheck=True)
         E.tlog("get_source", time.time() - _p0)
         _prog_set(key, 18, "Got the audio")
     except RuntimeError as e:
@@ -534,17 +534,6 @@ def _phase1(url, key, t0):
         "art": None,
     }
 
-    # how well TikTok's credited sound matches the audio actually in the video. Always
-    # carried, not just on a mismatch, so the healthy 1.000 case is visible too.
-    if src.get("sound_match_core") is not None:
-        res["sound_match_core"] = src.get("sound_match_core")
-    if src.get("sound_mismatch"):
-        # the answer came from the video's own audio, not the sound TikTok credits -
-        # worth carrying so a surprising result is explainable rather than mysterious.
-        res["sound_mismatch"] = True
-        res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
-                                             src.get("credited_author"))
-
     # ---- WHO MADE THE SOUND, at zero network cost. The richer block below
     # (_creator_attach / creator_check.py) resolves this from the sound page; these four
     # come straight out of tikwm's canonical "original sound - <handle>" title, which
@@ -559,41 +548,6 @@ def _phase1(url, key, t0):
     # work and the Shazam probes, and joined at the end of phase 1. Costs the request
     # nothing it was not already waiting on.
     _cr = _creator_start(url, src)
-
-    _t = time.time()
-    res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
-    res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
-    E.tlog("peaks_wave", time.time() - _t)
-    _prog_set(key, 24, "Building the fingerprint")
-    # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
-    # not the length of the source video. The scanning timeline is scaled to this, so it
-    # has to describe the same thing the window offsets below are measured against.
-    try:
-        res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
-    except Exception:
-        res["clip_secs"] = None
-
-    # ANOTHER CLIP MAY HAVE ALREADY ANSWERED THIS SOUND. Checked here, after the audio
-    # exists so sound_match_core can be trusted, and before a single Shazam probe fires.
-    # This is the one change that makes the app faster AND broader at once: a hit skips
-    # identification and the entire edit hunt, and it works on audio nobody has a name
-    # for. The clip-specific fields (waveform, thumbnail, handle) come from THIS scan and
-    # are layered over the shared answer.
-    _forced = key in _NO_SOUND_CACHE
-    _NO_SOUND_CACHE.discard(key)
-    _sc = None if _forced else _sound_cache_get(src)
-    if _sc:
-        for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
-            if res.get(k) is not None:
-                _sc[k] = res[k]
-        _sc["secs"] = round(time.time() - t0, 1)
-        _prog_set(key, 44, "Known sound")
-        E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
-        # The cached answer belongs to the SOUND; who posted THIS clip does not, so the
-        # creator block is re-attached per clip rather than served from the cache.
-        _creator_attach(_sc, _cr, budget=2.0)
-        _cleanup(src.get("tmp"))
-        return _sc, None
 
     # Comments OVERLAPPED WITH the fingerprint. The crowd routinely names the track
     # outright ("Music : Blu - Arc"), and that is decisive exactly when Shazam is least
@@ -703,6 +657,89 @@ def _phase1(url, key, t0):
         _hints_ex = ThreadPoolExecutor(max_workers=2)
         _hints_fut = _hints_ex.submit(_fetch_hints)
         _page_fut = _hints_ex.submit(_fetch_page)
+
+
+    _t = time.time()
+    res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
+    res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
+    E.tlog("peaks_wave", time.time() - _t)
+    _prog_set(key, 24, "Building the fingerprint")
+    # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
+    # not the length of the source video. The scanning timeline is scaled to this, so it
+    # has to describe the same thing the window offsets below are measured against.
+    try:
+        res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
+    except Exception:
+        res["clip_secs"] = None
+
+    # ANOTHER CLIP MAY HAVE ALREADY ANSWERED THIS SOUND. Checked here, after the audio
+    # exists so sound_match_core can be trusted, and before a single Shazam probe fires.
+    # This is the one change that makes the app faster AND broader at once: a hit skips
+    # identification and the entire edit hunt, and it works on audio nobody has a name
+    # for. The clip-specific fields (waveform, thumbnail, handle) come from THIS scan and
+    # are layered over the shared answer.
+    # ---------------- THE CREDIT CROSS-CHECK, JOINED HERE ----------------
+    # get_source handed the audio back with this still running (crate_engine.settle_source
+    # holds the whole decision, unchanged, and the same 12s ceiling measured from the same
+    # instant). What changed is what the process does during the wait: measured vid_wait
+    # is 0.75-6.23s, median 3.01s, and in that window exactly one thread used to be doing
+    # anything. It now covers the creator thread, the clip's comment fetch, the sound-page
+    # chase and the waveform, all of which were sitting behind it.
+    #
+    # EVERYTHING BELOW THIS LINE READS A SETTLED SOURCE. The sound cache keys on
+    # sound_match_core, the fingerprint reads src["audio"], and the credit feeds
+    # build_queries - so the join goes here, above all three, not later. On the rare
+    # mismatch the audio swaps, so the ~0.2s of waveform work above is simply redone
+    # against the audio that won.
+    try:
+        _swapped = E.settle_source(src)
+    except Exception:
+        _swapped = False
+    if _swapped:
+        _t = time.time()
+        res["peaks"] = _peaks(src["audio"])
+        res["wave"] = _wave(src["audio"])
+        try:
+            res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
+        except Exception:
+            res["clip_secs"] = None
+        res["credit"] = ("%s - %s" % (src.get("credit_title"), src.get("credit_author"))
+                         if src.get("credit_title") or src.get("credit_author")
+                         else "original sound")
+        res["is_original"] = src["is_original"]
+        E.tlog("peaks_wave_redo", time.time() - _t)
+
+    # how well TikTok's credited sound matches the audio actually in the video. Always
+    # carried, not just on a mismatch, so the healthy 1.000 case is visible too.
+    if src.get("sound_match_core") is not None:
+        res["sound_match_core"] = src.get("sound_match_core")
+    if src.get("sound_mismatch"):
+        # the answer came from the video's own audio, not the sound TikTok credits -
+        # worth carrying so a surprising result is explainable rather than mysterious.
+        res["sound_mismatch"] = True
+        res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
+                                             src.get("credited_author"))
+
+    _forced = key in _NO_SOUND_CACHE
+    _NO_SOUND_CACHE.discard(key)
+    _sc = None if _forced else _sound_cache_get(src)
+    if _sc:
+        for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
+            if res.get(k) is not None:
+                _sc[k] = res[k]
+        _sc["secs"] = round(time.time() - t0, 1)
+        _prog_set(key, 44, "Known sound")
+        E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
+        # The cached answer belongs to the SOUND; who posted THIS clip does not, so the
+        # creator block is re-attached per clip rather than served from the cache.
+        _creator_attach(_sc, _cr, budget=2.0)
+        # the hint threads now start ABOVE this return, so this path shuts them down
+        # itself - the try/finally that used to own that begins further down.
+        if _hints_ex is not None:
+            _hints_ex.shutdown(wait=False)
+        _cleanup(src.get("tmp"))
+        return _sc, None
+
 
     _hints_got = {}
 
@@ -1001,7 +1038,18 @@ def _phase1(url, key, t0):
                "res": res, "worth": worth, "comment_links": comment_links}
         # Joined last so it never delays the fingerprint. By now it has had the whole
         # Shazam sweep to finish in, so the budget is a backstop, not a wait.
-        _creator_attach(res, _cr, budget=5.0)
+        #
+        # EXCEPT THAT IT WAS A WAIT, and it lands on the one number that compares to
+        # Shazam: this is the last thing phase 1 does, after res is finished, and the UI
+        # calls /base. Measured blocked time between the phase1_done tlog and the next
+        # stage: 0.00, 0.00, 0.01, 1.21, 1.36, 6.29s - median 0.61s, mean 1.5s, worst
+        # 6.29s. The block is purely additive (see the module header: it writes metadata
+        # and touches nothing that ranks or crowns), so when there IS a phase 2 it gets a
+        # courtesy budget here and the /edits payload carries it instead. When there is
+        # no phase 2 nothing else will ever collect it, so it keeps the full budget.
+        _creator_attach(res, _cr, budget=(0.2 if worth else 5.0))
+        if worth and not res.get("creator"):
+            ctx["creator_h"] = _cr       # phase 2 collects it, for free, 19s from now
         return res, ctx
     finally:
         loop.close()
@@ -1570,6 +1618,54 @@ def _crown_contradicts(top, speed_label, mdir, measured=None, tilt_readable=True
     return None
 
 
+def _official_refs(src, base_title, base_artist, prefix="om"):
+    """Plain, normal-speed "official audio" uploads of the base song, confirmed by the
+    bass-robust high-pass lock as the same recording as the clip.
+
+    Lifted VERBATIM out of the fallback arm of the speed block in _phase2 so it can be
+    started before the edit hunt instead of after it. Same two queries, same title
+    filter, same 5-row download head, same confirm_ref check, so the ref set it returns
+    is the one that arm has always produced.
+
+    A speed measured against a DIFFERENT song is a made-up number, which is why
+    confirm_ref and not verify.core is the gate here: on a heavily bass-boosted or
+    reverbed clip core collapses on the clean master and would drop every ref.
+
+    Returns a list, or None if it threw. None is NOT the same as []: in the serial
+    version this arm sat inside the speed block's own try, so anything raising in here
+    abandoned the whole measurement rather than measuring against a short ref set. The
+    caller reproduces that, so the number cannot move on a failure either.
+    """
+    try:
+        core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
+        offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
+                               "%s %s audio" % (base_artist, core_t)], 4)
+        pick = [c for c in offs
+                if core_t.lower() in (c.get("title") or "").lower()
+                and not E.EDIT_WORDS.search(c.get("title") or "")
+                and not E.OTHER_RENDITION.search(c.get("title") or "")][:5]
+        if not pick:
+            return []
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            got = [p for p in ex.map(
+                lambda ic: E.dl_clip(ic[1]["url"],
+                                     os.path.join(src["tmp"], "%s%d.wav" % (prefix, ic[0]))),
+                list(enumerate(pick))) if p]
+        if not got:
+            return []
+        with ThreadPoolExecutor(max_workers=min(5, len(got))) as _cex:
+            _ok2 = list(_cex.map(
+                lambda p: speed_from_master.confirm_ref(src["audio"], p), got))
+        return [p for p, o in zip(got, _ok2) if o]
+    except Exception:
+        return None
+
+
+# SPEED LEVER, free, default on. Set CRATE_PREFETCH_REFS=0 to revert to the serial order.
+SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower()
+                       not in ("0", "false", "no", "off"))
+
+
 def _phase2(ctx, on_cand=None):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
     on SoundCloud and YouTube and compare each against the clip's actual audio (same
@@ -1584,6 +1680,24 @@ def _phase2(ctx, on_cand=None):
     base_title, base_artist = ctx["base_title"], ctx["base_artist"]
     edit_label, mdir = ctx["edit_label"], ctx["mdir"]
     hint_texts, shazam_reliable = ctx["hint_texts"], ctx["shazam_reliable"]
+    # ---- THE SPEED REFERENCE HUNT STARTS NOW, NOT AFTER THE EDIT HUNT ----
+    # The fallback arm of the speed measurement below needs only base_title, base_artist
+    # and src["audio"], all of which were settled at phase1_done - yet it did not begin
+    # until find_edit had returned, 19.3s later. Measured speed_measure: 4.34, 4.48,
+    # 4.51, 4.90 and 5.41s on the five runs that took the fallback, and 0.30s on the one
+    # run where edit["ref_paths"] already held two confirmed refs. That ~4.3s hides
+    # entirely under find_edit's 19.3s.
+    #
+    # THE ANSWER CANNOT MOVE. What comes back is used ONLY where the serial version used
+    # it: when `len(refs) < 2` is still true after edit["ref_paths"] has been confirmed.
+    # Otherwise it is discarded unread. The ref set, the consensus call and the number
+    # stay byte-identical, so no clip's speed label and no crown gate moves. It writes
+    # its downloads under a distinct prefix so it can never collide with the inline arm.
+    _ref_fut = None
+    if (SPEED_PREFETCH_REFS and fp and shazam_reliable and base_title and base_artist):
+        _ref_ex = ThreadPoolExecutor(max_workers=1)
+        _ref_fut = _ref_ex.submit(_official_refs, src, base_title, base_artist, "pre_om")
+        _ref_ex.shutdown(wait=False)     # queued work still runs; no idle thread is kept
     # THE EDIT HUNT REPORTS ITSELF TOO. Phase 1 got real milestones; without the same
     # here the bar climbs to the song, then parks in the 60s for the 20-60s the hunt
     # takes and only jumps when a candidate happens to verify. Each candidate CHECKED
@@ -1680,6 +1794,10 @@ def _phase2(ctx, on_cand=None):
                 pair=(mash or {}).get("pair"), on_cand=_emit))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
+            # The creator block phase 1 refused to wait on. The hunt has just taken ~19s,
+            # so this is free here, and /edits is the payload that carries it.
+            if ctx.get("creator_h") is not None and not res.get("creator"):
+                _creator_attach(res, ctx.pop("creator_h"), budget=2.0)
             rk = [c for c in edit.get("ranked", []) if c.get("final", c.get("score", -1)) > 0]
             # ONLY surface a candidate that actually VERIFIES as the same recording
             # (editmatch). A plain track then correctly reports no edit instead of a
@@ -1690,15 +1808,35 @@ def _phase2(ctx, on_cand=None):
             # so a dead upload verifies perfectly and then hands the user a "track was not
             # found" page. Only the ones we would actually show are checked, and only a
             # definite 404/410 removes anything.
+            # ONE WAVE, NOT SIX WAITS. Six independent HEAD requests with a 6s timeout
+            # each, on urls that have nothing to do with each other, were run strictly in
+            # sequence. Measured as the gap between the find_edit tlog and the start of
+            # speed_measure - a stretch that contains nothing else - 2.39, 3.87, 3.99,
+            # 4.17, 4.55 and 5.03s, median 4.08s. Run concurrently the wall is the slowest
+            # single HEAD, about 0.7s.
+            #
+            # SAME REQUESTS, SAME DROPS. The wave is sized to exactly what the serial loop
+            # would have asked for: it never checks more than it takes to fill the display
+            # window, and anything past that window is still appended unchecked. Same six
+            # urls, same fail-open rule, same 404/410 test, same set of drops - only the
+            # order of the waiting changed.
             _dead = 0
             _live = []
-            for c in verified:
-                if len(_live) >= 6:
-                    _live.append(c)              # past the display window, don't spend a request
-                elif _url_is_dead(c.get("url")):
-                    _dead += 1
+            _i = 0
+            while _i < len(verified) and len(_live) < 6:
+                _chunk = verified[_i:_i + (6 - len(_live))]
+                if len(_chunk) > 1:
+                    with ThreadPoolExecutor(max_workers=len(_chunk)) as _hx:
+                        _flags = list(_hx.map(lambda c: _url_is_dead(c.get("url")), _chunk))
                 else:
-                    _live.append(c)
+                    _flags = [_url_is_dead(_chunk[0].get("url"))]
+                for c, _bad in zip(_chunk, _flags):
+                    if _bad:
+                        _dead += 1
+                    else:
+                        _live.append(c)
+                _i += len(_chunk)
+            _live.extend(verified[_i:])          # past the display window, no request spent
             if _dead:
                 res["dead_links_dropped"] = _dead
                 verified = _live
@@ -1767,27 +1905,20 @@ def _phase2(ctx, on_cand=None):
                     else:
                         refs = []
                     if len(refs) < 2 and base_artist:
-                        core_t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
-                        offs = E.search_edits(["%s %s official audio" % (base_artist, core_t),
-                                               "%s %s audio" % (base_artist, core_t)], 4)
-                        pick = [c for c in offs
-                                if core_t.lower() in (c.get("title") or "").lower()
-                                and not E.EDIT_WORDS.search(c.get("title") or "")
-                                and not E.OTHER_RENDITION.search(c.get("title") or "")][:5]
-                        with ThreadPoolExecutor(max_workers=5) as ex:
-                            got = [p for p in ex.map(
-                                lambda ic: E.dl_clip(ic[1]["url"],
-                                                     os.path.join(src["tmp"], "om%d.wav" % ic[0])),
-                                list(enumerate(pick))) if p]
-                        # a speed measured vs a DIFFERENT song is a made-up number - keep
-                        # only refs that lock to the clip as the same recording. Use the
-                        # bass-robust high-pass lock (verify.core would drop them all here).
-                        if got:
-                            with ThreadPoolExecutor(max_workers=min(5, len(got))) as _cex:
-                                _ok2 = list(_cex.map(
-                                    lambda p: speed_from_master.confirm_ref(src["audio"], p),
-                                    got))
-                            refs += [p for p, o in zip(got, _ok2) if o]
+                        # collect the hunt that has been running under find_edit. If it
+                        # was never started, or it failed, do exactly what this arm has
+                        # always done, inline and under its own prefix.
+                        _pre = None
+                        if _ref_fut is not None:
+                            try:
+                                _pre = _ref_fut.result(timeout=30)
+                            except Exception:
+                                _pre = None
+                        if _pre is None:
+                            _pre = _official_refs(src, base_title, base_artist, "om")
+                        if _pre is None:
+                            raise RuntimeError("official_refs_failed")
+                        refs += _pre
                     if refs:
                         r = speed_from_master.measure_consensus(src["audio"], refs)
                         if r and r.get("confident"):
@@ -2046,6 +2177,30 @@ def _phase2(ctx, on_cand=None):
         return res
     finally:
         E.CAND_HOOK = _prev_cand_hook
+        # COLLECT THE REFERENCE HUNT BEFORE THE TEMP DIR IT WRITES INTO IS REMOVED.
+        # This is a RETENTION guard, not tidiness: it downloads audio into src["tmp"],
+        # and audio that lands there after _cleanup has run is audio this server kept.
+        # Transient processing is a materially different legal posture from a retained
+        # audio cache (see legal.md), so a file surviving the request is not acceptable.
+        #
+        # By here the edit hunt has run, so on every measured path the thread finished
+        # long ago and this costs nothing. The short ceiling keeps a hung yt-dlp from
+        # holding the request open, and if it IS still running the dir is swept again
+        # the moment it stops, on a daemon thread nobody waits for.
+        if _ref_fut is not None:
+            try:
+                _ref_fut.result(timeout=5)
+            except Exception:
+                pass
+            if not _ref_fut.done():
+                _td = src.get("tmp")
+                def _sweep_later(_f=_ref_fut, _d=_td):
+                    try:
+                        _f.result(timeout=180)
+                    except Exception:
+                        pass
+                    _cleanup(_d)
+                threading.Thread(target=_sweep_later, daemon=True).start()
         loop.close()
         _cleanup(src.get("tmp"))
 
