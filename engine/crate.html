@@ -585,7 +585,9 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    YouTube are always search urls. Four clean logo buttons with nothing on them would
    assert four verified track pages we do not have, so the word stays on the cell it
    belongs to. A tap never lies about where it lands. */
-.openin{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:2px}
+/* minmax(0,1fr), not 1fr: "SoundCloud" cannot wrap, so its min-content width blew its
+   own column out and the four tiles went uneven below 375px. */
+.openin{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:2px}
 .opl{display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px 9px;
   border-radius:14px;background:var(--raise);border:1px solid var(--line);text-align:center;
   transition:border-color .15s,filter .15s}
@@ -772,14 +774,24 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    to stop. Native <details>, so it is reachable with a tap, Enter and a screen reader, and
    there is nothing animated but a 15px chevron the global reduced-motion rule kills. */
 .othv{margin:0}
+/* IT HAS TO READ AS A CONTROL. At 3px padding this was a 23px tap target styled exactly
+   like the non-interactive .sect labels beside it, so it read as a heading and the five
+   supporting rows behind it effectively did not exist on a phone. Now it has a surface, a
+   border and 44px of height, which is the minimum for a thumb. */
 .othv>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
   font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
-  color:var(--faint);margin:20px 0 9px;padding:3px 0;transition:color .14s}
+  color:var(--muted);margin:20px 0 9px;padding:0 12px;min-height:44px;
+  background:var(--raise);border:1px solid var(--line);border-radius:12px;
+  transition:color .14s,background .14s}
+.othv>summary .cvn{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:none;
+  color:var(--warn);background:color-mix(in oklab,var(--warn) 16%,transparent);
+  padding:2px 7px;border-radius:999px;flex:none;margin-left:auto}
+.othv>summary .cvn+.cv{margin-left:8px}
 .othv>summary::-webkit-details-marker{display:none}
 .othv>summary::marker{content:""}
 .othv>summary:hover{color:var(--muted)}
 .othv>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
-.othv>summary .cv{margin-left:auto;display:grid;place-items:center;flex:none;
+.othv>summary .cv{margin-left:auto;display:grid;place-items:center;flex:none;color:var(--faint);
   transition:transform .18s}
 .othv>summary .cv svg{width:15px;height:15px;display:block}
 .othv[open]>summary .cv{transform:rotate(180deg)}
@@ -2075,12 +2087,25 @@ function renderResult(d,partial){
     // claimNote below it ("Titles are not measurements"). Those are the caveats on the
     // crown's certainty, so folding them away with the rows would leave the confident half
     // visible and hide the honest half. The heading string itself is unchanged.
-    if(others.length) shelf+='<details class="othv"><summary>'+
+    if(others.length){
+      var _shown=others.slice(0,12);
+      // COUNT THE CAVEATS OUTSIDE THE FOLD. Collapsing the shelf sealed the per-row
+      // honest notes in with it: "The official release, not an edit of it" and "Its EQ is
+      // N dB off the clip" had no representative outside, so a user who never taps sees
+      // only the confident half. Measured on a three-row shelf before this fix: both
+      // sentences absent from the rendered page until the fold was opened. claimNote and
+      // shelfNote stay outside as before, but they only speak to reverb, bass and spatial
+      // claims, so they do not cover these. The summary now says how many rows carry a
+      // note, which is true whether or not anyone taps.
+      var _flagged=0;
+      for(var _i=0;_i<_shown.length;_i++){ if(candFlag(_shown[_i],d)) _flagged++; }
+      shelf+='<details class="othv"><summary>'+
       '<span>Other versions we checked · '+others.length+'</span>'+
+      (_flagged?'<span class="cvn">'+_flagged+(_flagged===1?' has a note':' have notes')+'</span>':'')+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
-      others.slice(0,12).map(function(c,i){
+      _shown.map(function(c,i){
         return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div></details>'+
-      claimNote(others.slice(0,12));}
+      claimNote(_shown);}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
