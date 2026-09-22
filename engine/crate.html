@@ -736,6 +736,21 @@ button.savecard[disabled]{pointer-events:none}
 .secbtn span{text-align:center;line-height:1.2}
 .autonote{text-align:center;font-size:11.5px;color:var(--faint);margin-top:10px}
 .autonote button{color:var(--accent2);font-weight:600}
+.playermeta{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:0 16px 10px}
+.playerout{font-size:12px;color:var(--accent);text-decoration:none;font-weight:600;flex:none}
+.playerbody{padding:0 16px 16px;min-height:170px}
+.playerbody iframe{width:100%;height:170px;border:0;border-radius:10px;display:block;background:var(--raise2)}
+.player .pl,.trk .pl{cursor:pointer}
+.trk .pl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* A 44px THUMB TARGET WITHOUT A 44px BUTTON. The triangle is 28px on ordinary rows, and
+   now that it does something DIFFERENT from the rest of the row a near miss is not
+   harmless - it opens SoundCloud, which is precisely the behaviour being fixed. The
+   pseudo-element grows the hit area to the 44px minimum while the dot stays its drawn
+   size. position:relative on .pl and a higher z-index keep it above the row's own link. */
+.trk .pl{position:relative;z-index:2}
+.trk .pl::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:44px;height:44px;border-radius:50%}
 .sheet{position:fixed;inset:0;background:rgba(8,4,26,.66);display:grid;place-items:end center;z-index:50;
   padding:16px;animation:fade .25s var(--spring) both}
 .sheet[hidden]{display:none}
@@ -952,6 +967,14 @@ button.savecard[disabled]{pointer-events:none}
      which leaves a transform on it, and a transformed ancestor becomes the containing block
      for position:fixed - so in there the sheet was sized to the card and clipped by its
      overflow:hidden instead of covering the viewport. -->
+<div class="sheet player" id="player" hidden>
+    <div class="sheetcard" role="dialog" aria-modal="true" aria-label="Player">
+      <div class="hd"><button class="ib plain" id="playerx" title="Close" aria-label="Close player"></button><div class="ttl" id="playerttl">Preview</div></div>
+      <div class="playermeta"><span id="playersrc"></span>
+        <a id="playerout" class="playerout" href="#" target="_blank" rel="noopener">Open in app</a></div>
+      <div id="playerbody" class="playerbody"></div>
+    </div>
+  </div>
 <div class="sheet" id="sheet" hidden>
     <div class="sheetcard" role="dialog" aria-modal="true" aria-label="Settings">
       <div class="hd"><button class="ib plain" id="sheetx" title="Close" aria-label="Close settings"></button><div class="ttl">Settings</div></div>
@@ -1606,7 +1629,13 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
       '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
     (opt.rank?'<span class="rkn">'+opt.rank+'</span>':'')+
-    '<span class="pl">'+IC.play+'</span>'+
+    // KONNOR: "when you click only on the triangle it plays it right into the app rather
+    // than taking it to soundcloud, but keep when you click anywhere else it takes you
+    // into SoundCloud". The row is one <a>, so the triangle inherited the navigation.
+    // data-play carries the url; the delegated handler below swallows the click.
+    '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
+      ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
+      ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
     '<div class="mt">'+confChip(c.core)+
       (src?srcChip(src):'')+
@@ -2605,7 +2634,61 @@ function paintSheet(){
   document.getElementById('spsub').textContent=on?'Connected · saving to Found with Addify':'Not connected';
   document.getElementById('spbtn').textContent=on?'Disconnect':'Connect';
 }
+/* IN-APP PLAYBACK, VIA THE PLATFORM'S OWN PLAYER.
+   We stream nothing ourselves. Audio is never persisted here and that is a legal
+   position, not an implementation detail (hard-rules, Retention): transient processing
+   during a lookup is materially different from serving copies of other people's
+   recordings. SoundCloud's widget and YouTube's iframe are the sanctioned way to do
+   this - the bytes come from the platform, the artist gets the play counted, and the
+   listener never leaves Addify. Anything we cannot embed falls back to opening the
+   source, which is what the rest of the row already does. */
+function embedFor(url, src){
+  if(src==='soundcloud'||/soundcloud\.com/.test(url))
+    return 'https://w.soundcloud.com/player/?url='+encodeURIComponent(url)+
+           '&auto_play=true&hide_related=true&show_comments=false&show_teaser=false'+
+           '&visual=false&color=%237c8cff';
+  var yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
+  if(yt) return 'https://www.youtube-nocookie.com/embed/'+yt[1]+'?autoplay=1&rel=0';
+  return null;
+}
+function playHere(url, src, title){
+  var box=document.getElementById('player');
+  var frame=embedFor(url, src);
+  if(!frame){ window.open(url,'_blank','noopener'); return; }   // nothing to embed, be useful
+  document.getElementById('playerttl').textContent=title||'Preview';
+  document.getElementById('playersrc').innerHTML=src?srcChip(src):'';
+  document.getElementById('playerout').href=url;
+  document.getElementById('playerbody').innerHTML=
+    '<iframe title="Player" allow="autoplay" loading="lazy" src="'+esc(frame)+'"></iframe>';
+  box.hidden=false;
+}
+function closePlayer(){
+  var box=document.getElementById('player'); if(!box||box.hidden) return;
+  // Blow the iframe away rather than hiding it, or the track keeps playing behind the app.
+  document.getElementById('playerbody').innerHTML='';
+  box.hidden=true;
+}
+// One delegated listener for every row, present and future, including the ones the live
+// hunt streams in after this runs.
+document.addEventListener('click', function(e){
+  var t=e.target.closest && e.target.closest('[data-play]');
+  if(!t) return;
+  e.preventDefault(); e.stopPropagation();     // the row's <a> must not fire
+  playHere(t.getAttribute('data-play'), t.getAttribute('data-src'), t.getAttribute('data-title'));
+}, true);
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape') closePlayer();
+  if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.hasAttribute&&e.target.hasAttribute('data-play')){
+    e.preventDefault();
+    playHere(e.target.getAttribute('data-play'), e.target.getAttribute('data-src'),
+             e.target.getAttribute('data-title'));
+  }
+});
+
 function openSheet(){document.getElementById('sheet').hidden=false; paintSheet();}
+document.getElementById('playerx').innerHTML=IC.x;
+document.getElementById('playerx').onclick=closePlayer;
+document.getElementById('player').onclick=function(e){if(e.target.id==='player') closePlayer();};
 document.getElementById('sheetx').innerHTML=IC.x;
 document.getElementById('sheetx').onclick=function(){document.getElementById('sheet').hidden=true;};
 document.getElementById('sheet').onclick=function(e){if(e.target.id==='sheet') e.target.hidden=true;};
@@ -2864,6 +2947,7 @@ document.getElementById('onb').addEventListener('click',function(e){
     lsSet('addify-queue',[]); run(q[0]);});})();
 window.addEventListener('keydown',function(e){if(e.key==='Escape'){
   var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
+  var pw=document.getElementById('player'); if(pw&&!pw.hidden){closePlayer(); return;}
   var sh=document.getElementById('sheet'); if(!sh.hidden){sh.hidden=true; return;}}});
 </script>
 </body>
