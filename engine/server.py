@@ -1091,6 +1091,53 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
     return rows
 
 
+# ---- COVER ART (display only) ---------------------------------------------------------
+# Konnor asked for a cover next to every candidate row. It is built from what the pipeline
+# ALREADY has, so it adds no request and no second to any phase: a YouTube candidate's
+# artwork is pure string work on the URL the row is already carrying, and a SoundCloud
+# candidate's artwork rode in on the same flat-playlist search response search_edits was
+# making anyway.
+#
+# THE RULE THAT MATTERS: this is decoration. Nothing here is read by ranking, by the crown
+# gates, or by any claim string. A cover beside a row must never imply the row was verified
+# any harder than its own core says it was.
+#
+# Why the DERIVED YouTube URL and not the one in the search metadata: the search hands back
+# an hq720 with signed `sqp=` and `rs=` parameters. A signed URL expires, which would rot
+# the artwork in every saved library payload. i.ytimg.com/vi/<id>/mqdefault.jpg never
+# expires. mqdefault (320x180) over hqdefault (480x360) because hqdefault letterboxes 16:9
+# uploads with black bars, and over maxresdefault because maxres 404s on plenty of real
+# videos.
+_YT_ID = re.compile(r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/|/v/|/live/)([A-Za-z0-9_-]{11})")
+_SC_HOST = re.compile(r"^https?://i\d*\.sndcdn\.com/", re.I)
+# SoundCloud's own size tokens. `thumbnails.-1` is the LARGEST entry, which on SoundCloud
+# is `-original.jpg` at ~53KB; -t200x200 is the same image at ~6.1KB. Across 17 rows that
+# rewrite is the difference between ~900KB and ~100KB, so it is required, not a polish.
+_SC_SIZE = re.compile(r"-(?:original|large|badge|tiny|small|mini|crop|t\d+x\d+)"
+                      r"\.(jpg|jpeg|png)(?=$|\?)", re.I)
+
+
+def _cand_art(c):
+    """A candidate row -> a cover image URL, or None. Pure, no network, never raises."""
+    try:
+        url = c.get("url") or ""
+        src = (c.get("source") or "").lower()
+        if src == "youtube" or "youtube.com" in url or "youtu.be" in url:
+            m = _YT_ID.search(url)
+            # No id parsed -> None on purpose. Falling back to the search thumbnail here
+            # would put a signed, expiring URL into a payload we save.
+            return ("https://i.ytimg.com/vi/%s/mqdefault.jpg" % m.group(1)) if m else None
+        t = c.get("thumb")
+        if not isinstance(t, str) or not t.startswith("http"):
+            return None
+        if _SC_HOST.match(t):
+            return _SC_SIZE.sub(lambda m: "-t200x200." + m.group(1), t)
+        return t
+    except Exception:
+        # Art is decoration. It may never be the reason a candidate fails to render.
+        return None
+
+
 def _cand_row(c):
     """One candidate in the shape the UI renders. Extracted so a STREAMED row and a row
     in the final payload are built by the same code and can never disagree about a
@@ -1155,7 +1202,12 @@ def _cand_row(c):
             "slope": (round(c["slope_delta"], 3)
                       if c.get("slope_delta") is not None else None),
             "claim": _claim or None,
-            "claimkind": _kinds or None}
+            "claimkind": _kinds or None,
+            # COVER ART. Display only - see _cand_art. Built here, in the one row builder,
+            # so the streamed row and the final row can never disagree about it. Old saved
+            # payloads have no `art` key and render the coloured placeholder, which is
+            # correct rather than a regression.
+            "art": _cand_art(c)}
 
 
 # A title claiming the clip was re-pitched. Kept apart from EDIT_WORDS, which also
