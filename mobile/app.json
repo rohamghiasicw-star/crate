@@ -6,9 +6,22 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#150E33",
-    "splash": { "backgroundColor": "#150E33", "resizeMode": "contain" },
-    "ios": { "supportsTablet": false, "bundleIdentifier": "com.addify.app" },
-    "android": { "package": "com.addify.app" },
-    "extra": { "engine": "https://a8cbad03e40337.lhr.life" }
+    "splash": {
+      "backgroundColor": "#150E33",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.addify.app"
+    },
+    "android": {
+      "package": "com.addify.app"
+    },
+    "extra": {
+      "engine": "https://a8cbad03e40337.lhr.life"
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
   }
 }
