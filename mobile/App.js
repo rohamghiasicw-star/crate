@@ -24,16 +24,25 @@ import Constants from 'expo-constants';
    Addify". The watchdog publishes each new hostname to a public gist, which is a fixed
    address, so the app asks that first and only falls back to the compiled-in value if the
    lookup fails. A build from this morning still works tonight. */
-const DIRECTORY = 'https://gist.githubusercontent.com/rohamghiasicw-star/d63fcb85b88d9a8f12e943605dd0a078/raw/engine-url.txt';
+/* The API, not the raw gist URL. gist.githubusercontent.com/.../raw/<file> is served
+   through a CDN that caches hard and kept handing back an address that was two tunnels
+   out of date, which defeats the entire point of looking it up. The API returns current
+   content. Unauthenticated it allows 60 requests an hour per IP and this fires once at
+   launch and once per retry, so that ceiling is never close. */
+const DIRECTORY = 'https://api.github.com/gists/d63fcb85b88d9a8f12e943605dd0a078';
 const BAKED = (Constants.expoConfig?.extra?.engine || '').replace(/\/+$/, '');
 
 async function resolveEngine() {
   try {
     // cache-bust: raw gist responses cache hard, and a stale hostname is the exact
     // failure this exists to prevent.
-    const r = await fetch(DIRECTORY + '?t=' + Date.now(), { cache: 'no-store' });
+    const r = await fetch(DIRECTORY + '?t=' + Date.now(), {
+      cache: 'no-store',
+      headers: { Accept: 'application/vnd.github+json' },
+    });
     if (r.ok) {
-      const u = (await r.text()).trim().replace(/\/+$/, '');
+      const j = await r.json();
+      const u = (j?.files?.['engine-url.txt']?.content || '').trim().replace(/\/+$/, '');
       if (/^https?:\/\//.test(u)) return u;
     }
   } catch (e) { /* offline or gist down; the baked value is the fallback */ }
