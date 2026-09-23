@@ -105,6 +105,17 @@ final class EngineBridge: ObservableObject {
         reloadToken += 1
     }
 
+    /* "Try again" on the unreachable screen has to be able to find a NEW hostname, not
+       just re-request the dead one. The tunnel rotates roughly hourly, so a retry that
+       only reloads is a retry that fails every time until the app is relaunched. Resolve
+       first, then reload; reload regardless so a transient network blip still recovers. */
+    func retryResolvingFirst() {
+        Task { @MainActor in
+            await EngineConfig.resolveFromDirectory()
+            retry()
+        }
+    }
+
     /* Everything that leaves the engine origin goes through here. open.spotify.com,
        music.apple.com and soundcloud.com are universal links, so this single call IS the
        native handoff: the installed app takes the link, otherwise Safari does. */

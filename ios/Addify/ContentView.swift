@@ -58,13 +58,15 @@ struct UnreachableView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
-            Text("Check the engine is running and the address above is the current tunnel.")
+            Text("Looking for the engine. Retry re-checks the current address before reloading.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
             HStack(spacing: 12) {
-                Button("Retry") { bridge.retry() }
+                /* Resolve THEN reload. A plain reload re-requests a hostname that rotated
+                   away, so it fails every time until the app is force quit. */
+                Button("Retry") { bridge.retryResolvingFirst() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(red: 0.36, green: 0.29, blue: 0.91))
                 Button("Settings") { bridge.showSettings = true }

@@ -38,14 +38,19 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Button("Reset to default") {
-                        text = EngineConfig.defaultBaseURL
+                    /* "Automatic" not "default": clearing the field does not pin a fixed
+                       hostname, it hands the address back to the directory lookup, which
+                       is the only thing that keeps up with a tunnel that rotates hourly.
+                       Showing defaultBaseURL here would advertise a host that is expected
+                       to be dead. */
+                    Button("Use automatic address") {
+                        text = ""
                         status = .idle
                     }
-                    .disabled(EngineConfig.normalise(text) == EngineConfig.defaultBaseURL)
+                    .disabled(!EngineConfig.hasManualOverride && EngineConfig.normalise(text).isEmpty)
                 } footer: {
-                    Text("Default: \(EngineConfig.defaultBaseURL)")
-                        .font(.caption.monospaced())
+                    Text("Automatic finds the engine on its own and follows it when the address changes. Type an address above only to pin a specific one.")
+                        .font(.caption)
                 }
 
                 Section {
