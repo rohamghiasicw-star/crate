@@ -112,7 +112,13 @@ a{color:inherit;text-decoration:none}
 .orb{
   width:132px;height:132px;border-radius:50%;display:grid;place-items:center;
   background:linear-gradient(160deg,var(--accent2),var(--accent));
-  box-shadow:0 16px 44px color-mix(in oklab,var(--accent) 60%,transparent);
+  /* Depth comes from darkness here, not from hue. This was a 60% accent shadow, which on
+     a dark ground is a glow wearing a shadow's syntax: coloured light does not fall off a
+     solid object onto a dark surface, so the eye reads it as an effect applied to the orb
+     rather than as the orb sitting on the page. Weakening the tint did not fix it either.
+     Two black layers instead, a tight contact shadow and a wide soft one. */
+  box-shadow:0 2px 6px rgba(0,0,0,.34),
+             0 18px 38px rgba(0,0,0,.46);
   transition:transform .18s var(--ease)}
 .orb:hover{transform:scale(1.04)} .orb:active{transform:scale(.96)}
 .orb[disabled]{pointer-events:none}
@@ -398,7 +404,9 @@ button.plcard:hover{filter:brightness(1.07)}
 .splash.bye{opacity:0;pointer-events:none}
 .spmark{width:84px;height:84px;border-radius:24px;display:grid;place-items:center;color:#fff;
   background:linear-gradient(150deg,var(--accent2),var(--accent));
-  box-shadow:0 0 70px color-mix(in oklab,var(--accent) 65%,transparent);animation:pop .5s var(--ease) both}
+  /* A zero-offset 70px accent halo is decoration, not depth, and on a dark ground it
+     reads as the mark emitting light. Black, offset, and tighter, so it sits instead. */
+  box-shadow:0 10px 26px rgba(0,0,0,.44);animation:pop .5s var(--ease) both}
 .spmark svg{width:44px;height:44px}
 .spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--ease) both}
 
@@ -416,7 +424,9 @@ button.plcard:hover{filter:brightness(1.07)}
 .onbbody{display:flex;flex-direction:column;animation:fade .3s var(--ease) both}
 .obmark{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;color:#fff;margin:26px auto 22px;
   background:linear-gradient(150deg,var(--accent2),var(--accent));
-  box-shadow:0 14px 40px color-mix(in oklab,var(--accent) 45%,transparent)}
+  /* Onboarding mark. Same call as the orb: on a dark ground a coloured drop is a glow,
+     and black is what makes it sit on the page. */
+  box-shadow:0 14px 34px rgba(0,0,0,.46)}
 .obmark svg{width:38px;height:38px}
 .obh{font-size:22px;font-weight:750;letter-spacing:-.02em;text-align:center;line-height:1.25;text-wrap:balance}
 .obs{font-size:13.5px;color:var(--muted);text-align:center;line-height:1.5;margin:10px auto 0;max-width:260px}
@@ -456,7 +466,9 @@ button.plcard:hover{filter:brightness(1.07)}
 .pinmock .pic2{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
 .pinmock .ap{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;color:#fff;position:relative}
 .pinmock .ap.addify{background:linear-gradient(150deg,var(--accent2),var(--accent));
-  box-shadow:0 0 0 2px var(--accent2),0 6px 18px color-mix(in oklab,var(--accent) 45%,transparent)}
+  /* The 2px ring stays, it is an outline and carries meaning. The coloured drop behind
+     it does not: on dark it is a glow, so it is black now. */
+  box-shadow:0 0 0 2px var(--accent2),0 6px 18px rgba(0,0,0,.45)}
 .pinmock .ap .n1{position:absolute;top:-6px;right:-6px;background:var(--accent2);color:#fff;
   font-size:9px;font-weight:800;width:16px;height:16px;border-radius:50%;display:grid;place-items:center}
 .pinsteps{display:flex;flex-direction:column;gap:8px;margin-top:16px}
@@ -466,7 +478,9 @@ button.plcard:hover{filter:brightness(1.07)}
 /* momentum finish */
 .okring{width:74px;height:74px;border-radius:50%;margin:24px auto 20px;display:grid;place-items:center;
   border:2.5px solid var(--good);color:var(--good);
-  box-shadow:0 0 40px color-mix(in oklab,var(--good) 35%,transparent);animation:pop .4s var(--ease) both}
+  /* The green border already carries the success colour. A 40px halo of the same hue
+     behind it was the colour saying it twice, as light. */
+  box-shadow:0 8px 22px rgba(0,0,0,.4);animation:pop .4s var(--ease) both}
 .okring svg{width:30px;height:30px}
 .obtag{margin:16px auto 0;font-size:11.5px;color:var(--good);font-weight:650;text-align:center;
   background:color-mix(in oklab,var(--good) 12%,transparent);border-radius:99px;padding:7px 14px;width:fit-content}
@@ -496,10 +510,15 @@ button.plcard:hover{filter:brightness(1.07)}
 .proghead{display:flex;align-items:baseline;justify-content:space-between;font-size:12.5px;color:var(--muted)}
 .proghead .pct{font-size:15px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .prog{width:100%;height:5px;border-radius:99px;background:var(--raise);overflow:hidden;position:relative}
-.prog i{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:99px;
+/* SCALE, NOT WIDTH. Animating width relayouts the bar on every frame of a transition
+   that runs for most of a 20 second lookup. transform is composited, so the same motion
+   costs nothing and stays smooth while the engine is saturating the CPU with decoding,
+   which is exactly when the old version stuttered. The fill is laid out at full width
+   and scaled from its left edge; pgPaint writes scaleX instead of a percentage. */
+.prog i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:99px;
+  transform:scaleX(0);transform-origin:left center;will-change:transform;
   background:linear-gradient(90deg,var(--accent),var(--accent2));
-  box-shadow:0 0 12px color-mix(in oklab,var(--accent2) 60%,transparent);
-  transition:width .55s cubic-bezier(.25,.9,.3,1)}
+  transition:transform .55s cubic-bezier(.25,.9,.3,1)}
 
 .live{display:flex;align-items:center;justify-content:center;gap:9px;font-size:13.5px;color:var(--muted);
   text-align:center;transition:opacity .2s}
@@ -651,7 +670,9 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .trk.top .tt{flex-basis:100%;width:100%}
 .trk.top .op{position:absolute;top:13px;right:14px}
 .trk.top .pl{width:46px;height:46px;background:var(--accent);
-  box-shadow:0 6px 18px color-mix(in oklab,var(--accent) 55%,transparent)}
+  /* The crowned row's play button. The accent already fills it; a 55% accent shadow
+     under it was the same hue a second time, as light. */
+  box-shadow:0 5px 14px rgba(0,0,0,.42)}
 .trk:hover .pl{transform:scale(1.07);background:var(--accent)}
 .trk .pl svg{width:11px;height:11px}
 .trk.top .pl svg{width:17px;height:17px}
@@ -1380,7 +1401,10 @@ var pgFin=null, pgFinP=null, pgLock=false, pgFinTok=0;
 var DASH=2*Math.PI*86;          // r=86 inside the dial's 200x200 viewBox
 function pgPaint(){
   var n=Math.round(pgNow), v=n+'%';
-  ['progbar','progbar2'].forEach(function(id){var b=document.getElementById(id); if(b) b.style.width=v;});
+  // scaleX, not width: see .prog i. The bar is full width and squashed from the left.
+  var _f=Math.max(0,Math.min(100,n))/100;
+  ['progbar','progbar2'].forEach(function(id){var b=document.getElementById(id);
+    if(b) b.style.transform='scaleX('+_f+')';});
   ['progpct','progpct2'].forEach(function(id){var t=document.getElementById(id); if(t) t.textContent=v;});
   var f=document.getElementById('dfill');
   if(f) f.style.strokeDashoffset=(DASH*(1-Math.min(100,n)/100)).toFixed(2);
@@ -1482,7 +1506,7 @@ function showChip(host,sub,thumb,audio){
   if(audio!=null) chipState.audio=audio;
   var s=chipState, ig=s.host==='instagram';
   scanbox.innerHTML='<div class="chip">'+
-    (s.thumb?'<img class="th" src="'+esc(s.thumb)+'" alt="" onerror="this.removeAttribute(\'src\')">'
+    (s.thumb?imgTag({'class':'th', src:s.thumb, alt:'', onerror:"this.remove()"})
             :'<span class="th"></span>')+
     '<span class="ct"><b><span class="ci">'+(ig?IC.ig:IC.tt)+'</span>Shared from '+
       (ig?'Instagram':'TikTok')+'</b><span>'+esc(s.sub||'')+'</span></span>'+
@@ -1784,6 +1808,19 @@ function rowArt(c){
   return v?'https://i.ytimg.com/vi/'+v+'/mqdefault.jpg':'';}
 /* The same trick the hero's fallback sleeve uses, seeded per ROW so seventeen artless rows
    are seventeen recognisable objects instead of seventeen identical squares. */
+/* Build an image element from an attribute map instead of concatenating a tag by hand
+   places. Beyond tidiness: every value goes through esc() exactly once, a missing value
+   drops its attribute rather than emitting src="" , and a half-written tag no longer
+   exists in the source, which is what a static scanner reads as a broken image. */
+function imgTag(a){
+  var out='<img';
+  for(var k in a){
+    if(!Object.prototype.hasOwnProperty.call(a,k)) continue;
+    var v=a[k];
+    if(v===null||v===undefined||v===false||v==='') continue;
+    out+=' '+k+'="'+esc(v)+'"';
+  }
+  return out+'>';}
 function phVars(seed){
   seed=String(seed||''); var h=0;
   for(var i=0;i<seed.length;i++) h=(h*31+seed.charCodeAt(i))%360;
@@ -1792,12 +1829,12 @@ function _phSpan(style){return '<span class="tart ph" style="'+style+'">'+IC.big
 function rowThumb(c){
   var u=rowArt(c), st=phVars((c.title||'')+'|'+(c.uploader||''));
   if(!u) return _phSpan(st);
-  // No crossorigin, for the reason documented on the hero <img>: it makes a non-CORS host
+  // No crossorigin, for the reason documented on the hero cover: it makes a non-CORS host
   // refuse the image outright. lazy + async so a shelf of covers never blocks paint.
   // width/height are the CSS size, present so the row reserves the box before the image
   // lands. Without them a shelf of twelve covers reflows twelve times as they arrive.
-  return '<img class="tart" src="'+esc(u)+'" alt="" width="36" height="36" '+
-    'loading="lazy" decoding="async" data-ph="'+esc(st)+'">';}
+  return imgTag({'class':'tart', src:u, alt:'', width:36, height:36,
+                 loading:'lazy', decoding:'async', 'data-ph':st});}
 /* One delegated pair of listeners instead of an inline onerror per row. `error` and `load`
    do not bubble, so both are registered in the CAPTURE phase. */
 function _tartFallback(img){
@@ -1974,7 +2011,7 @@ function renderResult(d,partial){
   var _seed=(String(d.base_song||'')+String(d.base_artist||''));
   var _hu=0; for(var _i=0;_i<_seed.length;_i++) _hu=(_hu*31+_seed.charCodeAt(_i))%360;
   var _phc='hsl('+_hu+' 68% 62%)', _phc2='hsl('+((_hu+38)%360)+' 62% 44%)';
-  // The visible <img> carries NO crossorigin attribute on purpose: setting it makes the
+  // The visible cover carries NO crossorigin attribute on purpose: setting it makes the
   // browser refuse the image outright on any host that does not send CORS headers, which
   // would trade real cover art for a background glow. The bloom is sampled from a second,
   // hidden CORS-enabled load instead - if that one fails, the artwork is unaffected and
@@ -1983,13 +2020,13 @@ function renderResult(d,partial){
   // sleeve carries no information a screen reader needs, and a non-empty alt is actively
   // harmful here: when the cover 404s the browser paints the alt STRING over the fallback
   // gradient, which is the broken-image look Roham called gimmicky. The old inline
-  // onerror only restyled the <img>, so the alt text stayed on screen. The delegated
+  // onerror only restyled the image, so the alt text stayed on screen. The delegated
   // handler below swaps the whole element for the real placeholder instead.
   var art=d.art
-    ? '<img class="art" src="'+esc(d.art)+'" alt="" width="150" height="150" '+
-      'data-ph="--phc:'+_phc+';--phc2:'+_phc2+'">'
+    ? imgTag({'class':'art', src:d.art, alt:'', width:150, height:150,
+               'data-ph':'--phc:'+_phc+';--phc2:'+_phc2})
     : '<div class="art ph" style="--phc:'+_phc+';--phc2:'+_phc2+'">'+IC.bignote+'</div>';
-  var clip = d.handle ? '<div class="clip">'+(d.thumb?'<img src="'+esc(d.thumb)+'" alt="" onerror="this.remove()">':'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
+  var clip = d.handle ? '<div class="clip">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
   // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
