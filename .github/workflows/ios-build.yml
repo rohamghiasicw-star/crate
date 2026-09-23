@@ -1,0 +1,65 @@
+name: iOS build
+
+# WHY THIS EXISTS. Nobody on this project has a Mac with Xcode. The iOS shell was written
+# without a compiler and had never been built, which meant "it is ready" was a claim with
+# no evidence behind it. GitHub's macOS runners ship Xcode preinstalled, and this repo is
+# public, so standard runners cost nothing. That turns "we need a 40GB install first" into
+# "push and read the log".
+#
+# This job builds UNSIGNED on purpose. Signing needs a paid Apple Developer account, a
+# certificate and a provisioning profile, none of which exist yet. An unsigned build still
+# runs the whole compiler and linker over both targets, which is exactly the unknown worth
+# closing first. Archiving for TestFlight is a second job, added when the account exists.
+
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios-build.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: What Xcode is on this runner
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          echo "--- available simulators (first 5) ---"
+          xcrun simctl list devices available | head -8
+
+      - name: Show the targets we are about to build
+        run: xcodebuild -list -project ios/Addify.xcodeproj
+
+      # Build for the SIMULATOR. A device build insists on a signing identity even with
+      # signing disabled; the simulator SDK does not, so this compiles both the app and the
+      # share extension with no Apple account involved at all.
+      - name: Build (unsigned, simulator)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/Addify.xcodeproj \
+            -scheme Addify \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build.log
+
+      - name: What got built
+        if: always()
+        run: |
+          echo "--- products ---"
+          find build/Build/Products -maxdepth 2 -name "*.app" -o -maxdepth 2 -name "*.appex" | sed 's/^/  /'
+          echo "--- warnings and errors ---"
+          grep -E "warning:|error:" build.log | sort -u | head -40 || echo "  none"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
