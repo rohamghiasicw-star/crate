@@ -23,7 +23,14 @@
   --warn:#F5B94D;
   --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
   --r-card:26px; --r-mid:18px; --r-pill:999px;
-  --spring:cubic-bezier(.2,.9,.25,1.15);
+  /* Exponential ease-out. This used to be a token named --spring whose curve ended
+     past its end point, so every animated element overshot and settled back, on thirteen
+     elements.
+     That overshoot is the most dated thing a motion system can have. Renamed as well as
+     retuned, because a token called --spring that holds an ease-out curve misleads the
+     next person reading it. Same curve the reveal animations already use, so the whole
+     app now decelerates the same way. */
+  --ease:cubic-bezier(.16,1,.3,1);
   --shadow:0 24px 60px rgba(8,4,30,.55);
 }
 :root[data-theme="light"]{
@@ -69,7 +76,7 @@ a{color:inherit;text-decoration:none}
   width:100%; max-width:400px; background:var(--card); border-radius:32px;
   border:1px solid var(--line); box-shadow:var(--shadow);
   padding:20px 18px 24px; min-height:660px; display:flex; flex-direction:column;
-  animation:rise .5s var(--spring) both; overflow:hidden;
+  animation:rise .5s var(--ease) both; overflow:hidden;
   transition:background-color .45s ease;
 }
 .app[data-state="scanning"]{background:var(--scan)}
@@ -81,7 +88,7 @@ a{color:inherit;text-decoration:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* one screen at a time */
-.screen{display:none; flex:1; flex-direction:column; animation:fade .35s var(--spring) both}
+.screen{display:none; flex:1; flex-direction:column; animation:fade .35s var(--ease) both}
 .app[data-state="idle"] #s-home{display:flex}
 .app[data-state="scanning"] #s-scan{display:flex}
 .app[data-state="locked"] #s-match{display:flex}
@@ -106,7 +113,7 @@ a{color:inherit;text-decoration:none}
   width:132px;height:132px;border-radius:50%;display:grid;place-items:center;
   background:linear-gradient(160deg,var(--accent2),var(--accent));
   box-shadow:0 16px 44px color-mix(in oklab,var(--accent) 60%,transparent);
-  transition:transform .18s var(--spring)}
+  transition:transform .18s var(--ease)}
 .orb:hover{transform:scale(1.04)} .orb:active{transform:scale(.96)}
 .orb[disabled]{pointer-events:none}
 
@@ -155,7 +162,7 @@ a{color:inherit;text-decoration:none}
    real information, not decoration. It stays grey until the server actually returns
    waveform data. */
 .chip{display:flex;align-items:center;gap:11px;width:100%;background:var(--raise);border-radius:16px;
-  padding:10px 11px;border:1px solid var(--line);animation:pop .3s var(--spring) both}
+  padding:10px 11px;border:1px solid var(--line);animation:pop .3s var(--ease) both}
 .chip .th{width:42px;height:42px;border-radius:11px;flex:none;object-fit:cover;display:block;
   background:linear-gradient(150deg,var(--raise2),var(--card))}
 .chip .ct{min-width:0;flex:1}
@@ -168,7 +175,7 @@ a{color:inherit;text-decoration:none}
 .abadge{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
   padding:4px 8px;border-radius:8px;background:var(--raise2);color:var(--faint);transition:.25s}
 .abadge.on{background:color-mix(in oklab,var(--good) 18%,transparent);color:var(--good);
-  animation:pop .3s var(--spring) both}
+  animation:pop .3s var(--ease) both}
 .abadge svg{width:11px;height:11px}
 
 /* ---------- the dial ---------- */
@@ -362,7 +369,7 @@ button.plcard:hover{filter:brightness(1.07)}
 .picker[hidden]{display:none}
 .pkcard{width:100%;max-width:400px;background:var(--card);border-radius:24px 24px 0 0;
   border:1px solid var(--line);border-bottom:0;padding:10px 16px 26px;max-height:72vh;overflow-y:auto;
-  animation:sheetup .3s var(--spring) both}
+  animation:sheetup .3s var(--ease) both}
 @keyframes sheetup{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
 .pkgrip{width:38px;height:4px;border-radius:99px;background:var(--line2);margin:2px auto 12px}
 .pkh{font-size:15px;font-weight:700;margin-bottom:11px}
@@ -391,22 +398,22 @@ button.plcard:hover{filter:brightness(1.07)}
 .splash.bye{opacity:0;pointer-events:none}
 .spmark{width:84px;height:84px;border-radius:24px;display:grid;place-items:center;color:#fff;
   background:linear-gradient(150deg,var(--accent2),var(--accent));
-  box-shadow:0 0 70px color-mix(in oklab,var(--accent) 65%,transparent);animation:pop .5s var(--spring) both}
+  box-shadow:0 0 70px color-mix(in oklab,var(--accent) 65%,transparent);animation:pop .5s var(--ease) both}
 .spmark svg{width:44px;height:44px}
-.spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--spring) both}
+.spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--ease) both}
 
 /* ---------- onboarding ---------- */
 .onb{position:fixed;inset:0;z-index:80;background:rgba(8,4,26,.65);backdrop-filter:blur(4px);
   display:grid;place-items:center;padding:18px}
 .onb[hidden]{display:none}
 .onbcard{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);
-  border-radius:28px;padding:18px 20px 22px;box-shadow:var(--shadow);animation:pop .35s var(--spring) both;
+  border-radius:28px;padding:18px 20px 22px;box-shadow:var(--shadow);animation:pop .35s var(--ease) both;
   max-height:92vh;overflow-y:auto;scrollbar-width:none}
 .onbcard::-webkit-scrollbar{display:none}
 .dots{display:flex;gap:6px;justify-content:center;margin-bottom:16px}
 .dots i{width:6px;height:6px;border-radius:99px;background:var(--raise2);transition:.25s}
 .dots i.on{width:20px;background:var(--accent2)}
-.onbbody{display:flex;flex-direction:column;animation:fade .3s var(--spring) both}
+.onbbody{display:flex;flex-direction:column;animation:fade .3s var(--ease) both}
 .obmark{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;color:#fff;margin:26px auto 22px;
   background:linear-gradient(150deg,var(--accent2),var(--accent));
   box-shadow:0 14px 40px color-mix(in oklab,var(--accent) 45%,transparent)}
@@ -459,7 +466,7 @@ button.plcard:hover{filter:brightness(1.07)}
 /* momentum finish */
 .okring{width:74px;height:74px;border-radius:50%;margin:24px auto 20px;display:grid;place-items:center;
   border:2.5px solid var(--good);color:var(--good);
-  box-shadow:0 0 40px color-mix(in oklab,var(--good) 35%,transparent);animation:pop .4s var(--spring) both}
+  box-shadow:0 0 40px color-mix(in oklab,var(--good) 35%,transparent);animation:pop .4s var(--ease) both}
 .okring svg{width:30px;height:30px}
 .obtag{margin:16px auto 0;font-size:11.5px;color:var(--good);font-weight:650;text-align:center;
   background:color-mix(in oklab,var(--good) 12%,transparent);border-radius:99px;padding:7px 14px;width:fit-content}
@@ -514,7 +521,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    each following a beat later. It is the one moment the whole product exists for, so it
    gets choreography instead of a transition. All of it collapses to nothing under
    prefers-reduced-motion (the global rule near the top of this sheet). */
-.card{animation:fade .4s var(--spring) both}
+.card{animation:fade .4s var(--ease) both}
 .hero{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;
   position:relative}
 /* the bloom: the artwork's own dominant colour, pulled at runtime, washing outward once */
@@ -587,8 +594,20 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    belongs to. A tap never lies about where it lands. */
 /* minmax(0,1fr), not 1fr: "SoundCloud" cannot wrap, so its min-content width blew its
    own column out and the four tiles went uneven below 375px. */
-.openin{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:2px}
-.opl{display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px 9px;
+/* CENTRED, NOT LEFT-RAGGED. A fixed four-column grid left a hole on the right whenever
+   fewer than four platforms came back, which is the common case: links.py returns Apple
+   Music only when the iTunes lookup hits. Three tiles then sat hard against the left
+   margin under a centred title and a centred sleeve. Roham: "I don't know why the icons
+   are left hand margin. Just make them central." Flex with centre justification fits
+   whatever count arrives and stays centred under the rest of the card. */
+.openin{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin-top:2px}
+/* The grid used to give each tile its width. On flex they need their own basis, and a
+   fixed 84px basis wrapped the fourth tile onto its own line at 375px, which put three
+   tiles left and one underneath - worse than the left-ragged grid it replaced. They now
+   shrink to share the row, with a floor so a tile never gets too small to read and a
+   ceiling so three or two tiles do not stretch into slabs. */
+.opl{flex:1 1 0;min-width:62px;max-width:96px;
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px 9px;
   border-radius:14px;background:var(--raise);border:1px solid var(--line);text-align:center;
   transition:border-color .15s,filter .15s}
 .opl:hover{filter:brightness(1.1);border-color:var(--line2)}
@@ -852,11 +871,11 @@ button.savecard[disabled]{pointer-events:none}
 .trk .pl::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:44px;height:44px;border-radius:50%}
 .sheet{position:fixed;inset:0;background:rgba(8,4,26,.66);display:grid;place-items:end center;z-index:50;
-  padding:16px;animation:fade .25s var(--spring) both}
+  padding:16px;animation:fade .25s var(--ease) both}
 .sheet[hidden]{display:none}
 .sheetcard{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
   border-radius:26px;padding:16px 16px 20px;display:flex;flex-direction:column;gap:12px;
-  max-height:calc(100vh - 32px);overflow-y:auto;animation:rise .3s var(--spring) both}
+  max-height:calc(100vh - 32px);overflow-y:auto;animation:rise .3s var(--ease) both}
 .sheetcard .hd{grid-template-columns:36px 1fr 36px}
 .sheetcard .hd .ttl{grid-column:2}
 .setrow{display:flex;align-items:center;gap:12px;background:var(--raise);border-radius:15px;padding:13px 14px}
@@ -1775,25 +1794,31 @@ function rowThumb(c){
   if(!u) return _phSpan(st);
   // No crossorigin, for the reason documented on the hero <img>: it makes a non-CORS host
   // refuse the image outright. lazy + async so a shelf of covers never blocks paint.
-  return '<img class="tart" src="'+esc(u)+'" alt="" loading="lazy" decoding="async" '+
-    'data-ph="'+esc(st)+'">';}
+  // width/height are the CSS size, present so the row reserves the box before the image
+  // lands. Without them a shelf of twelve covers reflows twelve times as they arrive.
+  return '<img class="tart" src="'+esc(u)+'" alt="" width="36" height="36" '+
+    'loading="lazy" decoding="async" data-ph="'+esc(st)+'">';}
 /* One delegated pair of listeners instead of an inline onerror per row. `error` and `load`
    do not bubble, so both are registered in the CAPTURE phase. */
 function _tartFallback(img){
   if(!img||!img.parentNode) return;
+  var hero=img.className.indexOf('art')===0 && img.className.indexOf('tart')!==0;
   var tmp=document.createElement('div');
-  tmp.innerHTML=_phSpan(img.getAttribute('data-ph')||'');
+  // The hero sleeve and a shelf thumb are the same idea at two sizes, so they get the
+  // same replacement rather than two fallbacks that drift apart.
+  tmp.innerHTML = hero
+    ? '<div class="art ph" style="'+(img.getAttribute('data-ph')||'')+'">'+IC.bignote+'</div>'
+    : _phSpan(img.getAttribute('data-ph')||'');
   img.parentNode.replaceChild(tmp.firstChild,img);}
+function _isCover(t){return t&&t.tagName==='IMG'&&(t.className==='tart'||t.className==='art');}
 document.addEventListener('error',function(e){
-  var t=e.target;
-  if(t&&t.tagName==='IMG'&&t.className==='tart') _tartFallback(t);
+  if(_isCover(e.target)) _tartFallback(e.target);
 },true);
 document.addEventListener('load',function(e){
   var t=e.target;
   // A dead or private YouTube id answers 404 with a DECODABLE 120x90 grey jpeg, so onerror
   // never fires for it. A real mqdefault is 320 wide; anything at or under 120 is the grey.
-  if(t&&t.tagName==='IMG'&&t.className==='tart'&&t.naturalWidth&&t.naturalWidth<=120)
-    _tartFallback(t);
+  if(_isCover(t)&&t.naturalWidth&&t.naturalWidth<=120) _tartFallback(t);
 },true);
 function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
@@ -1880,7 +1905,7 @@ function renderResult(d,partial){
   if(d.result==='error'){
     /* most often a private or unreadable link - a dead end converted into the listen-mode teach */
     result.innerHTML=errCard('lock',"Couldn't read that link",
-      'It may be private or region-locked - but the mic can hear anything.',
+      'It may be private or region locked. The mic can hear anything.',
       (micOK()?'<button class="cta mic" id="golisten">'+IC.mic+'Use listen mode instead</button>'+
         '<div class="trainnote">Play the reel out loud and we’ll catch it</div>'
        :'<div class="trainnote">'+esc(d.error||'Try again in a moment.')+'</div>'));
@@ -1893,17 +1918,17 @@ function renderResult(d,partial){
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
-        'But we got close - is this the base song?',
+        'But we got close. Is this the base song?',
         '<div class="guessrow"><span class="sq" style="background:'+SQ[0]+'">'+IC.note+'</span>'+
           '<span class="tt"><b>'+esc(guess)+'</b><span>'+esc(d.base_artist_guess||d.base_artist||'')+' · original</span></span></div>'+
-        '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes - it’s an edit</button>'+
+        '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes, it’s an edit</button>'+
           '<button class="vbtn no" id="fbno">Not it</button></div>'+
         '<div class="trainnote" id="fbnote">Confirming helps Addify learn this edit for everyone</div>');
       var done=function(v){
         sendFeedback({url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||'',verdict:v});
         if(v==='yes'){saveOne({base_song:guess,base_artist:d.base_artist_guess||d.base_artist||'',handle:d.handle}); dropUnmatched(curURL);}
         var n=document.getElementById('fbnote');
-        if(n) n.textContent=v==='yes'?'Logged - and saved to your finds':'Logged - this trains the edit database';
+        if(n) n.textContent=v==='yes'?'Logged, and saved to your finds':'Logged. This trains the edit database';
         ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});};
       var y=document.getElementById('fbyes'), no=document.getElementById('fbno');
       if(y) y.onclick=function(){done('yes');};
@@ -1913,7 +1938,7 @@ function renderResult(d,partial){
       d.result==='no_match'
         ? 'Listened through the whole clip. This one is most likely genuine original audio, not a track.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
-      '<div class="trainnote">Saved as pending - we’ll retry as the edit database grows</div>');
+      '<div class="trainnote">Saved as pending. We’ll retry as the edit database grows</div>');
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
@@ -1954,9 +1979,15 @@ function renderResult(d,partial){
   // would trade real cover art for a background glow. The bloom is sampled from a second,
   // hidden CORS-enabled load instead - if that one fails, the artwork is unaffected and
   // the bloom simply keeps its default accent.
+  // alt is EMPTY on purpose. The title and artist sit directly under this image, so the
+  // sleeve carries no information a screen reader needs, and a non-empty alt is actively
+  // harmful here: when the cover 404s the browser paints the alt STRING over the fallback
+  // gradient, which is the broken-image look Roham called gimmicky. The old inline
+  // onerror only restyled the <img>, so the alt text stayed on screen. The delegated
+  // handler below swaps the whole element for the real placeholder instead.
   var art=d.art
-    ? '<img class="art" src="'+esc(d.art)+'" alt="Cover art" '+
-      'onerror="this.className=\'art ph\';this.removeAttribute(\'src\')">'
+    ? '<img class="art" src="'+esc(d.art)+'" alt="" width="150" height="150" '+
+      'data-ph="--phc:'+_phc+';--phc2:'+_phc2+'">'
     : '<div class="art ph" style="--phc:'+_phc+';--phc2:'+_phc2+'">'+IC.bignote+'</div>';
   var clip = d.handle ? '<div class="clip">'+(d.thumb?'<img src="'+esc(d.thumb)+'" alt="" onerror="this.remove()">':'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
@@ -1985,23 +2016,26 @@ function renderResult(d,partial){
         original's sleeve that starts a slowed edit would misstate what you are hearing,
         so the control names what it will play - and the player sheet it opens prints that
         title and its source chip the moment it appears.
-     2. WHAT IT DOES. With no crown, `pv` falls back to d.shazam, and embedFor only handles
-        SoundCloud and YouTube - so a triangle there would silently open a tab, which is
-        the exact behaviour Konnor filed his first ask against. The triangle renders ONLY
-        when embedFor can actually embed it. Otherwise the corner carries the open arrow,
-        the same glyph the rest of the row uses for leaving the app.
+     2. WE NEVER SEND ANYONE TO SHAZAM. This used to fall back to d.shazam and render an
+        open-arrow, so on a clip with no crown the one control on the artwork threw the
+        user out of Addify and onto a competitor's track page - which on Roham's own
+        screenshot was shazam.com/track/562501330/UNAVAILABLE, a dead page. His words:
+        "this is not playable and we can't just lead the page to shazam, that is a very
+        bad look". He is right twice over. A control that cannot do the thing it depicts
+        is worse than no control, and handing our traffic to Shazam is worse still.
+        The corner now renders ONLY when embedFor can genuinely play it in the sheet.
+        With nothing playable there is no corner at all; the Open in row below is the
+        honest way out of the app and it already exists.
      It reuses the [data-play] attributes trackRow sets, so the existing delegated handler
      picks it up and there is no second listener anywhere. */
-  var pv=(ex&&ex.url)||d.shazam||'';
+  var pv=(ex&&ex.url)||'';
   var pvsrc=(ex&&(ex.source||'').toLowerCase())||'';
   var pvttl=(ex&&ex.title)||d.base_song||'';
   var pvlbl=ex?'Play the exact version':'Play this track';
-  var corner = !pv ? ''
-    : embedFor(pv,pvsrc)
-      ? '<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
-        ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>'
-      : '<a class="artplay out" href="'+esc(pv)+'" target="_blank" rel="noopener"'+
-        ' title="Opens this version at the source" aria-label="Open this version at the source">'+IC.open+'</a>';
+  var corner = (pv && embedFor(pv,pvsrc))
+    ? '<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
+      ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>'
+    : '';
   var hero='<div class="hero"><span class="artwrap">'+art+corner+'</span>'+
     '<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
     '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+'</div>';
@@ -2146,14 +2180,14 @@ function renderResult(d,partial){
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
-      shelf='<div class="sect">Closest versions - we did not crown one</div>'+
+      shelf='<div class="sect">Closest versions. We did not crown one</div>'+
         '<div class="heldcard"><b>Nothing came close</b><span>The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
         'matched the clip audio, so there is nothing worth listing. The song above is '+
         'still the answer.</span></div>';
     } else {
     cands = _kept;
-    shelf='<div class="sect">Closest versions - we did not crown one</div>'+
+    shelf='<div class="sect">Closest versions. We did not crown one</div>'+
       (held
         ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload matched the clip '+
             'audio at '+w+'%, but we would not crown it: '+esc(why)+'. Listed, not presented as '+
@@ -2161,7 +2195,7 @@ function renderResult(d,partial){
             ', after that check ran.':'')+'</span></div>'
         : '<div class="heldcard"><b>Under our bar to call it</b><span>Best audio match was '+w+
             '%, and we do not crown anything under '+Math.round(CORE_KEEP*100)+'%. These are the closest '+
-            'the search got - one of them may still be it.</span></div>')+
+            'the search got. One of them may still be it.</span></div>')+
       // Row 1 used to get the pill and NOTHING else, on the reasoning that the card above
       // already carries the reason word for word. It carries the GATE's reason, which is
       // a different sentence from "this title claims something we did not measure" - and
@@ -2178,7 +2212,7 @@ function renderResult(d,partial){
       (_dropped?'<div class="trainnote">'+_dropped+' more upload'+(_dropped===1?' was':'s were')+
         ' checked and did not match the clip audio, so '+(_dropped===1?'it is':'they are')+
         ' not listed.</div>':'')+
-      '<div class="trainnote">Open the top few and listen - your ear settles this faster than ours does.</div>';
+      '<div class="trainnote">Open the top few and listen. Your ear settles this faster than ours does.</div>';
     }}
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+

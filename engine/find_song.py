@@ -109,8 +109,17 @@ async def shazam(path):
     # reliable within about +-5%. The trustworthy "is this actually sped/slowed"
     # signal - far better than comparing against a random re-pitched re-upload.
     ms = (out or {}).get("matches") or []
+    # KEEP THE COVER SHAZAM ALREADY HANDED US. It rides along in the same response we
+    # have already paid for, and throwing it away meant the result screen fell back to a
+    # generated gradient sleeve on every track iTunes does not carry - which is most
+    # bootlegs and slowed edits, i.e. exactly the tracks this product exists to name.
+    # Roham, on seeing one: "a real cover would've been nice so it doesn't look gimmicky",
+    # while Shazam's own page for that same track was showing the real artwork.
+    # coverarthq first, coverart second; both are plain https URLs on Shazam's CDN.
+    _img = tr.get("images") or {}
     return {"title": tr.get("title"), "artist": tr.get("subtitle"),
             "url": tr.get("url"), "key": tr.get("key"),
+            "art": _img.get("coverarthq") or _img.get("coverart") or None,
             "freqskew": ms[0].get("frequencyskew") if ms else None,
             "timeskew": ms[0].get("timeskew") if ms else None}
 
