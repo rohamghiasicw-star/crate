@@ -1,0 +1,112 @@
+name: iOS release to TestFlight
+
+# Archives the app, signs it, and uploads it to TestFlight. Runs on GitHub's Mac, so no
+# Xcode is needed on anyone's laptop.
+#
+# It needs three secrets, all from ONE App Store Connect API key. That key is deliberately
+# the only credential: with -allowProvisioningUpdates, xcodebuild uses it to create the
+# signing certificate and provisioning profiles by itself, so there is no exporting .p12
+# files, no wrangling profiles by hand, and no Apple password anywhere near this repo.
+#
+#   ASC_KEY_ID       the key's ID, e.g. 2X9ABC3DEF
+#   ASC_ISSUER_ID    the issuer UUID shown above the keys table
+#   ASC_KEY_P8       the whole contents of the AuthKey_XXXX.p8 file you download once
+#
+# Add them at Settings > Secrets and variables > Actions. Apple only lets you download the
+# .p8 once, so save it somewhere before leaving that page.
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 'What testers should know about this build'
+        required: false
+        default: 'Latest Addify build'
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse early if the secrets are missing
+        env:
+          K: ${{ secrets.ASC_KEY_ID }}
+          I: ${{ secrets.ASC_ISSUER_ID }}
+          P: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          [ -z "$K" ] && missing="$missing ASC_KEY_ID"
+          [ -z "$I" ] && missing="$missing ASC_ISSUER_ID"
+          [ -z "$P" ] && missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secret(s):$missing. See the header of this workflow."
+            exit 1
+          fi
+          echo "all three secrets present"
+
+      - name: Install the API key
+        env:
+          P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$P8" > ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
+          chmod 600 ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
+
+      # Every upload needs a build number Apple has not seen before. The run number is
+      # monotonic per workflow, so it can never collide or go backwards.
+      - name: Stamp the build number
+        run: |
+          B=${{ github.run_number }}
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" ios/Addify/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" ios/AddifyShare/Info.plist
+          echo "build number $B"
+
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Addify.xcodeproj -scheme Addify \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Addify.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
+            archive 2>&1 | tee archive.log
+
+      - name: Export the ipa
+        run: |
+          cat > /tmp/export.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/Addify.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist /tmp/export.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
+            2>&1 | tee export.log
+
+      - name: Always shred the key
+        if: always()
+        run: rm -rf ~/private_keys
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-logs
+          path: |
+            archive.log
+            export.log
+          retention-days: 14
