@@ -18,10 +18,18 @@
       "package": "com.addify.app"
     },
     "extra": {
-      "engine": "https://a8cbad03e40337.lhr.life"
+      "engine": "https://a8cbad03e40337.lhr.life",
+      "eas": {
+        "projectId": "cfc01e89-5a09-4b51-b349-6087eb63d59d"
+      }
     },
     "plugins": [
       "expo-status-bar"
-    ]
+    ],
+    "owner": "rohamg8",
+    "runtimeVersion": "exposdk:57.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/cfc01e89-5a09-4b51-b349-6087eb63d59d"
+    }
   }
 }

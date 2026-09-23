@@ -19,3 +19,6 @@ engine/shazamkit_bridge/ShazamBridge.app/
 engine/shazamkit_bridge/embedded.provisionprofile
 mobile/node_modules/
 mobile/.expo/
+
+mobile/dist/
+.expo-token
