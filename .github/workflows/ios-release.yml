@@ -31,10 +31,28 @@ on:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # PIN THE NEWEST XCODE ON THE IMAGE. Apple refuses any upload not built with the
+      # iOS 26 SDK or later, and the runner's DEFAULT Xcode is not necessarily the newest
+      # one installed: this failed with "built with the iOS 18.5 SDK" on an image that had
+      # a newer Xcode sitting right beside the selected one. Selecting the highest version
+      # present keeps working as GitHub rolls the images forward, instead of pinning a
+      # version that disappears.
+      - name: Select the newest Xcode on the runner
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          echo "installed: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')"
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          xcodebuild -version
+          echo "iOS SDK: $(xcodebuild -showsdks | grep -i 'iphoneos' | tail -1)"
 
       - name: Refuse early if the secrets are missing
         env:
