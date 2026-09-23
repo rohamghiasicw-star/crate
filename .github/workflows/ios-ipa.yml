@@ -1,0 +1,57 @@
+name: iOS unsigned ipa (free sideload)
+
+# THE FREE ROUTE. Every Apple distribution channel (TestFlight, ad hoc, and now even Expo
+# Go) needs the $99 Developer Program. What does NOT need it is Apple's own free-tier
+# development signing: any Apple ID can sign an app onto a device it is paired with, for 7
+# days at a time. Tools like AltStore and Sideloadly automate that and re-sign over wifi
+# before it lapses.
+#
+# They need an .ipa. This job produces one with no signing at all, so the tester signs it
+# with THEIR OWN free Apple ID on their own machine. Nothing here touches an Apple account.
+#
+# An .ipa is just a zip with the .app inside a Payload/ directory, which is why this can be
+# assembled without any signing identity.
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['ios/**', '.github/workflows/ios-ipa.yml']
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Device SDK, not the simulator: a simulator .app is x86/arm64-sim and will not run
+      # on a phone. Signing is fully disabled, and the entitlements that require a
+      # provisioning profile are stripped, because the signing tool will inject its own.
+      - name: Build unsigned for device
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Addify.xcodeproj -scheme Addify \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build 2>&1 | tee ipa-build.log
+
+      - name: Wrap it into an ipa
+        run: |
+          APP=$(find build/Build/Products -maxdepth 2 -name "Addify.app" | head -1)
+          if [ -z "$APP" ]; then echo "::error::no Addify.app was produced"; exit 1; fi
+          echo "app: $APP"
+          rm -rf payload && mkdir -p payload/Payload
+          cp -R "$APP" payload/Payload/
+          cd payload && zip -qry ../Addify-unsigned.ipa Payload && cd ..
+          ls -lh Addify-unsigned.ipa | awk '{print "  ipa size: "$5}'
+          echo "--- what is inside ---"
+          unzip -l Addify-unsigned.ipa | grep -E "Payload/Addify.app/(Addify|Info.plist)$|\.appex" | head -5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Addify-unsigned-ipa
+          path: Addify-unsigned.ipa
+          retention-days: 30
