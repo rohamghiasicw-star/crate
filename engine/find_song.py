@@ -19,6 +19,25 @@ import asyncio, json, re, subprocess, sys, tempfile, os, urllib.request
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
 
+# WHICH SHAZAM. shazamio is the default and the only backend that answers on this Mac.
+# "shazamkit" routes through shazamkit_bridge/ShazamBridge.app (Apple's sanctioned
+# ShazamKit, the launch-blocker fix in ADDIFY-PLAN.md) and needs a build signed with an
+# Apple Developer Program identity - README.md in that folder has the evidence. Unknown
+# values fail HERE, at import, so a typo in the env never silently runs the wrong backend.
+SHAZAM_BACKEND = os.environ.get("CRATE_SHAZAM_BACKEND", "shazamio")
+if SHAZAM_BACKEND not in ("shazamio", "shazamkit"):
+    raise RuntimeError("CRATE_SHAZAM_BACKEND=%r; expected 'shazamio' or 'shazamkit'"
+                       % SHAZAM_BACKEND)
+SHAZAMKIT_BRIDGE = os.environ.get("CRATE_SHAZAMKIT_BRIDGE", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "shazamkit_bridge", "ShazamBridge.app",
+    "Contents", "MacOS", "ShazamBridge"))
+# Per-call ceiling for the bridge subprocess. Its own 20 s semaphore is a backstop; this is
+# the number that matters, and the sweep's wait_for (SHAZAM_TIMEOUT 3.5 / SWEEP_PROBE 3.0)
+# is tighter still. Measured on this Mac: 0.28-0.41 s to the token-service refusal, so a
+# real match will land somewhere above that and below shazamio's 2.4 s worst. Re-measure on
+# an entitled machine before touching either engine timeout.
+SHAZAMKIT_TIMEOUT = float(os.environ.get("CRATE_SHAZAMKIT_TIMEOUT", 6.0))
+
 # Try a straight match first, then counter-speed. 1/1.25 = 0.80 and 1/1.3 = 0.77
 # undo the two most common TikTok "sped up" presets; 1.25 undoes a slowed edit.
 SWEEP = [
@@ -99,7 +118,7 @@ def cut(src, dst, offset, rate, span=20):
                     "-t", str(span)] + af + ["-ac", "1", "-ar", "44100", dst], check=True)
 
 
-async def shazam(path):
+async def _shazam_shazamio(path):
     from shazamio import Shazam
     out = await Shazam().recognize(path)
     tr = (out or {}).get("track")
@@ -122,6 +141,63 @@ async def shazam(path):
             "art": _img.get("coverarthq") or _img.get("coverart") or None,
             "freqskew": ms[0].get("frequencyskew") if ms else None,
             "timeskew": ms[0].get("timeskew") if ms else None}
+
+
+async def _shazam_shazamkit(path):
+    """Same answer shape as _shazam_shazamio, from Apple's ShazamKit via the bridge.
+
+    One subprocess per probe, no daemon of our own: the bridge is ~0.03 s to launch and
+    shazamd (Apple's) is the long-lived part. Serialised by the caller's Semaphore(1)
+    exactly like shazamio - ShazamKit's rate limits are unpublished, so we assume the
+    same concurrency rule until measured otherwise.
+    """
+    if not os.path.exists(SHAZAMKIT_BRIDGE):
+        # Fail loud. A silent fall-back to shazamio would make a "ShazamKit is live"
+        # claim unfalsifiable, and that claim is the whole point of the flag.
+        raise RuntimeError("CRATE_SHAZAM_BACKEND=shazamkit but no bridge at %s "
+                           "(run engine/shazamkit_bridge/build.sh)" % SHAZAMKIT_BRIDGE)
+    proc = await asyncio.create_subprocess_exec(
+        SHAZAMKIT_BRIDGE, path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=SHAZAMKIT_TIMEOUT)
+    except asyncio.TimeoutError:
+        # Kill our child, then re-raise so the sweep's own wait_for/t_sink logic sees the
+        # same TimeoutError it gets from a stalled shazamio call and re-fires the probe.
+        proc.kill()
+        raise
+    if proc.returncode != 0 or not out.strip():
+        raise RuntimeError("shazamkit bridge exit %s: %s" % (
+            proc.returncode, (err or out or b"").decode("utf-8", "replace").strip()[:300]))
+    r = json.loads(out.decode("utf-8").splitlines()[-1])
+    if not r.get("matched"):
+        # no_match is a real "not in the catalog" answer -> None, same as shazamio.
+        # error (today: ShazamCore 102 from an unentitled build) is NOT a no-match; raise
+        # so the probe log says why instead of quietly reading as "song not found".
+        if r.get("reason") == "no_match":
+            return None
+        raise RuntimeError("shazamkit bridge: %s %s/%s %s" % (
+            r.get("reason"), r.get("domain"), r.get("code"), r.get("error", "")))
+    sid = r.get("shazam_id") or None
+    return {"title": r.get("title") or None, "artist": r.get("artist") or None,
+            "url": r.get("web_url") or (sid and "https://www.shazam.com/track/%s" % sid),
+            "key": sid,
+            # frequencySkew's sign/scale vs shazamio's frequencyskew is unverified until
+            # both backends answer the same clip on an entitled machine (README.md).
+            "freqskew": r.get("frequency_skew"),
+            # ShazamKit has no timeskew. crate_engine's mashup tempo-gap test reads it
+            # and degrades to its run-count vote when None - measure before defaulting.
+            "timeskew": None,
+            "offset_in_master": r.get("offset_seconds"),
+            "backend": "shazamkit"}
+
+
+async def shazam(path):
+    # Dispatch only. Name, signature and return keys are what crate_engine imports and
+    # what server.py reads (url, freqskew), so consumers never learn which backend ran.
+    if SHAZAM_BACKEND == "shazamkit":
+        return await _shazam_shazamkit(path)
+    return await _shazam_shazamio(path)
 
 
 async def identify(url):

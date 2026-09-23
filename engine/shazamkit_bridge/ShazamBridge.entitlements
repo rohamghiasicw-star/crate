@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<!-- Granted only by a provisioning profile from an App ID with the ShazamKit App Service.
+     Self-signing with this entitlement is killed by AMFI at launch (exit 137, measured
+     2026-09-04, README.md). build.sh applies it only when CODESIGN_IDENTITY is set. -->
+<key>com.apple.developer.shazamkit</key><true/>
+</dict></plist>

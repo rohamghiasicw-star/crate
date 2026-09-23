@@ -202,7 +202,7 @@ https://vt.tiktok.com/ZS4xR59yW/
 
 | Blocker | What it means | Owner |
 |---|---|---|
-| shazamio is unofficial and Apple owns Shazam | Migrate to ShazamKit for iOS. Free, allowed commercially, takes an audio file not just the mic, and returns the matched timecode in the original for free. | C |
+| shazamio is unofficial and Apple owns Shazam | Migrate to ShazamKit for iOS. Free, allowed commercially, takes an audio file not just the mic, and returns the matched timecode in the original for free. Bridge built 2026-09-04 (`engine/shazamkit_bridge/`, flag `CRATE_SHAZAM_BACKEND=shazamkit`); needs Apple Developer Program + App ID with the ShazamKit service + provisioning profile. Ad-hoc build proven to fail at the Apple token step (ShazamCore 102, apiToken 404). | C, then R for the Apple account |
 | Spotify dev mode caps at 5 users | Extended quota effectively wants an incorporated company. Bites during testing, not just launch. | R |
 | App Store rule 5.2.3 | Names YouTube and SoundCloud by example for downloading. Server-side placement hides it from a reviewer but does not resolve it. | C |
 | EU liability | A paid app linking to unauthorised uploads is presumed to know. Offering the official licensed link alongside is the defence, and that is now built. | C |

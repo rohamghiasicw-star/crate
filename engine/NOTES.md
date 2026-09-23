@@ -86,3 +86,23 @@ Companions: `MARKETING.md` (Konnor's go-to-market), `SHARE-SHEET.md` (share exte
 5. **Speed** — 20-60s typical. Roham wants faster. Remaining fat is the serialized sweep
    and a 3.5-3.8s speed-reference fetch.
 6. **A clean full re-run** of Konnor's list on unthrottled limits.
+
+## 2026-09-04 - ShazamKit bridge: builds here, cannot match here (branch ws/shazamkit-bridge)
+
+- Built `shazamkit_bridge/` (Swift CLI packaged as ShazamBridge.app, build.sh, adapter in
+  `find_song.py` behind `CRATE_SHAZAM_BACKEND=shazamkit`, `compare_backends.py`). shazamio
+  stays the default; with the flag unset `shazam()` runs the identical old body.
+- Measured on this Mac (CLT only, no Xcode, 0 signing identities): compile 1.9 s; signature
+  from a 12 s cut in 0.015-0.030 s; catalog max 12 s / min 3 s; every match attempt
+  returns ShazamCore 102 in 0.28-0.41 s. shazamd log: `sf-api-token-service.itunes.apple.com/apiToken`
+  -> HTTP 404 -> AMSErrorDomain 306 (status 401, max retries) -> 102. Ad-hoc signing WITH
+  the shazamkit entitlement is killed by AMFI (exit 137). Needs Apple Developer Program +
+  App ID with ShazamKit service + provisioning profile. Full table in
+  `shazamkit_bridge/README.md`.
+- `SHAZAM_TIMEOUT` 3.5 / `SWEEP_PROBE_TIMEOUT` 3.0 (crate_engine.py:86-87) are shazamio
+  numbers. Re-measure under the shazamkit backend on an entitled machine before touching.
+- `timeskew` does not exist in ShazamKit. `tskew()` at crate_engine.py:2663 gets None and
+  the mashup tempo-gap test falls to its run-count vote. Needs a measured fallback before
+  shazamkit can be default.
+- Health probe during the build run: 4 shazamio probes at 0.28-0.44 s, then probes 5 and 6
+  timed out at 12 s. Stopped per hard-rules; no side-by-side table was taken.
