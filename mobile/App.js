@@ -18,7 +18,27 @@ import {
 import { WebView } from 'react-native-webview';
 import Constants from 'expo-constants';
 
-const ENGINE = (Constants.expoConfig?.extra?.engine || '').replace(/\/+$/, '');
+/* THE ENGINE ADDRESS IS RESOLVED AT LAUNCH, NOT BAKED IN.
+   The engine sits behind a free tunnel whose hostname changes roughly hourly, so a URL
+   compiled into the app is wrong within the hour and the tester just sees "can't reach
+   Addify". The watchdog publishes each new hostname to a public gist, which is a fixed
+   address, so the app asks that first and only falls back to the compiled-in value if the
+   lookup fails. A build from this morning still works tonight. */
+const DIRECTORY = 'https://gist.githubusercontent.com/rohamghiasicw-star/d63fcb85b88d9a8f12e943605dd0a078/raw/engine-url.txt';
+const BAKED = (Constants.expoConfig?.extra?.engine || '').replace(/\/+$/, '');
+
+async function resolveEngine() {
+  try {
+    // cache-bust: raw gist responses cache hard, and a stale hostname is the exact
+    // failure this exists to prevent.
+    const r = await fetch(DIRECTORY + '?t=' + Date.now(), { cache: 'no-store' });
+    if (r.ok) {
+      const u = (await r.text()).trim().replace(/\/+$/, '');
+      if (/^https?:\/\//.test(u)) return u;
+    }
+  } catch (e) { /* offline or gist down; the baked value is the fallback */ }
+  return BAKED;
+}
 const INK = '#F4F4F5', DIM = '#9A9AA6', BG = '#150E33', ACCENT = '#7C8CFF';
 
 export default function App() {
@@ -26,10 +46,28 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [key, setKey] = useState(0);
+  const [engine, setEngine] = useState(null);
+
+  // Re-resolve on every retry, not only at boot. If the tunnel moved while the app was
+  // open, retrying against the old address would fail forever.
+  React.useEffect(() => {
+    let alive = true;
+    resolveEngine().then(u => { if (alive) setEngine(u); });
+    return () => { alive = false; };
+  }, [key]);
 
   const retry = useCallback(() => {
-    setFailed(false); setLoading(true); setKey(k => k + 1);
+    setFailed(false); setLoading(true); setEngine(null); setKey(k => k + 1);
   }, []);
+
+  if (!engine) {
+    return (
+      <SafeAreaView style={s.fill}>
+        <StatusBar barStyle="light-content" />
+        <View style={s.overlay}><ActivityIndicator size="large" color={ACCENT} /></View>
+      </SafeAreaView>
+    );
+  }
 
   // The engine runs on a laptop behind a tunnel, so "unreachable" is a normal state and
   // not a crash. Say so plainly and offer the one useful action instead of a white screen.
@@ -44,7 +82,7 @@ export default function App() {
             The engine runs on Roham's Mac. If it's asleep or the tunnel moved, this is what
             you get. Pull down to retry.
           </Text>
-          <Text style={s.url}>{ENGINE || 'no engine configured'}</Text>
+          <Text style={s.url}>{engine || BAKED || 'no engine configured'}</Text>
           <TouchableOpacity style={s.btn} onPress={retry}>
             <Text style={s.btnText}>Try again</Text>
           </TouchableOpacity>
@@ -59,7 +97,7 @@ export default function App() {
       <WebView
         key={key}
         ref={ref}
-        source={{ uri: ENGINE }}
+        source={{ uri: engine }}
         style={s.fill}
         // Dark, so a slow first paint does not flash white over a dark app.
         containerStyle={{ backgroundColor: BG }}
@@ -77,7 +115,7 @@ export default function App() {
         // Anything that is not the engine (SoundCloud, YouTube, Spotify) opens in the real
         // app or Safari rather than trapping the user inside this WebView with no back.
         onShouldStartLoadWithRequest={(req) => {
-          if (req.url.startsWith(ENGINE) || req.url.startsWith('about:')) return true;
+          if (req.url.startsWith(engine) || req.url.startsWith('about:')) return true;
           Linking.openURL(req.url).catch(() => {});
           return false;
         }}

@@ -145,6 +145,18 @@ while true; do
   fi
 
   echo "$URL" > "$URLFILE"
+  # PUBLISH IT SOMEWHERE THAT DOES NOT MOVE. The phone app cannot have a rotating tunnel
+  # baked into it: the URL changes roughly hourly, and a tester opening a build from this
+  # morning just gets "can't reach Addify". A public gist is a fixed address that always
+  # holds the current one, so the app resolves it at launch and survives every rotation.
+  # Failure here is deliberately silent and non-fatal; a tunnel that works but could not be
+  # announced is still better than no tunnel.
+  if [ -f ~/crate/.engine_gist_id ]; then
+    ( printf '%s\n' "$URL" > /tmp/engine-url.txt
+      gh gist edit "$(cat ~/crate/.engine_gist_id)" -a /tmp/engine-url.txt >/dev/null 2>&1 \
+        && log "published $URL to the gist" \
+        || log "could not publish to the gist (not fatal)" ) &
+  fi
   born=$(date +%s)
   backoff=0
   log "UP via $PROVIDER -> $URL (pid $CFPID)"
