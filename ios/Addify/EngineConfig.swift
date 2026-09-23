@@ -6,12 +6,22 @@ import Foundation
    redirect_uri (location.origin + '/') stays whatever the engine host is, and a server
    fix reaches the phone on the next launch with no App Store release.
 
-   The default is today's trycloudflare hostname. Free tunnels rotate on every cloudflared
-   restart, so this constant WILL go stale; the in-app Settings sheet is the stopgap and a
-   stable hosted backend (already an ADDIFY-PLAN launch blocker) is the fix. */
+   THIS MUST BE A HOSTNAME THAT DOES NOT ROTATE. It used to be whichever trycloudflare
+   hostname happened to be alive the day the shell was written, and that one has been dead
+   for weeks. Shipping a build whose default points at a free tunnel means every tester
+   opens the app to "Engine unreachable" the first time your laptop sleeps, and there is no
+   way to fix it without another TestFlight build. Measured over one week on this network:
+   318 quick tunnels registered and were never routed, 67 fallbacks, and the hostname
+   changed roughly hourly.
+
+   So the default is the NAMED Cloudflare tunnel. It requires a one-time `cloudflared
+   tunnel login` against rghiasi.com and a route to this hostname; until that exists this
+   build will not reach an engine, and the Settings sheet is the only way in. That is a
+   deliberate choice: a default that is wrong forever is worse than one that is wrong
+   until a five minute setup is done. */
 enum EngineConfig {
     static let key = "engineBaseURL"
-    static let defaultBaseURL = "https://loving-giving-literature-affairs.trycloudflare.com"
+    static let defaultBaseURL = "https://addify.rghiasi.com"
 
     static var baseURLString: String {
         let s = AppGroup.defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
