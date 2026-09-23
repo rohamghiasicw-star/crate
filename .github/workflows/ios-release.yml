@@ -87,6 +87,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" ios/AddifyShare/Info.plist
           echo "build number $B"
 
+      # ARCHIVE UNSIGNED, SIGN AT EXPORT. With automatic signing, the archive step asks
+      # Apple for an iOS App DEVELOPMENT profile, and development profiles must embed a
+      # list of registered device UDIDs. A brand new team has no devices, so Apple refuses
+      # and the archive dies with "Your team has no devices from which to generate a
+      # provisioning profile" - which reads like a missing-hardware problem and is really
+      # a wrong-profile-type problem. TestFlight needs a DISTRIBUTION profile, which
+      # contains no devices and needs none.
+      #
+      # The export step below is where the distribution profile is created and the app is
+      # signed, so the archive itself does not need to be signed at all. This also keeps
+      # the whole thing working on a team that never registers a single device.
       - name: Archive
         run: |
           set -o pipefail
@@ -95,10 +106,10 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath build/Addify.xcarchive \
             DEVELOPMENT_TEAM=${{ secrets.ASC_TEAM_ID }} \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
             archive 2>&1 | tee archive.log
 
       - name: Export the ipa
