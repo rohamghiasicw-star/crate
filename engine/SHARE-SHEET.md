@@ -55,21 +55,40 @@ real app with the wave icon and no browser chrome.
 
 ## The real thing (native app)
 
-Two Xcode targets, per the product brief:
+**Built, unbuilt on this Mac: `ios/` in the repo.** A SwiftUI app (`Addify`) hosting the
+page in a WKWebView plus a Share Extension target (`AddifyShare`). `ios/README.md` has the
+exact build steps and what was and was not validated (no Xcode on the build Mac, so it has
+parsed and linted but never compiled).
 
-**Share Extension** — puts the Addify icon in the top app row for any shared URL. Standard
-target, no permission from Apple or Instagram needed. On day one it may sit behind "More"
+**Share Extension** - puts the Addify icon in the top app row for any shared URL or text
+with a URL inside (TikTok shares text, Instagram shares a URL; the activation rule accepts
+both). No permission from Apple or Instagram needed. On day one it may sit behind "More"
 until the user pins it, which is its own tutorial moment (the onboarding pin screen
 already teaches this).
 
-**Action Extension** — adds the text row underneath, labelled **"Scan song in Addify"**.
-Label it with the verb, not "Open in Addify": the verb tells a stranger what the app does.
-CapCut does exactly this with "Remove Background in CapCut".
+How the link travels, as built:
 
-Both hand the URL to the same place the web build already uses, so the backend contract
-does not change.
+1. The extension pulls the first `https?://` out of the shared item and keeps it only if
+   it is a TikTok or Instagram host (same rule as `parseLink()` here).
+2. It writes the link into the app group `group.com.addify.app` (`pendingShareURL`). This
+   is the guaranteed path.
+3. It tries to open `addify://scan?url=<link>` via the responder-chain `openURL:` trick
+   (extensions have no UIApplication). Best effort; Apple can close it.
+4. The app handles `addify://scan` in `onOpenURL`, and drains the app-group inbox on every
+   `scenePhase == .active`, so a share that failed step 3 still scans on the next open.
+5. Delivery into the page: if crate.html is loaded on the engine origin and `busy` is
+   false, the app calls `run(link)` directly; otherwise it loads `<engine>/share?url=`,
+   the same landing every other share path uses. The backend contract does not change.
+6. `finish()` posts the landed result to the app (`webkit.messageHandlers.addify`), which
+   answers with a haptic, a native toast, and a local notification if the app is not in
+   front. Plain browsers never see this call.
 
-**iOS renders extension rows in standard colors** — the purple highlight in the brief's
+**Action Extension** (not built yet) - adds the text row underneath, labelled **"Scan song
+in Addify"**. Label it with the verb, not "Open in Addify": the verb tells a stranger what
+the app does. CapCut does exactly this with "Remove Background in CapCut". It is a third
+target (`com.apple.ui-services`) that reuses `SharedInbox.swift` unchanged.
+
+**iOS renders extension rows in standard colors** - the purple highlight in the brief's
 mockup is only marking which rows are ours, not something we control.
 
 ---

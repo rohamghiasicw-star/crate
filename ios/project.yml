@@ -1,0 +1,57 @@
+# xcodegen mirror of Addify.xcodeproj.
+# The committed .xcodeproj was hand-written on a Mac without Xcode. If Xcode refuses to
+# open it, regenerate a guaranteed-valid one with:
+#     brew install xcodegen && cd ios && xcodegen generate
+# Settings here must stay identical to project.pbxproj.
+name: Addify
+options:
+  bundleIdPrefix: com.addify
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  xcodeVersion: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  Addify:
+    type: application
+    platform: iOS
+    sources:
+      - path: Addify
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.addify.app
+        INFOPLIST_FILE: Addify/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Addify/Addify.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+    dependencies:
+      - target: AddifyShare
+        embed: true
+    scheme:
+      testTargets: []
+  AddifyShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: AddifyShare
+        excludes:
+          - "Info.plist"
+      # SharedInbox is compiled into both targets on purpose: it is the app-group contract.
+      - path: Addify/SharedInbox.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.addify.app.share
+        INFOPLIST_FILE: AddifyShare/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AddifyShare/AddifyShare.entitlements
+        SKIP_INSTALL: YES
