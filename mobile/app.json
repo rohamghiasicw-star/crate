@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Addify",
+    "slug": "addify",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#150E33",
+    "splash": { "backgroundColor": "#150E33", "resizeMode": "contain" },
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.addify.app" },
+    "android": { "package": "com.addify.app" },
+    "extra": { "engine": "https://a8cbad03e40337.lhr.life" }
+  }
+}

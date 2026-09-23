@@ -17,3 +17,5 @@ engine/eval/tester_contacts.json
 # Built bridge bundle; rebuild with engine/shazamkit_bridge/build.sh
 engine/shazamkit_bridge/ShazamBridge.app/
 engine/shazamkit_bridge/embedded.provisionprofile
+mobile/node_modules/
+mobile/.expo/
