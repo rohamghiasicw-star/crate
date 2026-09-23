@@ -58,6 +58,29 @@ start_cloudflared(){
   done
 }
 
+# localhost.run: no account, and crucially NO BROWSER WARNING PAGE. pinggy and serveo both
+# interstitial free tunnels, which is worse than it sounds - the tester is handed a
+# "Caution, you are about to visit a website served for free" screen before the app, and
+# curl never sees it, so several links were verified as working and were not. Verify
+# tunnels in a browser, not with curl.
+start_lhr(){
+  pkill -f "R 80:localhost:8788 nokey@localhost.run" 2>/dev/null
+  sleep 1
+  : > "$CFLOG"
+  ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 \
+      -o ExitOnForwardFailure=yes -R 80:localhost:8788 nokey@localhost.run >> "$CFLOG" 2>&1 &
+  CFPID=$!
+  URL=""
+  # 60s, not 30. localhost.run draws a QR code before it prints the hostname, and it is
+  # slower still when you reconnect right after dropping a session. A 30s window missed a
+  # URL that arrived at ~35s and dumped us onto the provider with the warning page.
+  for i in $(seq 1 60); do
+    URL=$(grep -oE "https://[a-z0-9-]+\.lhr\.life" "$CFLOG" 2>/dev/null | head -1)
+    [ -n "$URL" ] && break
+    sleep 1
+  done
+}
+
 start_pinggy(){
   pkill -f "R0:localhost:8788 qr@a.pinggy.io" 2>/dev/null
   sleep 1
@@ -90,7 +113,15 @@ while true; do
   fi
 
   PROVIDER=""
-  for try in cloudflared pinggy; do
+  for try in cloudflared lhr pinggy; do
+    # CHECK THE ENGINE ON EVERY ATTEMPT, not just in the watch loop below. Building a
+    # tunnel takes up to 90s per provider and cloudflared is tried first on every cycle
+    # even though it currently fails almost always, so a full pass through this ladder can
+    # run for several minutes. The engine was going unwatched for that entire window:
+    # measured 2026-09-23, the engine died and stayed dead while the watchdog was busy
+    # hunting a tunnel, and a tunnel pointed at a dead engine is the exact thing this
+    # script exists to prevent.
+    ensure_engine
     log "trying $try"
     start_$try
     if [ -z "$URL" ]; then
