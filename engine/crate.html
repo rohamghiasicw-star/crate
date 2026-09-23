@@ -2120,6 +2120,7 @@ function renderResult(d,partial){
      order the engine returned. Never re-sorted here: the order is the engine's verdict,
      and re-ranking in the page would be inventing a second opinion. */
   var shelf='', plain=false;   // plain = the clip is the track itself, no edit to show
+  var noCrown=false;           // a shelf rendered that explicitly declines to crown one
   function shelfNote(list,crownCore){
     if(!list.length||crownCore===null||crownCore===undefined) return '';
     var bi=-1,bv=-1,i;
@@ -2224,6 +2225,7 @@ function renderResult(d,partial){
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
+      noCrown=true;
       shelf='<div class="sect">Closest versions. We did not crown one</div>'+
         '<div class="heldcard"><b>Nothing came close</b><span>The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
@@ -2231,6 +2233,7 @@ function renderResult(d,partial){
         'still the answer.</span></div>';
     } else {
     cands = _kept;
+    noCrown=true;
     shelf='<div class="sect">Closest versions. We did not crown one</div>'+
       (held
         ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload matched the clip '+
@@ -2307,6 +2310,17 @@ function renderResult(d,partial){
   // ORDER, top to bottom: the clip it came from, the song with its cover and the version
   // pill standing alone, the save confirmation directly under that pill, where to open it,
   // then the evidence.
+  /* THE HEADER MUST NOT ARGUE WITH THE SHELF. matchttl is set far above, before the
+     shelf exists, so it said "Match found" even when the shelf underneath went on to
+     say "Closest versions. We did not crown one" and "best audio match was 11%".
+     Both are true and they answer DIFFERENT questions - which song this is, and which
+     exact upload the clip used - but stacked 200px apart they read as the app
+     contradicting itself, which costs more trust than the miss itself does.
+
+     Naming the song is still a real result, so this does not downgrade to a failure.
+     It just stops the header claiming the half we did not get. */
+  if(!partial) document.getElementById('matchttl').textContent =
+      noCrown ? 'Song identified' : 'Match found';
   result.innerHTML='<div class="card">'+head+clip+hero+card+openin+wavebar+mash+shelf+plat+quotes+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
@@ -2814,9 +2828,32 @@ var pasteBtn=document.getElementById('pastebtn');
 if(pasteBtn) pasteBtn.onclick=function(){
   if(!(navigator.clipboard&&navigator.clipboard.readText)){urlEl.focus();return;}
   navigator.clipboard.readText().then(function(t){
-    if(parseLink(t).host){urlEl.value=t; run(t);}
+    if(parseLink(t).host){urlEl.value=t; syncFormAction(); run(t);}
     else {urlEl.focus(); showErr('No TikTok or Instagram link on the clipboard.');}
   }).catch(function(){urlEl.focus();});};
+
+/* ONE BUTTON AT A TIME. Paste and Find it were both sitting in the row permanently,
+   and on a 375px phone - the only width that matters here - that left the field 116px
+   wide. Measured: the placeholder "Paste a TikTok or Instagram link" rendered as
+   "Paste a TikTok or l", and a pasted URL showed about 18 characters. This is the
+   app's primary input.
+
+   They are never both the right action. An empty field can only want Paste; a field
+   with something in it can only want Find it. Swapping them frees ~65px and nearly
+   doubles the field, with no feature removed and nothing new to learn.
+
+   The submit button is only ever hidden, never disabled or detached, so Enter still
+   submits the form the whole time. */
+function syncFormAction(){
+  if(!pasteBtn) return;
+  var has = urlEl.value.trim().length > 0;
+  pasteBtn.hidden = has;
+  var go = document.getElementById('gobtn');
+  if(go && !go.hasAttribute('disabled')) go.hidden = !has;
+}
+urlEl.addEventListener('input', syncFormAction);
+urlEl.addEventListener('change', syncFormAction);
+syncFormAction();
 var phaseT=null, finishT=null;
 function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
   WIN=null; clipSecs=0;
@@ -2913,6 +2950,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
 }
 function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeout(phaseT);
   document.getElementById('gobtn').removeAttribute('disabled');
+  if(typeof syncFormAction==='function') syncFormAction();
   if(d&&d.result==='engine_down'&&curURL){
     // the scan is queued, not lost - boot retries it the moment the engine answers
     var q=lsGet('addify-queue','[]');
