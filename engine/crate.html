@@ -117,6 +117,8 @@ a{color:inherit;text-decoration:none}
 .frow .tt b,.urow .tt b{display:block;font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fmeta{display:flex;align-items:center;gap:7px;margin-top:5px;min-width:0}
 .fsrc{font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fheart{display:inline-grid;vertical-align:-2px;margin-left:6px;color:#F3697F}
+.fheart svg{width:12px;height:12px}
 .vchip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
 .vchip.orig{color:var(--good);background:color-mix(in oklab,var(--good) 15%,transparent)}
 .vchip.edit{color:var(--accent2);background:color-mix(in oklab,var(--accent) 16%,transparent);
@@ -159,6 +161,7 @@ a{color:inherit;text-decoration:none}
 .srecent button{font-size:12px;font-weight:600;color:var(--muted);padding:8px 13px;border-radius:var(--r-pill);
   background:var(--raise);border:1px solid var(--line);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sresh{font-size:12.5px;color:var(--muted);margin:18px 2px 10px}
+.snote{font-size:12px;line-height:1.45;color:var(--warn);margin:-4px 2px 10px}
 .slist{display:flex;flex-direction:column;gap:9px}
 .srow{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:16px;
   background:var(--raise);border:1px solid var(--line)}
@@ -2583,7 +2586,8 @@ function renderResult(d,partial){
   var plat=
     '<div class="secrow">'+
       '<button class="secbtn wide" id="otherbtn">'+IC.pladd+'<span>Add to another playlist</span></button>'+
-      '<button class="secbtn sq" id="likebtn" aria-label="Like" aria-pressed="false">'+IC.heart+'</button>'+
+      (function(){var on=isLiked(d.base_song,d.base_artist);
+        return '<button class="secbtn sq'+(on?' on':'')+'" id="likebtn" aria-label="'+(on?'Liked':'Like')+'" aria-pressed="'+on+'">'+(on?IC.heartfill:IC.heart)+'</button>';})()+
     '</div>'+
     '<div class="otherwrap" id="otherwrap" hidden><div class="sect">Add to another playlist</div><div class="plat">'+
       prow('Spotify',d.base_song,d.base_artist,'spotify')+
@@ -2643,7 +2647,10 @@ function renderResult(d,partial){
   if(lb) lb.onclick=function(){lb.classList.toggle('on');
     var on2=lb.classList.contains('on');
     lb.innerHTML=on2?IC.heartfill:IC.heart; lb.setAttribute('aria-pressed',String(on2));
-    lb.setAttribute('aria-label',on2?'Liked':'Like');};
+    lb.setAttribute('aria-label',on2?'Liked':'Like');
+    setLiked(d.base_song,d.base_artist,on2);
+    if(on2) saveOne(d);                           // a like is also a keep
+    else { try{ renderLib(); }catch(e){} }};
   var ab=document.getElementById('autobtn');
   if(ab) ab.onclick=function(){
     openSheet();};
@@ -2864,6 +2871,16 @@ var SQ=['linear-gradient(140deg,#FF6B8B,#F9407B)','linear-gradient(140deg,#4BE8B
 function lsGet(k,fb){try{return JSON.parse(localStorage.getItem(k)||fb);}catch(e){return JSON.parse(fb);}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 function loadCrate(){return lsGet('crate-saved','[]');}
+/* LIKES. The heart used to change colour and store nothing (found 2026-09-24): tap it,
+   leave, come back, and it was gone. Now it is remembered per song, liking a song saves it
+   to Finds if it is not there yet, and Finds can show only liked songs. It is a local like,
+   not Spotify Liked Songs: that needs the user-library-modify scope, and adding a scope
+   forces every connected account to re-authorise under Spotify's 5-user development cap. */
+function likeKey(song,artist){return ((song||'')+'|'+(artist||'')).toLowerCase();}
+function likedList(){return lsGet('addify-liked','[]');}
+function isLiked(song,artist){return likedList().indexOf(likeKey(song,artist))>=0;}
+function setLiked(song,artist,on){var k=likeKey(song,artist), a=likedList().filter(function(x){return x!==k;});
+  if(on) a.unshift(k); lsSet('addify-liked',a.slice(0,2000));}
 function storeCrate(a){lsSet('crate-saved',a); paintHome(); renderLib(); renderTrend();}
 /* every SCAN (including repeats of the same song) - this is what trending measures */
 function scanLog(){return lsGet('addify-scanlog','[]');}
@@ -3060,6 +3077,8 @@ function renderLib(){
   document.getElementById('libsub').textContent = all.length
     ? songs(all.length)+(edits?' · '+edits+' of them edit'+(edits===1?'':'s'):'') : 'Nothing saved yet';
   var chips=[['All',all.length],['Edits',edits],['Originals',all.length-edits]];
+  var nLiked=all.filter(function(x){return isLiked(x.song,x.artist);}).length;
+  if(nLiked) chips.splice(3,0,['Liked',nLiked]);
   if(un.length) chips.push(['Unmatched',un.length]);
   document.getElementById('libchips').innerHTML=chips.map(function(c){
     return '<button type="button" class="chipf'+(libFilter===c[0]?' on':'')+(c[0]==='Unmatched'?' amber':'')+
@@ -3092,6 +3111,7 @@ function renderLib(){
       if(libMonth && monthKey(x.ts)!==libMonth) return false;
       if(libFilter==='Edits') return isEdit(x);
       if(libFilter==='Originals') return !isEdit(x);
+      if(libFilter==='Liked') return isLiked(x.song,x.artist);
       return true;});
     list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
     var groups={}, gorder=[];
@@ -3101,7 +3121,7 @@ function renderLib(){
         var i=all.indexOf(x), sl=srcLine(x);
         return '<div class="frow" role="button" tabindex="0" data-i="'+i+'">'+
           '<span class="fart">'+(x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.note+'</span>'+
-          '<span class="tt"><b>'+esc(x.song)+'</b>'+
+          '<span class="tt"><b>'+esc(x.song)+(isLiked(x.song,x.artist)?'<i class="fheart" aria-label="Liked">'+IC.heartfill+'</i>':'')+'</b>'+
             '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span>'+
           (x.url?'<span class="fplay" role="button" tabindex="0" aria-label="Play '+esc(x.song)+'"'+
             ' data-play="'+esc(x.url)+'" data-src="" data-title="'+esc(x.song)+'">'+IC.play+'</span>':'')+
@@ -3164,7 +3184,12 @@ function renderSearch(){
     if(!r.length){
       body.innerHTML='<div class="smsg"><b>Nothing close</b><span>Try fewer words, or the one line you remember best.</span></div>';
       return;}
-    body.innerHTML='<p class="sresh">Best guesses - tap to hear a clip</p><div class="slist">'+
+    /* Vibe search is honest but early (Konnor's own effort order puts it after lyric search:
+       it needs a model over our edit database). Right now it matches words in upload titles,
+       so say that, and a weak list reads as early rather than broken. */
+    body.innerHTML='<p class="sresh">Best guesses - tap to hear a clip</p>'+
+      (sState.rmode==='vibe'?'<p class="snote">Vibe search is early. These match words in upload titles, not the sound itself.</p>':'')+
+      '<div class="slist">'+
       r.map(function(x,i){
         var sub=[x.artist,x.version].filter(Boolean).join(' · ');
         var saved=loadCrate().some(function(c){return c.song===x.title&&c.artist===x.artist;});
@@ -3209,7 +3234,13 @@ function sRun(q,mode){
     .then(function(d){ if(seq!==sSeq) return;          // a newer search won
       clearTimeout(to);
       if(!d||!d.ok){sState.busy=false; sState.err=(d&&d.error)||'Try again in a moment.'; renderSearch(); return;}
-      sState.busy=false; sState.res=(d.results||[]).slice(0,6); renderSearch();})
+      /* One row per song. The engine can return the same track from YouTube and from
+         SoundCloud; as two rows it reads like two different guesses. First one wins,
+         since the engine already ranked them. */
+      var seen={}, uniq=[];
+      (d.results||[]).forEach(function(x){var k=((x.title||'')+'|'+(x.artist||'')).toLowerCase();
+        if(!seen[k]){seen[k]=1; uniq.push(x);}});
+      sState.busy=false; sState.res=uniq.slice(0,6); sState.rmode=d.mode||''; renderSearch();})
     .catch(function(e){ if(seq!==sSeq) return; clearTimeout(to);
       sState.busy=false;
       sState.err=(e&&e.name==='AbortError')?'It took too long to answer. Try again.':'Could not reach the engine. Check your connection and try again.';
