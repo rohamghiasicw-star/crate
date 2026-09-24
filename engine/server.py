@@ -1456,7 +1456,21 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core):
 # known-correct: kelthraxx, mason and bouch all land at exactly 1.0000. The ski-slopes
 # crown Roham rejected sits at 0.9002. Nothing real was observed between 1.00 and 0.90, so
 # 6% is generous and still separates them cleanly.
+#
+# STILL 0.06 after the 2026-09-24 batch, and here is why it cannot be tightened: two
+# crowns landed at the SAME distance and Roham graded them opposite ways. "dj antoine -
+# welcome to st. tropez (slowed + reverb)" [infinity], vspeed 1.039, |log2| 0.0552, core
+# 1.000: "that one is like too slow ... you said 100% match but it wasn't". "Baby Kia - BK
+# Back Slowed Down (BUT BASS GETS LOUDER)", vspeed 0.9625, |log2| 0.0551: "think so,
+# pretty close man". No tolerance separates 0.0551 from 0.0552, so the band stays and two
+# other things change instead: a crown past _TEMPO_EXACT carries `crown_tempo_off` (the
+# card stops saying 100% and says "about 4% slower"), and when the first gate-clean row is
+# not exact the walk below prefers the nearest tempo among rows of the same core - on
+# St. Tropez that is the [slowed + reverbed] upload at 0.9772 (2.3% off), not the one at
+# 3.9%, which sat one row lower only on play count.
 _TEMPO_TOL = 0.06          # |log2(vspeed)|, about +-4%
+_TEMPO_EXACT = 0.03        # speed_exact's bucket 0 (about 2%); past this the crown says how
+                           # far off it is, and a closer same-core row may take its place
 
 # THE SOFT BAND, and Roham's Soap ruling: "0.9 slowed is basically closer to original you
 # know". A tempo gap is only proof of "a different edit" when there is a competing reading.
@@ -1488,8 +1502,172 @@ _SOFT_TEMPO_TOL = float(os.environ.get("CRATE_SOFT_TEMPO_TOL", 0.0))
 # about +-4%, the same window _TEMPO_TOL uses to call two tempos equal.
 _SOURCE_AGREE_TOL = float(os.environ.get("CRATE_SOURCE_AGREE_TOL", 0.06))
 
+# THE SOURCE HAS TO BE PLAIN. The source branch below crowns an upload the clip was
+# re-pitched FROM, so the upload must be the recording itself, not somebody's edit of
+# it. `_SPEED_CLAIM` only covers slowed/sped words, and that let through:
+#   - "Ariana Grande-Side To Side ft Nicki Minaj [BASS BOOSTED]" (clip 16), crowned as
+#     the source at vspeed 0.8027 while the official "Side To Side" sat one row down at
+#     the same ratio and a higher core. Roham: "its not the bass boosted one its the slow
+#     and reverb". A bass-boosted rip cannot be the thing the clip was cut from without
+#     also claiming the clip is bass boosted, which nothing measured.
+#   - "King Von Ft Lil Durk - Crazy Story 2.0 (FAST)" (clip 20) and "Taylor Swift - Blank
+#     space (Rock version)" (clip 31): a tempo word and a rendition word, neither in
+#     _SPEED_CLAIM, each crowned as the source of a clip Roham heard as the plain song
+#     slowed.
+# EDIT_WORDS and OTHER_RENDITION are the engine's own definitions of "not the plain
+# release"; the tempo words are the ones neither list carries (fast/quick/chopped/
+# screwed are speed edits in everything but name). The ski-slopes case this branch was
+# built for is untouched: "ski slopes" carries none of these words.
+#
+# Two things the regexes alone get wrong, both caught in the offline replay:
+#   - "plain" is relative to the recording Shazam NAMED. When the base is "Trndsttr
+#     [Lucian Remix]" (clip 9), "Best Black Coast - Trndsttr Lucian Remix I" is the plain
+#     upload of that recording, and reading "Remix" as an edit word threw away a source
+#     crown Roham had graded fine ("yeah maybe a bit slowed"). The base title's own edit
+#     words are removed from the candidate before the test.
+#   - the regexes are ASCII and uploaders title edits in maths fonts ("BK Back 𝙎𝙡𝙤𝙬𝙚𝙙
+#     𝘿𝙤𝙬𝙣", clip 41), which read as carrying no edit word at all. crate_engine has
+#     _ascii_fold for exactly this; apply it first.
+_TEMPO_WORDS = re.compile(r"\b(fast(er)?|quick|chopped|screwed|pitch(ed)?|tekk)\b", re.I)
+_RENDITION_WORDS = re.compile(r"\b(remix|version|mashup|flip|edit)\b", re.I)
 
-def _crown_tempo_mismatch(top, measured=None):
+
+def _title_less_base(title, base_title=None):
+    """The candidate title, ASCII-folded, with the base song's own RENDITION words removed.
+
+    Only rendition words ("remix", "version", "cover"...), never speed words. A base
+    named "Welcome to St. Tropez (... Radio Edit slowed)" [velours] is a slowed copy
+    that Shazam happens to hold, so a candidate titled "slowed" is still an edit of the
+    song and not the plain source; exempting "slowed" there crowned exactly that (clip
+    25, ShazamKit run, in the offline replay)."""
+    t = E._ascii_fold(title or "")
+    for w in {m.group(0).lower() for m in E.EDIT_WORDS.finditer(E._ascii_fold(base_title or ""))}:
+        if _SPEED_CLAIM.search(w) or _TEMPO_WORDS.search(w):
+            continue
+        t = re.sub(r"\b%s\b" % re.escape(w), " ", t, flags=re.I)
+    return t
+
+
+def _is_plain_upload(title, base_title=None):
+    t = _title_less_base(title, base_title)
+    return not (_SPEED_CLAIM.search(t) or _TEMPO_WORDS.search(t)
+                or E.EDIT_WORDS.search(t) or E.OTHER_RENDITION.search(t))
+
+
+# ONE REFERENCE IS ONE OPINION. measure_consensus is built to outvote a bad reference:
+# every ref votes, the densest cluster wins, a lone off-speed re-upload loses. With ONE
+# ref there is no vote, and the reading still came back `confident` (a tight 2-window
+# cluster inside a single file is self-agreement, not agreement). On the 2026-09-24
+# batch every wrong speed came from exactly this:
+#   - clip 20 measured 0.7208 on one ref, the "(FAST)" upload above; the sweep had
+#     matched the song at 1.08x (0.93x) and every plain upload sat at 0.899. The lone
+#     ref overrode both and then crowned itself.
+#   - clip 22 measured 0.5869 on one ref while four bass-boosted rips of the same
+#     recording all sat at 0.8286 (0.5869 is 0.8286 / sqrt 2, a half-octave alias in
+#     the window lock; the pool had the right number and nothing asked it).
+#   - clips 21 and 37 are the same audio and flip between "as posted" and "sped up
+#     ~1.18x" depending on whether a single ref turned up.
+# So a single-ref reading needs a WITNESS before it may overrule anything, and two are
+# already in hand at no cost:
+#   - the counter-speed sweep. A hit at rate r puts the clip inside Shazam's window of
+#     1/r, and the label only carries a ratio when the sweep actually moved off 1.0.
+#     0.12 in log2 (about 8.7%) is outside that window with room to spare: the F2 study
+#     bracketed shazamio's window at 6.3-7.9% on the same batch.
+#   - the verified pool. Uploads whose titles claim no tempo change (bass boosted is EQ,
+#     not tempo) and that verify() measured off the clip at the same ratio. Three of them
+#     within 1.4% of each other IS a consensus of three references - the evidence class
+#     measure_consensus wants, taken with verify's xcorr instead of the high-pass lock.
+#     Fewer than three, or spread out, say nothing. verify() writes vspeed 1.0 exactly
+#     when its own confidence is too low to measure, so that value is not a witness.
+# A contradicting sweep throws the reading out; a contradicting pool replaces it with
+# the pool's own cluster and ref count, so the payload says 4 refs, not 1. A reading no
+# witness can speak to stands: an uncontradicted measurement is still the best number
+# in hand, and throwing it out cost clip 16 its correct "slowed ~0.78x" in simulation.
+#
+# Two-ref and better readings are NOT touched. Of the regression clips, kelthraxx and
+# mason measure on 2 refs, bouch on none; kyks measures 1.0188 on one ref against a
+# sweep that matched at 1.4x (0.71x), which this drops - its crown sits at vspeed 1.0193
+# and clears the tempo gate on its own, and its label already comes from the sweep, so
+# nothing on its card moves (replayed offline over testruns/lastbatch).
+_SINGLE_REF_TOL = float(os.environ.get("CRATE_SINGLE_REF_TOL", 0.12))
+_POOL_WITNESS_MIN = 3
+_POOL_WITNESS_SPREAD = 0.02       # log2, about 1.4%: the bucket width _edit_sig uses
+
+
+def _phase1_speed(label):
+    """The sweep's own ratio out of its label ("slowed ~0.93x" -> 0.93), or None when
+    phase 1 said only "as posted" - a straight hit is not a measurement of 1.0, Shazam
+    also matched clip 16 straight at 0.80x of the original."""
+    m = re.search(r"~(\d+\.\d+)x", label or "")
+    return float(m.group(1)) if m else None
+
+
+def _pool_speed(verified, base_title=None):
+    """Speed the plain-titled, audio-verified pool agrees on: (speed, n) or (None, 0)."""
+    vs = []
+    for c in verified or []:
+        if (c.get("core") or 0) < E.CORE_MERIT:
+            continue
+        t = _title_less_base("%s %s" % (c.get("title") or "", c.get("uploader") or ""),
+                             base_title)
+        # BASS BOOST IS THE ONLY EDIT WORD A WITNESS MAY CARRY. It is EQ, not tempo, so a
+        # boosted rip of the original still runs at the original's speed. Every other
+        # EDIT_WORDS family is a tempo suspect: a "(reverb)"-only title is a slowed rip
+        # more often than not, and hoodtrap / mylancore / jersey club run off-tempo by
+        # construction (clip 37's hoodtrap remix reads 1.15x of the official). Three such
+        # rips agreeing at 1.0 would outvote a plain reference that had the clip right,
+        # which is deriving the magnitude from a fellow edit (hard-rules). Strip the bass
+        # words, then hold the rest to EDIT_WORDS. No 2026-09-24 batch row moves: the
+        # clip 22 rips are titled bass boosted only, and no other pool reached three.
+        t = _BASS_CLAIM.sub(" ", t)
+        if (_SPEED_CLAIM.search(t) or _TEMPO_WORDS.search(t) or E.EDIT_WORDS.search(t)
+                or E.OTHER_RENDITION.search(t) or _RENDITION_WORDS.search(t)):
+            continue
+        v = c.get("vspeed_locked")
+        if v is None:
+            v = c.get("vspeed")
+        if not v or v <= 0 or float(v) == 1.0:
+            continue
+        vs.append(math.log2(float(v)))
+    if len(vs) < _POOL_WITNESS_MIN:
+        return None, 0
+    vs.sort()
+    med = vs[len(vs) // 2]
+    cl = [x for x in vs if abs(x - med) <= _POOL_WITNESS_SPREAD]
+    if len(cl) < _POOL_WITNESS_MIN:
+        return None, 0
+    return 2.0 ** (sum(cl) / len(cl)), len(cl)
+
+
+def _reconcile_single_ref(measured, phase1_label, verified, base_title=None):
+    """(measured, note). Unchanged for 2+ refs or no witness; None when the sweep
+    contradicts a lone ref; the pool's own consensus when the pool does."""
+    if not measured or not measured.get("confident") or (measured.get("agree") or 0) != 1:
+        return measured, None
+    m = float(measured.get("speed") or 0)
+    if m <= 0:
+        return measured, None
+    p1 = _phase1_speed(phase1_label)
+    if p1 and abs(math.log2(m / p1)) > _SINGLE_REF_TOL:
+        return None, ("one reference read %.3fx but the counter-speed sweep matched the "
+                      "song at ~%.2fx, so that reference is not at the original's speed"
+                      % (m, p1))
+    ps, n = _pool_speed(verified, base_title)
+    if ps and abs(math.log2(m / ps)) > _SINGLE_REF_TOL:
+        # same deadband and wording as measure_consensus, so consumers cannot tell the
+        # two apart except by `source`
+        if abs(math.log10(ps)) < math.log10(1.045):
+            lbl = "as posted"
+        else:
+            lbl = "%s ~%.2fx" % ("slowed" if ps < 1 else "sped up", ps)
+        rep = dict(measured, speed=round(ps, 4), agree=n, label=lbl, source="pool",
+                   reason="pool of %d plain uploads outvoted one reference at %.3f" % (n, m))
+        return rep, ("one reference read %.3fx; %d plain uploads of the same recording "
+                     "agree on %.3fx" % (m, n, ps))
+    return measured, None
+
+
+def _crown_tempo_mismatch(top, measured=None, base_title=None):
     """The crowned upload is the same recording but not at the speed that played.
 
     Distinct from `_crown_contradicts`, which reads TITLES. This reads the measurement, so
@@ -1528,7 +1706,9 @@ def _crown_tempo_mismatch(top, measured=None):
     # against real reference audio, and this pair's own vspeed. A candidate that is simply
     # a different edit does not corroborate the clip's measured ratio, so it still fails.
     m_speed = (measured or {}).get("speed") if (measured or {}).get("confident") else None
-    if m_speed and m_speed > 0 and not _SPEED_CLAIM.search(title):
+    # `_is_plain_upload`, not `not _SPEED_CLAIM`: see _TEMPO_WORDS. A "[BASS BOOSTED]",
+    # "(FAST)" or "(Rock version)" upload is somebody's edit and cannot be the source.
+    if m_speed and m_speed > 0 and _is_plain_upload(title, base_title):
         if abs(math.log2(float(v) / float(m_speed))) <= _SOURCE_AGREE_TOL:
             return None, v          # this upload is the SOURCE; clip is it re-pitched
     if (_SOFT_TEMPO_TOL > 0 and d <= _SOFT_TEMPO_TOL
@@ -1931,7 +2111,35 @@ def _phase2(ctx, on_cand=None):
                             measured = r
                 except Exception:
                     measured = None
-                E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured))
+                # A LONE REFERENCE GETS CROSS-EXAMINED before it can overrule the sweep
+                # or crown a source. See _reconcile_single_ref. `res["speed"]` is still
+                # the phase-1 label here (nothing below has written it yet), which is the
+                # sweep's number when the sweep moved and "as posted" when it did not.
+                measured, _srnote = _reconcile_single_ref(measured, res.get("speed"), verified,
+                                                          base_title)
+                if _srnote:
+                    res["speed_disputed"] = _srnote
+                if not measured:
+                    # NO READING AT ALL, BUT THE POOL AGREES. Clip 16 (Side To Side): the
+                    # tightened ref filter rightly stopped measuring against the
+                    # "[BASS BOOSTED]" rip, nothing else was confident, and the card fell
+                    # back to phase 1's "as posted" on a clip slowed to 0.80x - while the
+                    # official "Side To Side" and two boosted rips of the same recording all
+                    # sat at vspeed 0.8027. Three or more plain (bass words allowed, EQ is not
+                    # tempo) audio-verified uploads agreeing within 1.4% ARE a measurement.
+                    # Only ever fills a gap: any confident reading above wins untouched.
+                    _ps, _pn = _pool_speed(verified, base_title)
+                    if _ps:
+                        _lbl = ("as posted" if abs(math.log10(_ps)) < math.log10(1.045) else
+                                "%s ~%.2fx" % ("slowed" if _ps < 1 else "sped up", _ps))
+                        measured = {"speed": round(_ps, 4), "agree": _pn, "confident": True,
+                                    "label": _lbl, "source": "pool",
+                                    "reason": "no confident reference; %d plain uploads of the "
+                                              "same recording agree" % _pn}
+                if measured and measured.get("source") == "pool":
+                    res["speed_source"] = "pool"
+                E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured),
+                       disputed=bool(_srnote))
 
             # "as posted" HAS TO BE SAYABLE AS A FINDING, NOT ONLY AS A DEFAULT.
             # Until now a confident as-posted reading was thrown away (the `pass` branch
@@ -1974,31 +2182,77 @@ def _phase2(ctx, on_cand=None):
             # The gates themselves are unchanged; only how many rows they are offered is.
             _gate_pool = [c for c in (verified or [])
                           if (c.get("core") or 0) >= E.CORE_KEEP] if top else []
-            _first_reject = None
-            for _cand in (_gate_pool or []):
-                _source_v = None
-                _why, _source_v = _crown_tempo_mismatch(_cand, measured)
+            _rejects = {}          # pool index -> (why, cand); the lowest index is shown
+            # TWO PASSES, SAME GATES, SAME COST. The pure gates (tempo, title) run over
+            # the whole pool first; the null control, which downloads and verifies, still
+            # runs on one row at a time, exactly as the single loop did. What the split
+            # buys is the ORDER the clean rows are tried in. Rank order put "dj antoine -
+            # welcome to st. tropez (slowed + reverb)" [infinity] at vspeed 1.039 above
+            # the [slowed + reverbed] upload at 0.9772 - same recording, same core 1.000,
+            # separated only by play count - and the walk stopped at the first clean row,
+            # so the crown was the one 3.9% off when one 2.3% off sat directly under it.
+            # Roham: "that one is like too slow". So when the first clean row is not exact
+            # (past _TEMPO_EXACT), the nearest tempo among clean rows OF THE SAME CORE
+            # takes its place; a row that is exact, or whose core is lower, is left where
+            # rank_key put it, so core still decides the song and this only picks the
+            # family member. A source row (clip re-pitched from it) never outranks a row
+            # inside the tempo band.
+            _clean = []
+            for _i, _cand in enumerate(_gate_pool or []):
+                _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title)
                 if not _why:
                     _why = _crown_contradicts(_cand, res.get("speed"), mdir,
                                               measured=measured,
-                                              tilt_readable=(_source_v is None))
-                if not _why:
-                    _why = _time_reversed_null(src.get("audio"), _cand.get("url"),
-                                               _cand.get("core"))
+                                              tilt_readable=(_sv is None))
                 if _why:
-                    if _first_reject is None:
-                        _first_reject = (_why, _cand)
+                    _rejects[_i] = (_why, _cand)
                     continue
-                top = _cand
+                _clean.append((_i, _cand, _sv))
+
+            def _tempo_d(c):
+                _v = c.get("vspeed_locked")
+                if _v is None:
+                    _v = c.get("vspeed")
+                return abs(math.log2(float(_v))) if _v and float(_v) > 0 else 0.0
+
+            def _tempo_known(c):
+                # verify() writes vspeed 1.0 EXACTLY when its own confidence is too low to
+                # measure (verify.py, "unreliable -> don't invent a speed edit"). Real
+                # readings come back 0.9991, 1.0001, 1.0006 (the gate crowns), never the
+                # bare 1.0. An unmeasured row cannot be "nearer" than anything, so it may
+                # keep the crown rank_key gave it but never take one from a measured row.
+                return (c.get("vspeed_locked") is not None
+                        or (c.get("vspeed") is not None and float(c["vspeed"]) != 1.0))
+
+            top = None
+            _source_v = None
+            while _clean:
+                _i0, _c0, _s0 = _clean[0]
+                if _s0 is None and _tempo_d(_c0) <= _TEMPO_EXACT:
+                    _pick = _clean[0]
+                else:
+                    _band = [r for r in _clean
+                             if r is _clean[0]
+                             or ((r[1].get("core") or 0) >= (_c0.get("core") or 0) - 0.05
+                                 and _tempo_known(r[1]))]
+                    _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
+                                                       _tempo_d(r[1]), r[0]))
+                _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
+                                           _pick[1].get("core"))
+                if _why:
+                    _rejects[_pick[0]] = (_why, _pick[1])
+                    _clean.remove(_pick)
+                    continue
+                top, _source_v = _pick[1], _pick[2]
                 break
-            else:
+            if top is None:
                 # every row above the bar was refused - report the FIRST refusal, which is
                 # the one about the strongest candidate and the one worth showing.
-                if _first_reject:
+                if _rejects:
+                    _first_reject = _rejects[min(_rejects)]
                     res["crown_rejected"] = _first_reject[0]
                     res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
-                top = None
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.
@@ -2015,6 +2269,22 @@ def _phase2(ctx, on_cand=None):
                     # clip running off its tempo. Presentation can then stop short of the
                     # "exact version" claim on a row we have not earned it on.
                     res["crown_is_source"] = True
+                else:
+                    # INSIDE THE GATE BUT NOT DEAD ON. _TEMPO_TOL admits a crown up to
+                    # about 3.5% off the clip; speed_exact's own "exact" bucket is 2%.
+                    # A crown in between is the right family at not quite the right
+                    # tempo, and the card was calling it a 100% match (clip 25: 3.9%
+                    # slower, "you said 100% match but it wasn't"). Say the number.
+                    _tv = top.get("vspeed_locked")
+                    if _tv is None:
+                        _tv = top.get("vspeed")
+                    if _tv and float(_tv) > 0 and abs(math.log2(float(_tv))) > _TEMPO_EXACT:
+                        # vspeed is the clip's tempo over the upload's, so v > 1 means the
+                        # upload is the slower of the two.
+                        res["crown_tempo_off"] = ("this upload runs about %.0f%% %s than the "
+                                                  "clip" % (abs(1.0 - 1.0 / float(_tv)) * 100.0,
+                                                            "slower" if float(_tv) > 1.0
+                                                            else "faster"))
             else:
                 _source_v = None
 

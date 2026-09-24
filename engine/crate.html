@@ -874,7 +874,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
      play count on ONE line at 375px, which is the whole reason the meta was collapsed. */
   .trk .rkn{width:13px}
   .trk .mt{gap:4px 7px}
-  .trk .cf{font-size:10.5px}
+  .trk .cf,.trk .cfw{font-size:10.5px}
   .trk .src{font-size:10px}
   .trk .src.hasmark{padding:2px 6px 2px 4px;gap:3px}
   .trk .src.hasmark svg{width:12px;height:12px}
@@ -932,6 +932,13 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    the light theme's crown row is pale lavender, and #fff on it was measured unreadable in
    the light-theme screenshot. --text is white in dark and near-black in light. */
 .trk.top .cf.s2,.trk.top .cf.s1{color:var(--text)}
+/* WHY THE FIGURE IS NOT EXACT, in four words ("clip 4% faster", "EQ 13.8 dB off"). Same
+   size as the figure, one step quieter, and never amber: it is a measurement, not an
+   alarm - the flags below the title stay the only thing on this screen allowed to shout.
+   flex:none keeps it one unit, so at 375px it wraps whole instead of splitting a number
+   from its unit. */
+.cfw{font-size:11px;font-weight:600;color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
+.trk.top .cfw{color:color-mix(in oklab,var(--text) 78%,transparent)}
 .trk.top .cfl.s2 i,.trk.top .cfl.s1 i{background:var(--text)}
 /* A caveat the audio can back. Amber, small, under the title so it reads as a footnote
    on that row and not as a second headline. Only the two the ENGINE itself flagged - the
@@ -1922,23 +1929,137 @@ function confTier(v){var p=Math.round(v*100);
    perfect 1.000 on the same slowed clip - so a 100% here means "nothing in the audio
    rules it out", not "proven". The tooltip says so in as many words. */
 function confPct(v){return Math.max(0,Math.min(100,Math.round(v*100)));}
-/* `full` spells the crown's chip out as "N% audio match" (layout spec item 5). The MOCK
-   prints a flat "100% audio match" and that is the one thing it cannot have: the number is
-   always the rendered value of confPct(core), never a fixed string.
-     - core saturates at 1.000 on low-transient audio (see the note above), so 100% means
-       "nothing in the audio rules it out", not "proven".
-     - server.py's _cand_row writes core:null when the engine has no value, and this
-       function then prints nothing rather than a zero.
-     - the crown is ranked on more than core, which is why shelfNote right underneath can
-       legitimately say a lower row scores higher on audio alone. A static 100% would
-       contradict that sentence on the same screen.
-   The tooltip is unchanged, word for word. Rows keep the short "N% match" so the meta line
-   still fits on one line at 375px. */
-function confChip(v,full){
-  if(v===null||v===undefined) return '';
-  return '<span class="cf s'+confTier(v)+'" title="Audio match '+confPct(v)+'%. How closely this '+
-    'upload lines up with the clip. High is good evidence, not proof.">'+confPct(v)+
-    (full?'% audio match':'% match')+'</span>';}
+/* ---------- THE FIGURE ON EVERY ROW IS A VERSION MATCH, NOT RAW `core` ----------
+   Roham, on the 2026-09-24 batch (lastbatch/doc_full.txt):
+     #24 Love Sosa  "definitely not a 100% match for the soundcloud version you sent, more
+                     bass than even that"
+     #25 St. Tropez "you said 100% match but it wasn't 100% match"
+     #30 Love Me Like You Do "very close dont know why its only 20% match"
+   All three are the same bug: the chip printed round(core*100), and core only answers "is
+   this the same RECORDING". It is built to see straight through speed and EQ, and it
+   saturates at 1.000 on different renditions and even unrelated songs (engine skill,
+   findings/core-saturation.md). So a same-recording upload 4% off the clip's tempo (#25,
+   vspeed 1.039) and one on a different EQ (#24, slope_delta +0.689, most of the 0.734 a
+   real 14 dB shelf reads) both said "100% audio match", while a slowed+reverb upload of
+   the right song (#30, core 0.175-0.197) said "18%"/"20%", which reads as a wrong answer.
+
+   The figure now combines the three legs the payload already carries on every row:
+     core   - same recording. Necessary, never sufficient.
+     vspeed - clip tempo / this upload's tempo (locked where the engine had a lock).
+              Inside 2% (|log2| <= 0.03, crate_engine rank_key's speed_exact bucket 0)
+              is "same speed". Outside it the figure loses 3% of itself per 1% of tempo
+              gap, floored at half: 4% off -> x0.88, 10% off -> x0.70, a wrong-speed
+              render never below half of its audio evidence. Proportional, because the
+              speed lock is bass-robust and fine-grained (hard-rules: speed beats bass).
+     bass/slope - EQ, judged only at the same speed (across a tempo gap the tilt is
+              forged by the pitch shift, the same reason candFlag refuses it on a
+              pitched clip). Off when either leg clears the engine's own gap: tilt >= 6 dB
+              (BASS_STRIP_GAP) or slope >= 0.40 dB/decade (SLOPE_BOOST_GAP). An EQ miss
+              only CAPS the figure (90 at the gap, one point less per dB past it, never
+              under 70; on a clip that measured pitched, a flat 90 and no dB figure, see
+              CLIP_PITCHED below), it never drags a row down: both legs are noisier than the lock
+              and the crown's bass_off pick must not be argued with on a mid-core row.
+              Bass and speed nudge, they never reject.
+   "Exact match" needs all three: core >= CORE_SAME, speed measured inside 2%, both EQ legs
+   measured inside their gaps. Nothing else can print a figure above 94, so a green
+   top-tier chip only ever appears on a row every measurement we take agrees on. Checked
+   against Roham's ear on the 9 crowns of the batch that have core >= 0.95 at the clip's
+   speed: the three he called exact (#06 "that is exact", #14 "bang", #42 "correct") are
+   the three with |slope| under 0.40 (0.317, 0.379, 0.226); the six he called off or "might
+   be the original" (#11, #24, #34, #36 x2, #38) all sit at 0.69 or above.
+   Under CORE_KEEP there is no number at all. The verifier is saying "the audio did not
+   confirm this upload", which is a statement about the upload and not a grade out of 100
+   for the song: "Unconfirmed", or "No audio match" under SHELF_FLOOR.
+   Still never "confidence" or "sure": Exact means nothing we measure rules it out. */
+var SPEED_BAND=0.03,       // |log2 vspeed|; crate_engine rank_key, speed_exact bucket 0
+    SLOPE_GAP=0.40,        // server.py SLOPE_BOOST_GAP, dB per decade
+    /* THE CLIP MEASURED SLOWED OR SPED. Set by renderResult from d.speed (the same test
+       candFlag runs before it will read a tilt), cleared by liveReset. A page-level flag
+       rather than an argument because trackRow is shared by the live "Best so far" list
+       and the final shelf, and a streamed row and a final row must never print two
+       different figures for one upload: renderResult runs on the /base payload before
+       the first candidate streams, so the live rows already see it. */
+    CLIP_PITCHED=false;
+function vmatch(c){
+  var core=c?c.core:null;
+  if(core===null||core===undefined) return null;
+  var v=c.vspeed, sl=c.slope, tilt=Math.abs(c.bass||0);
+  var s=(typeof v==='number'&&v>0)?Math.abs(Math.log2(v)):null;
+  var slOK=(typeof sl==='number');
+  var m={core:core, exact:false, pct:null, word:'', why:'', speed:'', eq:''};
+  // Same magnitude and direction as server.py's tempo refusal ("clip plays N% faster than
+  // this upload"), so a held-back card and a row never print two numbers for one gap.
+  // One decimal under 10%, or a 2.3% gap would print as "2%" beside a 2% band.
+  var off=s===null?0:Math.abs(1-v)*100,
+      offTxt=(off<9.95?off.toFixed(1):String(Math.round(off)))+'% '+(v>1?'faster':'slower');
+  m.speed = s===null ? 'not measured'
+          : s<=SPEED_BAND ? 'matches the clip (within 2%)'
+          : 'clip plays '+offTxt+' than this upload';
+  if(core<CORE_KEEP){
+    m.word = core<SHELF_FLOOR ? 'No audio match' : 'Unconfirmed';
+    m.eq='not compared'; return m;}
+  var f=core, eqOff=false;
+  if(s!==null&&s>SPEED_BAND){
+    f*=Math.max(0.5,1-0.03*off);
+    m.why='clip '+offTxt;
+    m.eq='not compared across a speed gap';
+  } else if(tilt>=BASS_GAP||(slOK&&Math.abs(sl)>=SLOPE_GAP)){
+    // The cap slides with the tilt past the gap, one point per dB, floored at 70: a
+    // flat 90 read a 24.9 dB-off row (#41 ShazamKit, row 3) as "measures closer" than
+    // the crown and an 18 dB-off "(Healthy Bass Boost)" (#38, row 4) as a close call
+    // with three same-EQ rows, which is the measurement saying it CAN separate them
+    // and the figure saying it cannot. At the gap itself nothing changes (6 dB -> 90).
+    // A slope-only miss has no dB figure to scale on (its units are uncalibrated,
+    // verify.py: "scale is ~5x smaller than tilt's dB") so it keeps the flat 90.
+    eqOff=true;
+    if(CLIP_PITCHED){
+      // ON A PITCHED CLIP THE dB SCALE IS NOT ADMISSIBLE. candFlag (below) and server.py's
+      // `tilt_readable` refuse to read a tilt on a clip that measured slowed or sped, and
+      // the regression gate shows why the slide cannot run here either: kyks (0.71x) has
+      // its documented crown at core 0.974, vspeed 1.019 - same tempo as the clip - and a
+      // tilt of -44.6 dB against it, with the next row at -28.9 dB. Two ultra-slowed
+      // renders of one recording do not differ by a 44 dB shelf; that is the measure
+      // breaking on low-transient audio (findings/core-saturation.md), and the slide would
+      // have printed "70% version match, EQ 44.6 dB off" on the gate's right answer.
+      // Same tempo, so the legs may still DISAGREE (not Exact, flat 90), but the dB figure
+      // is not printed and does not scale anything. #26 (0.80x, "nail on head") loses its
+      // "EQ 8.1 dB off" span for the same reason.
+      f=Math.min(f,0.90);
+      m.eq='reads off the clip, but the clip is pitched and that reading is not reliable there';
+    } else {
+      f=Math.min(f, tilt>=BASS_GAP ? Math.max(0.70, 0.90-0.01*(tilt-BASS_GAP)) : 0.90);
+      // Only the tilt leg gets words on the row. On a slope-only miss the server's own
+      // claim sentence can say "which is the same EQ" (it reads the tilt leg alone), and a
+      // row that argued with its own caveat would be worse than a number without a reason.
+      // The tooltip carries it instead.
+      if(tilt>=BASS_GAP){ m.why='EQ '+tilt.toFixed(1)+' dB off'; m.eq=tilt.toFixed(1)+' dB off the clip';}
+      else m.eq='one of our two EQ readings differs from the clip';
+    }
+  } else m.eq = slOK ? 'matches the clip' : 'not fully measured';
+  m.exact = core>=CORE_SAME && s!==null && s<=SPEED_BAND && slOK && !eqOff;
+  if(!m.exact) f=Math.min(f,0.94);
+  m.pct = m.exact ? 100 : Math.max(0,Math.round(f*100));
+  return m;}
+/* One comparable number per row for the shelf notes. Exact sorts as 100 here and is never
+   printed as one; unconfirmed rows sort under every row that has a figure. */
+function vfig(m){return !m?-2:m.pct===null?-1:m.pct;}
+function vtxt(m){return !m?'':m.exact?'exact':m.pct===null?m.word.toLowerCase():m.pct+'%';}
+function vtier(m){return m.exact?3:m.pct===null?0:m.pct>=80?2:m.pct>=CORE_KEEP*100?1:0;}
+/* `full` spells the crown's chip out (layout spec item 5): "N% version match", or "Exact
+   match" when every leg agrees. Rows keep the short "N% match" so the meta line still fits
+   at 375px; the reason sits in its own span so it wraps as a unit instead of splitting.
+   server.py's _cand_row writes core:null when the engine has no value, and this prints
+   nothing rather than a zero. A payload saved before vspeed/slope existed can never read
+   Exact: a leg we did not measure is not a leg that agreed. */
+function confChip(c,full){
+  var m=vmatch(c); if(!m) return '';
+  var tip='Same recording: '+(m.core>=CORE_SAME?'strong':m.core>=0.62?'likely':
+            m.core>=CORE_KEEP?'partial':'not confirmed')+
+          '. Speed: '+m.speed+'. EQ: '+m.eq+'. Exact only when all three agree. '+
+          'Good evidence, not proof.';
+  var lbl=m.exact?'Exact match':m.pct===null?m.word:m.pct+(full?'% version match':'% match');
+  return '<span class="cf s'+vtier(m)+'" title="'+esc(tip)+'">'+esc(lbl)+'</span>'+
+    (m.why?'<span class="cfw">'+esc(m.why)+'</span>':'');}
 function confRule(v){
   if(v===null||v===undefined) return '';
   return '<span class="cfl s'+confTier(v)+'"><i style="width:'+Math.max(2,confPct(v))+'%"></i></span>';}
@@ -2140,7 +2261,7 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
       ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
       ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>'+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
-    '<div class="mt">'+confChip(c.core,!!top)+
+    '<div class="mt">'+confChip(c,!!top)+
       (src?srcChip(src):'')+
       (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
       (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div>'+
@@ -2158,7 +2279,7 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
    ORDER here is provisional - the winner is decided at the end against the full pool -
    so the top row says "Best so far", never "the exact version playing". */
 var LIVE=[];
-function liveReset(){LIVE=[]; var b=document.getElementById('livelist'); if(b) b.innerHTML='';}
+function liveReset(){LIVE=[]; CLIP_PITCHED=false; var b=document.getElementById('livelist'); if(b) b.innerHTML='';}
 function liveAdd(c){
   if(!c||!c.url) return;
   for(var i=0;i<LIVE.length;i++) if(LIVE[i].url===c.url) return;   // never list one twice
@@ -2229,6 +2350,10 @@ function artGlow(src, fallback){
 function urlHandle(u){var m=String(u||'').match(/tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[\/?#]|$)/); return m?m[1]:'';}
 function renderResult(d,partial){
   lastResult=d;
+  // Read before any row is built (vmatch reads it). The final payload can carry a speed
+  // label the /base payload did not (the consensus re-measure, see the stale-speed note
+  // in the no-crown branch), and this runs again on that payload, so the shelf follows.
+  CLIP_PITCHED=/slow|sped|speed|nightcore|daycore/i.test((d&&d.speed)||'');
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
   if(d.result==='engine_down'){
     result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
@@ -2280,6 +2405,18 @@ function renderResult(d,partial){
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
+  /* ONE MEANING OF "EXACT" ON THE WHOLE SCREEN. The heading said "The exact version
+     playing" over every crown, so it sat over a "70% version match, clip 10% slower"
+     (#30 on ShazamKit: the official upload, which server.py itself flags
+     `crown_is_source` - "Presentation can then stop short of the 'exact version' claim on
+     a row we have not earned it on" - and nothing here ever read it) and over #25's crown
+     4% off tempo. The heading, the save line and the play label now say "exact" only when
+     the crown's own chip does. When a lower row measures closer than the crown (#08 on
+     ShazamKit: an Exact official upload under a 74% remix) even "closest" would be false,
+     so it is named for what it is, the engine's pick, and shelfNote says which row to
+     check. The crown itself is untouched - this is wording, the engine still decides. */
+  var exM=ex?vmatch(ex):null, exExact=!!(exM&&exM.exact), exBeat=false;
+  if(ex) cands.forEach(function(c){ if(c.url!==ex.url&&vfig(vmatch(c))>vfig(exM)) exBeat=true; });
   /* ---------- THE SAVE CARD, HOISTED (layout spec item 3) ----------
      It has to sit directly under the version pill now, which means it is built before the
      hero rather than after the shelf. It depends on `ex`, so this block moves up here as a
@@ -2294,7 +2431,7 @@ function renderResult(d,partial){
   // so we say plainly that the exact version was identified and the original was saved.
   var exactSavable = !!(ex && (ex.source||'').toLowerCase()!=='soundcloud');
   var savedLine = (ex && !exactSavable)
-      ? 'Exact version identified, original saved'
+      ? (exExact?'Exact version identified':'Closest version found')+', original saved'
       : 'Your playlist';
   // If the user turned auto-save off, nothing was written - so the card must not claim
   // it was. It becomes a neutral one-tap Save instead of a green confirmation.
@@ -2390,7 +2527,7 @@ function renderResult(d,partial){
   var pv=(ex&&ex.url)||'';
   var pvsrc=(ex&&(ex.source||'').toLowerCase())||'';
   var pvttl=(ex&&ex.title)||d.base_song||'';
-  var pvlbl=ex?'Play the exact version':'Play this track';
+  var pvlbl=ex?(exExact?'Play the exact version':'Play this version'):'Play this track';
   var corner = (pv && embedFor(pv,pvsrc))
     ? '<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
       ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>'
@@ -2447,30 +2584,40 @@ function renderResult(d,partial){
      and re-ranking in the page would be inventing a second opinion. */
   var shelf='', plain=false;   // plain = the clip is the track itself, no edit to show
   var noCrown=false;           // a shelf rendered that explicitly declines to crown one
-  function shelfNote(list,crownCore){
-    if(!list.length||crownCore===null||crownCore===undefined) return '';
-    var bi=-1,bv=-1,i;
-    for(i=0;i<list.length;i++) if((list[i].core||0)>bv){bv=list[i].core||0; bi=i;}
-    // An upload further down that beats the crown on raw audio is the single most
-    // useful thing this screen can say, so it outranks every other note.
-    if(bv>crownCore+0.005)
-      return '<div class="shelfnote"><b>Worth a listen:</b> #'+(bi+2)+' scores higher on audio alone ('+
-        Math.round(bv*100)+'% vs '+Math.round(crownCore*100)+'%). The crown also weighs speed fit, EQ fit and plays.</div>';
-    var t=tieNote(list,crownCore); if(t) return t;
-    return '<div class="shelfnote">Leads the next version by '+
-      Math.round((crownCore-bv)*100)+' points on audio ('+Math.round(crownCore*100)+'% vs '+
-      Math.round(bv*100)+'%).'+(d.decisive?' Decisive pick.':'')+'</div>';}
+  /* SAME FIGURE AS THE ROWS. This note used to compare raw core and print it, so the
+     one line meant to temper the crown printed "(100% vs 93%)" - core shown as 100%, the
+     exact overclaim the chips no longer make - and read against rows that now carry a
+     different number. It compares the version figure the rows show (vmatch), and an
+     exact row is printed as "exact", never as a percentage. */
+  function shelfNote(list,crown){
+    var cm=vmatch(crown);
+    if(!list.length||!cm) return '';
+    var cf=vfig(cm),bi=-1,bf=-3,bm=null,i,m;
+    for(i=0;i<list.length;i++){m=vmatch(list[i]); if(vfig(m)>bf){bf=vfig(m); bm=m; bi=i;}}
+    if(!bm) return '';   // every other row is core:null (unverified) - nothing to compare against
+    // An upload further down that measures closer to the clip than the crown is the
+    // single most useful thing this screen can say, so it outranks every other note.
+    if(bf>cf)
+      return '<div class="shelfnote"><b>Worth a listen:</b> #'+(bi+2)+' measures closer to the clip ('+
+        vtxt(bm)+' vs '+vtxt(cm)+'). The crown is picked on more than this figure, so give both a listen.</div>';
+    var t=tieNote(list,crown); if(t) return t;
+    return '<div class="shelfnote">Leads the next version ('+vtxt(cm)+' vs '+vtxt(bm)+').'+
+      (d.decisive?' Decisive pick.':'')+'</div>';}
   /* Scores this close are a tie, and saying so is the whole product promise. It matters
      most where there is no crown at all: "mr popular" comes back with six uploads at a
      flat 1.000 each (testruns/r45/e_9.json), which is core saturating, not six perfect
-     answers. Six identical numbers already hint at it; one sentence removes the doubt. */
-  function tieNote(list,topCore){
-    if(topCore===null||topCore===undefined||!list.length) return '';
-    var tied=1;
-    for(var i=0;i<list.length;i++) if(Math.abs((list[i].core||0)-topCore)<=0.02) tied++;
+     answers. Measured on the version figure now, not raw core: six uploads that saturate
+     core but sit at different speeds no longer tie (their figures already separate them,
+     and "the measurement cannot separate them" under an Exact and a 50% would be false),
+     while six at the same speed and EQ still do. */
+  function tieNote(list,top){
+    var tm=vmatch(top);
+    if(!tm||tm.pct===null||!list.length) return '';
+    var tf=vfig(tm),tied=1,f;
+    for(var i=0;i<list.length;i++){f=vfig(vmatch(list[i])); if(f>=0&&Math.abs(f-tf)<=2) tied++;}
     if(tied<2) return '';
-    return '<div class="shelfnote"><b>Close call:</b> '+tied+' versions score within 2 points of '+
-      'each other on audio. The measurement cannot separate them, so check the top few by ear.</div>';}
+    return '<div class="shelfnote"><b>Close call:</b> '+tied+' versions measure within 2 points of '+
+      'each other. The measurement cannot separate them, so check the top few by ear.</div>';}
   if(ex){
     // THE CROWN. Rank 1, its own heading, the gradient row - it still reads as the
     // answer. Its caveat comes from the server's own `title_overclaims` and nowhere
@@ -2478,14 +2625,32 @@ function renderResult(d,partial){
     // `ex.claim` is the same server sentence carried on the row itself, and it is the
     // fallback for a payload whose crown block did not set `title_overclaims`.
     var xoc=d.title_overclaims||ex.claim||'';
-    shelf='<div class="sect">The exact version playing</div><div class="list">'+
-      trackRow(ex,true,'',false,{rank:1,flag:xoc,
-        flagtag:xoc?'unverified claim':''})+'</div>';
+    // THE SOURCE IS NOT THE VERSION. server.py has carried `crown_is_source` since the
+    // ski-slopes ruling ("Presentation can then stop short of the 'exact version'
+    // claim") and this page never read it, so a plain original the clip was re-pitched
+    // from was headed "The exact version playing" and shown at 85%. Roham on clip 16,
+    // handed a "[BASS BOOSTED]" rip as the source: "its not the bass boosted one its the
+    // slow and reverb". The engine now only crowns a PLAIN upload as the source; this
+    // says what that crown is and what the clip did to it, in the engine's own speed.
+    var xsrc=!!d.crown_is_source;
+    // NOT DEAD ON. `crown_tempo_off` is the engine's sentence for a crown that cleared
+    // the tempo gate but sits outside the 2% "exact" bucket. Clip 25 was a 3.9%-slower
+    // upload presented as a 100% match; the pill now carries the number.
+    var xoff=(!xsrc && d.crown_tempo_off)?d.crown_tempo_off:'';
+    shelf='<div class="sect">'+(xsrc?'The recording this clip was cut from':
+                                  exExact?'The exact version playing':
+                                  exBeat?'Our pick':'The closest version we found')+'</div>'+
+      (xsrc?'<div class="heldcard"><b>Source, not the exact edit</b><span>The clip is this '+
+        'recording played '+esc(d.speed||'at a different speed')+'. We did not find an upload at '+
+        'that speed, so this is what it was made from, not the version itself.</span></div>':'')+
+      '<div class="list">'+
+      trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
+        flagtag:xoc?'unverified claim':(xoff?'not exact':'')})+'</div>';
     var others=cands.filter(function(c){return c.url!==ex.url;});
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
-    shelf+=shelfNote(others,ex.core);
+    shelf+=shelfNote(others,ex);
     // COLLAPSED BY DEFAULT (layout spec item 6), and ONLY HERE - the crowned case, where
     // there is already an answer on screen and this list is the supporting evidence. Note
     // what stays outside the fold: shelfNote above it ("#3 scores higher on audio alone"),
@@ -2518,7 +2683,7 @@ function renderResult(d,partial){
   // audio match was 21%" under it, which reads as a failure attached to a correct answer.
   // A held-back crown is different and keeps its shelf: there the engine has a real
   // candidate and a real reason, and hiding that would be hiding evidence.
-  else if(d.unsure && cands.length && !d.crown_rejected
+  else if(d.unsure && cands.length && !d.crown_rejected && !d.crowd_version
           && (!cands[0] || (cands[0].core||0) < CORE_KEEP)
           && (!d.speed || d.speed==='as posted')){ shelf=''; plain=true; }
   else if(d.unsure && cands.length){
@@ -2531,7 +2696,7 @@ function renderResult(d,partial){
     // the engine's real reason - a good sentence it already wrote - was thrown away.
     // Now the list IS the answer: say which of the two happened, in the engine's words,
     // and rank the candidates the same way the crowned screen does.
-    var why=d.crown_rejected||'', held=!!why, w=Math.round((d.weak_exact||0)*100);
+    var why=d.crown_rejected||'', held=!!why;
     // THE GATE FIRED BEFORE THE FINAL SPEED READING. server.py runs `_crown_contradicts`
     // (which can only reject on an "as posted" clip) well before the bass-robust
     // consensus re-measures the clip and can rewrite `speed` to a pitch label. When those
@@ -2548,11 +2713,26 @@ function renderResult(d,partial){
     // "closest versions" tells the user the opposite. Rows under SHELF_FLOOR are dropped;
     // if that empties the shelf we say plainly that nothing came close rather than pad
     // the screen with rows the audio already rejected.
+    // THE COMMENTS ALREADY NAMED THE VERSION (server `crowd_version`, set only when no
+    // upload was crowned). On ZSqGqdJuD the reply to "song name?" read "Scream and
+    // shout slowed", the sweep measured slowed ~0.83x, and the screen still led with
+    // "under our bar, best audio match was 17%". Roham: "How do u not get it when it
+    // says the song right there in the comments". Lead with the agreement; the shelf
+    // of near-misses stays under it because it is still the evidence we have.
+    var _cv=d.crowd_version||null, crowdCard='';
+    if(_cv&&_cv.hint){
+      var _fam=(_cv.family||[]).join(' + ');
+      crowdCard='<div class="heldcard crowd"><b>The comments already name it</b><span>'+
+        '\u201C'+esc(_cv.hint)+'\u201D'+
+        (_cv.agrees===true
+          ? '. The audio agrees: '+esc(d.speed||_fam)+'. That exact upload is not public or we could not find it; the closest public ones are below.'
+          : '. We cannot measure '+esc(_fam||'that')+' against the clip, so it stays the crowd\u2019s word, not ours. The closest public uploads are below.')+
+        '</span></div>';}
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
       noCrown=true;
-      shelf='<div class="sect">Closest versions. We did not crown one</div>'+
+      shelf='<div class="sect">Closest versions. We did not crown one</div>'+crowdCard+
         '<div class="heldcard"><b>Nothing came close</b><span>The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
         'matched the clip audio, so there is nothing worth listing. The song above is '+
@@ -2560,15 +2740,21 @@ function renderResult(d,partial){
     } else {
     cands = _kept;
     noCrown=true;
-    shelf='<div class="sect">Closest versions. We did not crown one</div>'+
+    // NO RAW-CORE NUMBER IN EITHER CARD. `weak_exact` is core, so the held card read
+    // "matched the clip audio at 100%, but we would not crown it" - core shown as 100% on
+    // the one screen that exists to say the upload is NOT the version - and the under-bar
+    // card led with the figure Roham called out on #30: "Best audio match was 18%" over a
+    // slowed+reverb upload of the right song. The row underneath carries the real figure
+    // (vmatch); the card only has to say which of the two things happened.
+    shelf='<div class="sect">Closest versions. We did not crown one</div>'+crowdCard+
       (held
-        ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload matched the clip '+
-            'audio at '+w+'%, but we would not crown it: '+esc(why)+'. Listed, not presented as '+
+        ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload lines up with the '+
+            'clip audio, but we would not crown it: '+esc(why)+'. Listed, not presented as '+
             'the version.'+(stale?' Note: the final speed read came back '+esc(d.speed)+
             ', after that check ran.':'')+'</span></div>'
-        : '<div class="heldcard"><b>Under our bar to call it</b><span>Best audio match was '+w+
-            '%, and we do not crown anything under '+Math.round(CORE_KEEP*100)+'%. These are the closest '+
-            'the search got. One of them may still be it.</span></div>')+
+        : '<div class="heldcard"><b>Under our bar to call it</b><span>None of these lined up with '+
+            'the clip audio closely enough to crown. These are the closest the search got, and '+
+            'one of them may still be it.</span></div>')+
       // Row 1 used to get the pill and NOTHING else, on the reasoning that the card above
       // already carries the reason word for word. It carries the GATE's reason, which is
       // a different sentence from "this title claims something we did not measure" - and
@@ -2581,7 +2767,7 @@ function renderResult(d,partial){
           flag:(held&&i===0)?(c.claim||''):candFlag(c,d,i===0),
           flagtag:(held&&i===0)?'held back':''});}).join('')+'</div>'+
       claimNote(cands.slice(1,12))+
-      tieNote(cands.slice(1), cands[0]&&cands[0].core)+
+      tieNote(cands.slice(1), cands[0])+
       (_dropped?'<div class="trainnote">'+_dropped+' more upload'+(_dropped===1?' was':'s were')+
         ' checked and did not match the clip audio, so '+(_dropped===1?'it is':'they are')+
         ' not listed.</div>':'')+
@@ -2623,6 +2809,16 @@ function renderResult(d,partial){
   var hints=(d.comment_hints||[]).filter(function(h){
       h=String(h||'').trim(); return h.length>=8 && h.split(/\s+/).length>=2;}).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
+  /* A LATER WINDOW HEARD A DIFFERENT TITLE (server `later_window`, one extra Shazam
+     probe on the second half of a clip the sweep answered from one slice). Shown as a
+     note next to the comments, never as the answer: the version hunt did not chase it
+     unless CRATE_LATER_WINDOW_SEED is on. Built for the Chief Keef / Kanye "I Don't
+     Like" clip, where the hook names the original and the verse names the remix. */
+  var _lw=d.later_window||null;
+  if(_lw&&_lw.title&&_lw.same===false){
+    quotes+='<div class="quotes"><div class="qh">Later in the clip</div><div class="quote">'+IC.quote+
+      '<span>'+esc(_lw.title)+(_lw.artist?' \u00B7 '+esc(_lw.artist):'')+' (heard at '+Math.round(_lw.t0)+'-'+
+      Math.round(_lw.t1)+'s). This may be a remix or a second song; the version hunt did not chase it.</span></div></div>';}
   /* ---------- THE WAVEFORM IS GONE (layout spec item 1) ----------
      It used to draw on every edit result. Its stated job was to be the thing the shelf
      rows and the matched window are read against, and on a plain original there was

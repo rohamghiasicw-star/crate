@@ -5548,16 +5548,35 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # clip's speed vs SEVERAL of these and taking the agreeing median (dropping a bad
     # re-upload that's itself off-speed) is what makes the speed exact - reusing these
     # costs no extra download.
+    # "fast" IS A TEMPO WORD. This list had every slowing word and no speeding word beyond
+    # "sped"/"speed up", so "King Von Ft Lil Durk - Crazy Story 2.0 (FAST)" (Crazy Story
+    # 2.0, 2026-09-24 batch, clip 20) passed as a plain reference, became the ONLY ref,
+    # measured the clip at 0.7208 of itself, and was then crowned as the source of a clip
+    # the sweep had already matched at 0.93x. Roham: "the version you had was way too
+    # fast". Same shape for "chopped"/"screwed" (DJ Drobitussin, clip 15).
     _PLAIN = re.compile(r"\b(slow(ed)?|sped|speed ?up|nightcore|daycore|bass ?boost(ed)?|"
                         r"reverb|remix|hoodtrap|mylancore|jersey ?club|phonk|8d|hardstyle|"
-                        r"flip|mashup|cover|guitar|instrumental)\b", re.I)
+                        r"flip|mashup|cover|guitar|instrumental|fast(er)?|quick|chopped|"
+                        r"screwed|pitch(ed)?|tekk)\b", re.I)
     # SPEED REFERENCES MUST BE THE SAME RECORDING. Filtering on the title alone let the
     # engine measure the clip against completely unrelated songs and report a confident
     # "sped up ~1.40x" for a clip whose best candidate only scored core 0.447 - a speed
     # ratio against a different song is meaningless. If nothing verifies, we have no
     # reference and must not claim a speed at all.
+    #
+    # ...AND THE SAME RENDITION. A reference sets the clip's speed, so it has to be the
+    # plain original: EDIT_WORDS and OTHER_RENDITION are exactly the two filters
+    # _official_refs in server.py already applies to the references it fetches, and the
+    # pool refs were held to a weaker bar. "Taylor Swift - Blank space (Rock version)"
+    # (clip 31, core 0.822) cleared _PLAIN, measured the clip at 0.8999 of ITSELF, and was
+    # crowned as the source of a clip Roham heard as "just blank space slowed". The
+    # four regression clips lose nothing here: kelthraxx's two refs ("flipp", "432 Hz")
+    # carry none of these words, and mason, bouch and kyks already took every ref from
+    # _official_refs because their pools are all mashup/slowed titles.
     ref_paths = [c["path"] for c in cands
                  if c.get("path") and c.get("title") and not _PLAIN.search(c["title"])
+                 and not EDIT_WORDS.search(c["title"])
+                 and not OTHER_RENDITION.search(c["title"])
                  and c.get("core", 0) >= CORE_KEEP][:5]
     result.update(ranked=ranked, decisive=decisive, clip_ok=clip_spec is not None,
                   bass_boosted=bool(bassy), clip_tilt=round(clip_tilt, 1),
