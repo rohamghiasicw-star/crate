@@ -2525,7 +2525,23 @@ function renderResult(d,partial){
   // pages come back marked exact and get the solid treatment; the keyless-lookup gap
   // (Spotify and YouTube need auth) falls back to search and is labelled as a search, so
   // a tap never lies about where it lands.
-  var lk=(d.links||[]);
+  var lk=(d.links||[]).slice();
+  /* Konnor: "where did the Open in Spotify / Open in SoundCloud go". The engine builds
+     these links behind a 6s cap and its own comment says a failure is silent, so when that
+     lookup times out d.links comes back empty and the whole row vanished. The song and
+     artist are always on screen, so a search destination is always buildable: fill in any
+     of Spotify, SoundCloud, Apple Music, YouTube the engine did not return, so the row is
+     always there. Same search URLs the engine uses, marked as a search so a tap never lies
+     about where it lands. */
+  if(d.base_song){
+    var _fq=encodeURIComponent((d.base_artist?d.base_artist+' ':'')+d.base_song);
+    var _fb=[{name:'Spotify',kind:'spotify',url:'https://open.spotify.com/search/'+_fq},
+             {name:'SoundCloud',kind:'soundcloud',url:'https://soundcloud.com/search?q='+_fq},
+             {name:'Apple Music',kind:'apple',url:'https://music.apple.com/search?term='+_fq},
+             {name:'YouTube',kind:'youtube',url:'https://www.youtube.com/results?search_query='+_fq}];
+    var _have={}; lk.forEach(function(l){_have[l.kind]=true;});
+    _fb.forEach(function(l){if(!_have[l.kind]){l.exact=false; lk.push(l);}});
+  }
   var openin = lk.length ? '<div class="sect">Open in</div><div class="openin">'+lk.map(function(l){
       /* Konnor, item 5: "one row of four, logo on top, name below". The uppercase SEARCH
          word under three of the four tiles is what made the row read as unfinished on his
