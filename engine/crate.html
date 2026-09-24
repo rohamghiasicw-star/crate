@@ -2888,20 +2888,21 @@ function renderResult(d,partial){
      straight back to the clip's own app when we know where it came from. */
   var _plabel = _plat==='Instagram' ? 'Back to Instagram' : (_plat==='TikTok' ? 'Back to TikTok' : 'Open the video');
   var _picon = _plat==='Instagram' ? IC.ig : (_plat==='TikTok' ? IC.tt : IC.open);
-  // Konnor: the save confirmation card (checkmark + "Saved to Found with Addify") took up
-  // too much room directly under the song, so it is gone from the layout and the primary
-  // "Find another song" button moves into that space. The scan still auto-saves silently
-  // (autoSave below), and the Back / Back to app row stays at the foot of the card.
-  var findbtn='<div class="navrow"><button class="navbtn go" id="againbtn" type="button">'+IC.scan+'<span>Find another song</span></button></div>';
+  // Konnor: the save confirmation card (checkmark + "Saved to Found with Addify") stays
+  // gone, it did not look authentic and ate room under the song. But "Find another song"
+  // goes back to its original home at the foot of the card, in the same action row as Back
+  // and Back to app, so its accent colour sits with the other buttons instead of floating
+  // alone under the hero. The scan still auto-saves silently (autoSave below).
   var actions='<div class="navrow">'+
+    '<button class="navbtn go" id="againbtn" type="button">'+IC.scan+'<span>Find another song</span></button>'+
     '<div class="r2">'+
       '<button class="navbtn half" id="backbtn" type="button">'+IC.lchev+'<span>Back</span></button>'+
       (_vid?'<a class="navbtn half" id="tikbtn" href="'+esc(_vid)+'" target="_blank" rel="noopener">'+_picon+'<span>'+_plabel+'</span></a>':'')+
     '</div>'+
   '</div>';
   // ORDER, top to bottom: the clip it came from, the song with its cover and the version
-  // pill standing alone, the "Find another song" button directly under that (Konnor: it
-  // replaced the save card here), where to open it, then the evidence.
+  // pill standing alone, where to open it, then the evidence, then the action row with
+  // "Find another song" back in its original spot (Konnor). The save card slot stays empty.
   /* THE HEADER MUST NOT ARGUE WITH THE SHELF. matchttl is set far above, before the
      shelf exists, so it said "Match found" even when the shelf underneath went on to
      say "Closest versions. We did not crown one" and "best audio match was 11%".
@@ -2913,7 +2914,7 @@ function renderResult(d,partial){
      It just stops the header claiming the half we did not get. */
   if(!partial) document.getElementById('matchttl').textContent =
       noCrown ? 'Song identified' : 'Match found';
-  result.innerHTML='<div class="card">'+head+clip+hero+findbtn+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
+  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
