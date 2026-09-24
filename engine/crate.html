@@ -3836,8 +3836,17 @@ document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
   var d=lastResult; if(!d) return; var u=(d.exact&&d.exact.url)||d.shazam||''; if(!u) return;
   var sh=document.getElementById('share');
-  if(navigator.clipboard) navigator.clipboard.writeText(u).then(function(){
-    sh.innerHTML=IC.savefill; setTimeout(function(){sh.innerHTML=IC.share;},1400);});};
+  var confirm=function(){sh.innerHTML=IC.savefill; setTimeout(function(){sh.innerHTML=IC.share;},1400);};
+  // Open the phone's real share sheet so the song actually goes somewhere (Messages, etc).
+  // navigator.share needs a user gesture, which this click is. Fall back to a clipboard copy
+  // where the share sheet is missing (desktop, or the preview browser).
+  var title=d.base_song||'Addify', artist=d.base_artist||'';
+  var text=d.base_song?(d.base_song+(artist?' by '+artist:'')):'';
+  if(navigator.share){
+    navigator.share({title:title, text:text, url:u}).then(confirm).catch(function(){});
+    return;
+  }
+  if(navigator.clipboard) navigator.clipboard.writeText(u).then(confirm);};
 
 /* ============================================================
    LISTEN MODE - the mic is real: WebAudio levels on screen, the
