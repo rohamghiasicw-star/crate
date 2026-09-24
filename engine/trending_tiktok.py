@@ -52,7 +52,11 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
 TOKCHART_URL = "https://tokchart.com/"
-APPLE_PLAYLIST_ID = "pl.35b7d6e334854d1585237d106e69bdc2"  # TikTok Songs 2026 (Topsify)
+# Filtr "TikTok Songs <month> 2026" - refreshed monthly, so the fill rows are songs
+# going around RIGHT NOW. The year-long Topsify list (pl.35b7d6e334854d1585237d106e69bdc2)
+# ranked months-old catalogue cuts as "trending this week" and Roham called it fake
+# (war room, 2026-09-24). Both candidates were verified fetchable in the NOTES file.
+APPLE_PLAYLIST_ID = "pl.d9dcaa71eae146549c216c6fc81640bd"  # TikTok Songs monthly (Filtr)
 
 # tokchart free tier renders paywalled rows with placeholder text - any row
 # carrying one of these is subscription bait, not data. Skip, never parse.
