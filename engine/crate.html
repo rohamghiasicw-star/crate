@@ -3837,11 +3837,21 @@ document.getElementById('share').onclick=function(){
   var d=lastResult; if(!d) return; var u=(d.exact&&d.exact.url)||d.shazam||''; if(!u) return;
   var sh=document.getElementById('share');
   var confirm=function(){sh.innerHTML=IC.savefill; setTimeout(function(){sh.innerHTML=IC.share;},1400);};
-  // Open the phone's real share sheet so the song actually goes somewhere (Messages, etc).
-  // navigator.share needs a user gesture, which this click is. Fall back to a clipboard copy
-  // where the share sheet is missing (desktop, or the preview browser).
   var title=d.base_song||'Addify', artist=d.base_artist||'';
   var text=d.base_song?(d.base_song+(artist?' by '+artist:'')):'';
+  // Inside the app the share sheet has to come from the native side. WKWebView does not
+  // expose navigator.share, so the old web-only call did nothing and the clipboard fallback
+  // ran silently, which is why the button looked dead. Hand the song to the native bridge
+  // and it raises the phone's real share sheet (Messages, AirDrop, and the rest). The
+  // share flag is only set by app builds that carry that handler, so older builds and plain
+  // browsers keep taking the web path below.
+  var N=window.ADDIFY_NATIVE;
+  if(N&&N.share&&window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify){
+    window.webkit.messageHandlers.addify.postMessage({type:'share', url:u, text:text, title:title});
+    confirm();
+    return;
+  }
+  // Safari and the preview browser: the Web Share API where it exists, then a clipboard copy.
   if(navigator.share){
     navigator.share({title:title, text:text, url:u}).then(confirm).catch(function(){});
     return;

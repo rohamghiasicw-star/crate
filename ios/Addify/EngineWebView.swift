@@ -26,7 +26,7 @@ struct EngineWebView: UIViewRepresentable {
         let ucc = WKUserContentController()
         /* Lets the page know it is inside the app (feature-detect with window.ADDIFY_NATIVE).
            Injected at document start so it exists before any page script runs. */
-        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)'};"
+        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true};"
         ucc.addUserScript(WKUserScript(source: flag, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.add(context.coordinator, name: "addify")
         cfg.userContentController = ucc
@@ -167,10 +167,10 @@ struct EngineWebView: UIViewRepresentable {
             present(ac, over: webView) ?? completionHandler(false)
         }
 
-        private func present(_ ac: UIAlertController, over view: UIView) -> Void? {
+        private func present(_ controller: UIViewController, over view: UIView) -> Void? {
             var responder: UIResponder? = view
             while let r = responder {
-                if let vc = r as? UIViewController { vc.present(ac, animated: true); return () }
+                if let vc = r as? UIViewController { vc.present(controller, animated: true); return () }
                 responder = r.next
             }
             return nil
@@ -182,9 +182,31 @@ struct EngineWebView: UIViewRepresentable {
             guard message.name == "addify" else { return }
             /* Only the engine's own page may talk to the native side. */
             guard isEngineOrigin(message.frameInfo.request.url) else { return }
+            /* The song's share button. WKWebView never exposes navigator.share, so the page
+               hands the link here and we raise the real iOS share sheet. */
+            if let d = message.body as? [String: Any], (d["type"] as? String) == "share" {
+                presentShare(url: (d["url"] as? String) ?? "", text: (d["text"] as? String) ?? "")
+                return
+            }
             if let payload = ResultPayload(message: message.body) {
                 bridge.showResult(payload)
             }
+        }
+
+        private func presentShare(url: String, text: String) {
+            guard let wv = bridge.webView else { return }
+            var items: [Any] = []
+            if !text.isEmpty { items.append(text) }
+            if let u = URL(string: url) { items.append(u) } else if !url.isEmpty { items.append(url) }
+            guard !items.isEmpty else { return }
+            let ac = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            /* iPad presents this as a popover; without an anchor that is a crash, not a no-op. */
+            if let pop = ac.popoverPresentationController {
+                pop.sourceView = wv
+                pop.sourceRect = CGRect(x: wv.bounds.midX, y: wv.bounds.midY, width: 0, height: 0)
+                pop.permittedArrowDirections = []
+            }
+            _ = present(ac, over: wv)
         }
     }
 }
