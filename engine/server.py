@@ -2484,6 +2484,2305 @@ def erase_feedback(row_id):
     return {"ok": True, "erased": gone}
 
 
+# ---------------------------------------------------------------- free-text search
+# NEW 2026-09-24. The Search tab from Konnor's spec (KONNOR-SPEC-2026-09-23.md section 3):
+# "for when the reel is gone and all they remember is a lyric or a vibe". Three modes,
+# taught by example rows in the UI: lyric ("mmm whatcha say"), vibe ("slowed, female
+# vocal, gym reel") and creator ("edits by @fastmusic954").
+#
+# THESE ARE GUESSES, NOT MATCHES. Every other answer in Addify is audio compared to audio
+# and can say how sure it is. Here there is no clip, so there is nothing to score, and a
+# percentage would be invented. Each row carries a confidence chip instead, and "strong"
+# is only ever set on a concrete, stated reason from two independent sources (a lyric
+# phrase hit on Genius, or Genius naming a song whose title is or sits inside the typed
+# words, AND an upload with the same title and artist coming up for the user's words; or
+# the words being the song title with YouTube and SoundCloud agreeing on the artist).
+# A song that shares its title with a far more played song in the same results is never
+# strong (the KIDZ BOP "Shake It Off" crown). When the typed words ARE a title that two or
+# more artists have, nothing is strong, and neither is a song whose stated reason holds for
+# another artist's same-title song too (the lyric found under both). Everything else is
+# "possible". Vibe results are always "possible".
+#
+# WHAT THIS NEVER DOES: call Shazam or anything behind its semaphore, download audio, or
+# write anything but JSON to memory. Sources are text only: Genius's public web search
+# (keyless, measured 0.6-1.1s; or its official API when GENIUS_ACCESS_TOKEN is set, see
+# README-search.md), YouTube's own web search endpoint read directly (the
+# same youtubei/v1/search call yt-dlp's ytsearch makes, measured 0.7s and ~5ms to parse,
+# with yt-dlp as the fallback), and yt-dlp's flat scsearch for SoundCloud. `plays` is the
+# platform's own play or view count from that search, or null. There is no "used in N
+# reels" number anywhere, because we have no source for one.
+#
+# LOAD (tester, 2026-09-24): 12 uncached lyric searches at once returned 5 x 502. Each
+# request was starting 2-10 yt-dlp python processes (~0.5s CPU each), so a burst of 12
+# was ~70 processes on 10 cores. Now YouTube is one in-process HTTPS call, SoundCloud is
+# the only subprocess (one per query), all of them share one 6-wide semaphore, identical
+# lookups in flight are coalesced, and every sub-lookup is cached as JSON for 15 minutes.
+import concurrent.futures as _cf
+import difflib
+import urllib.request as _ureq
+from urllib.parse import quote as _quote, unquote as _unquote
+
+SEARCH_MAX_Q = 200          # characters. A lyric, a vibe or a handle is never longer.
+SEARCH_MAX_ROWS = 6
+SEARCH_DEADLINE = 7.2       # whole-request budget; the UI contract is ~8s even if a source hangs
+SEARCH_STAGE1 = 4.5         # first fan-out (Genius + upload search) gets at most this
+SEARCH_TTL = 900.0          # JSON-only result cache, seconds
+_SEARCH_CACHE = {}          # (mode, q.lower()) -> (stored_at, results)
+_SEARCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+_S_SUB_TTL = 900.0          # per-lookup JSON cache (one Genius / YouTube / SoundCloud call)
+_S_SUB_CACHE = {}           # (kind, ..., query.lower(), n) -> (stored_at, rows)
+_S_SUB_LOCK = threading.Lock()
+_S_INFLIGHT = {}            # same key -> threading.Event while the first caller runs it
+_S_PROC_SEM = threading.BoundedSemaphore(6)   # yt-dlp subprocesses started by /search
+_S_YT_URL = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false"
+_S_YT_CLIENT = "2.20250925.01.00"
+_S_YT_VIDEOS = "EgIQAQ%3D%3D"   # the "Type: Video" search filter
+
+# Only URLs the UI can hand to the platform's own embed player.
+_S_YT_OK = re.compile(r"^https?://(?:www\.|m\.)?youtube\.com/(?:watch\?(?:.*&)?v=|shorts/)"
+                      r"[A-Za-z0-9_-]{11}|^https?://youtu\.be/[A-Za-z0-9_-]{11}")
+_S_SC_OK = re.compile(r"^https?://(?:www\.|m\.)?soundcloud\.com/([^/?#\s]+)/([^/?#\s]+)/?$")
+_S_SC_NOT_TRACK = {"sets", "likes", "tracks", "reposts", "albums", "popular-tracks",
+                   "followers", "following", "comments"}
+_S_BRACKETS = re.compile(u"[\\(\\[\\{\u3010][^\\)\\]\\}\u3011]*[\\)\\]\\}\u3011]")
+_S_FEAT = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)(?:\s+.*)?$", re.I)
+_S_PROD = re.compile(r"\s+\(?(?:prod\.?|produced)\s*(?:by)?\s*\S.*$", re.I)
+# " - " between artist and title; also "Future- My conscience" (a dash glued to the left
+# word only), never "Jay-Z" or "Pt.2-3".
+_S_DASH = re.compile(u"\\s+[-\u2013\u2014~]+\\s+|(?<=[^\\s\\d\\-])[-\u2013\u2014]\\s+(?=\\S)")
+# Title segment separators uploaders use between "Song - Artist" and the tag soup:
+# | and its full-width / box-drawing lookalikes (U+2503 "┃" in the phonk titles), and "•".
+_S_SEGS = re.compile(u"\\s*[|\uff5c\u2502\u2503\u2506\u2507\u250a\u250b\u2551\u2758\u2759"
+                     u"\u275a\u00a6\u01c0\u2223\u2022]\\s*")
+_S_JUNK = re.compile(r"\b(official\s+(?:music\s+|lyric\s+)?(?:video|audio|visualizer)|"
+                     r"music\s+video|lyrics?(?:\s+video)?|visualizer|audio|hd|hq|4k|mv|"
+                     r"explicit|clean)\b", re.I)
+
+# Spelling folds applied to BOTH sides of every text comparison, so "y u gotta b" and
+# "why you gotta be" compare equal. Letter runs are squeezed too ("mmmm" == "mmm").
+_S_SLANG = {"u": "you", "yu": "you", "y": "why", "ur": "your", "r": "are", "b": "be",
+            "luv": "love", "cuz": "because", "coz": "because", "tho": "though",
+            "thru": "through", "wat": "what", "watcha": "whatcha", "whatchu": "whatcha",
+            "cause": "because", "cos": "because", "em": "them", "til": "until",
+            "till": "until"}
+# Contractions spelled out on both sides: typed "i must have called" vs Adele's "I must've
+# called", typed "show them" vs Katy Perry's "show 'em" (the slang map above).
+_S_EXPAND = {"mustve": "must have", "couldve": "could have", "shouldve": "should have",
+             "wouldve": "would have", "mightve": "might have", "ive": "i have",
+             "youve": "you have", "weve": "we have", "theyve": "they have", "im": "i am",
+             "youre": "you are", "theyre": "they are", "gotta": "got to"}
+
+# (pattern, label) read off an upload TITLE. This is the uploader's word, not a
+# measurement - the UI shows it as the upload's name, the same rule _unverified_claims
+# enforces on scan results.
+_S_VERSION_ANY = [
+    (r"\b(?:super|ultra)\s?slowed\b", "super slowed"),
+    (r"\bslowed\b|\bs l o w e d\b", "slowed"),
+    (r"\b(?:sped|speed)\s?up\b|\bspedup\b", "sped up"),
+    (r"\bnightcore\b", "nightcore"),
+    (r"\bdaycore\b", "daycore"),
+    (r"\breverb(?:ed)?\b|\br e v e r b\b", "reverb"),
+    (r"\bbass\s?boost(?:ed)?\b", "bass boosted"),
+    (r"\b8d(?:\s+audio)?\b", "8d"),
+    (r"\bhoodtrap\b", "hoodtrap"),
+    (r"\bjersey\s?club\b", "jersey club"),
+    (r"\bmashup\b", "mashup"),
+    (r"\b(?:remix|rmx)\b", "remix"),
+    (r"\bcover\b", "cover"),
+    (r"\bacoustic\b", "acoustic"),
+    (r"\binstrumental\b", "instrumental"),
+]
+# Words that only mean a version when they sit in a bracketed qualifier: "(FAST)" is
+# fastmusic954's sped-up tag, while "Fast Car" is a song title.
+_S_VERSION_QUAL = [
+    (r"\bfast(?:er)?\b", "fast"),
+    (r"\bslow(?:er)?\b", "slow"),
+    (r"\bphonk\b", "phonk"),
+    (r"\bhardstyle\b", "hardstyle"),
+    (r"\blive\b", "live"),
+    (r"\btik\s?tok\s+(?:version|edit)\b", "tiktok edit"),
+    (r"\bedit\b", "edit"),
+]
+
+_S_VIBE_STOP = {"reel", "reels", "tiktok", "tik", "tok", "instagram", "ig", "insta",
+                "song", "songs", "sound", "sounds", "audio", "music", "track", "from",
+                "a", "an", "the", "that", "this", "with", "and", "in", "on", "of", "for",
+                "my", "some", "one", "like", "kind", "type", "vibe", "vibes", "video",
+                "clip", "it", "was", "is", "used", "use", "those", "these", "edit", "edits"}
+
+# AUTO MODE. Routing on "any vibe word anywhere" sent lyrics to vibe ("all about that
+# bass" -> vibe) and "music from <word>" anywhere sent lyrics to creator ("i can hear the
+# music from the radio" -> creator, handle "the"). Creator needs an @handle, or a query
+# that STARTS "edits/songs/... by|from <handle>". Vibe (tester round 1: "sad piano, rain,
+# late night", "hard bass drill, dark", "chill vibes", "rainy day jazz" and styled
+# "𝓈𝓁𝑜𝓌𝑒𝒹 𝓇𝑒𝓋𝑒𝓇𝒷" all went to lyric): the query is NFKC-folded first, then needs one
+# STRONG vibe word (an edit word, a genre, a mood, an instrument, or "vibe"/"aesthetic")
+# and most of its meaningful words to be vibe words (edit, genre, mood, instrument or
+# setting words), with no first/second-person lyric word (3/4 of them and two strong words
+# if there is one: "speed up my heart" is a lyric). A comma-separated list of short
+# descriptors ("summer vibes, beach, upbeat") needs only half. Setting words alone
+# ("midnight rain", a song) never make a vibe unless there are 3+ of them and nothing
+# else ("late night drive"). Everything else is a lyric.
+_S_VIBE_PRIMARY = re.compile(
+    r"\b(?:(?:super|ultra)\s?slowed|slowed|sped\s?up|speed\s?up|spedup|sped|phonk|"
+    r"reverb(?:ed)?|nightcore|daycore|bass\s?boost(?:ed)?|bassboosted|boosted|8d|lo-?fi|"
+    r"instrumental|vocals?|acapella|gym|workout|hardstyle|jersey\s?club|hoodtrap|mashup|"
+    r"hip\s?hop|drum\s+(?:and|n)\s+bass|r\s?(?:and|n)\s?b|late\s+night|road\s+trip|"
+    # tester round 2: vibes that went to lyric
+    r"night\s+drive|slow\s+jams?|(?:rain|ocean|nature|forest|thunder)\s+sounds|"
+    r"(?:white|brown|pink)\s+noise|(?:edm|bass|beat)\s+drops?|classic\s+rock|"
+    r"(?:tech|afro|deep|progressive|future|acid|tropical|melodic)\s+house|future\s+bass|"
+    r"(?:uk|ny|chicago|brooklyn)\s+drill|boom\s+bap|(?:piano|acoustic|guitar)\s+covers?)\b",
+    re.I)
+# Decades are vibes: "90s rnb", "80s synth", "2000s pop".
+_S_DECADE = re.compile(r"^(?:19|20)?\d0s$")
+# Vibe words too weak to make a vibe on their own, because lyrics and titles use them all
+# the time ("beat it", "deep in the night", "heavy is the head"): they count toward the
+# vibe share, never as the strong word a vibe needs.
+_S_VIBE_WEAK = {"deep", "heavy", "hard", "soft", "smooth", "beat", "beats"}
+_S_VIBE_GENRE = {"phonk", "drill", "trap", "lofi", "jazz", "jazzy", "house", "techno", "edm",
+                 "dubstep", "dnb", "jungle", "garage", "ukg", "rnb", "rap", "hiphop", "pop",
+                 "kpop", "jpop", "rock", "metal", "punk", "emo", "indie", "soul", "funk",
+                 "disco", "gospel", "country", "classical", "orchestral", "ambient",
+                 "synthwave", "vaporwave", "hyperpop", "grunge", "reggae", "reggaeton",
+                 "dancehall", "afrobeats", "afrobeat", "amapiano", "baile", "brazilian",
+                 "latin", "cumbia", "bachata", "salsa", "blues", "bossa", "trance",
+                 "hardstyle", "hardcore", "breakcore", "chillhop", "chillwave", "shoegaze",
+                 "anime", "sigma", "villain", "rage", "plugg", "pluggnb", "nightcore",
+                 "daycore", "hoodtrap", "slowed", "reverb", "sped", "remix", "mashup", "8d"}
+_S_VIBE_MOOD = {"sad", "happy", "chill", "chilled", "calm", "relaxing", "relaxed", "peaceful",
+                "dark", "hype", "hyped", "upbeat", "energetic", "aggressive", "angry",
+                "emotional", "melancholic", "melancholy", "dreamy", "nostalgic", "romantic",
+                "moody", "groovy", "funky", "uplifting", "eerie", "creepy", "spooky",
+                "cinematic", "epic", "aesthetic", "motivational", "motivation", "hard",
+                "heavy", "deep", "soft", "mellow", "smooth", "gloomy", "depressing", "vibe",
+                "vibes", "vibey", "atmospheric", "ethereal", "haunting", "intense", "sexy",
+                "sensual", "cozy", "dramatic", "triumphant", "suspenseful", "mysterious",
+                "lonely", "heartbreak", "heartbroken", "hypnotic", "sigma", "badass"}
+_S_VIBE_INSTR = {"piano", "guitar", "violin", "bass", "808", "808s", "drums", "drum",
+                 "synth", "synths", "sax", "saxophone", "flute", "cello", "strings", "choir",
+                 "bells", "trumpet", "harp", "organ", "vocal", "vocals", "acapella",
+                 "whistle", "beat", "beats", "instrumental", "acoustic", "orchestra",
+                 "humming"}
+_S_VIBE_SETTING = {"rain", "rainy", "night", "late", "midnight", "summer", "winter", "autumn",
+                   "beach", "sunset", "sunrise", "morning", "drive", "driving", "car", "road",
+                   "trip", "gym", "workout", "study", "studying", "sleep", "sleeping",
+                   "party", "club", "wedding", "christmas", "halloween", "coffee", "cafe",
+                   "city", "ocean", "forest", "running", "training", "cardio", "montage",
+                   "background", "bgm", "female", "male", "fast", "slow", "loud", "quiet",
+                   "playlist", "mix", "version", "boosted", "super", "ultra", "classic",
+                   "tech", "afro", "drop", "drops", "jam", "jams", "cover", "covers",
+                   "remixes", "throwback", "noise"}
+_S_VIBE_STRONG = _S_VIBE_GENRE | _S_VIBE_MOOD | _S_VIBE_INSTR
+_S_VIBE_ALL = _S_VIBE_STRONG | _S_VIBE_SETTING
+# Words that say nothing about lyric vs vibe ("rainy DAY jazz", "a SONG for the gym").
+_S_MODE_STOP = {"a", "an", "the", "of", "in", "on", "at", "to", "for", "with", "and", "or",
+                "from", "by", "that", "this", "those", "these", "it", "is", "was", "be",
+                "some", "one", "like", "kind", "type", "song", "songs", "sound", "sounds",
+                "audio", "music", "track", "tracks", "reel", "reels", "tiktok", "tik", "tok",
+                "instagram", "ig", "insta", "video", "videos", "clip", "clips", "used",
+                "use", "edit", "edits", "day", "days", "time", "n", "s"}
+_S_LYRIC_MARKS = {"i", "im", "you", "your", "youre", "me", "my", "we", "our", "us", "she",
+                  "he", "they", "baby", "love", "gonna", "wanna", "gotta", "don", "dont",
+                  "ain", "aint", "oh", "ooh", "yeah", "na", "la", "never", "know", "cant",
+                  "wont"}
+_S_CREATOR_LEAD = re.compile(
+    r"^(?:(?:the|some|all|any|those|more|his|her|their)\s+)?(?:edits?|songs?|sounds?|"
+    r"audios?|remix(?:es)?|mashups?|uploads?|music|reels?|videos?|tracks?)\s+(?:by|from)"
+    r"\s+@?([a-z0-9_.]{2,30})((?:\s+\S+)*)\s*$", re.I)
+_S_HANDLE_STOP = {"the", "a", "an", "my", "your", "his", "her", "their", "our", "this",
+                  "that", "me", "you", "him", "them", "us", "it", "somebody", "someone"}
+
+
+def _s_toks(s, exact=False):
+    """Comparison tokens: styled unicode folded, lowercase, apostrophes dropped, slang
+    folded, letter runs squeezed. Used on both sides of every comparison.
+
+    exact=True squeezes only runs of 3+ letters, to 2 ("mmmm" == "mmm", but "too" !=
+    "to" and "good" != "god"). Tester round 2: with every run squeezed to one letter,
+    typed "to god" was "the song title" of "Too Good" and "i fel god" of "I Feel Good".
+    Word-for-word title claims use this form; loose comparisons keep the full squeeze."""
+    s = re.sub(u"['\u2019`]", "", unicodedata.normalize("NFKC", s or "")).replace("&", " and ")
+    # Punctuation to spaces BEFORE the ASCII fold: fold_name drops non-ASCII symbols
+    # outright, so "that\u3010slowed" would otherwise glue into one token "thatslowed".
+    s = E.fold_name(re.sub(r"[^\w\s]", " ", s)).lower()
+    out = []
+    for t in re.findall(r"[a-z0-9]+", s):
+        t = _S_SLANG.get(t, t)
+        for x in _S_EXPAND.get(t, t).split():
+            out.append(re.sub(r"(.)\1{2,}", r"\1\1", x) if exact else re.sub(r"(.)\1+", r"\1", x))
+    return out
+
+
+def _s_core(title, exact=False):
+    """A title reduced to the song it names: brackets, feat and prod credits dropped."""
+    t = _S_BRACKETS.sub(" ", unicodedata.normalize("NFKC", title or ""))
+    t = _S_PROD.sub("", _S_FEAT.sub("", t))
+    return " ".join(_s_toks(t, exact))
+
+
+def _s_xkey(text):
+    """Word-for-word key of a title or of the typed words (see _s_toks exact=True)."""
+    return "".join(_s_toks(text, True))
+
+
+def _s_akey(artist):
+    """Artist comparison key: first credited name, no spaces ("The Lonely Island" and
+    the channel "thelonelyisland" meet here)."""
+    a = re.split(r"\s+(?:feat\.?|ft\.?|featuring|x|with)\s+|\s*[,&]\s*",
+                 artist or "", flags=re.I)[0]
+    return "".join(_s_toks(a))
+
+
+def _s_close(a, b, bar=0.9):
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return len(a) >= 4 and difflib.SequenceMatcher(None, a, b).ratio() >= bar
+
+
+def _s_informative(ptoks):
+    """Enough words to test a lyric excerpt against. A single word ("yeah"), or "a" x 200
+    (letter runs squeeze it to "a"), occurs in nearly every excerpt Genius returns, so an
+    "exact" hit on it proves nothing (tester: "a"*200 -> Despacito "lyric found on
+    Genius"). Those queries skip the lyric lane and are matched on titles only."""
+    return len(set(ptoks)) >= 2 and sum(len(t) for t in ptoks) >= 6
+
+
+def _s_title_in_phrase(core, ptoks):
+    """True when a song title (2+ words, 6+ letters) sits inside the typed words as a
+    contiguous run: "shake it off" in "shake it off shake it off"."""
+    ct = (core or "").split()
+    n = len(ct)
+    if n < 2 or len("".join(ct)) < 6 or n > len(ptoks):
+        return False
+    if n < 3 and float(n) / len(ptoks) < 0.3:
+        return False
+    return any(ptoks[i:i + n] == ct for i in range(len(ptoks) - n + 1))
+
+
+def _s_phrase_hit(ptoks, text, frags=None):
+    """-> "exact" when the typed words occur contiguously in `text` (after the spelling
+    folds), "close" for a near spelling of them, else None.
+
+    `frags` are Genius's highlight windows, which are cut at fixed widths and so often
+    start or end mid-phrase: Meghan Trainor's reads "about that bass, 'bout that bass, no
+    treble" for "all about that bass bout that bass no treble". Word for word, with the
+    missing words sitting exactly where the window was cut (at most 2, of a 4+ word
+    phrase), is still "exact"."""
+    if not ptoks:
+        return None
+    tt = _s_toks(text)
+    n = len(ptoks)
+    for i in range(0, len(tt) - n + 1):
+        if tt[i:i + n] == ptoks:
+            return "exact"
+    if n >= 4:
+        for fr in frags or []:
+            ft = _s_toks(fr)
+            for cut in (1, 2):
+                k = n - cut
+                if k < 3 or k > len(ft):
+                    continue
+                if ft[:k] == ptoks[cut:] or ft[-k:] == ptoks[:k]:
+                    return "exact"
+    if n < 3:
+        return None
+    p = " ".join(ptoks)
+    for w in (n - 1, n, n + 1):
+        for i in range(0, max(1, len(tt) - w + 1)):
+            if difflib.SequenceMatcher(None, p, " ".join(tt[i:i + w])).ratio() >= 0.88:
+                return "close"
+    return None
+
+
+def _s_version(title):
+    t = unicodedata.normalize("NFKC", title or "")
+    t = re.sub(u"[\u3010\u3016\uff08\uff3b]", "(", re.sub(u"[\u3011\u3017\uff09\uff3d]", ")", t))
+    folded = E.fold_name(re.sub(r"[^\w\s()\[\]{}+&-]", " ", t)).lower()
+    quals = " ".join(_S_BRACKETS.findall(folded))
+    found = []
+    for rx, label in _S_VERSION_ANY:
+        if re.search(rx, folded) and label not in found:
+            found.append(label)
+    for rx, label in _S_VERSION_QUAL:
+        if re.search(rx, quals) and label not in found:
+            found.append(label)
+    if _S_FAST_TAIL.search(t) and "fast" not in found:
+        found.append("fast")
+    if "super slowed" in found and "slowed" in found:
+        found.remove("slowed")
+    if "tiktok edit" in found and "edit" in found:
+        found.remove("edit")
+    return " + ".join(found[:2]) or None
+
+
+def _s_strip_version_words(t):
+    for rx, _ in _S_VERSION_ANY:
+        t = re.sub(rx, " ", t, flags=re.I)
+    return t
+
+
+def _s_unvis(s):
+    """NFKC, invisible format characters removed (a SoundCloud uploader named U+200E,
+    the left-to-right mark, rendered as a blank artist), whitespace collapsed."""
+    s = unicodedata.normalize("NFKC", s or "")
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _s_edge_junk(ch):
+    return (unicodedata.category(ch) in ("So", "Sm", "Sk", "Cf", "Zs", "Pd")
+            or ch in u" -~|/\\*_.,:;+\"'\u201c\u201d\u2022\u00b7\u2027\u2219\u22c6")
+
+
+def _s_tidy(t):
+    """Display tidy: empty brackets and doubled spaces gone, decorative symbols and
+    separators trimmed off both ends ("katy perry /" after "sped up / nightcore" is
+    stripped, "BLAH! \u2503" and "\u2570\u2022\u2605\u2605 X \u2605\u2605\u2022\u256f")."""
+    t = re.sub(r"[\(\[\{]\s*[\)\]\}]", " ", _s_unvis(t))
+    t = re.sub(r"\s*/\s*(?:/\s*)+", " / ", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    i, j = 0, len(t)
+    while i < j and _s_edge_junk(t[i]):
+        i += 1
+    while j > i and _s_edge_junk(t[j - 1]):
+        j -= 1
+    if j < len(t) and t[j] == "." and re.search(r"(?:^|[\s(])(?:\w\.)+\w$", t[i:j]):
+        j += 1                             # "T.I." keeps its last dot
+    return t[i:j]
+
+
+def _s_named(s):
+    """A usable name: has at least one letter or digit ("\u2726" and U+200E are not)."""
+    s = _s_tidy(s)
+    return s if re.search(r"\w", s) else ""
+
+
+def _s_playable(url):
+    """-> (canonical url, "youtube"|"soundcloud") or (None, None)."""
+    u = (url or "").strip()
+    if _S_YT_OK.match(u):
+        m = _YT_ID.search(u)
+        if not m:
+            return None, None
+        if "/shorts/" in u:
+            return "https://www.youtube.com/shorts/%s" % m.group(1), "youtube"
+        return "https://www.youtube.com/watch?v=%s" % m.group(1), "youtube"
+    u = u.split("?")[0].split("#")[0]
+    m = _S_SC_OK.match(u)
+    if m and m.group(2).lower() not in _S_SC_NOT_TRACK:
+        return "https://soundcloud.com/%s/%s" % (m.group(1), m.group(2)), "soundcloud"
+    return None, None
+
+
+# LIVE / EVENT TAILS (tester round 1: "we will we will rock you" showed title "QUEEN ROCK
+# MONTREAL 1981" by "WE WILL ROCK YOU", and "We Will Rock You - Queen / Rockin'1000 at Stade
+# De France" showed the venue as the song). Where and when a performance happened is never
+# the song title and never the artist's name. A side that carries a venue ("at Stade De
+# France"), a "live in/at ..." tail, or a year next to other words is the PERFORMER side,
+# and the tail is cut off it. "The 1975" keeps its name (a year with only an article).
+_S_VENUE_WORDS = (r"stadium|stade|stadion|estadio|arena|wembley|hall|theat(?:re|er)|festival|"
+                  r"fest|garden|bowl|castle|cent(?:er|re)|dome|forum|palace|"
+                  r"amphitheat(?:re|er)|colosseum|coliseum|o2|glastonbury|coachella|"
+                  r"lollapalooza|tomorrowland|rock\s+in\s+rio|tiny\s+desk|bbc|live\s+lounge")
+_S_VENUE_RX = re.compile(r"\b(?:%s)\b" % _S_VENUE_WORDS, re.I)
+_S_VENUE_TAIL = re.compile(r"\s+(?:live\s+)?(?:at|@)\s+(?:the\s+)?(?:\S+\s+){0,4}?(?:%s)\b.*$"
+                           % _S_VENUE_WORDS, re.I)
+_S_LIVE_TAIL = re.compile(u"(\\s*[-\u2013\u2014~|\u2022/,:]\\s*|\\s+)\\b(?:live|en vivo|ao vivo|"
+                          u"en directo)\\s+(at|in|from|on|@|en|no|na|desde)\\s+(\\S.*)$", re.I)
+_S_YEAR = re.compile(r"(?<!\d)(?:19[5-9]\d|20[0-3]\d)(?!\d)")
+_S_ARTICLES = {"the", "a", "an"}
+# A second "|" segment that is tag soup, not the other half of "Artist | Title".
+_S_TAGSEG = re.compile(r"#|\b(?:lyrics?|letra|lirik|terjemahan|tradu[c\u00e7][a\u00e3]o|traducci[o\u00f3]n|"
+                       r"sub(?:s|titulado|titles)?|karaoke|full|documentary|tik\s?tok|reels?|"
+                       r"trend(?:ing)?|playlist|mix|edit|audio|version|prod|official|video|"
+                       r"visualizer|cover|remix|hd|4k|mv|free\s+dl|download|type\s+beat)\b", re.I)
+# fastmusic954-style trailing tags: "I Can't Sleep FAST*", "TP FAST*", "News (FAST)"
+_S_FAST_TAIL = re.compile(r"\s+(?:FAST|[Ff]ast\*)\**\s*$")
+
+
+def _s_live_cut(side):
+    """"We Will Rock You - Live in Montreal 1981" -> ("We Will Rock You", True). Needs a
+    separator before "live", or "live at", or a year or venue in the tail, so "I Live in
+    Fear" and "Live Your Life" keep their names."""
+    s = side or ""
+    m = _S_LIVE_TAIL.search(s)
+    if m and m.start() > 0 and (m.group(1).strip() or m.group(2).lower() in ("at", "@")
+                                or _S_YEAR.search(m.group(3)) or _S_VENUE_RX.search(m.group(3))):
+        return s[:m.start()].strip(u" -~|\u2022/,:"), True
+    return s, False
+
+
+def _s_venue_cut(side):
+    """"Queen / Rockin'1000 at Stade De France" -> ("Queen / Rockin'1000", True)."""
+    s = side or ""
+    m = _S_VENUE_TAIL.search(s)
+    if m and m.start() > 0:
+        return s[:m.start()].strip(u" -~|\u2022/,:"), True
+    return s, False
+
+
+def _s_strip_event(side):
+    """-> (side without its live/venue tail, had_one)."""
+    s, a = _s_live_cut(side)
+    s, b = _s_venue_cut(s)
+    return s, a or b
+
+
+def _s_strip_year(side):
+    """An artist slot never carries a year: "QUEEN ROCK MONTREAL 1981" -> "QUEEN ROCK
+    MONTREAL". "The 1975" is left alone (the year is the name)."""
+    words = (side or "").split()
+    yrs = {i for i, w in enumerate(words) if _S_YEAR.fullmatch(w.strip(u"()[]{},.*'\"!"))}
+    if not yrs:
+        return side, False
+    if not [w for i, w in enumerate(words)
+            if i not in yrs and w.lower().strip("().,*") not in _S_ARTICLES]:
+        return side, False
+    return " ".join(w for i, w in enumerate(words) if i not in yrs), True
+
+
+def _s_marked(side):
+    """This side is a PERFORMER at a venue ("Queen / Rockin'1000 at Stade De France"). A
+    "- Live in X" tail can follow a song title, and a year can be part of one ("Party Like
+    It's 1999"), so neither decides which side is the artist here; a year only decides it
+    in _s_orient, next to an artist this batch or process already knows."""
+    return _s_venue_cut(_s_live_cut(side)[0])[1]
+
+
+def _s_clean_side(s):
+    return _s_tidy(_S_JUNK.sub(" ", _s_strip_version_words(_S_FEAT.sub("", s or ""))))
+
+
+def _s_typed_side(ptoks, side):
+    """This side of an upload title is what the user typed: the words are in it, it is
+    (close to) the words, or it is a song title sitting inside them ("We Will Rock You"
+    inside "we will we will rock you")."""
+    if not ptoks:
+        return False
+    core = _s_core(side)
+    return bool(_s_phrase_hit(ptoks, side) or _s_close(core, " ".join(ptoks))
+                or _s_title_in_phrase(core, ptoks))
+
+
+def _s_cover_by(side):
+    """"Kodaline cover by Alexandra Porat" -> "Alexandra Porat" (the performer)."""
+    m = re.search(r"\b(?:cover(?:ed)?|version)\s+by\s+(\S.*)$", side or "", re.I)
+    return m.group(1) if m and _s_named(m.group(1)) else side
+
+
+# DASH SEGMENTS (tester round 2, item 9). Upload titles often carry more than "Artist -
+# Title": "Rock in Rio 2015 - Queen + Adam Lambert - Bohemian Rhapsody", "Love nwantiti
+# (ah ah ah) - Ckay - TikTok (Sped Up) - F4ST Remix", "All i want is #Jerseyclub - Slowed".
+# Splitting on the first dash only put the event in the artist slot and the tag soup in
+# the title. Now every dash segment is read: a segment of nothing but tags or version words
+# ("Slowed", "TikTok") is dropped anywhere; with 3+ segments, a where-or-when segment at
+# either end ("Live Aid 1985", "Glastonbury 2016") and a remixer credit at the end ("F4ST
+# Remix") are dropped too; the first two segments left are the artist and the title.
+_S_FEST_RX = re.compile(r"\b(?:glastonbury|coachella|lollapalooza|tomorrowland|woodstock|"
+                        r"rock\s+in\s+rio|live\s+aid|tiny\s+desk|live\s+lounge|"
+                        r"ultra\s+music\s+festival)\b", re.I)
+_S_REMIXER_SEG = re.compile(r"\b(?:remix|rmx|edit|flip|bootleg|vip|mashup|refix|rework|"
+                            r"cover)\s*$", re.I)
+_S_HASHTAG = re.compile(r"#[^\W\d_]\w*")
+# First/second-person words and lyric contractions. Names rarely carry two of them, song
+# titles often do ("all i want is you", "Say You Won't Let Go", "Love Me Like You Do").
+_S_PRONOUNS = {"i", "im", "ive", "id", "you", "your", "youre", "me", "my", "mine", "we",
+               "our", "us", "it", "its", "she", "her", "he", "him", "his", "they", "them",
+               "their", "dont", "cant", "wont", "aint"}
+
+
+def _s_titleish(side):
+    """How many first/second-person words or lyric contractions a side carries."""
+    s = re.sub(u"['’`]", "", E.fold_name(unicodedata.normalize("NFKC", side or "")).lower())
+    return sum(1 for t in re.findall(r"[a-z]+", s) if t in _S_PRONOUNS)
+
+
+def _s_years(side):
+    """-> (year tokens, other words that are not articles) of one side."""
+    words = (side or "").split()
+    yrs = [w for w in words if _S_YEAR.fullmatch(w.strip(u"()[]{},.*'\"!"))]
+    rest = [w for w in words if w not in yrs and w.lower().strip("().,*") not in _S_ARTICLES]
+    return yrs, rest
+
+
+def _s_event_seg(seg):
+    """A dash segment that only says where or when a performance happened: "Rock in Rio
+    2015", "Live Aid 1985", "Glastonbury 2016", "Live in Montreal 1981", "1995". "The
+    1975" is a name, and "Hall & Oates" is not a venue (a venue word alone never counts)."""
+    s = _s_tidy(seg)
+    if not s:
+        return False
+    if _S_FEST_RX.search(s):
+        return True
+    if re.match(r"^live\s+(?:at|in|from|on|@)\b", s, re.I):
+        return True
+    yrs, rest = _s_years(s)
+    if not yrs:
+        return False
+    if not rest:
+        return not any(w.lower() in _S_ARTICLES for w in s.split())   # "1995", not "The 1975"
+    if _S_VENUE_RX.search(s) or re.search(r"\blive\b", s, re.I):
+        return True
+    return len(rest) <= 2 and _s_titleish(s) == 0
+
+
+def _s_tag_seg(seg):
+    """A segment with nothing left once tags, version words and junk words go: "Slowed",
+    "TikTok", "Lyrics", "Official Video". "Little Mix" keeps "Little", so it stays."""
+    x = _S_TAGSEG.sub(" ", _S_HASHTAG.sub(" ", seg or ""))
+    return not _s_named(_s_clean_side(x))
+
+
+def _s_dash_segments(t):
+    """Title text (brackets already out) -> (segments to pair, an event segment was cut)."""
+    segs = _S_DASH.split(t)
+    # "Bad - Meets - Evil - Fast - Lane - Ft. - Eminem": dashes used as spaces
+    if len(segs) >= 4 and sum(1 for s in segs if len(s.split()) <= 1) >= 0.75 * len(segs):
+        return [" ".join(s.strip() for s in segs)], False
+    if len(segs) >= 2 and re.match(r"^\s*\d{1,3}\.?\s*$", segs[0]):
+        segs = segs[1:]                               # "11 - Got My Mind Set on You"
+    segs = [s for s in segs if _s_named(s) and not _s_tag_seg(s)]
+    n, keep, event = len(segs), [], False
+    for i, s in enumerate(segs):
+        if n >= 3 and i in (0, n - 1) and _s_event_seg(s):
+            event = True
+            continue
+        if n >= 3 and i == n - 1 and len(s.split()) <= 4 and _S_REMIXER_SEG.search(s):
+            continue
+        keep.append(s)
+    return keep, event
+
+
+def _s_left_subtitle(disp):
+    """"Love nwantiti (ah ah ah) - Ckay", "4 Morant (Better Luck Next Time)- Doja Cat": a
+    bracketed subtitle right before the first dash marks the LEFT side as the song title.
+    Brackets that are credits, versions or junk ("(feat. X)", "(Live)", "(Official)") don't."""
+    m = re.match(u"^\\s*[^\\(\\[\\-–—|]+?\\s*[\\(\\[]([^\\)\\]]{2,60})[\\)\\]]\\s*"
+                 u"[-–—]+\\s", disp or "")
+    if not m:
+        return False
+    c = m.group(1)
+    return not (_s_version(c) or re.search(r"\b(?:feat|ft|featuring|prod|produced|with|x)\b",
+                                           c, re.I)
+                or _S_JUNK.search(c) or _S_TAGSEG.search(c) or _S_YEAR.search(c))
+
+
+def _s_soft_flip(artist, title, left_is_title=False):
+    """"Artist - Title" is the default reading. With nothing firmer to go on (no typed
+    words on one side, no channel match, no venue), these flip it, in order:
+      * a year on one side only: the short side with the year is a performer and a date
+        ("WE WILL ROCK YOU - QUEEN 1981"); a long side with the year is a song title that
+        has a year in it ("Party Like It's 1999 - Prince"), and the year stays in it;
+      * a bracketed subtitle before the dash ("Love nwantiti (ah ah ah) - Ckay");
+      * two or more first/second-person words on the left and none on the right ("all i
+        want is you - rebzyyx"). Tester round 2: these came back swapped."""
+    ya, ra = _s_years(artist)
+    yt, rt = _s_years(title)
+    if ya and not yt:
+        return len(ra) >= 3 and 1 <= len(rt) <= 2
+    if yt and not ya:
+        return 1 <= len(rt) <= 2 and len(ra) >= 3
+    if left_is_title:
+        return True
+    return _s_titleish(artist) >= 2 and _s_titleish(title) == 0
+
+
+def _s_parse(raw, uploader, ptoks=None):
+    """Upload title -> (artist, title, artist_named, info). info = {"live": a live/venue
+    tail was cut, "event": the artist slot had a venue or year cut (so a known artist may
+    still be peeled off it, see _s_peel), "pipe": (left, right) of an undecided "A | B"}.
+
+    Shapes: "Artist - Title" (the common one), "Title - Artist" (swapped when the typed
+    words sit on the left, the uploader's channel is the right side, or the right side is
+    the performer side of a live upload), "Artist | Title" / "Title \u2022 Artist" (oriented by
+    the uploader, the typed words, a remembered artist or a live tail; left for _s_orient
+    otherwise), "Uploader: Song" on its own channel or a remembered artist's name before
+    a colon. No separator: the title is the whole name and the artist is the uploader,
+    which is what the platform itself shows. A dash whose left side is only a track
+    number ("11 - Got My Mind Set on You") is not an artist."""
+    disp = _s_unvis(raw)
+    topic = bool(re.search(r"\s-\s*topic$", _s_unvis(uploader), re.I))
+    up = re.sub(r"\s*-\s*topic$|vevo$", "", _s_unvis(uploader), flags=re.I).strip()
+    up = re.sub(r"\s+(?:official(?:\s+(?:channel|music|page|artist|youtube|account))?|oficial|"
+                r"officiel)$", "", up, flags=re.I).strip() or up
+    upk = _s_akey(up)
+    # topic: a YouTube "Artist - Topic" channel (auto-made for the artist, so its uploads
+    # name the artist even with no dash in the title). lr: the dash sides in the order the
+    # uploader wrote them, for _s_batch_orient.
+    info = {"live": False, "event": False, "pipe": None, "decided": False, "topic": topic,
+            "lr": None}
+    pipe_decided = False
+    left_sub = _s_left_subtitle(disp)
+    t = _S_BRACKETS.sub(" ", disp)
+    t = re.sub(r"\s*[\(\[\{\u3010][^\)\]\}\u3011]*$", "", t) or t   # unclosed "[4K HDR Blu-Ray"
+    segs = [s for s in _S_SEGS.split(t) if _s_named(s)]
+    pipe = None
+    if segs:
+        dseg = next((s for s in segs if _S_DASH.search(" %s " % s.strip(" -~"))), None)
+        t = dseg if dseg is not None else segs[0]
+        if (dseg is None and len(segs) >= 2 and not _S_TAGSEG.search(segs[1])
+                and not _s_version(segs[1]) and len(segs[1]) <= 60):
+            pipe = (segs[0], segs[1])
+    t = _S_PROD.sub("", t)
+    t = re.sub(u"[\"\u201c\u201d]", "", t).strip().lstrip(u"-~\u2013\u2014 ")
+    t = re.sub(r"^\d{1,3}[.)]\s+", "", t)
+    t = re.sub(r"\s{2,}", " ", _S_HASHTAG.sub(" ", t)).strip() or t   # "#Jerseyclub" is a tag
+    segs, seg_event = _s_dash_segments(t)
+    dash = len(segs) >= 2
+    if dash:
+        parts = segs[:2]
+    elif segs:
+        t = segs[0]
+    info["live"] = seg_event
+    flip = False                  # the artist side is the one the uploader wrote second
+    if not dash and pipe:
+        a, b = (_S_PROD.sub("", re.sub(u"[\"\u201c\u201d]", "", x)).strip() for x in pipe)
+        side = None                                  # index of the ARTIST side
+        if upk and _s_akey(a) == upk and _s_akey(b) != upk:
+            side = 0
+        elif upk and _s_akey(b) == upk and _s_akey(a) != upk:
+            side = 1
+        if side is None and ptoks:
+            ha, hb = _s_typed_side(ptoks, a), _s_typed_side(ptoks, b)
+            side = 1 if (ha and not hb) else (0 if (hb and not ha) else None)
+        if side is None:
+            ka, kb = _s_akey(a) in _S_KNOWN_ARTISTS, _s_akey(b) in _S_KNOWN_ARTISTS
+            side = 0 if (ka and not kb) else (1 if (kb and not ka) else None)
+        if side is None:
+            ma, mb = _s_marked(a), _s_marked(b)
+            side = 0 if (ma and not mb) else (1 if (mb and not ma) else None)
+        if side is not None:
+            parts, dash = ([a, b] if side == 0 else [b, a]), True
+            pipe_decided, flip = True, side == 1
+        else:
+            info["pipe"] = (_s_clean_side(a), _s_clean_side(b))
+    if dash:
+        artist, title = parts[0], parts[1]
+        decided = False
+
+        def swap():
+            return title, artist, not flip
+        if ptoks:
+            l_hit, r_hit = _s_typed_side(ptoks, artist), _s_typed_side(ptoks, title)
+            if l_hit and not r_hit:
+                artist, title, flip = swap()
+                decided = True
+            elif r_hit and not l_hit:
+                decided = True
+        if upk and _s_akey(title) == upk and _s_akey(artist) != upk:
+            artist, title, flip = swap()
+            decided = True
+        elif upk and _s_akey(artist) == upk:
+            decided = True
+        if not decided and _s_marked(title) and not _s_marked(artist):
+            artist, title, flip = swap()           # the performer side carries the venue
+            decided = True
+        if not decided and _s_cover_by(title) != title and _s_cover_by(artist) == artist:
+            artist, title, flip = swap()           # "... - Kodaline cover by Alexandra Porat"
+            decided = True
+        info["decided"] = decided or pipe_decided
+        if not info["decided"] and _s_soft_flip(artist, title, left_sub and not flip):
+            artist, title, flip = swap()
+        title, t_ev = _s_strip_event(title)
+        artist, a_ev = _s_strip_event(_s_cover_by(artist))
+        artist, a_yr = _s_strip_year(artist)
+        info["live"] = seg_event or t_ev or a_ev
+        info["event"] = a_ev or a_yr
+    else:
+        artist, title = up, t
+        title, t_ev = _s_strip_event(title)
+        info["live"] = seg_event or t_ev
+        cp = re.split(r"\s*:\s+", title, maxsplit=1)   # "Uploader Name: Song" on its own channel
+        if (len(cp) == 2 and _s_akey(cp[0]) and _s_named(cp[1])
+                and (_s_akey(cp[0]) == upk or _s_akey(cp[0]) in _S_KNOWN_ARTISTS)):
+            artist, title = cp[0], cp[1]
+    if _S_FAST_TAIL.search(title or "") and _s_named(_S_FAST_TAIL.sub("", title)):
+        title = _S_FAST_TAIL.sub("", title)
+    title, artist = _s_clean_side(title), _s_named(_s_clean_side(artist))
+    if not _s_named(title):
+        title = _s_tidy(disp)
+    if dash:
+        info["lr"] = (title, artist) if flip else (artist, title)
+    return (artist or _s_named(up) or None), title, dash, info
+
+
+def _s_prep(rows, ptoks=None, xq=None):
+    """search rows -> playable, parsed upload records with per-platform rank. xq is the
+    typed words' word-for-word key (_s_xkey), for title_exact."""
+    out, seen, rank = [], set(), {"youtube": 0, "soundcloud": 0}
+    one_word = ptoks is not None and len(set(ptoks)) < 2
+    for r in rows or []:
+        url, src = _s_playable(r.get("url"))
+        if not url or url in seen:
+            continue
+        if E._is_compilation(r):
+            continue
+        seen.add(url)
+        artist, title, dash, info = _s_parse(r.get("title"), r.get("uploader"), ptoks)
+        if not _s_field(_s_named(title)):
+            continue                          # no usable title ("\u202e\u202e\u202e"): not a row
+        if not artist and src == "soundcloud":
+            artist = url.split("/")[3]        # the uploader's permalink, never blank
+        core = _s_core(title)
+        version = _s_version(r.get("title"))
+        if info["live"] and "live" not in (version or "").split(" + "):
+            version = "%s + live" % version if version else "live"
+        rec = {"url": url, "src": src, "raw": r.get("title") or "",
+               "uploader": _s_unvis(r.get("uploader")), "chan": _s_unvis(r.get("chan")),
+               "artist": artist, "title": title,
+               "dash": dash, "core": core, "akey": _s_akey(artist),
+               "event": info["event"], "pipe": info["pipe"], "decided": info["decided"],
+               "topic": info["topic"],
+               "lr": info["lr"] and (_s_akey(info["lr"][0]), _s_akey(info["lr"][1])),
+               "version": version,
+               "plays": int(r.get("plays") or 0) or None,
+               "art": _s_art(_cand_art({"url": url, "source": src, "thumb": r.get("thumb")})),
+               "rank": rank[src]}
+        rank[src] += 1
+        if ptoks:
+            p = " ".join(ptoks)
+            # exact after the spelling folds, spaces ignored ("mmm whatcha say" is NOT
+            # "Whatcha Say": that is only close, and the why has to say so)
+            # word for word: runs of 3+ letters squeezed to 2 only, so "to god" is not
+            # "Too Good" (see _s_toks exact=True)
+            rec["title_exact"] = bool(core) and (
+                _s_core(title, True).replace(" ", "") == xq if xq is not None
+                else core.replace(" ", "") == p.replace(" ", ""))
+            rec["title_is_phrase"] = _s_close(core, p)
+            rec["title_in_phrase"] = (not rec["title_is_phrase"] and not one_word
+                                      and _s_title_in_phrase(core, ptoks))
+            # "exact" | "close" | None: the why says which ("is this real life?" is only
+            # close to typed "is this the real life")
+            rec["phrase_in_title"] = _s_phrase_hit(ptoks, r.get("title") or "")
+        out.append(rec)
+    n = {"youtube": rank["youtube"] or 1, "soundcloud": rank["soundcloud"] or 1}
+    for rec in out:
+        rec["n_src"] = n[rec["src"]]
+    return out
+
+
+# Artist keys this process has seen CONFIRMED: an upload whose channel is its own dash-left
+# side (the official upload), or a Genius primary artist. Lets a lone "i kissed a girl -
+# katy perry" flip the right way even while Genius is cooling off. Names only, capped.
+_S_KNOWN_ARTISTS = set()
+
+
+def _s_know(akey):
+    if akey and len(akey) >= 4:
+        if len(_S_KNOWN_ARTISTS) > 20000:
+            _S_KNOWN_ARTISTS.clear()
+        _S_KNOWN_ARTISTS.add(akey)
+
+
+def _s_swap(u):
+    u["artist"], u["title"] = u["title"], u["artist"]
+    u["core"], u["akey"] = _s_core(u["title"]), _s_akey(u["artist"])
+    u["swapped"] = not u.get("swapped")
+
+
+_S_JOINERS = {"/", "&", "x", ",", "and", "feat", "feat.", "ft", "ft.", "with", "vs", "vs.", "+"}
+
+
+def _s_known_prefix(side, cands):
+    """The leading words of `side` that name an artist in `cands`, or None."""
+    words = (side or "").split()
+    for j in range(len(words), 0, -1):
+        k = _s_akey(" ".join(words[:j]))
+        if len(k) >= 3 and k in cands:
+            return " ".join(words[:j]), words[j:]
+    return None
+
+
+def _s_cands(u, ups, core):
+    """Artist keys that can name `u`'s performer: remembered artists, plus the artists
+    other uploads in this batch give for the same song."""
+    return _S_KNOWN_ARTISTS | {o["akey"] for o in ups
+                               if o is not u and o["dash"] and o["akey"] and o["core"] == core}
+
+
+def _s_set_sides(u, artist, title):
+    u["artist"], u["title"] = _s_named(artist) or u["artist"], _s_tidy(title) or u["title"]
+    u["core"], u["akey"] = _s_core(u["title"]), _s_akey(u["artist"])
+
+
+def _s_batch_orient(ups):
+    """Creator and vibe results carry no typed song words to orient by. A name that pairs
+    with several different songs in this batch, while each of those songs pairs only with
+    it, is the artist: "Kodak Black - Closure", "Kodak Black - Rocketman" ... make
+    "Kodak Black \u2022 really loved you" read the same way round (tester round 1 showed it as
+    the song "Kodak Black" by the uploader 561FastMusic).
+
+    A SONG pairs with several names too, when several people upload it ("Jason Derulo -
+    Whatcha Say (Macon RMX)", "fakemutin - whatcha say", "WHATCHA SAY - JASON DERULO").
+    Tester round 2: that song was voted the artist and "Jason Derulo - Whatcha Say" came
+    back as the song "Jason Derulo" by "Whatcha Say". So the name must also sit on the LEFT
+    of the dash (where uploaders put the artist) in more of its uploads than on the right,
+    and none of its partners may be an artist this process already knows."""
+    def sides(u):
+        if u["dash"]:
+            return u["artist"], u["title"]
+        return u.get("pipe")
+    pairs, left, right = {}, {}, {}
+    for u in ups:
+        sd = sides(u)
+        if not sd:
+            continue
+        ka, kb = _s_akey(sd[0]), _s_akey(sd[1])
+        if len(ka) >= 3 and len(kb) >= 3 and ka != kb:
+            pairs.setdefault(ka, set()).add(kb)
+            pairs.setdefault(kb, set()).add(ka)
+        if u["dash"] and u.get("lr"):
+            left[u["lr"][0]] = left.get(u["lr"][0], 0) + 1
+            right[u["lr"][1]] = right.get(u["lr"][1], 0) + 1
+    artists = {k for k, ps in pairs.items()
+               if len(ps) >= 2 and all(len(pairs.get(p, ())) == 1 for p in ps)
+               and left.get(k, 0) > right.get(k, 0) and not (ps & _S_KNOWN_ARTISTS)}
+    for u in ups:
+        sd = sides(u)
+        if not sd or u.get("decided") or u.get("oriented"):
+            continue
+        ka, kb = _s_akey(sd[0]), _s_akey(sd[1])
+        if kb in artists and ka not in artists:
+            _s_set_sides(u, sd[1], sd[0])
+        elif ka in artists and kb not in artists:
+            _s_set_sides(u, sd[0], sd[1])
+        else:
+            continue
+        u["dash"] = u["oriented"] = True
+
+
+def _s_orient(ups, typed=None):
+    """Uploads that name the same song in either order ("Adele - Hello" and "Hello -
+    Adele (Karaoke)") are one song. Each such cluster takes ONE orientation: the side an
+    uploader's channel name matches is the artist (the official upload), else the side
+    most of the uploads put on the left, weighted by plays. Fixes rows like "Adele" by
+    "Hello" and lets the uploads count as agreement for each other.
+
+    Before that: a year beside a known artist marks the performer side ("WE WILL ROCK YOU
+    - QUEEN ROCK MONTREAL 1981" is Queen), a known artist is peeled off an artist slot that
+    had a venue or year cut ("QUEEN ROCK MONTREAL" -> "QUEEN", but "Queen / Rockin'1000"
+    stays whole), and with no typed words (creator, vibe) _s_batch_orient runs."""
+    clusters = {}
+    for u in ups:
+        if u["dash"] and len(u["akey"]) >= 4 and u["akey"] in "".join(_s_toks(u["uploader"])):
+            _s_know(u["akey"])
+    for u in ups:
+        if not u["dash"] or u.get("decided") or not _s_strip_year(u["title"])[1]:
+            continue
+        cands = _s_cands(u, ups, _s_core(u["artist"]))
+        if _s_known_prefix(u["title"], cands) and not _s_known_prefix(u["artist"], cands):
+            _s_set_sides(u, _s_strip_year(u["title"])[0], u["artist"])
+            u["event"] = u["decided"] = True
+    for u in ups:
+        if u["dash"] and u.get("event"):
+            hit = _s_known_prefix(u["artist"], _s_cands(u, ups, u["core"]))
+            if hit and hit[1] and hit[1][0].lower() not in _S_JOINERS:
+                _s_set_sides(u, hit[0], u["title"])
+    # A side that other uploads in this batch settle as a SONG TITLE (their own channel or
+    # the typed words decided it) is a title here too: "We Will Rock You - GMV" is the
+    # song "We Will Rock You" by GMV, not the reverse.
+    settled = {"".join(u["core"].split()) for u in ups if u["dash"] and u.get("decided")}
+    settled |= {"".join(u["core"].split()) for u in ups
+                if u["dash"] and len(u["akey"]) >= 3 and u["akey"] in "".join(_s_toks(u["uploader"]))}
+    settled.discard("")
+    for u in ups:
+        if not u["dash"] or u.get("decided") or "".join(u["core"].split()) in settled:
+            continue
+        first = re.split(r"\s*[,*]\s*", u["artist"])[0]      # "We Will Rock You, *ALL STARS*"
+        if "".join(_s_core(u["artist"]).split()) in settled:
+            _s_swap(u)
+            u["decided"] = True
+        elif (len(_s_core(first).split()) >= 2
+              and "".join(_s_core(first).split()) in settled):
+            _s_set_sides(u, u["title"], first)
+            u["decided"] = True
+    if typed is None:
+        _s_batch_orient(ups)
+    for u in ups:
+        if not u["dash"]:
+            continue
+        a, t = u["akey"], "".join(u["core"].split())
+        if a and t and a != t:
+            clusters.setdefault(tuple(sorted((a, t))), []).append(u)
+    for us in clusters.values():
+        if len(us) < 2:
+            continue
+        votes = {}
+        for u in us:
+            upk = "".join(_s_toks(u["uploader"]))
+            official = len(u["akey"]) >= 3 and u["akey"] in upk
+            other = "".join(u["core"].split())
+            if len(other) >= 3 and other in upk and not official:
+                votes[other] = votes.get(other, 0.0) + 5.0
+            w = 1.0 + _s_logplays(u["plays"]) + (5.0 if official else 0.0)
+            votes[u["akey"]] = votes.get(u["akey"], 0.0) + w
+        best = max(votes, key=lambda k: votes[k])
+        for u in us:
+            if u["akey"] != best:
+                _s_swap(u)
+            u["oriented"] = True
+    for u in ups:
+        if u["dash"] and not u.get("oriented"):
+            tk = _s_akey(u["title"])
+            if tk in _S_KNOWN_ARTISTS and u["akey"] not in _S_KNOWN_ARTISTS:
+                _s_swap(u)
+                u["oriented"] = True
+            elif u["akey"] in _S_KNOWN_ARTISTS and tk not in _S_KNOWN_ARTISTS:
+                u["oriented"] = True
+        elif not u["dash"] and u.get("pipe"):
+            a, b = u["pipe"]
+            ka, kb = _s_akey(a) in _S_KNOWN_ARTISTS, _s_akey(b) in _S_KNOWN_ARTISTS
+            if ka != kb:
+                _s_set_sides(u, a if ka else b, b if ka else a)
+                u["dash"] = u["oriented"] = True
+    return ups
+
+
+def _s_title_agree(core, u):
+    if not core:
+        return False
+    if _s_close(core, u["core"]):
+        return True
+    if u["dash"] and _s_close(core, _s_core(u["artist"])):
+        return True                        # the upload put the title on the left
+    raw = " %s " % " ".join(_s_toks(u["raw"]))
+    return (len(core) >= 6 and " " in core) and (" %s " % core) in raw
+
+
+def _s_artist_agree(artist, u):
+    """The artist is named in the upload title or is the uploader. A 2+ word tail of the
+    name also counts ("Scott Bradlee's Postmodern Jukebox" uploads as "Postmodern
+    Jukebox"), never a single leftover word."""
+    text = "".join(_s_toks(u["raw"] + " " + u["uploader"]))
+    a = _s_akey(artist)
+    if len(a) >= 3 and a in text:
+        return True
+    toks = _s_toks(re.split(r"\s+(?:feat\.?|ft\.?|featuring|x|with)\s+|\s*[,&]\s*",
+                            artist or "", flags=re.I)[0])
+    for i in range(1, len(toks) - 1):
+        tail = "".join(toks[i:])
+        if len(toks) - i >= 2 and len(tail) >= 8 and tail in text:
+            return True
+    return False
+
+
+def _s_fut(f):
+    """A finished future's value, or None if it failed or is still running."""
+    if f is None or not f.done():
+        return None
+    try:
+        return f.result()
+    except Exception:
+        return None
+
+
+def _s_logplays(p):
+    return min(math.log10((p or 0) + 1), 9.0) / 9.0
+
+
+# Every string that leaves /search goes through _s_field: control and format characters
+# (C0/C1 controls, bidi overrides, zero-width marks) out, whitespace collapsed, and a length
+# cap, so an uploader string can neither break a row nor bloat the payload (tester round
+# 1, item 12). The UI escapes too; this is the server keeping its own output sane.
+_S_FIELD_MAX = 200
+_S_WHY_MAX = 300
+
+
+def _s_field(s, cap=_S_FIELD_MAX):
+    if s is None:
+        return None
+    s = "".join(ch for ch in unicodedata.normalize("NFC", u"%s" % s)
+                if unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Co"))
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:cap].rstrip() or None
+
+
+def _s_art(url):
+    """Cover art or None. SoundCloud's grey default avatar (default_avatar_large.png) and
+    Genius's default cover are placeholders, not art for this song."""
+    if not isinstance(url, str) or not url.startswith("https://") or len(url) > 600:
+        return None
+    if re.search(r"default_avatar|default_cover|/images/default", url):
+        return None
+    return url
+
+
+def _s_why(why):
+    """One clause per reason: a clause or list item said twice ("shake, off, shake, off")
+    is said once."""
+    out = []
+    for part in re.split(r",\s+", why or ""):
+        if part and part.lower() not in [o.lower() for o in out]:
+            out.append(part)
+    return _s_field(", ".join(out), _S_WHY_MAX)
+
+
+def _s_row(title, artist, u, confidence, why, art=None):
+    return {"title": _s_field(title or u["title"]), "artist": _s_field(artist or u["artist"]),
+            "version": _s_field(u["version"]), "url": u["url"], "src": u["src"],
+            "art": u["art"] or _s_art(art), "plays": u["plays"],
+            "confidence": confidence, "why": _s_why(why)}
+
+
+def _s_srcs_txt(srcs):
+    names = [n for k, n in (("youtube", "YouTube"), ("soundcloud", "SoundCloud"))
+             if k in srcs]
+    return " and ".join(names)
+
+
+class _SLookupFailed(OSError):
+    """A coalesced lookup failed for its owner; every waiter gets this instead of running it."""
+
+
+_S_NEG_TTL = 30.0           # a failed or empty lookup is remembered this long
+_S_NEG_CACHE = {}           # key -> (stored_at, error text or None for "answered, empty")
+
+
+def _s_cached(key, fn, wait=8.0):
+    """Run one lookup through the 15-minute JSON cache. A second caller asking for the
+    same lookup while the first is still running waits for it instead of starting its own
+    (a burst of the same query costs one lookup), and SHARES ITS OUTCOME, failure
+    included. Tester round 1: a waiter whose owner failed used to run fn() itself, so 8
+    concurrent requests against black-holed sources kept spawning yt-dlp for 30-40s after
+    they had all returned 502. Now a failure or an empty answer is remembered for 30s
+    (_S_NEG_TTL) and a waiter that outlives its wait gives up rather than re-running.
+    Only non-empty results go in the 15-minute cache."""
+    now = time.time()
+    with _S_SUB_LOCK:
+        hit = _S_SUB_CACHE.get(key)
+        if hit and now - hit[0] < _S_SUB_TTL:
+            return hit[1]
+        neg = _S_NEG_CACHE.get(key)
+        if neg and now - neg[0] < _S_NEG_TTL:
+            if neg[1] is None:
+                return []
+            raise _SLookupFailed("failed %ds ago: %s" % (now - neg[0], neg[1]))
+        slot = _S_INFLIGHT.get(key)
+        owner = slot is None
+        if owner:
+            slot = _S_INFLIGHT[key] = {"ev": threading.Event(), "rows": None, "err": None}
+    if not owner:
+        if not slot["ev"].wait(wait):
+            raise _SLookupFailed("the same lookup is still running")
+        if slot["err"] is not None:
+            raise _SLookupFailed(slot["err"])
+        return slot["rows"] or []
+    try:
+        rows = fn()
+    except BaseException as e:
+        slot["err"] = ("%s: %s" % (type(e).__name__, e))[:160]
+        with _S_SUB_LOCK:
+            if len(_S_NEG_CACHE) > 3000:
+                _S_NEG_CACHE.clear()
+            _S_NEG_CACHE[key] = (time.time(), slot["err"])
+        raise
+    else:
+        slot["rows"] = rows
+        with _S_SUB_LOCK:
+            if rows:
+                if len(_S_SUB_CACHE) > 3000:
+                    _S_SUB_CACHE.clear()
+                _S_SUB_CACHE[key] = (time.time(), rows)
+            else:
+                _S_NEG_CACHE[key] = (time.time(), None)
+        return rows
+    finally:
+        with _S_SUB_LOCK:
+            _S_INFLIGHT.pop(key, None)
+        slot["ev"].set()
+
+
+# GENIUS SOURCES. Default: Genius's public web search (genius.com/api/search/<kind>, no
+# key), whose hits carry the matched lyric excerpt. If GENIUS_ACCESS_TOKEN is set, the
+# OFFICIAL API is used instead (api.genius.com/search, "Authorization: Bearer <token>",
+# a free client access token from genius.com/api-clients): documented and keyed, so it is
+# not subject to the web endpoint's bot challenge, but its hits carry no lyric excerpt, so
+# a lyric can't be checked word for word and lyric mode leans on title matches. Both go
+# through the same breaker below. ADDIFY_GENIUS=off switches Genius off entirely (lyric
+# mode then runs on the upload lanes and its why says the lyric check is unavailable).
+# See README-search.md.
+_S_G_WEB = "https://genius.com/api/search/%s?q=%s&per_page=%d"
+_S_G_API = "https://api.genius.com/search?q=%s&per_page=%d"
+
+
+def _s_genius_mode():
+    """-> "off" | "api" | "web"."""
+    if os.environ.get("ADDIFY_GENIUS", "").strip().lower() in ("off", "0", "no", "false"):
+        return "off"
+    return "api" if os.environ.get("GENIUS_ACCESS_TOKEN", "").strip() else "web"
+
+
+class _SGeniusBadBody(ValueError):
+    """Genius answered 200 with a body that is not its JSON (a Cloudflare "Just a moment..."
+    page is the known case). The breaker treats it as a challenge (tester round 2: it used
+    to count as a plain failure, so 8 concurrent searches sent 16 calls and never backed off)."""
+    code = 200
+
+
+def _genius(kind, q, per_page, timeout=4.0, mode=None):
+    """One Genius search. kind = "lyric" | "song" on the web endpoint; the official API has
+    one search for both. Each web hit carries the matched lyric excerpt in `highlight`,
+    which is what makes a lyric hit checkable instead of a black box: we test the typed
+    words against it ourselves. Raises on any HTTP error (urllib's HTTPError, with .code
+    and .headers), so the breaker can see a 429."""
+    mode = mode or _s_genius_mode()
+    if mode == "api":
+        url = _S_G_API % (_quote(q), per_page)
+        headers = {"Authorization": "Bearer %s" % os.environ.get("GENIUS_ACCESS_TOKEN", "").strip(),
+                   "User-Agent": "Addify/1.0", "Accept": "application/json"}
+    else:
+        url = _S_G_WEB % (kind, _quote(q), per_page)
+        headers = {"User-Agent": _SEARCH_UA, "Accept": "application/json"}
+    req = _ureq.Request(url, headers=headers)
+    with _ureq.urlopen(req, timeout=timeout) as r:
+        body = r.read()
+    try:
+        j = json.loads(body.decode("utf-8", "replace"))
+    except ValueError:
+        j = None
+    if not isinstance(j, dict):
+        raise _SGeniusBadBody("Genius sent a non-JSON 200 (%r)" % body[:40])
+    resp = j.get("response") or {}
+    lists = [sec.get("hits") or [] for sec in (resp.get("sections") or [])]   # web shape
+    if isinstance(resp.get("hits"), list):
+        lists.append(resp["hits"])                                              # API shape
+    hits = []
+    for lst in lists:
+        for h in lst:
+            if h.get("type") != "song":
+                continue
+            res = h.get("result") or {}
+            hl = h.get("highlights") or []
+            hits.append({
+                "title": _s_unvis(res.get("title")),
+                "artist": _s_unvis((res.get("primary_artist") or {}).get("name")
+                                   or res.get("primary_artist_names")
+                                   or res.get("artist_names") or ""),
+                "highlight": " / ".join((x.get("value") or "") for x in hl),
+                "frags": [x.get("value") or "" for x in hl],
+                "art": _s_art(res.get("song_art_image_thumbnail_url"))})
+    return hits
+
+
+# GENIUS BREAKER (measured 2026-09-24): ~30 searches in about a minute, each making 2-8
+# Genius calls, got this machine's IP a Cloudflare challenge (HTTP 429, header
+# "cf-mitigated: challenge") that was still in place hours later. We never try to get past
+# a challenge. Rules, all enforced INSIDE the 4-wide semaphore so a call that queued behind
+# the one that tripped the breaker never goes out (tester round 1, item 3):
+#   * a 429/403/401 trips the breaker: 2 min doubling to 15 for a plain 429, 10 min
+#     doubling to 30 when Cloudflare says "challenge". ONE trip per window: calls that were
+#     already in flight when it tripped fail without doubling it again (item 3), and the
+#     trip is logged with tlog's own secs argument (item 2: passing secs twice raised
+#     TypeError on every 429).
+#   * until a call has succeeded (at start-up, and after every window) Genius is
+#     half-open: exactly ONE probe call goes out, the others wait for its answer, so a
+#     blocked machine sends one request per window, never a burst.
+#   * never more than _S_G_RATE calls a minute in all (30 web, 120 official API), and the
+#     optional name check only spends from its own smaller budget.
+_S_G_LOCK = threading.Lock()
+_S_G_COND = threading.Condition(_S_G_LOCK)
+_S_G_SEM = threading.BoundedSemaphore(4)
+_S_G_STATE = {"off_until": 0.0, "backoff": 0.0, "tripped_at": 0.0, "healthy": False,
+              "probing": False, "code": None, "calls": []}
+_S_G_NAME_BUDGET = 30       # name-check calls per rolling minute, across all requests
+_S_G_QUEUE_WAIT = 4.5       # longest a call waits for a slot or for the probe's answer
+# Hard ceiling on ALL Genius calls per rolling minute. The challenge came at roughly
+# 60-240 web calls a minute; past the ceiling a call is skipped (lyric mode says the check
+# is unavailable) instead of being sent. The keyed official API gets more room.
+_S_G_RATE = {"web": 30, "api": 120}
+
+
+def _s_genius_open():
+    """Genius may be called now (switched on, not cooling off, no probe in flight)."""
+    st = _S_G_STATE
+    return (_s_genius_mode() != "off" and time.time() >= st["off_until"]
+            and (st["healthy"] or not st["probing"]))
+
+
+def _s_genius_trip(code, challenge, started):
+    """Called with _S_G_COND held. -> backoff seconds if this call tripped the breaker,
+    None if it tripped already while this call was in flight (same window)."""
+    st = _S_G_STATE
+    if st["tripped_at"] >= started:
+        return None
+    lo, hi = (600.0, 1800.0) if challenge else (120.0, 900.0)
+    b = min(hi, max(lo, st["backoff"] * 2))
+    now = time.time()
+    st.update(backoff=b, off_until=now + b, tripped_at=now, healthy=False, code=code)
+    return b
+
+
+def _s_genius_raw(kind, q, per_page):
+    mode = _s_genius_mode()
+    if mode == "off":
+        raise OSError("Genius is switched off (ADDIFY_GENIUS=off)")
+    if not _S_G_SEM.acquire(timeout=_S_G_QUEUE_WAIT):
+        raise OSError("Genius is busy")
+    probe = False
+    try:
+        with _S_G_COND:
+            give_up = time.time() + _S_G_QUEUE_WAIT
+            while True:
+                now = time.time()
+                if now < _S_G_STATE["off_until"]:
+                    raise OSError("Genius cooling off after a %s" % _S_G_STATE["code"])
+                if _S_G_STATE["healthy"]:
+                    break
+                if not _S_G_STATE["probing"]:
+                    _S_G_STATE["probing"] = probe = True
+                    break
+                if now >= give_up:
+                    raise OSError("Genius probe still running")
+                _S_G_COND.wait(give_up - now)
+            recent = [t for t in _S_G_STATE["calls"] if now - t < 60]
+            if len(recent) >= _S_G_RATE.get(mode, 30):
+                raise OSError("Genius rate ceiling reached (%d calls in the last minute)"
+                              % len(recent))
+            _S_G_STATE["calls"] = recent + [now]
+            started = now
+        try:
+            out = _genius(kind, q, per_page, mode=mode)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            bad_body = isinstance(e, _SGeniusBadBody)
+            if code in (401, 403, 429) or bad_body:
+                hdrs = getattr(e, "headers", None)
+                challenge = bad_body or bool(hdrs is not None and
+                                             (hdrs.get("cf-mitigated") or "").lower() == "challenge")
+                if bad_body:
+                    code = "non-JSON 200"
+                with _S_G_COND:
+                    b = _s_genius_trip(code, challenge, started)
+                if b is not None:
+                    E.tlog("search_genius_backoff", 0, code=code, backoff_s=b,
+                           challenge=challenge, via=mode)
+            raise
+        with _S_G_COND:
+            _S_G_STATE["healthy"], _S_G_STATE["backoff"] = True, 0.0
+        return out
+    finally:
+        if probe:
+            with _S_G_COND:
+                _S_G_STATE["probing"] = False
+                _S_G_COND.notify_all()
+        _S_G_SEM.release()
+
+
+def _s_genius(kind, q, per_page):
+    if _s_genius_mode() == "api":
+        # one official search serves both kinds (it has no separate lyric search)
+        hits = _s_cached(("genius", "api", q.lower()), lambda: _s_genius_raw("song", q, 20))
+        hits = (hits or [])[:per_page]
+    else:
+        hits = _s_cached(("genius", kind, q.lower(), per_page),
+                         lambda: _s_genius_raw(kind, q, per_page))
+    for h in hits or []:
+        if not h["artist"].startswith("Genius "):
+            _s_know(_s_akey(h["artist"]))
+    return hits
+
+
+def _s_genius_budget(n):
+    """True when n more OPTIONAL Genius calls fit this minute's name-check budget."""
+    with _S_G_LOCK:
+        now = time.time()
+        recent = sum(1 for t in _S_G_STATE["calls"] if now - t < 60)
+    return _s_genius_open() and recent + n <= _S_G_NAME_BUDGET
+
+
+def _s_text(o):
+    if not isinstance(o, dict):
+        return ""
+    return o.get("simpleText") or "".join(r.get("text", "") for r in o.get("runs") or [])
+
+
+def _s_yt_walk(o, out, depth=0):
+    if depth > 40:
+        return
+    if isinstance(o, dict):
+        v = o.get("videoRenderer")
+        if isinstance(v, dict):
+            out.append(v)
+        for k, x in o.items():
+            if k != "videoRenderer" and isinstance(x, (dict, list)):
+                _s_yt_walk(x, out, depth + 1)
+    elif isinstance(o, list):
+        for x in o:
+            _s_yt_walk(x, out, depth + 1)
+
+
+def _s_yt_handle(v):
+    """The channel's own handle ("/@FastMusic954" -> "FastMusic954") from a videoRenderer,
+    or "". Creator mode matches a typed @handle against it exactly."""
+    for k in ("ownerText", "longBylineText", "shortBylineText"):
+        for r in ((v.get(k) or {}).get("runs") or []):
+            try:
+                base = r["navigationEndpoint"]["browseEndpoint"].get("canonicalBaseUrl") or ""
+            except (KeyError, TypeError, AttributeError):
+                continue
+            m = re.match(r"^/(?:@|c/|user/)([^/?#]+)", base)
+            if m:
+                return _unquote(m.group(1))
+    return ""
+
+
+def _s_yt_direct(q, n, timeout=3.5):
+    """YouTube's own search endpoint (the call ytsearch makes), in-process: one HTTPS
+    request instead of a python subprocess. Same row shape as crate_engine._run_search.
+    Live streams and premieres (no length) are skipped: they are not song uploads."""
+    body = {"context": {"client": {"clientName": "WEB", "clientVersion": _S_YT_CLIENT,
+                                   "hl": "en", "gl": "US"}},
+            "query": q, "params": _S_YT_VIDEOS}
+    req = _ureq.Request(_S_YT_URL, data=json.dumps(body).encode(), headers={
+        "Content-Type": "application/json", "User-Agent": _SEARCH_UA,
+        "Origin": "https://www.youtube.com", "X-YouTube-Client-Name": "1",
+        "X-YouTube-Client-Version": _S_YT_CLIENT})
+    with _ureq.urlopen(req, timeout=timeout) as r:
+        j = json.loads(r.read().decode("utf-8", "replace"))
+    vids = []
+    _s_yt_walk(j, vids)
+    if not vids:
+        raise ValueError("no videoRenderer in the YouTube search response")
+    rows = []
+    for v in vids:
+        vid = v.get("videoId") or ""
+        if not re.match(r"^[A-Za-z0-9_-]{11}$", vid):
+            continue
+        secs = 0
+        for part in _s_text(v.get("lengthText")).strip().split(":"):
+            secs = secs * 60 + int(part) if part.isdigit() else 0
+        if not secs:
+            continue
+        vt = _s_text(v.get("viewCountText"))
+        views = int(re.sub(r"\D", "", vt) or 0) if "view" in vt.lower() else 0
+        owner = (_s_text(v.get("ownerText")) or _s_text(v.get("longBylineText"))
+                 or _s_text(v.get("shortBylineText")))
+        rows.append({"title": _s_text(v.get("title")), "uploader": owner,
+                     "url": "https://www.youtube.com/watch?v=%s" % vid, "source": "youtube",
+                     "duration": str(secs), "plays": views, "likes": 0, "query": q,
+                     "thumb": None, "chan": _s_yt_handle(v)})
+        if len(rows) >= n:
+            break
+    return rows
+
+
+def _s_flat(prefix, src, q, timeout=8.0):
+    """crate_engine._run_search's yt-dlp flat search (same command, same row shape) with
+    an 8s ceiling instead of 25s, so a hung search frees its slot in the shared 6-wide
+    semaphore quickly. Raises on failure, so a dead source reads as dead, not empty."""
+    import subprocess
+    out = subprocess.run(E.YTDLP + [prefix + q, "--flat-playlist", "--print", E._SEARCH_FMT],
+                         capture_output=True, text=True, timeout=timeout).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or not parts[2].startswith("http"):
+            continue
+        rows.append({"title": parts[0], "uploader": parts[1], "url": parts[2],
+                     "source": src, "duration": parts[3] if len(parts) > 3 else "",
+                     "plays": E._num(parts[4]) if len(parts) > 4 else 0,
+                     "likes": E._num(parts[5]) if len(parts) > 5 else 0, "query": q,
+                     "thumb": E._thumb(parts[6]) if len(parts) > 6 else None})
+    return rows
+
+
+def _s_yt(q, n):
+    def run():
+        try:
+            return _s_yt_direct(q, n)
+        except Exception as e:
+            E.tlog("search_yt_direct_fail", 0, err=str(e)[:120])
+        with _S_PROC_SEM:
+            return _s_flat("ytsearch%d:" % n, "youtube", q)
+    return _s_cached(("yt", q.lower(), n), run)
+
+
+def _s_sc(q, n):
+    def run():
+        with _S_PROC_SEM:
+            return _s_flat("scsearch%d:" % n, "soundcloud", q)
+    return _s_cached(("sc", q.lower(), n), run)
+
+
+def _s_uploads(specs, deadline):
+    """[(query, yt_n, sc_n)] -> (rows, answered). All lookups concurrent; rows keep query
+    order (YouTube then SoundCloud per query) so per-platform rank means something."""
+    ex = ThreadPoolExecutor(max_workers=max(1, 2 * len(specs)))
+    try:
+        futs = []
+        for q, yn, sn in specs:
+            if yn:
+                futs.append(ex.submit(_s_yt, q, yn))
+            if sn:
+                futs.append(ex.submit(_s_sc, q, sn))
+        _cf.wait(futs, timeout=max(0.3, min(SEARCH_STAGE1, deadline - time.time() - 1.0)))
+        res = [_s_fut(f) for f in futs]
+    finally:
+        ex.shutdown(wait=False)
+    rows, seen = [], set()
+    for r in res:
+        for x in r or []:
+            if x["url"] not in seen:
+                seen.add(x["url"])
+                rows.append(x)
+    return rows, any(r is not None for r in res)
+
+
+def _s_sides(u):
+    """The two halves of an upload title that could be artist and song: the dash split,
+    else an "Artist: Title" colon split ("Gym Class Heroes: Stereo Hearts" on a label
+    channel), else None."""
+    if u["dash"]:
+        return u["artist"], u["title"]
+    parts = re.split(r"\s*:\s+", u["title"], maxsplit=1)
+    if len(parts) == 2 and _s_named(parts[0]) and _s_named(parts[1]) and len(parts[0]) <= 40:
+        return _s_tidy(parts[0]), _s_tidy(parts[1])
+    return None
+
+
+def _s_akey_in(ha, side):
+    """Genius's artist key names this side: equal, the side starts with it, or the
+    side's first 2+ words sit at the end of it ("Postmodern Jukebox European Tour Version"
+    vs "Scott Bradlee's Postmodern Jukebox")."""
+    k = "".join(_s_toks(side))
+    if not ha or not k:
+        return False
+    if ha == _s_akey(side) or (len(ha) >= 4 and k.startswith(ha)):
+        return True
+    st = _s_toks(side)
+    return any(len("".join(st[:j])) >= 8 and ha.endswith("".join(st[:j]))
+               for j in range(2, len(st) + 1))
+
+
+def _s_genius_names(rows, ups_by_url, deadline):
+    """Rows built from an upload title alone ("i kissed a girl - katy perry sped up /
+    nightcore") can have the sides the wrong way round. Ask Genius, once per row, for
+    "<left> <right>": when its song has one side as the title AND the other as the
+    artist, use that orientation and Genius's own spelling. Anything less leaves the row
+    as the uploader wrote it. Never changes which upload is linked."""
+    left = deadline - time.time() - 0.25
+    todo = []
+    for r in rows:
+        u = ups_by_url.get(r["url"])
+        sd = u and _s_sides(u)
+        if not sd:
+            continue
+        upk = "".join(_s_toks(u["uploader"]))
+        if u.get("oriented") or (u["dash"] and len(u["akey"]) >= 3 and u["akey"] in upk):
+            continue                       # the cluster or the artist's own channel settled it
+        todo.append((r, sd))
+    todo = todo[:3]
+    if left < 0.6 or not todo or not _s_genius_budget(len(todo)):
+        return
+    ex = ThreadPoolExecutor(max_workers=len(todo))
+    try:
+        futs = [(r, sd, ex.submit(_s_genius, "song", "%s %s" % sd, 3)) for r, sd in todo]
+        _cf.wait([f for _, _, f in futs], timeout=min(1.6, left))
+        for r, (a_side, t_side), f in futs:
+            for h in (_s_fut(f) or [])[:3]:
+                hc, ha = _s_core(h["title"]), _s_akey(h["artist"])
+                if not hc or not ha or h["artist"].startswith("Genius "):
+                    continue
+                straight = _s_close(hc, _s_core(t_side)) and _s_akey_in(ha, a_side)
+                flipped = _s_close(hc, _s_core(a_side)) and _s_akey_in(ha, t_side)
+                if straight or flipped:
+                    r["title"] = _s_field(_s_tidy(_S_FEAT.sub("", _S_BRACKETS.sub(" ", h["title"]))))
+                    r["artist"] = _s_field(h["artist"])
+                    r["why"] = r["why"].replace(" (no artist named, uploader shown)", "")
+                    break
+    finally:
+        ex.shutdown(wait=False)
+
+
+# A different PERFORMANCE, not an edit of the recording, so never offered as "the same
+# song, other version".
+_S_NOT_EDIT = {"cover", "acoustic", "live", "instrumental"}
+
+
+def _s_pick(ups, used, want_version=False, artist=None, edits_only=False):
+    """Representative upload. The artist's own channel first: offering the official
+    destination where one exists is the "simple measure" in legal.md, and it is the
+    real recording. Then the plain version (the song, not an edit of it), then the
+    most-played. With want_version, the most-played labelled edit instead; edits_only
+    leaves out covers and live takes."""
+    pool = [u for u in ups if u["url"] not in used and bool(u["version"]) == want_version]
+    if edits_only:
+        pool = [u for u in pool
+                if not (set((u["version"] or "").split(" + ")) & _S_NOT_EDIT)]
+    if not pool:
+        return None
+    ak = _s_akey(artist or "")
+
+    def official(u):
+        return len(ak) >= 3 and ak in "".join(_s_toks(u["uploader"]))
+    return max(pool, key=lambda u: (official(u), u["plays"] or 0, -u["rank"]))
+
+
+def _s_grp_artist(grp):
+    if grp.get("g"):
+        return grp["g"]["artist"]
+    dashed = [u["artist"] for u in grp["ups"] if u["dash"]]
+    return dashed[0] if dashed else None
+
+
+def _search_lyric(q, deadline):
+    ptoks = _s_toks(q)
+    phrase = " ".join(ptoks)
+    if sum(len(t) for t in ptoks) < 3:
+        return [], True               # "a" x 200, "?!": nothing to match on
+    info = _s_informative(ptoks)
+    one_word = len(set(ptoks)) < 2
+    xq = _s_xkey(q)
+    # strong needs a phrase specific enough that a hit on it means something
+    strong_ok = not one_word and (len(set(ptoks)) >= 3 or len(phrase) >= 12)
+    ex = ThreadPoolExecutor(max_workers=4)
+    try:
+        f_gl = ex.submit(_s_genius, "lyric", q, 20) if info else None
+        f_gs = ex.submit(_s_genius, "song", q, 5)
+        f_yt = ex.submit(_s_yt, q, 10)
+        f_sc = ex.submit(_s_sc, q, 15)
+        _cf.wait([f for f in (f_gl, f_gs, f_yt, f_sc) if f],
+                 timeout=max(0.3, min(SEARCH_STAGE1, deadline - time.time() - 1.0)))
+        gl, gs, yt, sc = (_s_fut(f) for f in (f_gl, f_gs, f_yt, f_sc))
+    finally:
+        ex.shutdown(wait=False)
+    g_dead = gs is None and (gl is None or not info)
+    # Without the upload lane nothing is playable, so "no rows" would be a lie about the
+    # music rather than a statement about our sources. Stage 2 can still revive it.
+    alive = yt is not None or sc is not None
+    ups = _s_orient(_s_prep((yt or []) + (sc or []), ptoks, xq), ptoks)
+
+    # Genius candidates. A lyric hit counts when the typed words are really in the
+    # excerpt Genius matched on; also when Genius lists the song in its top 3 for the
+    # words and the title IS (or sits inside) the words, because Genius's excerpt is
+    # often fragmentary ("never gonna give, never gonna give (give you up)"). A song-search
+    # hit counts only when its title is or sits inside the typed words.
+    gc, seen = [], {}
+
+    def gkey(h):
+        if h["artist"].startswith("Genius ") or re.search(r"\btrack\s?list\b", h["title"], re.I):
+            return None                    # translation pages and tracklists, not songs
+        k = (_s_core(h["title"]), _s_akey(h["artist"]))
+        return k if k[0] and k[1] else None
+
+    def tmatch(core):
+        teq = _s_close(core, phrase)
+        return teq, (not teq) and (not one_word) and _s_title_in_phrase(core, ptoks)
+
+    def texact(title):
+        # word for word (see _s_toks exact=True): "to god" is not "Too Good"
+        x = _s_core(title, True).replace(" ", "")
+        return bool(x) and x == xq
+
+    for i, h in enumerate(gl or []):
+        k = gkey(h)
+        if not k:
+            continue
+        hit = _s_phrase_hit(ptoks, h["highlight"], h.get("frags"))
+        if k in seen:
+            if hit == "exact" or (hit and not seen[k]["lyric"]):
+                seen[k]["lyric"] = hit
+            continue
+        teq, tin = tmatch(k[0])
+        if not hit and not ((teq or tin) and i < 3):
+            continue
+        seen[k] = dict(h, core=k[0], lyric=hit, lrank=i, srank=None, teq=teq, tin=tin,
+                       texact=texact(h["title"]))
+        gc.append(seen[k])
+    for i, h in enumerate(gs or []):
+        k = gkey(h)
+        if not k:
+            continue
+        teq, tin = tmatch(k[0])
+        if not (teq or tin):
+            continue
+        if k in seen:
+            if seen[k]["srank"] is None:
+                seen[k]["srank"] = i
+            continue
+        seen[k] = dict(h, core=k[0], lyric=None, lrank=None, srank=i, teq=teq, tin=tin,
+                       texact=texact(h["title"]))
+        gc.append(seen[k])
+
+    groups = []
+    # lyric hits in Genius's order (capped), then EVERY song-search title hit. Cutting the
+    # combined list by position dropped Taylor Swift's "Shake It Off" (song search #1,
+    # appended after 17 lyric hits) and let KIDZ BOP take the crown.
+    for g in [x for x in gc if x["lrank"] is not None][:10] + \
+            [x for x in gc if x["lrank"] is None]:
+        m = [u for u in ups if _s_title_agree(g["core"], u) and _s_artist_agree(g["artist"], u)]
+        groups.append({"g": g, "ups": m, "resolved": []})
+    # Two Genius entries for one song ("Hide and Seek 2", "Hide & Seek (bootleg)") that
+    # land on the same upload are one guess, not two.
+    merged = []
+    for grp in groups:
+        urls = {u["url"] for u in grp["ups"]}
+        host = next((o for o in merged if urls and _s_akey(o["g"]["artist"]) ==
+                     _s_akey(grp["g"]["artist"]) and urls & {u["url"] for u in o["ups"]}), None)
+        if host:
+            hg, gg = host["g"], grp["g"]
+            host["ups"] += [u for u in grp["ups"] if u not in host["ups"]]
+            if gg["lyric"] == "exact" or (gg["lyric"] and not hg["lyric"]):
+                hg["lyric"], hg["lrank"] = gg["lyric"], gg["lrank"]
+            elif hg["lrank"] is None:
+                hg["lrank"] = gg["lrank"]
+            if gg["srank"] is not None and (hg["srank"] is None or gg["srank"] < hg["srank"]):
+                hg["srank"] = gg["srank"]
+            hg["teq"], hg["tin"] = hg["teq"] or gg["teq"], hg["tin"] or gg["tin"]
+            hg["texact"] = hg["texact"] or gg["texact"]
+        else:
+            merged.append(grp)
+    groups = merged
+    claimed = {u["url"] for grp in groups for u in grp["ups"]}
+    for u in ups:
+        if u["url"] in claimed:
+            continue
+        host = next((o for o in groups if o["g"] is None and o["core"] == u["core"]
+                     and o["akey"] == u["akey"]), None)
+        if host:
+            host["ups"].append(u)
+        else:
+            groups.append({"g": None, "ups": [u], "resolved": [], "core": u["core"],
+                           "akey": u["akey"]})
+
+    def pool(grp):
+        return grp["ups"] or grp["resolved"]
+
+    def maxplays(grp):
+        return max([u["plays"] or 0 for u in pool(grp)] or [0])
+
+    def score(grp):
+        g, us = grp["g"], grp["ups"]
+        s = 0.0
+        if g:
+            if g["lyric"] == "exact":
+                s += 3.0 - 0.06 * g["lrank"]
+            elif g["lyric"] == "close":
+                s += 2.0 - 0.06 * g["lrank"]
+            elif g["lrank"] is not None:
+                s += 1.0 - 0.2 * g["lrank"]        # listed top 3 for the words, excerpt fragmentary
+            if g["srank"] is not None:
+                s += 1.0 - 0.15 * g["srank"]
+            s += 2.5 if g["teq"] else (1.5 if g["tin"] else 0.0)
+        elif any(u.get("title_is_phrase") for u in us):
+            s += 2.0
+        elif any(u.get("title_in_phrase") for u in us):
+            s += 1.5
+        elif any(u.get("phrase_in_title") for u in us):
+            s += 1.0
+        if us:
+            s += max((1.5 if u["src"] == "youtube" else 1.0) *
+                     (1.0 - float(u["rank"]) / u["n_src"]) for u in us)
+            s += 0.4 * min(len(us) - 1, 4)         # several uploads name this song
+            if len({u["src"] for u in us}) == 2:
+                s += 0.5
+        s += 2.0 * _s_logplays(maxplays(grp))
+        if grp.get("echo"):
+            s += 2.0
+        if grp.get("shadow"):
+            s -= 3.0
+        return s
+
+    # Stage 2: a Genius hit that no upload search surfaced still needs something the UI
+    # can play. Only the ones that could make the six rows, at most 3, YouTube only (a
+    # Genius song's own upload is on YouTube), one narrow "artist title" search each.
+    prov = sorted(groups, key=score, reverse=True)[:SEARCH_MAX_ROWS]
+    todo = [grp for grp in prov if grp["g"] and not grp["ups"]][:3]
+    if todo and deadline - time.time() > 1.1:
+        specs = {id(grp): "%s %s" % (grp["g"]["artist"],
+                                     _s_tidy(_S_BRACKETS.sub(" ", grp["g"]["title"])))
+                 for grp in todo}
+        ex = ThreadPoolExecutor(max_workers=len(todo))
+        try:
+            futs = [(grp, ex.submit(_s_yt, specs[id(grp)], 5)) for grp in todo]
+            _cf.wait([f for _, f in futs], timeout=max(0.3, deadline - time.time() - 0.6))
+            for grp, f in futs:
+                g = grp["g"]
+                res = _s_fut(f)
+                alive = alive or res is not None
+                got = _s_prep(res)
+                grp["resolved"] = [u for u in got if _s_title_agree(g["core"], u)
+                                   and _s_artist_agree(g["artist"], u)]
+        finally:
+            ex.shutdown(wait=False)
+
+    # Same title, different artist, 10x+ fewer plays than a song whose evidence is at
+    # least as good: a cover or a lesser namesake. Never strong, ranked down, and the why
+    # says so. KIDZ BOP "Shake It Off" (lyric on Genius, 53K plays) vs Taylor Swift
+    # "Shake It Off" (title in the words, 3.7B views) is the case that made this.
+    def tkey(grp):
+        return "".join((grp["g"]["core"] if grp["g"] else grp["core"]).split())
+
+    def akey(grp):
+        return _s_akey(grp["g"]["artist"]) if grp["g"] else grp["akey"]
+
+    def same_title(a, b):
+        # "I Got My Mind Set On You" / "Got My Mind Set On You" are one title
+        return _s_close(tkey(a), tkey(b), 0.88)
+
+    def title_word(a, b):
+        # what a why may call two titles that same_title() put together: "Mmm Whatcha
+        # Say" and "Whatcha Say" are only similar (tester round 2, item 6)
+        return "same" if tkey(a) == tkey(b) else "similar"
+
+    def ev(grp):
+        g, us = grp["g"], grp["ups"]
+        if g:
+            return 2 if (g["lyric"] == "exact" or g["teq"] or g["tin"]) else (1 if g["lyric"] else 0)
+        if any(u.get("title_is_phrase") or u.get("title_in_phrase") for u in us):
+            return 2
+        if grp.get("echo"):
+            return ev(grp["echo"])
+        return 1 if any(u.get("phrase_in_title") for u in us) else 0
+
+    # The reverse case: Genius has the words only under a cover or namesake ("Don't Stop
+    # Believin'" by Glee Cast and Anthem Lights, no Journey page in its top 20), while the
+    # same title by another artist is 10x+ more played right here (Journey, 389M). That
+    # upload inherits the lyric for RANKING and its why says exactly that. It stays
+    # "possible": Genius never showed the words on that artist's own page.
+    for G in groups:
+        if G["g"] or not tkey(G):
+            continue
+        gp = maxplays(G)
+        for H in groups:
+            if (H["g"] and H["g"]["lyric"] and same_title(H, G) and akey(H) != akey(G)
+                    and gp >= 1e6 and gp >= 10 * max(maxplays(H), 1)):
+                G["echo"] = H
+                break
+
+    for G in groups:
+        for H in groups:
+            if H is G or not tkey(G) or not same_title(H, G) or akey(H) == akey(G):
+                continue
+            hp = maxplays(H)
+            if (hp >= 1e6 and hp >= 10 * max(maxplays(G), 1) and ev(H) >= max(1, ev(G))
+                    and (not G.get("shadow") or hp > maxplays(G["shadow"]))):
+                G["shadow"] = H
+    for G in groups:
+        if G.get("shadow"):
+            G.pop("echo", None)            # outranked by the far more played song: no bonus
+
+    # SEVERAL SONGS SHARE THIS TITLE (tester round 1: "all i want" crowned Kodaline strong
+    # while Olivia Rodrigo's "All I Want", more played, sat below it as possible). When the
+    # typed words ARE a song title, word for word, and two or more different artists have
+    # a song by exactly that title, the words cannot say which one was meant. Nothing is
+    # strong, those songs lead ordered by plays, and each why says so.
+    # Tester round 2: (a) a far less played namesake ("shadow") still counts: the words
+    # name it as much as the big one, so the big one is not strong either; it just keeps
+    # its own "far more played" why and its place. (b) An upload names its artist with a
+    # dash, OR from a YouTube "Artist - Topic" channel, OR from a channel this process
+    # knows as an artist: Olivia Rodrigo's "All I Want" arrives as the title alone on
+    # "Olivia Rodrigo - Topic". A labelled edit, cover or live take is a version of a
+    # song, not a different song by that name, so it never counts.
+    def named_up(u):
+        return u["dash"] or u.get("topic") or (len(u["akey"]) >= 4 and u["akey"] in _S_KNOWN_ARTISTS)
+
+    def title_exact_grp(grp):
+        if grp["g"]:
+            return grp["g"]["texact"]
+        return any(u.get("title_exact") and named_up(u) and not u["version"]
+                   for u in grp["ups"])
+    amb_all = [G for G in groups if title_exact_grp(G)]
+    ambiguous = len({akey(G) for G in amb_all if akey(G)}) >= 2
+    amb_ids = {id(G) for G in amb_all if not G.get("shadow")} if ambiguous else set()
+    ok = strong_ok and not ambiguous
+
+    def shown_artist(grp):
+        return grp["g"]["artist"] if grp["g"] else (_s_grp_artist(grp) or "another artist")
+
+    def rival(grp, kind):
+        """Another artist's song with the same (or a similar) title and the SAME evidence
+        on Genius, so that evidence can't single this one out (tester round 2: Genius had
+        the "I Will Always Love You" lyric under Whitney Houston AND Dolly Parton, and
+        Whitney was strong on "lyric found on Genius")."""
+        for H in groups:
+            hg = H["g"]
+            if (H is grp or not hg or not akey(H) or akey(H) == akey(grp)
+                    or not same_title(H, grp)):
+                continue
+            if kind == "lyric" and hg["lyric"] == "exact":
+                return H
+            if kind == "title" and (hg["tin"] or hg["teq"]):
+                return H
+        return None
+
+    def verdict(grp, pick=None):
+        """-> (confidence, why). `pick` is the upload the row links: a why that talks
+        about "this upload" is checked against that upload, not against any upload of the
+        song (tester round 2: the official video was linked with "upload title contains
+        your words", which only a SoundCloud upload's title did)."""
+        g, ups_ = grp["g"], grp["ups"]
+        srcs = {u["src"] for u in ups_}
+        where = _s_srcs_txt(srcs)
+        sh = grp.get("shadow")
+        if id(grp) in amb_ids:
+            found = _s_srcs_txt({u["src"] for u in pool(grp)})
+            return "possible", ("several songs share this title, ranked by plays" +
+                                (", found on %s" % found if found else ""))
+        note = None
+        if g and srcs and not sh and ok:
+            if g["lyric"] == "exact":
+                r = rival(grp, "lyric")
+                if r is None:
+                    return "strong", "lyric found on Genius, title and artist agree on %s" % where
+                note = ("Genius has these words under a song with %s title by %s too"
+                        % ("the same" if title_word(r, grp) == "same" else "a similar",
+                           shown_artist(r)))
+            elif g["texact"]:
+                return "strong", ("your words are the song title on Genius, title and "
+                                  "artist agree on %s" % where)
+            elif g["tin"] and g["srank"] is not None and g["srank"] <= 1:
+                r = rival(grp, "title")
+                if r is None:
+                    return "strong", ("your words include the song title on Genius, title "
+                                      "and artist agree on %s" % where)
+                note = ("Genius has a song with %s title by %s too"
+                        % ("the same" if title_word(r, grp) == "same" else "a similar",
+                           shown_artist(r)))
+        tip = any(u.get("title_is_phrase") for u in ups_)
+        tipx = any(u.get("title_exact") for u in ups_)
+        yt = {u["akey"] for u in ups_ if u["src"] == "youtube" and u["dash"] and u["akey"]}
+        sc = {u["akey"] for u in ups_ if u["src"] == "soundcloud" and u["dash"] and u["akey"]}
+        if not g and tipx and yt & sc and not sh and ok:
+            return "strong", ("your words are the song title, and YouTube and SoundCloud "
+                              "uploads agree on the artist")
+        why = base_why(grp, srcs, where, tip, tipx, pick)
+        if note:
+            why = "%s, %s" % (why, note)
+        if sh:
+            why = "%s a far more played song by %s, %s" % (
+                "same title as" if title_word(grp, sh) == "same" else "similar title to",
+                shown_artist(sh), why)
+        return "possible", why
+
+    def base_why(grp, srcs, where, tip, tipx, pick=None):
+        g, ups_ = grp["g"], grp["ups"]
+        if g and g["lyric"] and srcs:
+            return ("lyric found on Genius, title and artist agree on %s" % where
+                    if g["lyric"] == "exact" else
+                    "close lyric match on Genius (not word for word), title and artist "
+                    "agree on %s" % where)
+        if g and g["lyric"]:
+            return ("lyric found on Genius, linked to an upload with the same title and "
+                    "artist" if g["lyric"] == "exact" else
+                    "close lyric match on Genius (not word for word), linked by title and "
+                    "artist")
+        if g and (g["teq"] or g["tin"]):
+            # say what matched: "mmm whatcha say" is close to "Whatcha Say", it is not it
+            what = ("Genius has a song with your words as its title" if g["texact"] else
+                    "your words are close to a song title on Genius" if g["teq"] else
+                    "your words include a song title on Genius")
+            return what + (", found on %s" % where if where else
+                           ", linked to an upload with the same title and artist")
+        anon = "" if any(u["dash"] for u in ups_) else " (no artist named, uploader shown)"
+        if grp.get("echo"):
+            return ("Genius has your words in a %s-title song by %s, and this one is far "
+                    "more played" % (title_word(grp, grp["echo"]), shown_artist(grp["echo"])))
+        if tip:
+            return "your words %s this upload's title on %s%s" % (
+                "are" if tipx else "are close to", where, anon)
+        if any(u.get("title_in_phrase") for u in ups_):
+            return "your words include this upload's title on %s%s" % (where, anon)
+        hits = [u for u in ups_ if u.get("phrase_in_title")]
+        if hits:
+            if pick is not None and pick.get("phrase_in_title"):
+                hit = pick["phrase_in_title"]
+            elif pick is None:
+                hit = "exact" if any(u["phrase_in_title"] == "exact" for u in hits) else "close"
+            else:
+                hit = None
+            if hit == "exact":
+                return "upload title contains your words" + anon
+            if hit == "close":
+                return "upload title is close to your words (not word for word)" + anon
+            exact = [u for u in hits if u["phrase_in_title"] == "exact"]
+            if exact:
+                return ("another upload of this song, on %s, has your words in its title%s"
+                        % (_s_srcs_txt({u["src"] for u in exact}), anon))
+            return ("another upload of this song, on %s, has words close to yours in its "
+                    "title%s" % (_s_srcs_txt({u["src"] for u in hits}), anon))
+        return "came up on %s for your words, %s%s" % (
+            where, "lyric check unavailable right now" if g_dead else "lyric not confirmed",
+            anon)
+
+    ordered = sorted(groups, key=lambda G: (id(G) in amb_ids,
+                                            maxplays(G) if id(G) in amb_ids else 0,
+                                            score(G)), reverse=True)
+    rows, used, plain = [], set(), set()
+
+    def emit(grp, u, conf):
+        g = grp["g"]
+        why = verdict(grp, u)[1]
+        if grp.get("disp"):
+            # a second row for the same song keeps the first row's names; only the
+            # version and the link differ
+            rows.append(_s_row(grp["disp"][0], grp["disp"][1], u, conf, why,
+                               art=g.get("art") if g else None))
+        elif g:
+            rows.append(_s_row(_s_tidy(_S_FEAT.sub("", _S_BRACKETS.sub(" ", g["title"]))),
+                               g["artist"], u, conf, why, art=g.get("art")))
+        else:
+            rows.append(_s_row(None, None, u, conf, why))
+            plain.add(id(rows[-1]))
+        grp["disp"] = (rows[-1]["title"], rows[-1]["artist"])
+        used.add(u["url"])
+
+    verdicts = {id(grp): verdict(grp) for grp in ordered}
+    # pass 1: every strong guess, one row each
+    for grp in ordered:
+        conf = verdicts[id(grp)][0]
+        if conf != "strong":
+            continue
+        a = _s_grp_artist(grp)
+        u = _s_pick(grp["ups"], used, artist=a) or _s_pick(grp["ups"], used, True, artist=a)
+        if u:
+            emit(grp, u, conf)
+    # the top strong song's most-played labelled edit, since this app is about versions
+    if rows and ordered:
+        top = next((grp for grp in ordered if verdicts[id(grp)][0] == "strong"), None)
+        u = top and _s_pick(top["ups"], used, True, artist=_s_grp_artist(top),
+                            edits_only=True)
+        if u and len(rows) < SEARCH_MAX_ROWS:
+            emit(top, u, verdicts[id(top)][0])
+    # pass 2: possible guesses
+    for grp in ordered:
+        if len(rows) >= SEARCH_MAX_ROWS:
+            break
+        conf = verdicts[id(grp)][0]
+        if conf == "strong":
+            continue
+        a = _s_grp_artist(grp)
+        u = _s_pick(pool(grp), used, artist=a) or _s_pick(pool(grp), used, True, artist=a)
+        if u:
+            emit(grp, u, conf)
+    # pass 3: fill with more versions of the guesses already shown
+    for grp in ordered:
+        if len(rows) >= SEARCH_MAX_ROWS:
+            break
+        u = _s_pick(pool(grp), used, True, artist=_s_grp_artist(grp), edits_only=True)
+        if u:
+            emit(grp, u, verdicts[id(grp)][0])
+    rows = rows[:SEARCH_MAX_ROWS]
+    # rows named from an upload title alone: let Genius settle which side is the artist
+    _s_genius_names([r for r in rows if id(r) in plain], {u["url"]: u for u in ups}, deadline)
+    return rows, alive
+
+
+def _search_vibe(q, deadline):
+    """Keyword search over upload titles. Edit uploads literally carry their vibe in the
+    title ("slowed + reverb", "female vocal", "phonk"), so this is a real first version,
+    but it only ever proves the words are in the title. Every row is "possible".
+
+    The words are NFKC- and ASCII-folded first, the same fold auto mode routes on (tester
+    round 2: "slowed reverb" typed in a styled or fullwidth alphabet was routed here and
+    then matched no word, so the search returned nothing without asking any source)."""
+    chunks = []
+    for c in re.split(r"[,;/\n]+", unicodedata.normalize("NFKC", q or "")):
+        words = [w for w in re.findall(r"[a-z0-9][a-z0-9'+-]*", E.fold_name(c).lower())
+                 if w not in _S_VIBE_STOP]
+        if words:
+            chunks.append(words)
+    words = list(dict.fromkeys(w for c in chunks for w in c))   # "shake off" once, not twice
+    if not words:
+        return [], True
+    queries = [" ".join(words)]
+    if len(chunks) >= 2:
+        queries.append(" ".join(w for c in chunks[:-1] for w in c))
+        if len(chunks) >= 3:
+            queries.append(" ".join(chunks[-1] + chunks[0]))
+    elif len(words) >= 3:
+        queries.append(" ".join(words[:-1]))
+    queries = list(dict.fromkeys(queries))[:3]
+    found, answered = _s_uploads([(x, 8, 15) for x in queries], deadline)
+    if not answered:
+        return [], False
+    ups = _s_orient(_s_prep(found))
+
+    def hits(u):
+        t = " %s " % E.fold_name(unicodedata.normalize("NFKC", u["raw"])).lower()
+        t = re.sub(r"[^a-z0-9]+", " ", t)
+        got = []
+        for w in words:
+            stem = w[:5] if len(w) > 5 else w
+            if re.search(r"\b%s" % re.escape(stem), t):
+                got.append(w)
+        return got
+
+    scored = []
+    for u in ups:
+        got = hits(u)
+        if not got:
+            continue
+        s = 3.0 * len(got) / len(words) + 1.5 * _s_logplays(u["plays"]) \
+            + 0.3 * (1.0 - float(u["rank"]) / u["n_src"])
+        scored.append((s, got, u))
+    scored.sort(key=lambda x: -x[0])
+    rows, keys, per_up = [], set(), {}
+    for s, got, u in scored:
+        k = (u["core"], u["akey"])
+        up = u["uploader"].lower()
+        if k in keys or per_up.get(up, 0) >= 2:
+            continue
+        keys.add(k)
+        per_up[up] = per_up.get(up, 0) + 1
+        rows.append(_s_row(None, None, u, "possible",
+                           "upload title has: %s%s" % (", ".join(got), "" if u["dash"]
+                                                       else " (no artist named, uploader shown)")))
+        if len(rows) >= SEARCH_MAX_ROWS:
+            break
+    _s_genius_names(rows, {u["url"]: u for u in ups}, deadline)
+    return rows, True
+
+
+def _s_handle(q):
+    m = re.search(r"@([A-Za-z0-9_.]{2,30})", q)
+    if m:
+        return m.group(1).rstrip(".")
+    for m in re.finditer(r"\b(?:by|from)\s+@?([A-Za-z0-9_.]{2,30})", q, re.I):
+        h = m.group(1).rstrip(".")
+        if h.lower() not in _S_HANDLE_STOP:
+            return h
+    return q if re.match(r"^[A-Za-z0-9_.]{2,30}$", q) else None
+
+
+def _s_hkey(s):
+    """Handle comparison key: styled unicode folded, lowercase, letters and digits only
+    ("@fast.music_954" == "FastMusic954" == soundcloud.com/fastmusic954)."""
+    return re.sub(r"[^a-z0-9]", "", E.fold_name(unicodedata.normalize("NFKC", s or "")).lower())
+
+
+def _s_credits(handle, raw):
+    """The upload title credits the handle itself: "@fastmusic954" written out, or "edit by
+    / prod by / by fastmusic954". A bare word that happens to equal a short handle ("FAST"
+    as the sped-up tag, for @fast) is not a credit."""
+    h = re.escape(handle)
+    return bool(re.search(r"(?<![\w.])@%s(?![\w])" % h, raw or "", re.I) or re.search(
+        r"(?:\b(?:edit(?:ed)?|remix(?:ed)?|mashup|flip(?:ped)?|prod(?:uced)?\.?|made|mixed)"
+        r"\s*(?:by|:)|\bby)\s+@?%s(?![\w])" % h, raw or "", re.I))
+
+
+def _search_creator(q, deadline):
+    q = unicodedata.normalize("NFKC", q or "")      # a handle typed in a styled alphabet
+    handle = _s_handle(q)
+    if not handle:
+        return None, True
+    rest = re.sub(r"@?(?<![\w.])" + re.escape(handle) + r"(?![\w])", " ", q, flags=re.I)
+    rest = re.sub(r"\b(?:edits?|songs?|sounds?|audios?|remix(?:es)?|mashups?|uploads?|"
+                  r"music|by|from)\b", " ", rest, flags=re.I)
+    extra = [w for w in re.findall(r"[a-z0-9']+", rest.lower()) if w not in _S_VIBE_STOP]
+    # the same queries the hunt's creator lane uses (verbatim handle first, then the
+    # handle with the words, then the de-dotted handle); SoundCloud deep on the first,
+    # where an editor's own catalogue lives
+    qs = E.creator_queries(handle, None, " ".join(extra) or None)[:3] or [handle]
+    found, answered = _s_uploads([(x, 6, 50 if i == 0 else 20) for i, x in enumerate(qs)],
+                                 deadline)
+    if not answered:
+        return [], False
+    ups = _s_orient(_s_prep(found))
+    # EXACT HANDLE ONLY FOR STRONG (tester round 1: "@fast kodak black" gave 6/6 strong
+    # from six different uploaders, FastMusic954 #2, Dineros Fast Funkz P3, Rawhh Fast
+    # Music II ..., because "fast" sat inside every name). "By @handle" now means the
+    # uploader's display name, SoundCloud permalink or YouTube channel handle IS the handle
+    # once both are folded to letters and digits. A name that only CONTAINS it is a partial
+    # match: possible at best, and the why says so.
+    # THE HANDLE DECIDES WHEN IT IS KNOWN (tester round 2): a YouTube channel handle
+    # (/@fastbeatz_official) or a SoundCloud permalink (soundcloud.com/fastbeatz2021) is the
+    # account's real handle, so when one is known the display name ("FAST") can't make it
+    # "@fast". The display name decides only when no handle is known (yt-dlp rows carry no
+    # channel handle, and a "user-123456" permalink is SoundCloud's placeholder, not a name).
+    hkey = _s_hkey(handle)
+    etoks = _s_toks(" ".join(extra))
+    scored = []
+    for u in ups:
+        handles = [u.get("chan") or ""]
+        acct = ("the channel handle is @%s" % u["chan"]) if u.get("chan") else None
+        if u["src"] == "soundcloud":
+            perm = u["url"].split("/")[3]
+            if not re.match(r"^user-?\d+(?:-\d+)?$", perm):
+                handles.append(perm)
+                acct = "the account is soundcloud.com/%s" % perm
+        hkeys = {_s_hkey(n) for n in handles if n}
+        dkeys = {_s_hkey(u["uploader"])} - {""}
+        if hkeys:
+            exact = hkey in hkeys
+            name_only = not exact and hkey in dkeys   # display name matches, handle does not
+        else:
+            exact, name_only = hkey in dkeys, False
+        partial = (not exact and not name_only and len(hkey) >= 3
+                   and any(hkey in k for k in hkeys | dkeys))
+        credit = _s_credits(handle, u["raw"])
+        ehit = bool(etoks) and all(t in _s_toks(u["raw"]) for t in etoks)
+        s = (3.0 * exact + 1.2 * (partial or name_only) + 1.5 * credit + 2.0 * ehit
+             + 1.5 * _s_logplays(u["plays"]))
+        scored.append((s, exact, partial, name_only, acct, credit, ehit, u))
+    scored.sort(key=lambda x: -x[0])
+    matched = [x for x in scored if x[1] or x[2] or x[3] or x[5]]
+    pool = matched if len(matched) >= 3 else scored
+    rows, keys = [], set()
+    for s, exact, partial, name_only, acct, credit, ehit, u in pool:
+        k = (u["core"], u["akey"])
+        if k in keys:
+            continue
+        keys.add(k)
+        where = "YouTube" if u["src"] == "youtube" else "SoundCloud"
+        who = u["uploader"] or u["url"].split("/")[3]
+        if exact:
+            why = "uploaded by %s on %s" % (who, where)
+        elif name_only:
+            why = "uploaded by %s on %s, but %s, not @%s" % (who, where, acct, handle)
+        elif partial:
+            why = "uploaded by %s on %s, a partial match for @%s, not the same handle" % (
+                who, where, handle)
+        elif credit:
+            why = "title credits @%s, on %s" % (handle, where)
+        else:
+            why = "came up for @%s on %s, uploader name differs" % (handle, where)
+        conf = "possible"
+        if ehit:
+            why += ", and the title has your words"
+            if exact:
+                conf = "strong"
+        rows.append(_s_row(None, None, u, conf, why))
+        if len(rows) >= SEARCH_MAX_ROWS:
+            break
+    _s_genius_names(rows, {u["url"]: u for u in ups}, deadline)
+    return rows, True
+
+
+def _search_mode(q):
+    """auto -> "creator" | "vibe" | "lyric". See the AUTO MODE note above the patterns."""
+    if q.startswith("@") or re.search(r"(^|\s)@[A-Za-z0-9_.]{2,}", q):
+        return "creator"
+    m = _S_CREATOR_LEAD.match(q.strip())
+    if (m and m.group(1).lower() not in _S_HANDLE_STOP
+            and len((m.group(2) or "").split()) <= 4):
+        return "creator"
+    # NFKC first: "𝓈𝓁𝑜𝓌𝑒𝒹 𝓇𝑒𝓋𝑒𝓇𝒷" is "slowed reverb" to a person
+    ql = E.fold_name(re.sub(r"[^\w\s,;/+|]", " ",
+                            unicodedata.normalize("NFKC", q).replace("'", ""))).lower()
+    toks = re.findall(r"[a-z0-9]+", ql)
+    content = [t for t in toks if t not in _S_MODE_STOP]
+    if not content:
+        return "lyric"
+    phrase_cov, phrases = set(), 0
+    for mm in _S_VIBE_PRIMARY.finditer(ql):
+        ws = re.findall(r"[a-z0-9]+", mm.group(0))
+        phrase_cov.update(ws)
+        # a vibe phrase counts as one strong word even when its words are only setting
+        # words ("night drive", "slow jams", "rain sounds"); its weak words don't make it
+        if len(ws) >= 2 or ws[0] not in _S_VIBE_WEAK:
+            phrases += 1
+
+    def is_strong(t):
+        return (t in _S_VIBE_STRONG and t not in _S_VIBE_WEAK) and t not in phrase_cov
+
+    def is_vibe(t):
+        return t in _S_VIBE_ALL or t in phrase_cov or bool(_S_DECADE.match(t))
+    strong = sum(1 for t in content if is_strong(t)) + phrases
+    share = sum(1 for t in content if is_vibe(t)) / float(len(content))
+    lyr = sum(1 for t in toks if t in _S_LYRIC_MARKS)
+    chunks = [re.findall(r"[a-z0-9]+", c) for c in re.split(r"[,;/+|\n]+", ql)]
+    chunks = [c for c in chunks if c]
+    listy = len(chunks) >= 2 and all(len(c) <= 4 for c in chunks)
+    if not strong:
+        if lyr == 0 and share == 1.0 and (len(content) >= 3 or (listy and len(content) >= 2)
+                                          or re.search(r"\b(?:music|songs|playlist)\b", ql)):
+            return "vibe"                  # "late night drive", "beach, sunset", "study music"
+        return "lyric"
+    # 3/4 of the words (was 0.6: "party rock anthem" and "heavy metal lover" are songs)
+    if lyr == 0 and (share >= 0.75 or (listy and share >= 0.5)):
+        return "vibe"
+    if lyr == 1 and share >= 0.75 and strong >= 2:
+        return "vibe"
+    return "lyric"
+
+
+# A pasted clip link is not a search (tester round 1: a TikTok URL went to lyric mode and
+# came back with non-music rows). Any q that is or contains a TikTok, Instagram, YouTube or
+# SoundCloud link is refused with code "link" so the UI can send it to Home, where links
+# are scanned. The UI already intercepts this; the server must not depend on that.
+# Tester round 2: the check reads the text NFKC-folded (fullwidth letters and dots), with
+# percent-encoding undone, and a bare "tiktok.com" counts. It is also BOUNDED: the old
+# pattern "(?:[a-z0-9-]+\.)*" backtracked quadratically on a run of "-", and Python's re
+# holds the GIL while it runs, so q="-"*60000 froze every thread in the process for 15s
+# (tester: /health took 13.5s during it). Host labels are capped at 63 characters and 8
+# levels, and only the first _S_LINK_SCAN characters are read (anything longer is refused
+# as too long anyway).
+_S_LINK_HOST = (r"(?:[a-z0-9-]{1,63}\.){0,8}(?:tiktok\.com|instagram\.com|instagr\.am|"
+                r"youtube\.com|youtu\.be|youtube-nocookie\.com|soundcloud\.com|snd\.sc)")
+_S_LINK = re.compile(r"https?://%s|(?<![\w.@-])%s(?![\w-])" % (_S_LINK_HOST, _S_LINK_HOST), re.I)
+_S_LINK_SCAN = 2048
+
+
+def _s_link_text(q):
+    """The text the link check reads: NFKC (fullwidth "tiktok.com" -> "tiktok.com"), ideographic
+    full stops as dots, percent-encoding undone (twice at most), format characters out."""
+    s = unicodedata.normalize("NFKC", q[:_S_LINK_SCAN]).replace(u"\u3002", ".")
+    for _ in range(2):
+        if "%" not in s:
+            break
+        s = _unquote(s)
+    return "".join(ch for ch in s if unicodedata.category(ch) not in ("Cc", "Cf", "Cs"))
+
+
+def search_text(text, mode="auto"):
+    """GET /search -> (http_code, body). See the contract in the section header."""
+    t0 = time.time()
+    q = re.sub(r"\s+", " ", text or "")
+    q = "".join(ch for ch in q if unicodedata.category(ch) not in ("Cc", "Cf", "Cs")).strip()
+    if not q:
+        return 400, {"ok": False, "code": "empty",
+                     "error": "Type a lyric, a vibe, or a creator's @handle."}
+    if _S_LINK.search(_s_link_text(q)):
+        return 400, {"ok": False, "code": "link",
+                     "error": "That is a clip link. Paste it on Home to scan it."}
+    # Everything below reads the NFKC form: a styled or fullwidth alphabet is the same
+    # words to a person (a styled "slowed" is "slowed", a styled "@fast" is "@fast"). The reply
+    # echoes what was typed.
+    qn = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", q)).strip()
+    if len(q) > SEARCH_MAX_Q or len(qn) > SEARCH_MAX_Q:
+        return 400, {"ok": False, "code": "too_long",
+                     "error": "That search is too long. Keep it to %d characters or fewer."
+                              % SEARCH_MAX_Q}
+    mode = (mode or "auto").strip().lower()
+    if mode not in ("auto", "lyric", "vibe", "creator"):
+        return 400, {"ok": False, "code": "mode",
+                     "error": "Mode must be lyric, vibe, creator or auto."}
+    resolved = _search_mode(qn) if mode == "auto" else mode
+    key = (resolved, qn.lower())
+    hit = _SEARCH_CACHE.get(key)
+    if hit and time.time() - hit[0] < SEARCH_TTL:
+        return 200, {"ok": True, "q": q, "mode": resolved, "results": hit[1],
+                     "elapsed_ms": int((time.time() - t0) * 1000)}
+    fn = {"lyric": _search_lyric, "vibe": _search_vibe, "creator": _search_creator}[resolved]
+    try:
+        rows, alive = fn(qn, t0 + SEARCH_DEADLINE)
+    except Exception as e:
+        return 502, {"ok": False, "code": "internal",
+                     "error": _s_field("Search failed on our side. Try again. (%s)"
+                                       % str(e)[:80])}
+    if rows is None:
+        return 400, {"ok": False, "code": "handle",
+                     "error": "Add the creator's handle, like \"edits by @fastmusic954\"."}
+    if not alive:
+        return 502, {"ok": False, "code": "sources",
+                     "error": "The search sources did not answer in time. "
+                              "Try again in a moment."}
+    rows = [r for r in rows if r.get("title")][:SEARCH_MAX_ROWS]   # never a row with no title
+    if rows:
+        if len(_SEARCH_CACHE) > 2000:
+            _SEARCH_CACHE.clear()
+        _SEARCH_CACHE[key] = (time.time(), rows)
+    E.tlog("search", time.time() - t0, mode=resolved, n=len(rows))
+    return 200, {"ok": True, "q": q, "mode": resolved, "results": rows,
+                 "elapsed_ms": int((time.time() - t0) * 1000)}
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -2686,11 +4985,27 @@ class H(BaseHTTPRequestHandler):
                 "share_target": {"action": "/share", "method": "GET",
                                  "params": {"title": "title", "text": "text", "url": "url"}},
             }), "application/manifest+json")
+        # iOS Safari ignores an SVG apple-touch-icon and falls back to a screenshot of the
+        # page, so Add to Home Screen got a thumbnail of the UI instead of the icon. A real
+        # 180px PNG (rendered from the same waveGlyph path as the app icon) fixes that.
+        if u.path == "/apple-touch-icon.png":
+            try:
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apple-touch-icon.png"), "rb") as fh:
+                    data = fh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.end_headers()
+                self.wfile.write(data)
+            except OSError:
+                self.send_response(404); self.end_headers()
+            return
         if u.path == "/icon.svg":
             return self._send_raw(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
                 '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
-                '<stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/>'
+                '<stop offset="0" stop-color="#8C82F0"/><stop offset="1" stop-color="#6B5FE0"/>'
                 '</linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#g)"/>'
                 '<path d="M96 256c34-96 62-96 96 0s62 96 96 0 62-96 96 0" fill="none" '
                 'stroke="#fff" stroke-width="46" stroke-linecap="round"/></svg>',
@@ -2720,6 +5035,17 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, trending_sounds())
             except Exception as e:
                 return self._send(200, {"rows": [], "error": str(e)[:120]})
+        if u.path == "/search":
+            # Free-text search (lyric / vibe / creator). Text sources only: never Shazam,
+            # never an audio download. See search_text().
+            sq = parse_qs(u.query, keep_blank_values=True)
+            try:
+                code, body = search_text((sq.get("q") or [""])[0],
+                                         (sq.get("mode") or ["auto"])[0])
+            except Exception as e:
+                code, body = 502, {"ok": False, "error": "Search failed on our side. (%s)"
+                                                         % str(e)[:80]}
+            return self._send(code, body)
         if u.path not in ("/find", "/base", "/edits", "/edits/stream"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
