@@ -429,6 +429,11 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .trow .addp{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
   color:var(--accent2);background:var(--card);transition:background .15s,color .15s}
 .trow .addp.did{color:var(--good);background:transparent}
+/* Roham, 2026-09-24: the chart rows sat shoulder to shoulder. Air between cards, and a
+   beat of space under the filter chips, only on the Trending screen. */
+#trendbody .list{gap:12px}
+#trendbody .trow{padding:13px 12px}
+#trendbody{margin-top:4px}
 
 /* library rows reuse .trow minus the rank; search + chips */
 .search{display:flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--line);
@@ -1196,7 +1201,7 @@ button.savecard[disabled]{pointer-events:none}
           <span id="orbmark"></span><span class="scanword">SCAN</span>
         </button>
       </div>
-      <p class="tap"><b>Share a reel into Addify</b> - or tap to listen</p>
+      <p class="tap"><b>Share a reel into Addify</b>, or tap to listen</p>
       <div class="miccopy" id="miccopy"><span id="ico-mic"></span>Listen mode works on anything playing out loud</div>
       <form class="form" id="form" autocomplete="off">
         <span class="lk" id="ico-link"></span>
@@ -1283,7 +1288,7 @@ button.savecard[disabled]{pointer-events:none}
       </div>
       <div class="miceq" id="miceq"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></div>
       <div class="listening" id="lstate">Play the sound out loud</div>
-      <div class="sub">Works on reels, TikToks, the radio - anything with a speaker</div>
+      <div class="sub">Works on reels, TikToks, the radio. Anything with a speaker</div>
     </div>
     <div class="tip"><span class="ts" id="ltipico"></span><span>Hold your phone near the speaker for the fastest match</span></div>
     <div class="cancelhint">Tap &times; to cancel</div>
@@ -1917,7 +1922,7 @@ function confPct(v){return Math.max(0,Math.min(100,Math.round(v*100)));}
    still fits on one line at 375px. */
 function confChip(v,full){
   if(v===null||v===undefined) return '';
-  return '<span class="cf s'+confTier(v)+'" title="Audio match '+confPct(v)+'% - how closely this '+
+  return '<span class="cf s'+confTier(v)+'" title="Audio match '+confPct(v)+'%. How closely this '+
     'upload lines up with the clip. High is good evidence, not proof.">'+confPct(v)+
     (full?'% audio match':'% match')+'</span>';}
 function confRule(v){
@@ -2212,7 +2217,7 @@ function renderResult(d,partial){
   lastResult=d;
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
   if(d.result==='engine_down'){
-    result.innerHTML=errCard('sat',"You're offline",'No stress - we kept your scan.<br>It’ll run the second you’re back.',
+    result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
       (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
         '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
     var rb=document.getElementById('retrybtn');
@@ -3029,7 +3034,7 @@ function renderTrend(){
   var b=document.getElementById('trendbody');
   if(!TREND.rows.length){
     b.innerHTML='<div class="dashcard"><b>Loading the chart…</b>'+
-      '<span>Live TikTok sounds - ranked by videos made with them.</span></div>';
+      '<span>Live TikTok sounds, ranked by videos made with them.</span></div>';
     if(!TREND.ts) fetchTrending();
     return;}
   var f=TREND.rows.map(function(r,i){return {r:r,i:i};})
@@ -3190,7 +3195,7 @@ function renderSearch(){
     /* Vibe search is honest but early (Konnor's own effort order puts it after lyric search:
        it needs a model over our edit database). Right now it matches words in upload titles,
        so say that, and a weak list reads as early rather than broken. */
-    body.innerHTML='<p class="sresh">Best guesses - tap to hear a clip</p>'+
+    body.innerHTML='<p class="sresh">Best guesses. Tap to hear a clip</p>'+
       (sState.rmode==='vibe'?'<p class="snote">Vibe search is early. These match words in upload titles, not the sound itself.</p>':'')+
       '<div class="slist">'+
       r.map(function(x,i){
@@ -3637,7 +3642,7 @@ function startListen(){
     lRec.onstop=function(){
       var blob=new Blob(chunks,{type:lRec.mimeType||'audio/webm'});
       cleanupListen();
-      if(blob.size<8000){goHome(); showErr('Heard nothing - hold the phone near the speaker.'); return;}
+      if(blob.size<8000){goHome(); showErr('Heard nothing. Hold the phone near the speaker.'); return;}
       sendListen(blob);};
     lRec.start();
     /* 12 seconds of room audio is what the engine's own probes use */
@@ -3707,7 +3712,7 @@ function openPicker(d){
         }).catch(function(e){
           pp.innerHTML=IC.plus;
           row.querySelector('.tt span').textContent=
-            String(e.message||e).indexOf('not on Spotify')>=0?'Not on Spotify':'Failed - tap to retry';});};});
+            String(e.message||e).indexOf('not on Spotify')>=0?'Not on Spotify':'Failed. Tap to retry';});};});
     var nw=document.getElementById('pknew');
     nw.onclick=function(){
       var name=prompt('Playlist name'); if(!name) return;
@@ -3715,8 +3720,8 @@ function openPicker(d){
       SP.create(name).then(function(p){
         return SP.addTo(p.id,d.base_song,d.base_artist).then(function(){
           nw.querySelector('b').innerHTML=esc(p.name)+' · added'+'<span class="itick">'+IC.tick+'</span>';});
-      }).catch(function(){nw.querySelector('b').textContent='Failed - tap to retry';});};
-  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists - reconnect Spotify in Profile.</div>';});}
+      }).catch(function(){nw.querySelector('b').textContent='Failed. Tap to retry';});};
+  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists. Reconnect Spotify in Profile.</div>';});}
 document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
 
 /* ============================================================
@@ -3739,14 +3744,14 @@ function paintOnb(){
   if(onbStep===0){                                     /* 1 · the pitch - seven words */
     h='<div class="obmark">'+waveGlyph(36)+'</div>'+
       '<div class="obh">Heard it on a reel?<br>Keep it forever.</div>'+
-      '<div class="obs">Addify finds the exact song - even slowed + reverb edits - and saves it to your playlist.</div>'+
+      '<div class="obs">Slowed, sped up, bass boosted, reverb, remixed. We find the real song and save it straight to your playlist.</div>'+
       '<button class="obcta" id="ob-next">Continue</button>';
   } else if(onbStep===1){                              /* 1.5 · three taps demo */
     h='<div class="obh" style="margin-top:14px">Three taps. That\'s it.</div>'+
       '<div class="obs">Watch how it works</div>'+
       '<div class="tsteps">'+
         '<div class="tstep" id="ts0"><span class="tn" style="background:linear-gradient(140deg,#F9407B,#B043E8)">'+IC.ig+'</span><div><b>Share the reel</b><span>Hit share → tap Addify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
-        '<div class="tstep" id="ts1"><span class="tn" style="background:linear-gradient(150deg,var(--accent2),var(--accent))">'+waveGlyph(18)+'</span><div><b>We find the exact version</b><span>Slowed · sped up · remix · original</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+        '<div class="tstep" id="ts1"><span class="tn" style="background:linear-gradient(150deg,var(--accent2),var(--accent))">'+waveGlyph(18)+'</span><div><b>We find the exact version</b><span>Slowed · sped up · bass boosted · reverb · remix</span></div><span class="tchk">'+IC.tick+'</span></div>'+
         '<div class="tstep" id="ts2"><span class="tn" style="background:color-mix(in oklab,var(--good) 30%,var(--raise2))">'+IC.savefill+'</span><div><b>Saved to your playlist</b><span>Automatically, in your Spotify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
       '</div>'+
       '<button class="obcta" id="ob-next">Let\'s set it up</button>';
@@ -3765,7 +3770,7 @@ function paintOnb(){
       '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
   } else if(onbStep===3){                              /* 3 · the pin - prize first, then steps */
     h='<div class="obh" style="margin-top:14px">Put Addify one tap away</div>'+
-      '<div class="obs">Pin it in your share sheet once - then it\'s the first icon every time you share a reel.</div>'+
+      '<div class="obs">Pin it in your share sheet once and it\'s the first icon every time you share a reel.</div>'+
       '<div class="pinmock">'+
         '<span class="pic2"><span class="ap addify">'+waveGlyph(22)+'<span class="n1">1</span></span>Addify</span>'+
         /* These were 💬 and ✉️ emoji beside the real Addify icon - the "emoji that looked
@@ -3777,7 +3782,7 @@ function paintOnb(){
       '<div class="pinsteps">'+
         '<div class="ps"><i>1</i>Share any reel → scroll the app row to the end</div>'+
         '<div class="ps"><i>2</i>Tap More → Edit → add Addify to Favorites</div>'+
-        '<div class="ps"><i>3</i>Drag it to the front - done forever</div>'+
+        '<div class="ps"><i>3</i>Drag it to the front. Done forever</div>'+
       '</div>'+
       '<button class="obcta" id="ob-next">Got it</button>'+
       '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
