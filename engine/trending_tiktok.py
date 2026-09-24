@@ -269,6 +269,121 @@ def fetch(limit=20, region="US"):
     return rows
 
 
+# ---------- RESOLVE A TIKTOK SOUND TO THE SONG, OR DO NOT RANK IT ----------
+# Konnor, 2026-09-23: "Trending rows show the song, not the raw TikTok sound name -
+# 'Compa Coleto - Aria Vega - slowed', with real artwork. If a sound can't be resolved,
+# don't rank it." tokchart hands back the TikTok SOUND label, which is whatever the
+# uploader typed: "COMPA COLETO (uy_como)", "zxc8228", and "Puede Nang Mangarap" with
+# "Apr 2015" in the artist slot. Printed as-is those read as noise, and a row with a
+# generic note icon reads as a placeholder.
+#
+# So every row without artwork is looked up on the iTunes Search API (keyless) and kept
+# ONLY when the catalogue agrees on BOTH the title and the artist. A title-only hit is
+# not enough: "Nights" matches a hundred songs. A sound nobody can name is dropped rather
+# than ranked, because ranking an unnamed sound is the same overclaim the result screen
+# refuses to make. Rows that arrive with art (the Apple Music playlist) are already
+# catalogue entries and pass straight through.
+#
+# Runs only when the server's 6h trending cache expires, never on a user's request path.
+
+_RESOLVED = {}          # title|by -> resolved dict or None, survives across refreshes
+_HANDLE_PAREN = re.compile(r"\s*\((?:[a-z0-9_.]+|@[^)]*)\)\s*$", re.I)   # "(uy_como)"
+_NOT_ARTIST = re.compile(r"^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}$|^\d", re.I)
+
+def _norm(s):
+    s = re.sub(r"\(.*?\)|\[.*?\]", " ", (s or "").lower())
+    s = re.sub(r"\b(feat|ft|featuring|with)\b.*", " ", s)
+    return " ".join(re.findall(r"[a-z0-9\u00c0-\u024f]+", s))
+
+def _agree(a, b):
+    """True when two names are the same name: equal after normalising, or one fully
+    contains the other with at least 4 characters of overlap."""
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return len(short) >= 4 and (" " + short + " ") in (" " + long_ + " ")
+
+def _itunes_song(title, by, timeout=5):
+    term = (title + " " + by).strip()
+    url = ("https://itunes.apple.com/search?media=music&entity=song&limit=8&term="
+           + urllib.parse.quote(term))
+    raw = _get(url, timeout=timeout)
+    data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8", "replace"))
+    for r in data.get("results", []):
+        if _agree(r.get("trackName"), title) and _agree(r.get("artistName"), by):
+            art = (r.get("artworkUrl100") or "").replace("100x100bb", "300x300bb")
+            return {"title": r.get("trackName"), "by": r.get("artistName"), "art": art}
+    return None
+
+def _display(name):
+    """Presentation only. Strip a trailing uploader handle like "(uy_como)" and soften
+    names shouted in all caps ("COMPA COLETO" -> "Compa Coleto"). Mixed-case names are
+    left exactly as the catalogue has them: stylised lowercase ("bloodstream") and
+    deliberate caps inside a name ("KAROL G") are the artist's choice, not noise."""
+    n = _HANDLE_PAREN.sub("", name or "").strip()
+    letters = [c for c in n if c.isalpha()]
+    if len(letters) > 3 and all(c.isupper() for c in letters):
+        n = " ".join(w if (len(w) <= 2 and w.isalpha()) else w.capitalize() for w in n.split())
+    return n
+
+def resolve_rows(rows, budget_s=12):
+    """Replace raw TikTok sound labels with the catalogue song, attach real artwork,
+    and drop anything that cannot be confirmed. Never invents a name or a cover."""
+    import concurrent.futures as cf, time as _t
+    todo = []
+    for r in rows:
+        if r.get("art"):
+            continue
+        clean = _HANDLE_PAREN.sub("", r.get("title") or "").strip()
+        by = (r.get("by") or "").strip()
+        r["_clean"] = clean
+        if _NOT_ARTIST.search(by):          # "Apr 2015" is a date, not an artist
+            r["_unresolvable"] = True
+            continue
+        key = clean.lower() + "|" + by.lower()
+        if key in _RESOLVED:
+            r["_hit"] = _RESOLVED[key]
+        else:
+            todo.append((r, key, clean, by))
+    # iTunes throttles bursts, so a small pool; explicit shutdown(wait=False) so a hung
+    # lookup cannot hold the refresh past its budget (a with-block would re-block on it).
+    ex = cf.ThreadPoolExecutor(max_workers=4)
+    try:
+        futs = {ex.submit(_itunes_song, c, b): (r, k) for r, k, c, b in todo}
+        deadline = _t.time() + budget_s
+        for f in futs:
+            r, k = futs[f]
+            try:
+                hit = f.result(timeout=max(0.1, deadline - _t.time()))
+            except Exception:
+                hit = False                  # timeout/error: unknown, not cached as a miss
+            if hit is not False:
+                _RESOLVED[k] = hit
+            r["_hit"] = hit or None
+    finally:
+        ex.shutdown(wait=False)
+    out = []
+    for r in rows:
+        if r.get("art"):
+            out.append(r)
+            continue
+        hit = r.pop("_hit", None)
+        raw_title = r.get("title") or ""
+        r.pop("_clean", None)
+        if r.pop("_unresolvable", False) or not hit:
+            continue                          # cannot name it: do not rank it
+        r["kind"] = r.get("kind") or _kind(raw_title)
+        r["title"], r["by"], r["art"] = _display(hit["title"]), _display(hit["by"]), hit["art"]
+        r["resolved_from"] = raw_title        # kept for debugging, never shown
+        out.append(r)
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
+
+
 if __name__ == "__main__":
     lim = int(sys.argv[1]) if len(sys.argv) > 1 else 20
     reg = sys.argv[2] if len(sys.argv) > 2 else "US"

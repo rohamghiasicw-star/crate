@@ -2390,6 +2390,13 @@ def trending_sounds():
                      "kind": r.get("kind") or "",
                      "src": r.get("src") or ""})
     rows = [r for r in rows if r["title"]]
+    # Name the song or drop the row (Konnor, 2026-09-23). See resolve_rows for why a
+    # title-only catalogue hit is not enough. A resolver failure keeps the raw rows
+    # rather than blanking the chart: an unresolved chart is worse, an empty one is worse still.
+    try:
+        rows = trending_tiktok.resolve_rows(rows)
+    except Exception:
+        pass
     if rows:
         _TREND["ts"], _TREND["rows"] = time.time(), rows
     return {"rows": rows or _TREND["rows"]}
