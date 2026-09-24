@@ -434,6 +434,10 @@ canvas#tlwave{width:100%;height:36px;display:block}
 #trendbody .list{gap:12px}
 #trendbody .trow{padding:13px 12px}
 #trendbody{margin-top:4px}
+/* Roham, 2026-09-24 (job 113): the home teaser drew the same rows with no wrapper, so the
+   two cards touched. Same list, same air as the Trending screen. */
+#trendteaser .list{gap:12px}
+#trendteaser .trow{padding:13px 12px}
 
 /* library rows reuse .trow minus the rank; search + chips */
 .search{display:flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--line);
@@ -2965,7 +2969,7 @@ function paintHome(){
   if(top.length){
     tt.innerHTML='<div class="secthd"><div class="sect">Trending edits this week</div>'+
       '<button id="seeall">See all</button></div>'+
-      top.map(function(r,i){return trowHTML(r,i+1);}).join('');
+      '<div class="list">'+top.map(function(r,i){return trowHTML(r,i+1);}).join('')+'</div>';
     document.getElementById('seeall').onclick=function(){nav('trending');};
     wireTrows(tt);
   } else if(!a.length){
