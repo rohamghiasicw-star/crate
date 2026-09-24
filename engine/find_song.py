@@ -14,7 +14,7 @@ The bit that makes this work on TikTok specifically:
 
 Usage:  python3 find_song.py <tiktok url> [more urls...]
 """
-import asyncio, json, re, subprocess, sys, tempfile, os, urllib.request
+import asyncio, json, re, subprocess, sys, tempfile, os, urllib.parse, urllib.request
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
@@ -37,6 +37,20 @@ SHAZAMKIT_BRIDGE = os.environ.get("CRATE_SHAZAMKIT_BRIDGE", os.path.join(
 # real match will land somewhere above that and below shazamio's 2.4 s worst. Re-measure on
 # an entitled machine before touching either engine timeout.
 SHAZAMKIT_TIMEOUT = float(os.environ.get("CRATE_SHAZAMKIT_TIMEOUT", 6.0))
+# SHAZAMKIT ANSWERS WHERE SHAZAMIO GOES SILENT, AND THE ENGINE IS BUILT ON THE SILENCE.
+# The speed logic assumes the shazamio contract: a hit's skew sits inside the +-6% band
+# server.py trusts (0.04 <= |freqskew| <= 0.06), and anything further off is found by the
+# counter-speed sweep, which only runs when the as-posted probe MISSES. ShazamKit matched
+# the as-posted probe at timeSkew -0.100/-0.100/-0.100/+0.079 on the 2026-09-24 batch
+# (#3, #18, #29, #43), so the sweep never ran, the band threw the skew away, `rate`
+# stayed 1.0 and all four read "as posted" where shazamio read slowed/sped up. Past this
+# skew the adapter answers what shazamio would have: no match at this rate. The sweep then
+# names the speed exactly as it does on the default backend. 0.07 is shazamio's window as
+# the same batch brackets it on the SAME master id: it did answer at +0.063 (#28, both
+# backends' winning probe at rate 1.2, track 76818886) and did not return the master at
+# +0.079 or -0.100 (#43, #3, #18, #29). 0.06, server.py's band edge, would also drop the
+# #28 hit that both backends agree on.
+SHAZAMKIT_MAX_SKEW = float(os.environ.get("CRATE_SHAZAMKIT_MAX_SKEW", 0.07))
 
 # Try a straight match first, then counter-speed. 1/1.25 = 0.80 and 1/1.3 = 0.77
 # undo the two most common TikTok "sped up" presets; 1.25 undoes a slowed edit.
@@ -179,17 +193,34 @@ async def _shazam_shazamkit(path):
         raise RuntimeError("shazamkit bridge: %s %s/%s %s" % (
             r.get("reason"), r.get("domain"), r.get("code"), r.get("error", "")))
     sid = r.get("shazam_id") or None
+    # frequencySkew: Apple defines 0.05 as "the query plays at 105 Hz where the original
+    # plays at 100 Hz", i.e. query/reference - 1, the same sign and scale server.py assumes
+    # for shazamio's frequencyskew (speed = 1 + skew). No flip, no rescale.
+    fs = r.get("frequency_skew")
+    fs = float(fs) if fs is not None else None
+    # timeSkew: not a SHMatchedMediaItem property, but ShazamKit's webURL carries it
+    # (...&timeSkew=-0.020357788&...). Same convention: (1 + timeSkew) / sweep rate matched
+    # the bass-robust speed_measured to 0.5% on #5, #9, #12, #27, #30 and #31.
+    ts = _url_timeskew(r.get("web_url"))
+    skews = [abs(x) for x in (fs, ts) if x is not None]
+    if skews and max(skews) > SHAZAMKIT_MAX_SKEW:
+        return None       # outside shazamio's window: let the counter-speed sweep answer
     return {"title": r.get("title") or None, "artist": r.get("artist") or None,
             "url": r.get("web_url") or (sid and "https://www.shazam.com/track/%s" % sid),
             "key": sid,
-            # frequencySkew's sign/scale vs shazamio's frequencyskew is unverified until
-            # both backends answer the same clip on an entitled machine (README.md).
-            "freqskew": r.get("frequency_skew"),
-            # ShazamKit has no timeskew. crate_engine's mashup tempo-gap test reads it
-            # and degrades to its run-count vote when None - measure before defaulting.
-            "timeskew": None,
+            "freqskew": fs if fs is not None else ts,
+            # crate_engine's mashup tempo-gap test reads this (a difference, so only the
+            # scale matters); None there silently drops it to the run-count vote.
+            "timeskew": ts,
             "offset_in_master": r.get("offset_seconds"),
             "backend": "shazamkit"}
+
+
+def _url_timeskew(u):
+    try:
+        return float(urllib.parse.parse_qs(urllib.parse.urlsplit(u or "").query)["timeSkew"][0])
+    except (KeyError, IndexError, ValueError):
+        return None
 
 
 async def shazam(path):

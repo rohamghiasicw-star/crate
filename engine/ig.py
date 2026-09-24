@@ -199,6 +199,16 @@ def fetch_reel(url):
     if os.environ.get("IG_LOCAL_SESSION") == "1":
         try:
             return _cookie_reel(url)
+        except urllib.error.HTTPError as e:
+            # AGE-GATED ACCOUNTS answer 400 {"message":"geoblock_required",
+            # "title":"People under 25 can't see this content"}. Nothing retries past
+            # that, so say so instead of the generic private/region line.
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:
+                body = ""
+            if "geoblock_required" in body or "can't see this content" in body:
+                raise RuntimeError("instagram account limits who can see this post (age restricted)")
         except Exception:
             pass
     raise RuntimeError("instagram reel is private, region-locked, or unavailable")

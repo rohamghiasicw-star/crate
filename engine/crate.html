@@ -2220,8 +2220,11 @@ function renderResult(d,partial){
     return;}
   if(d.result==='error'){
     /* most often a private or unreadable link - a dead end converted into the listen-mode teach */
+    var agegate=/age restricted/.test(d.error||''), gone=/video is unavailable/.test(d.error||'');
     result.innerHTML=errCard('lock',"Couldn't read that link",
-      'It may be private or region locked. The mic can hear anything.',
+      agegate?'This account hides its posts from some viewers. The mic can still hear it.'
+      :gone?'This video was deleted or made private. If it still plays for you, the mic can hear it.'
+             :'It may be private or region locked. The mic can hear anything.',
       (micOK()?'<button class="cta mic" id="golisten">'+IC.mic+'Use listen mode instead</button>'+
         '<div class="trainnote">Play the reel out loud and we’ll catch it</div>'
        :'<div class="trainnote">'+esc(d.error||'Try again in a moment.')+'</div>'));
@@ -3225,6 +3228,16 @@ function renderSearch(){
     b.onclick=function(){var q=b.getAttribute('data-q'); inp.value=q; sRun(q,b.getAttribute('data-m')||'auto');};});}
 function sRun(q,mode){
   q=(q||'').trim(); if(!q) return;
+  /* A pasted clip link is a scan, not a search. Searching the URL text returned random
+     comedy compilations (found by the search tester), so offer the scan instead. */
+  if(parseLink(q).host){
+    sState={q:q,mode:'link',busy:false,res:null,err:''};
+    document.getElementById('sbody').innerHTML='<div class="smsg"><b>That is a clip link</b>'+
+      '<span>Search is for when the reel is gone. This one you can scan directly.</span>'+
+      '<button type="button" id="sscan">Scan this clip</button></div>';
+    document.getElementById('sscan').onclick=function(){nav('idle'); urlEl.value=q;
+      if(typeof syncFormAction==='function') syncFormAction(); run(q);};
+    return;}
   var seq=++sSeq; sRemember(q);
   sState={q:q,mode:mode||'auto',busy:true,res:null,err:''}; renderSearch();
   var ctl=('AbortController' in window)?new AbortController():null;
@@ -3528,6 +3541,7 @@ function embedFor(url, src){
   return null;
 }
 function playHere(url, src, title){
+  if(!/^https?:\/\//i.test(String(url||''))) return;   // only real web links, never javascript: or data:
   var box=document.getElementById('player');
   var frame=embedFor(url, src);
   if(!frame){ window.open(url,'_blank','noopener'); return; }   // nothing to embed, be useful

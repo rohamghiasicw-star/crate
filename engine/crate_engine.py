@@ -242,6 +242,25 @@ def tiktok_oembed(url):
             "desc": j.get("title") or ""}
 
 
+def _tt_unavailable(url):
+    """True only when TikTok's own page data says the video can't be seen. The phrase
+    "video is unavailable" is useless here: it ships in the string bundle of EVERY page,
+    live ones included. The page's video-detail block carries a status code instead:
+    0 when fine, 10204 "item_privacy_authorization&status_self_see" when the owner made
+    it private (the dead regression clip, 2026-09-24). No block at all = can't tell = False.
+    Plain urllib on purpose: the cffi client gets a 1.4KB challenge shell for this page."""
+    try:
+        req = urllib.request.Request(url.split("?")[0], headers={"User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            t = r.read(2_000_000).decode("utf-8", "replace")
+    except Exception:
+        return False
+    m = re.search(r'"webapp\.video-detail":\{"statusCode":(\d+)', t)
+    return bool(m and m.group(1) != "0")
+
+
 def _tt_from_item(it):
     mus = it.get("music") or {}
     return {"playUrl": mus.get("playUrl"), "sound_title": mus.get("title"),
@@ -1903,6 +1922,13 @@ def get_source(url, defer_crosscheck=False):
             oe = {}
         tlog("tt_fetch", _gt1 - _gt0, oembed=round(time.time() - _gt1, 3))
         if not info or not info.get("playUrl"):
+            # A DELETED OR PRIVATE VIDEO lands here too, and "TikTok is busy, try again"
+            # sent people round that loop forever (the regression clip "cookie" was deleted
+            # and read as rate_limited on every run, 2026-09-24). oEmbed answers 400 with no
+            # author for those, and the page itself says "video is unavailable". Only this
+            # failure path pays for the one page read.
+            if not (oe or {}).get("handle") and _tt_unavailable(full):
+                raise RuntimeError("tiktok video is unavailable (deleted or private)")
             # couldn't get the audio (TikTok throttling this IP). Still hand back the
             # credit from oEmbed so the caller can answer if it names a real track.
             e = RuntimeError("tiktok_rate_limited")
@@ -2050,7 +2076,15 @@ def _title_key(t):
     to one thing worth voting on."""
     t = re.sub(r"[\(\[].*?[\)\]]", " ", t or "")
     words = re.sub(r"[^a-z0-9 ]", " ", t.lower()).split()
-    return " ".join(w for w in words if w not in ("the", "a", "an"))
+    key = " ".join(w for w in words if w not in ("the", "a", "an"))
+    if not key and t.strip():
+        # NON-LATIN TITLES (Cyrillic, CJK, Arabic...) stripped to "" above, so the
+        # as-posted read had no key, missed `groups`, and the consensus step died on
+        # KeyError ''. Keep their own letters. Latin titles never reach this line, so
+        # every existing key is byte-identical.
+        import unicodedata
+        key = " ".join(re.sub(r"[^\w ]|_", " ", unicodedata.normalize("NFKC", t).lower()).split())
+    return key
 
 
 _HINT_STOP = {"music", "song", "sound", "track", "name", "audio", "the", "and", "por",
@@ -2522,7 +2556,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
             # and is deliberately ranked BELOW nrates so it cannot overrule the audio.
             rung, conf = _hint_support(k, hw)
             return (rung, nrates(k),
-                    any(not _junk_id(h) for h in groups[k]), conf)
+                    any(not _junk_id(h) for h in groups.get(k, [])), conf)
         if groups:
             key_posted = _key(posted)
             # NEVER use max(groups, key=_key) to find a rival - on a tie it silently
