@@ -1437,12 +1437,12 @@ var IC={
      nearly round white bubble that fills most of the green tile, with a short curled tail
      at the lower left. Bigger and rounder than the old flat blob so the change is obvious. */
   bubble:'<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.3C6 3.3 1.2 7 1.2 11.6c0 2.7 1.6 5 4.1 6.5-.2 1.3-.9 2.6-2 3.5-.2.2-.1.6.2.6 2.2 0 4.2-.8 5.6-2 .9.2 1.9.3 2.9.3 6 0 10.8-3.7 10.8-8.4S18 3.3 12 3.3z"/></svg>',
-  /* Traced from Konnor's photo of the real iOS Mail icon (2026-09-24): a big white
-     envelope filling the blue tile. Dominant feature is the flap, a wide inverted V folded
-     down from the top corners to a point near the middle, softly shaded from white at the
-     top edge to light blue-grey at the fold. Two faint seams run from that point out to the
-     bottom corners, the way the real envelope's lower flap reads. No hairline scribble. */
-  mail:'<svg width="34" height="34" viewBox="0 0 24 24"><defs><linearGradient id="mfl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#DCE6F3"/></linearGradient></defs><rect x="2.3" y="5.5" width="19.4" height="13" rx="2.8" fill="#fff"/><path d="M2.9 6.3H21.1L12.7 12.9a1 1 0 0 1-1.4 0z" fill="url(#mfl)"/><path d="M2.9 6.4 12 12.95 21.1 6.4" fill="none" stroke="#AFC2DA" stroke-width=".7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.1 17.7 10.6 12M20.9 17.7 13.4 12" fill="none" stroke="#D6E1F0" stroke-width=".65" stroke-linecap="round"/></svg>',
+  /* Traced from Konnor's photos of the real iOS Mail icon (2026-09-24). The white envelope
+     is built as four folded faces meeting at the flap point just above centre, so it reads
+     3D like the real icon: the top flap is pure white, and the left, bottom and right faces
+     step to a slightly darker light blue-grey, with the right side the deepest shade. Faint
+     grey creases sit on the folds. Clipped to the rounded tile so no corner pokes out. */
+  mail:'<svg width="34" height="34" viewBox="0 0 24 24"><defs><linearGradient id="mtop" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#F2F6FC"/></linearGradient><clipPath id="mclip"><rect x="2.3" y="5.5" width="19.4" height="13" rx="2.8"/></clipPath></defs><g clip-path="url(#mclip)"><rect x="2.3" y="5.5" width="19.4" height="13" fill="#ffffff"/><path d="M2.3 5.5 21.7 5.5 12 12.6Z" fill="url(#mtop)"/><path d="M2.3 5.5 12 12.6 2.3 18.5Z" fill="#DEE7F4"/><path d="M2.3 18.5 12 12.6 21.7 18.5Z" fill="#D2DEEE"/><path d="M21.7 5.5 21.7 18.5 12 12.6Z" fill="#C8D6E8"/></g><path d="M2.9 6 12 12.4 21.1 6" fill="none" stroke="#AEBFD6" stroke-width=".6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.2 18 12 12.8 20.8 18" fill="none" stroke="#BFCCDD" stroke-width=".55" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   more:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18" cy="12" r="1.9"/></svg>',
   clock:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
   layers:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.5 8.5 4.5L12 12.5 3.5 8z"/><path d="m3.5 12.2 8.5 4.5 8.5-4.5M3.5 16.2l8.5 4.5 8.5-4.5"/></svg>',
