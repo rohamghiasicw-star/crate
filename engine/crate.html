@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#150E33">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Addify">
@@ -2198,6 +2199,12 @@ function artGlow(src, fallback){
     el.style.setProperty('--rg','rgb('+Math.round(r/n)+','+Math.round(g/n)+','+Math.round(b/n)+')');
   }catch(e){}};
   img.src=src;}
+/* The account that posted the reel, read from the resolved clip URL
+   (tiktok.com/@name/video/...). That URL is ground truth. The engine's `poster` is not:
+   measured 2026-09-24, it returned the SOUND's author "Liam_Mr3" for a clip whose URL
+   is tiktok.com/@tommybeckert/video/..., because one fetch leg hands back the sound's
+   nickname and it passes the handle-shape check. */
+function urlHandle(u){var m=String(u||'').match(/tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[\/?#]|$)/); return m?m[1]:'';}
 function renderResult(d,partial){
   lastResult=d;
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
@@ -2296,8 +2303,15 @@ function renderResult(d,partial){
                'data-ph':'--phc:'+_phc+';--phc2:'+_phc2})
     : '<div class="art ph" style="--phc:'+_phc+';--phc2:'+_phc2+'">'+IC.bignote+'</div>';
   var _plat=/instagram\.com|instagr\.am/i.test(curURL||'')?'Instagram':(/tiktok\.com/i.test(curURL||'')?'TikTok':'');
-  var clip = d.handle ? '<div class="clip"><span class="clippill">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
-    '<span class="h">@'+esc(d.handle)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'')+'</span></div>' : '';
+  /* WHERE YOU FOUND IT, NOT WHO MADE THE SOUND. res.handle is set server-side to the
+     sound's creator (a deliberate call for the review page's creator link), so the same
+     TikTok read "@tommybeckert" on one scan and "@Liam_Mr3" - the sound's author - on the
+     next. Konnor's spec wants the reel's own account here and in Finds: "people remember
+     the reel, not the title". The engine already carries that as res.poster; handle is
+     only the fallback where a platform does not supply one. */
+  var _who = urlHandle(d.url) || urlHandle(curURL) || d.poster || d.handle || '';
+  var clip = _who ? '<div class="clip"><span class="clippill">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
+    '<span class="h">@'+esc(_who)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'')+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
   // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
@@ -2814,7 +2828,7 @@ function saveOne(d){
   var a=loadCrate();
   var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
             url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||'',
-            handle:d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||''};
+            handle:urlHandle(d.url)||d.poster||d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||''};
   if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return false;
   a.unshift(item); storeCrate(a); return true;
 }
@@ -2855,7 +2869,7 @@ function storeCrate(a){lsSet('crate-saved',a); paintHome(); renderLib(); renderT
 function scanLog(){return lsGet('addify-scanlog','[]');}
 function logScan(d){var a=scanLog();
   a.unshift({song:d.base_song,artist:d.base_artist,speed:d.speed||'',ts:Date.now(),
-             handle:d.handle||'',listen:!!d.listen});
+             handle:urlHandle(d.url)||d.poster||d.handle||'',listen:!!d.listen});
   lsSet('addify-scanlog',a.slice(0,500));}
 /* failed scans wait here - the Library shows them as pending, not lost */
 function unmatched(){return lsGet('addify-unmatched','[]');}
