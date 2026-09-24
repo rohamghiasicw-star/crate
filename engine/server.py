@@ -862,6 +862,12 @@ def _phase1(url, key, t0):
                 shazam=fp.get("url"), art=fp.get("art"),
                 edit_label=fp["edit_label"], probes=fp["probes"],
             )
+            # WHAT A LATER WINDOW HEARD (crate_engine LATER_WINDOW). A note for the UI,
+            # and a seed for the hunt only behind LATER_WINDOW_SEED.
+            if fp.get("later_window"):
+                res["later_window"] = fp["later_window"]
+            if fp.get("second_window"):
+                res["second_window"] = True
             # ONE DISSENTING WINDOW IS NOT A SECOND SONG.
             # `multi` is set in _fingerprint_core purely by de-duping the phase-1 scan hits
             # on title, with NO support requirement - one window out of six naming
@@ -1083,6 +1089,11 @@ def _phase1(url, key, t0):
 # Section-hunt budget. A section hunt is a real search, so it is capped harder than the
 # whole-clip one (max_dl 14) and never runs on a single-song clip.
 SECTION_MAX_DL = 8
+# Let a `later_window` title (crate_engine LATER_WINDOW) seed the version hunt. OFF by
+# default: it changes build_queries' hint slots and therefore the candidate pool, which
+# is a ranking change that needs the five-clip gate before it ships. With it off the
+# later window is evidence on the screen and nothing else.
+LATER_WINDOW_SEED = os.environ.get("CRATE_LATER_WINDOW_SEED", "0").strip() == "1"
 SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
 
 
@@ -1741,7 +1752,14 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None):
 
 _OTHER_SONG_SKIP = {"the", "and", "feat", "ft", "with", "remix", "slowed", "sped", "up", "reverb",
                     "version", "edit", "mix", "official", "audio", "video", "lyrics", "original",
-                    "sound", "prod", "bass", "boosted", "loop", "hoodtrap", "tekk"}
+                    "sound", "prod", "bass", "boosted", "loop", "hoodtrap", "tekk",
+                    # GENRE WORDS NAME NO SONG. Clip 7 came back as "Outside Trap (Remix)" and
+                    # "Jump Around ( remix ) - House of pain | Warox HipHop Trap" sailed through
+                    # on the word "trap" (2026-09-25).
+                    "trap", "drill", "phonk", "house", "techno", "edm", "hiphop", "hip", "hop",
+                    "rap", "dubstep", "jersey", "club", "funk", "bootleg", "cover", "mashup",
+                    "nightcore", "daycore", "tiktok", "instrumental", "beat", "type", "music",
+                    "song", "new", "best", "full", "extended", "clean", "explicit"}
 
 
 def _crown_other_song(top, base_title, reup=None, res=None):
@@ -1771,10 +1789,28 @@ def _crown_other_song(top, base_title, reup=None, res=None):
         return None                      # nothing distinctive to judge by
     hay = " ".join([E._title_key(top.get("title") or ""),
                     E._title_key(top.get("uploader") or "")])
-    if any(w in hay for w in words):
-        return None
-    return ("this upload names a different song and its audio match (%d%%) is not strong "
-            "enough to prove it is the same recording" % round((top.get("core") or 0) * 100))
+    if not any(w in hay for w in words):
+        return ("this upload names a different song and its audio match (%d%%) is not strong "
+                "enough to prove it is the same recording" % round((top.get("core") or 0) * 100))
+    # THE SHARED WORD CAN BE THE OTHER ARTIST'S NAME. Kyks (2026-09-25, base "Three (Slowed)")
+    # crowned "Three Days Grace - Time Of Dying {slowed + reverb}" at core 0.78: "three" is in
+    # the band, the song half names Time Of Dying. On an "A - B" title, when the song's words
+    # sit only on one side and the other side is two or more words that are neither the song
+    # nor a known artist (the credit's, or the re-upload's original artist), that other side is
+    # a different song. Replayed on 102 saved crowns: refuses this one and clip 7's, nothing else.
+    parts = [x for x in re.split(r"\s[-\u2013~|]\s", top.get("title") or "") if x.strip()]
+    if len(parts) == 2:
+        def _kw(t):
+            return {w for w in (E._title_key(t or "") or "").split()
+                    if len(w) >= 3 and w not in _OTHER_SONG_SKIP}
+        side_a, side_b = _kw(parts[0]), _kw(parts[1])
+        artists = _kw((res or {}).get("base_artist")) | _kw((reup or {}).get("artist"))
+        a_hit = any(any(w in x for x in side_a) for w in words)
+        b_hit = any(any(w in x for x in side_b) for w in words)
+        if a_hit and not b_hit and len(side_b) >= 2 and not side_b <= artists:
+            return ("this upload is %s, a different song that only shares an artist-name word "
+                    "with this one" % parts[1].strip()[:60])
+    return None
 
 
 def _crown_contradicts(top, speed_label, mdir, measured=None, tilt_readable=True):
@@ -2329,6 +2365,10 @@ def _phase2(ctx, on_cand=None):
                 t = h.get("title")
                 if t and t != base_title:
                     search_hints.append(t)
+            _lw = (fp or {}).get("later_window") or {}
+            if (LATER_WINDOW_SEED and _lw.get("title") and _lw.get("same") is False
+                    and _lw["title"] != base_title):
+                search_hints.append(_lw["title"])
             mash = fp.get("mashup") if fp else None
             # ---- THE CREATOR LANE. Phase 1 already worked out who OWNS this sound (see
             # creator_check.py); this is where that evidence stops being a label and
@@ -2927,6 +2967,28 @@ def _phase2(ctx, on_cand=None):
                 res["speed"] = measured["label"]
                 res["speed_measured"] = measured.get("speed")
                 res["speed_refs"] = measured.get("agree")
+
+            # THE CROWD ALREADY CALLED IT. Only when NO upload was crowned: the comments
+            # (or caption, or the sound page) named the base song together with its
+            # edit family, and the measured speed does not contradict it. Carried as
+            # `crowd_version` so the screen leads with "the comments call it X, and the
+            # audio agrees" instead of "under our bar, best match 17%". Ranking, the
+            # gates above and `unsure` are untouched - see E.crowd_version_claim for the
+            # clip this was measured on (ZSqGqdJuD) and the rules.
+            # Sits BELOW the speed rewrite above on purpose: until that `elif measured`
+            # branch runs, res["speed"] is still the phase-1 sweep label, and the
+            # bass-robust consensus can rewrite it to the other direction (the same
+            # staleness `_crown_contradicts` had, see the "MEASURE THE SPEED *BEFORE*"
+            # note). Asked here, `agrees` is judged against the label the badge shows.
+            if top is None and res.get("unsure") and base_title:
+                try:
+                    _cv = E.crowd_version_claim(base_title, hint_texts, res.get("speed"))
+                except Exception:
+                    _cv = None
+                if _cv:
+                    res["crowd_version"] = _cv
+                    E.tlog("crowd_version", 0.0, agrees=_cv.get("agrees"),
+                           family=",".join(_cv.get("family") or []))
 
             _cleanup(edit.get("tmp"))
 

@@ -166,6 +166,42 @@ SWEEP_DROP_TAIL = _speed_flag("CRATE_SWEEP_DROP_TAIL", _SPEED_FAST)
 # does not survive being cut short; the speed has to come from somewhere else, and it
 # does - see the SHAZAM_TIMEOUT split, which is where the real win lives.
 SWEEP_NEED = int(os.environ.get("CRATE_SWEEP_NEED", 99))   # 99 = never exit early
+
+# ONE LATER WINDOW WHEN THE SWEEP ANSWERED FROM A SINGLE 20s SLICE. The Phase-2 sweep
+# fires every counter-speed at ONE offset with a 20s span, so on a clip under ~25s the
+# whole clip is one window and whatever dominates it names the song. On ZSqgEBw8E
+# (19.8s) that was Chief Keef's hook, shared note for note by the Kanye West remix, so
+# all 14 rates answered "I Don't Like (feat. Lil Reese)" while the verse under the
+# hook is Pusha T's - measured offline: the clip verifies at core 1.000 against the
+# official "I Don't Like (Remix)" (soundcloud.com/chiefkeef/i-dont-like-remix) at
+# 17.5-40s and only 0.15-0.49 against the original at Shazam's own 139s offset, and
+# the crowned "Bass Boosted" upload is 286s long, the remix's length, not the
+# original's 250s. Roham: "you missed the Pusha T voice so you just put the original
+# song". One extra probe on the second half of the clip, at the rate that already
+# matched, is the cheapest question that can hear the verse. It only ever ATTACHES
+# what it heard (`later_window` on the pick) - the base, `songs`, `multi` and every
+# search query are byte-identical, so no crown can move from this. Seeding the version
+# hunt with it is a separate, default-off switch in server.py (CRATE_LATER_WINDOW_SEED)
+# because that changes the candidate pool and needs the five-clip gate first.
+# Cost: +1 probe (~0.5s healthy) on clips whose base came from the sweep and that run
+# LATER_WINDOW_MIN_SECS or longer; never on a clip the 1.0x scan already answered,
+# because the scan already covered every window.
+LATER_WINDOW = _speed_flag("CRATE_LATER_WINDOW", True)
+LATER_WINDOW_MIN_SECS = 16.0
+
+# A SECOND WINDOW BEFORE SAYING "NO SONG". The sweep runs at windows_for(dur)[0], the
+# TAIL window, so on a 37.7s clip (ZSqgEGsBP, a KHL hits compilation with the poster's
+# own "original sound", comments naming nothing) the first 17.7s were only ever asked
+# at 1.0x. A heavily pitched track that sits in the first half is invisible to that.
+# Four preset rates at offset 0, only after everything else came back empty, so a
+# clip that was going to be found is untouched and a no_match clip pays ~2-3s more
+# before the honest "no song here". Untested against #17 itself (no Shazam in the lab
+# session); the live check is in the report.
+NOMATCH_SECOND_WINDOW = _speed_flag("CRATE_NOMATCH_SECOND_WINDOW", True)
+NOMATCH_MIN_SECS = 30.0
+NOMATCH_SECOND_BUDGET = 12.0
+NOMATCH_SECOND_RATES = [(1.20, "slowed ~0.83x"), (1.25, "slowed ~0.80x"),
+                        (1.12, "slowed ~0.89x"), (0.85, "sped up ~1.18x")]
 # Deadline (seconds, from when the search pair starts) for the headless-Chromium web
 # search. Measured at 28.6s of a 44.2s hunt when awaited outright.
 WEB_DEADLINE = 10.0
@@ -184,6 +220,118 @@ FAST_POOL, FAST_EXIT_CORE = 6, 0.95
 # is the broad hunt's creator lane that finds its crown), a hit outside it is carried
 # into the broad pool.
 FAST_EXIT_TEMPO = 0.06
+# ON A PITCHED CLIP, "IN THE BAND" IS NOT ENOUGH: THE ROW HAS TO CLAIM THE EDIT.
+# The band above only asks "is this upload at the clip's tempo". On a clip phase 1
+# measured as slowed or sped up that also admits the plain original whenever the clip is
+# pitched against Shazam's base rather than against the song the crowd named, and core
+# saturates across the whole family (references/findings/core-saturation.md), so the
+# first upload at FAST_EXIT_CORE is just the most-played member. Mason (gate clip, sweep
+# rate 1.12, "slowed ~0.89x" against "Dougie Freestyle (feat. noli)"): the sound-page hint
+# "Teach me how to dougie" pulled five uploads at core 0.976-1.000, every one at vspeed
+# 1.0 - the EMI master, a second plain upload and three "x" mashups with three different
+# partners - and the fast path returned "Cali Swag District - Teach Me How To Dougie"
+# (9.96M plays) over the REEF EDM "x Only Time" mashup the hintless broad hunt crowned
+# (gfull/int3_reg_mason_r1.json, unp_reg_mason_r1.json vs base_reg_mason_r1.json).
+#
+# "WAS THE TEMPO MEASURED" CANNOT SEPARATE THEM. verify() forces speed 1.0 only when its
+# xcorr confidence is under 0.10 (verify.py, `if sconf < 0.10`); a confident peak at lag
+# 0 is ALSO exactly 1.0, and the fast path never sets vspeed_locked. Measured offline
+# against the real clips on 2026-09-24 (verify._speed_xcorr confidence and
+# speed_from_master.candidate_speed_lock, no Shazam): all six mason uploads, the EMI
+# master and the REEF mashup included, read exactly 1.0 at confidence 0.835-0.985 with
+# locks 0.9998-1.0012, and #42's crown "mrpopular - predayed (slowed by APFDS)" reads
+# exactly 1.0 at 0.951 (lock 1.0007). The plain master really is at the clip's tempo.
+# A rule keyed on "vspeed != 1.0" therefore declines mason only by misreading a real
+# reading, and it declines #42 (Roham: "correct") and the kyks int run the same way.
+#
+# What separates them is the CLAIM. A row at the clip's tempo whose title says it is the
+# edit phase 1 measured ("slowed by APFDS", "(slowed + tiktok ver)", "Ultra Slowed")
+# agrees with every measurement. A row at the clip's tempo whose title claims no tempo
+# change says the clip plays at that upload's speed, which contradicts phase 1: Shazam's
+# base is a different recording (mason) or the upload is mislabelled, and a
+# contradiction is not a shortcut. So on a pitched clip the in-band rows must include
+# one whose title, ASCII-folded and with the base song's own name words removed, carries
+# a speed word in the measured direction, or one the sound's own creator linked in the
+# comments (`creator_link`, provenance the tie-break below already trusts). If none does,
+# the hit is declined exactly like an off-tempo one (rows carried into the broad pool,
+# see _fast_carry). If one does, the in-band rows that do not are listed after the rest,
+# so the server's crown walk cannot land on a plain master that happens to out-play the
+# edit. The audio still decides everything else; this only decides whether to stop
+# looking. As-posted clips: untouched.
+# CRATE_FAST_EXIT_CLAIM=0 restores the band-only exit.
+FAST_EXIT_CLAIM = _speed_flag("CRATE_FAST_EXIT_CLAIM", True)
+_FAST_SLOW_CLAIM = re.compile(r"\b(slow(ed)?|daycore|screwed)\b", re.I)
+_FAST_QUICK_CLAIM = re.compile(r"\b(sped ?up|spedup|speed ?up|nightcore|fast(er)?)\b", re.I)
+# GENRE EDITS THAT ARE SPED UP BY DEFINITION. A hoodtrap / mylancore / jersey club / tekk
+# remix of a song runs faster than the song, so on a clip phase 1 measured as SPED UP such
+# a title agrees with the measurement exactly as "(sped up)" does. Without this the gate
+# declined clip 7 (ZSqgV5qSd, base "Outside (卡点变速版)", sped up ~1.30x): the N3 creator
+# clause emits "outside hoodtrap", the fast path finds "outside (mylancore remix) -
+# hoodtrap (youtube).mp3" at core 1.000, vspeed 1.0, and the claim test refused it for
+# saying no "sped up" - measured 2026-09-25 with the real find_edit: same crown after the
+# broad hunt, ~25s later (find_edit ~10s -> ~35s). Counts only toward "sped up", and is
+# not a "quick" word, so "Outside (Hoodtrap) SLOWED" still claims slowed on a slowed clip.
+_FAST_GENRE_UP = re.compile(r"\b(hoodtrap|mylancore|jersey ?club|tekk)\b", re.I)
+
+
+def _fast_clip_dir(known_dir, edit_label):
+    """'slowed' / 'sped up' when phase 1 measured the clip as pitched, else None.
+    known_dir is server.py's `mdir` (sweep rate != 1.0, or frequencyskew in its 4-6%
+    band); edit_label is the sweep's own label ("slowed ~0.89x" / "as posted")."""
+    for s in ((known_dir or "").lower(), (edit_label or "").lower()):
+        if "slow" in s:
+            return "slowed"
+        if "sped" in s:
+            return "sped up"
+    return None
+
+
+def _fast_edit_claim(title, clip_dir, base_title=None):
+    """Does this upload's title say it IS the edit phase 1 measured?"""
+    t = re.sub(r"[^A-Za-z0-9]+", " ", _ascii_fold(title or ""))
+    # The base song's NAME is not a claim ("Slow Down"), but its version tag goes first,
+    # so under "Three (Slowed)" an "Ultra Slowed" upload still claims slowed. A tag after
+    # a spaced dash is a version tag too ("Three - Ultra Slowed", "X - Sped Up", the
+    # shape server.py's _QUALIFIER already strips): left in, its tempo word was deleted
+    # from EVERY row, so the real edit could never claim and the hit was always declined.
+    # Cut on the raw title: _ascii_fold drops an en/em dash outright.
+    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
+    name = re.sub(u"\\s[-\u2013\u2014]\\s.*$", " ", name)
+    name = _ascii_fold(name).lower()
+    for w in set(re.findall(r"[a-z0-9]+", name)):
+        t = re.sub(r"\b%s\b" % re.escape(w), " ", t, flags=re.I)
+    slow, quick = bool(_FAST_SLOW_CLAIM.search(t)), bool(_FAST_QUICK_CLAIM.search(t))
+    if clip_dir == "slowed":
+        return slow and not quick
+    if clip_dir == "sped up":
+        # a genre the BASE already is ("Outside (Hoodtrap Remix)") is not news: the sweep
+        # measured the clip sped up against that very remix, so it cannot vouch here
+        _gk = lambda s: {m.group(0).lower().replace(" ", "")
+                         for m in _FAST_GENRE_UP.finditer(s)}
+        genre = bool(_gk(t) - _gk(_ascii_fold(base_title or "")))
+        return (quick or genre) and not slow
+    return False
+
+
+def fast_exit_vouch(on_tempo, clip_dir, base_title=None):
+    """-> (on_tempo, demote). Pure, so it replays offline over saved payload rows.
+
+    As posted (clip_dir None), switched off, or nothing in the band: `on_tempo` comes
+    back unchanged and `demote` empty, i.e. exactly the band-only behaviour. Pitched:
+    when no in-band row claims the measured edit, `on_tempo` comes back EMPTY and the
+    caller declines; otherwise it is unchanged and `demote` holds the in-band rows that
+    make no such claim."""
+    on_tempo = list(on_tempo or [])
+    if not (FAST_EXIT_CLAIM and clip_dir and on_tempo):
+        return on_tempo, []
+    # A file the sound's own creator linked is its own claim: provenance, not a title,
+    # is what the tie-break below already trusts it on.
+    ids = {id(c) for c in on_tempo
+           if c.get("creator_link")
+           or _fast_edit_claim(c.get("title"), clip_dir, base_title)}
+    if not ids:
+        return [], []
+    return on_tempo, [c for c in on_tempo if id(c) not in ids]
 # File-name base for the fast path's downloads. _download_and_score names files
 # "c<start+i>.wav", and the fast path used to start at 0 in its OWN directory. Now that
 # a declined fast path hands that directory over as the broad hunt's `tmp`, wave 1 also
@@ -740,11 +888,42 @@ def _cs_value(v):
     return v if len(v) >= 3 else None
 
 
+# A DESCRIPTION OF THE SOUND IS NOT ITS NAME. "this opening sound is in so many TikTok
+# videos" matches "sound is X" exactly as "song is drain by lieu" does, and it went out
+# as the name "in so many TikTok videos!! 🤣": on the mason gate clip's sound page (a
+# reply under "Who's here in 2025", created 2025-12-01 UTC) it scored 7 (named value 5,
+# caps 2) and cleared the sound floor of 6. The noun there belongs to "this" / "her" /
+# "that" - the speaker is talking ABOUT the audio in front of them, and what follows the
+# "is" is a predicate ("in so many videos", "ethereal", "about love", "annoying asf",
+# "more mainstream"). The recorded corpora hold 17 "song is X" / "song: X" values over
+# 7,639 distinct lines; the real names among them ("Song is wake up super slowed",
+# 'the name of the song is "crave you"', "Song: Wake up (super slowed) - Grindgwap")
+# carry no demonstrative or possessive, and every line that does is a predicate.
+# Replayed over all 119 recorded pools (10,247 lines) this changes three emitted
+# strings, "annoying asf", "about love 😭" and this one, and no answer: coverage and
+# top-1 on the 70 labelled pools stay 34 and 34. The naming verbs stay names ("this
+# song is called X"), and "the" is left alone because "the song is X" is the ordinary
+# way to answer.
+_CS_ABOUT_DET = re.compile(r"\b(this|that|these|those|my|your|ur|his|her|their|our)\s+"
+                           r"(?:[^\W\d_]+\s+)?$", re.I)
+
+
+def _cs_describes(text, m):
+    """Is this `_CS_SONGIS` match a sentence ABOUT the sound rather than naming it?"""
+    if (m.group(2) or "").lower() not in ("is", "are"):
+        return False
+    if re.match(r"\s*(called|named)\b", m.group("v") or "", re.I):
+        return False
+    return bool(_CS_ABOUT_DET.search((text or "")[:m.start()]))
+
+
 def _cs_name_of(text):
     """The claimed TITLE inside the comment, so the query is the name and not the
     sentence around it ("crave you", not "bro no need for the ratio and just tell")."""
     for rx in (_CS_SONGPFX, _CS_SONGIS):
         m = rx.search(text or "")
+        if m and rx is _CS_SONGIS and _cs_describes(text, m):
+            m = None
         if m:
             v = _cs_value(m.group("v"))
             if v:
@@ -755,6 +934,67 @@ def _cs_name_of(text):
         if len(v) >= 3:
             return v
     return _cs_strip(_CS_HEDGE.sub("", text or ""))
+
+
+# THE CREATOR NAMING THE EDIT IN PASSING. On ZSqgV5qSd the sound's own creator answered
+# "Ok but can I use this sound" with "Yes but if u want it without the Hutson scores
+# it's outside hoodtrap, don't need to necessarily take it from my video". That is the
+# person who made the audio naming the exact family, and the reader emitted nothing:
+# 19 words (no short-line point), the parent is not a song ask (no reply bonus), and
+# the claimed "name" was the whole sentence, which no search could use. Measured
+# against the clip: the first YouTube result for "outside hoodtrap" ("Calvin Harris -
+# Outside (Hoodtrap) remix | TikTok RMX", VaultVision) verifies at core 1.000 at 0s,
+# as posted, so the comment WAS the answer. Roham: "it would be outside hoodtrap".
+# The clause is the words between the last marker ("it's", "is", "song"...) and the
+# edit-family word, plus any edit words stacked right after it ("slowed + reverb").
+# Only ever asked of a CREATOR's line (see crowd_claims); a stranger's prose is left
+# to the shape rules that were measured on 7,432 comments.
+_CS_MARKER = {"it's", "its", "it’s", "is", "was", "called", "named", "song", "sound",
+              "track", "audio", "music", "beat", "use", "used", "using", "play",
+              "playing", "be", "with", "on", "to"}
+_CS_CLAUSE_FILL = {"i", "u", "you", "we", "made", "make", "did", "this", "that", "these",
+                   "those", "just", "so", "very", "a", "an", "the", "my", "your", "some",
+                   "like", "only", "basically", "literally", "yes", "yeah", "yep", "no",
+                   "own", "new", "same"}   # "my own bass boosted edit" names nothing
+_CS_CLAUSE_LONE = {"edit", "one", "version", "remix", "mix", "sound", "song", "it", "one's"}
+
+
+def _cs_edit_clause(text):
+    """-> '<title> <edit word>' pulled out of a longer sentence, or None."""
+    for part in re.split(r"[,.;!?\n]", text or ""):
+        m = _C_EDIT.search(part)
+        if not m:
+            continue
+        title = []
+        for w in reversed(part[:m.start()].split()[-5:]):
+            if w.lower().strip("\"'“”‘’:") in _CS_MARKER:
+                break
+            title.insert(0, w)
+        # a title is not made of fillers: "I made this slowed" names nothing
+        while title and title[0].lower() in _CS_CLAUSE_FILL:
+            title.pop(0)
+        if not title:
+            continue
+        # ...nor is a lone "edit" / "one" / "version": "this is my own edit slowed" and
+        # "Its called that one hoodtrap remix" both passed as clauses ("edit slowed", "one
+        # hoodtrap remix"), took the +3, and went out as the WHOLE sentence (<= 6 words,
+        # so the clause swap in crowd_claims never ran). Live emits nothing for either.
+        if len(title) == 1 and title[0].lower().strip("\"'“”‘’") in _CS_CLAUSE_LONE:
+            continue
+        edit = [m.group(0)]
+        tail = part[m.end():].split()[:4]
+        for i, w in enumerate(tail):
+            if _C_EDIT.match(w):
+                edit.append(w)
+            elif (w.lower() in ("+", "&", "and", "x", "n") and i + 1 < len(tail)
+                  and _C_EDIT.match(tail[i + 1])):
+                edit.append(w)          # "slowed + reverb": keep the connector
+            else:
+                break
+        clause = _cs_strip(" ".join(title + edit))
+        if 2 <= len(clause.split()) <= 6 and _cs_alpha(clause) >= 2:
+            return clause
+    return None
 
 
 def _cs_half_ok(h):
@@ -815,7 +1055,11 @@ def _cs_score(text, meta):
     # sound page and they were being evaluated twice apiece
     _nm = _cs_name_of(t)
     _mash = split_mashup(t)
-    songis = bool(_CS_SONGPFX.match(t) or _CS_SONGIS.search(t))
+    _si = _CS_SONGIS.search(t)
+    # ...and "this sound is in so many videos" is not "song is X" at all, see
+    # _cs_describes. Without this the line keeps its +5 and goes out as the whole
+    # sentence, because _nm falls back to the full text once the value is refused.
+    songis = bool(_CS_SONGPFX.match(t) or (_si and not _cs_describes(t, _si)))
     # CHANGED: "song is X" only counts when X is a real value. "what song is this" and
     # "whats the song called??" both used to clear this and go out as search queries.
     named_value = bool(songis and _nm and not is_song_ask(t))
@@ -841,6 +1085,23 @@ def _cs_score(text, meta):
         s += 3
     if _C_EDIT.search(t):
         s += 3                      # "sped up" / "slowed" / "remix" - keep them
+        if meta.get("creator") and _cs_edit_clause(t):
+            # THE PERSON WHO MADE THE AUDIO naming its edit family. Provenance the
+            # fetcher already carries (`creator`) and the scorer never read. +3 lifts
+            # a creator's 19-word aside over the entry bar (4) and the floor (6) on its
+            # own; a stranger's identical sentence scores exactly what it did before.
+            # See _cs_edit_clause for the clip this was measured on.
+            # Only when the line actually holds a "<title> <edit word>" clause. Without
+            # that gate a creator's "I made this slowed version myself, hope you like
+            # it" scored 6 (edit 3 + creator 3), cleared the floor, and went out with
+            # the WHOLE sentence as the claimed name - a search query nobody can use and
+            # a hint whose every word ("hope", "like", "you") feeds the consensus vote.
+            # The recorded corpora cannot measure this (5,077 lines, 16 with an edit
+            # word, one of those over 7 words, none creator-flagged), so the evidence is
+            # the six synthetic creator lines in the review replay: ungated admits all
+            # six, three as the whole sentence and one as "own bass boosted"; gated
+            # admits the two that carry a clause ("outside hoodtrap", "drain remix").
+            s += 3
     by = _CS_BY.match(t)
     if by and len(words) <= 10:
         s += 3                      # CHANGED: anchored "A by B", not a bare "by"
@@ -1149,6 +1410,11 @@ def crowd_claims(comments, pool="clip", top=6):
         if s < min_score:
             continue
         name = _cs_name_of(text)
+        if meta.get("creator") and len(name.split()) > 6 and _C_EDIT.search(text):
+            # CREATOR PROSE -> THE CLAUSE. The scorer just admitted this line on the
+            # creator's word; the NAME must be searchable, and a 19-word sentence is
+            # not ("outside hoodtrap" is). Creator-gated, like the score bonus.
+            name = _cs_edit_clause(text) or name
         k = _cs_key(name)
         if not k or len(k) < 3:
             continue
@@ -2328,6 +2594,80 @@ def _hint_backed(title_key, hwords):
     return _hint_support(title_key, hwords)[0]
 
 
+def _edit_family_word(w):
+    """One spelling per family for the words _C_EDIT matches."""
+    w = re.sub(r"\s+", " ", (w or "").lower()).strip()
+    if w.startswith("sped") or w == "spedup":
+        return "sped up"
+    if w.startswith("bass"):
+        return "bass boosted"
+    if w.startswith("jersey"):
+        return "jersey club"
+    return w
+
+
+def crowd_version_claim(base_title, hints, speed_label=None):
+    """The crowd naming the BASE SONG *and* its edit family -> claim dict, or None.
+
+    Roham on ZSqGqdJuD: "How do u not get it when it says the song right there in the
+    comments". It did get the song: the base was "Scream & Shout", the sweep measured
+    slowed ~0.83x, and both the clip's own reply to "song name?" ("Scream and shout
+    slowed") and the sound page ("Scream n shout but this is slowed", 3 people) were
+    read and are in the payload. What the screen then said was "under our bar to call
+    it, best audio match was 17%" over six slowed+reverb uploads, because the exact
+    file is the sound owner's own edit (@izbasar_creator, 3,692 videos) and none of
+    those six is it - measured offline, the top YouTube one scores core <= 0.149 at
+    every offset of its first minute, so this was never an alignment miss. The crowd
+    and the measurement agree on the VERSION even though no public upload matched, and
+    that agreement is the answer the user was owed.
+
+    Pure and narrow: the hint must carry most of the base title's words (coverage
+    >= 0.6, so "shout out slowed" cannot claim "Scream & Shout") and an edit-family
+    word. A speed word is checked against the measured label and a contradiction
+    ("slowed" under a clip that measured sped up) returns nothing - the crowd may name
+    a version, it may never overrule the audio. Non-speed families (bass boosted,
+    hoodtrap, reverb) cannot be measured, so `agrees` is None and the UI says so.
+    Nothing here touches ranking; server.py only asks when no upload was crowned."""
+    key = [w for w in _title_key(base_title).split()
+           if len(w) >= 3 and w not in _HINT_STOP and w not in ("feat", "ft")]
+    if not key:
+        return None
+    # A family word the base title ALREADY carries is not news: "Gun lean remix" under
+    # a base of "Gun Lean Remix (feat. ...)" and "...slowed..." under "Fearless (Slowed)"
+    # both replayed as cards saying nothing the header did not (saved batch, 2026-09-24).
+    in_base = {_edit_family_word(m.group(0)) for m in _C_EDIT.finditer(base_title or "")}
+    sp = (speed_label or "").lower()
+    best = None
+    for h in (hints or []):
+        h = (h or "").strip()
+        fam = sorted({_edit_family_word(m.group(0)) for m in _C_EDIT.finditer(h)}
+                     - in_base)
+        if not fam:
+            continue
+        hw = set(re.sub(r"[^a-z0-9 ]", " ", _ascii_fold(h).lower()).split())
+        cov = sum(1 for w in key if w in hw) / float(len(key))
+        if cov < 0.6:
+            continue
+        slow = "slowed" in fam or "daycore" in fam
+        fast = "sped up" in fam or "nightcore" in fam
+        agrees = None
+        if slow or fast:
+            if sp.startswith("slowed"):
+                agrees = bool(slow and not fast)
+            elif sp.startswith("sped"):
+                agrees = bool(fast and not slow)
+            elif sp == "as posted":
+                agrees = False
+        if agrees is False:
+            continue
+        cand = {"hint": h, "family": fam, "agrees": agrees, "coverage": round(cov, 2)}
+        if (best is None
+                or (cand["agrees"] is True and best["agrees"] is not True)
+                or (cand["agrees"] == best["agrees"] and cov > best["coverage"])):
+            best = cand
+    return best
+
+
 def _consensus_id(hits, hints=None):
     """Pick the song several counter-speeds AGREE on. A real song shows up again and
     again as we sweep past its true rate; junk appears once. Ties break toward a
@@ -2747,11 +3087,44 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     # tighter now: the sweep itself already spent its budget getting here.
     swept += await retry_stalled(_to, bool(swept), cap=4)
     pick = _consensus_id(swept, hints)
+    if not pick and NOMATCH_SECOND_WINDOW and dur >= NOMATCH_MIN_SECS and off0 >= 8.0:
+        # Nothing at the tail window at 14 rates, and the head of the clip was only
+        # ever asked at 1.0x. See NOMATCH_SECOND_WINDOW. Four presets at offset 0.
+        _to2 = []
+        swept2 = await sweep_rates(0.0, NOMATCH_SECOND_RATES, t_sink=_to2,
+                                   budget=NOMATCH_SECOND_BUDGET)
+        pick = _consensus_id([h for h in swept2 if not _junk_id(h)] or swept2, hints)
+        tlog("nomatch_second_window", 0.0, hits=len(swept2), hit=bool(pick))
+        if pick:
+            pick = dict(pick)
+            pick["at"] = 0.0
+            pick["songs"] = [dict(pick)]
+            pick["multi"] = False
+            pick["second_window"] = True
+            return pick
     if pick:
         pick = dict(pick)
         pick["at"] = off0
         pick["songs"] = [dict(pick)]
         pick["multi"] = False
+        # See LATER_WINDOW. One probe on the second half at the rate that matched.
+        _rate = float(pick.get("rate") or 1.0)
+        if LATER_WINDOW and _rate != 1.0 and dur >= LATER_WINDOW_MIN_SECS:
+            off2 = max(off0 + 8.0, dur - 12.0)
+            span2 = min(12.0, dur - off2)
+            if span2 >= 6.0:
+                h2 = await probe(off2, _rate, pick.get("edit_label") or "", span=span2)
+                lw = {"t0": round(off2, 1), "t1": round(off2 + span2, 1),
+                      "rate": _rate, "same": None}
+                if h2 and not _junk_id(h2):
+                    k1 = _title_key(pick.get("title"))
+                    k2 = _title_key(h2.get("title"))
+                    lw.update(title=h2.get("title"), artist=h2.get("artist"),
+                              url=h2.get("url"), art=h2.get("art"),
+                              same=bool(k2 == k1 or _key_alias(k2, [k1]) == k1))
+                pick["later_window"] = lw
+                tlog("later_window", 0.0, off=round(off2, 1), same=lw["same"],
+                     title=lw.get("title"))
         return pick
     # nothing real anywhere - hand back the junk Phase-1 hit so the server's
     # shazam_untrustworthy check can flag it and answer "uncertain" honestly.
@@ -4902,6 +5275,15 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 # behaviour - this only ever declines on a CONFIDENT off-tempo reading.
                 on_tempo = [c for c in good if abs(float(np.log2(
                     max(0.25, min(4.0, c.get("vspeed") or 1.0))))) <= FAST_EXIT_TEMPO]
+                # ...and on a pitched clip one of those rows has to CLAIM the edit the
+                # sweep measured (FAST_EXIT_CLAIM). No claim -> declined right here.
+                _fast_dir = _fast_clip_dir(known_dir, edit_label)
+                _demote = []
+                if FAST_EXIT_CLAIM and _fast_dir and on_tempo:
+                    _n_in = len(on_tempo)
+                    on_tempo, _demote = fast_exit_vouch(on_tempo, _fast_dir, base_title)
+                    tlog("fast_exit_gate", 0.0, clip_dir=_fast_dir, n=_n_in,
+                         ok=(len(on_tempo) - len(_demote)), exit=bool(on_tempo))
                 if good and not on_tempo:
                     tlog("fast_declined", 0.0, n=len(good),
                          v=round(float(good[0].get("vspeed") or 1.0), 4))
@@ -4921,11 +5303,17 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                     good.sort(key=lambda c: (-(c.get("core") or 0),
                                              0 if c.get("creator_link") else 1,
                                              -(c.get("plays") or 0)))
+                    # speed references keep the order they always had
+                    _refs = [c["path"] for c in good if c.get("path")][:3]
+                    if _demote:                 # FAST_EXIT_CLAIM: plain in-band rows last
+                        _dm = {id(c) for c in _demote}
+                        good = ([c for c in good if id(c) not in _dm]
+                                + [c for c in good if id(c) in _dm])
                     return {"queries": hq, "ranked": good, "decisive": True,
                             "clip_ok": True, "bass_boosted": False,
                             "clip_tilt": 0.0, "target_tilt": 0.0,
                             "tmp": ftmp, "fast_path": True,
-                            "ref_paths": [c["path"] for c in good if c.get("path")][:3]}
+                            "ref_paths": _refs}
                 if _fast_tmp is None:
                     _cleanup_dir(ftmp)
 
