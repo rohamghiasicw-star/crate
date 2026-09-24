@@ -16,6 +16,7 @@ Pipeline
 """
 import asyncio, concurrent.futures, difflib, json, os, queue, re, statistics, subprocess, sys, tempfile, threading, time, unicodedata, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait as _cf_wait
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -171,6 +172,68 @@ WEB_DEADLINE = 10.0
 # Comments-first fast path. FAST_EXIT_CORE is deliberately near-identity: at 1.000 the
 # audio is the same recording beyond argument, so no broad sweep can improve on it.
 FAST_POOL, FAST_EXIT_CORE = 6, 0.95
+# A fast-path hit is only a SHORTCUT when the server would keep it. server.py's
+# _crown_tempo_mismatch refuses any crown whose |log2(vspeed)| exceeds _TEMPO_TOL 0.06,
+# and the fast path used to return on core alone: on the 2026-09-24 batch, #21 (Gun Lean)
+# hit "Hood Trap Remix - Digga D Only - Slowed + bass boost" at core 1.000 / vspeed 1.176
+# and #25 (St. Tropez, shazamkit) hit "Welcome to St tropez slowed" at 1.000 / 1.059, both
+# returned decisively, both refused by the gate ("clip plays 18% / 6% faster"), and the
+# broad hunt that would have found the un-slowed family member never ran. Same number as
+# the gate on purpose: a hit inside the band exits exactly as before (kyks 1.0193 is
+# inside; kelthraxx never exits here - its fast path scores one row at core 0.047 and it
+# is the broad hunt's creator lane that finds its crown), a hit outside it is carried
+# into the broad pool.
+FAST_EXIT_TEMPO = 0.06
+# File-name base for the fast path's downloads. _download_and_score names files
+# "c<start+i>.wav", and the fast path used to start at 0 in its OWN directory. Now that
+# a declined fast path hands that directory over as the broad hunt's `tmp`, wave 1 also
+# starts at 0 in it - and dl_clip (_range_to_wav, ffmpeg -y) overwrites - so c0..c5 of
+# the carried rows would silently become wave 1's audio while their `path` still said
+# they were the carried upload: the speed lock (candidate_speed_lock on c["path"]),
+# the creator alignment and ref_paths would then read the wrong file. Wave 1 uses 0..13,
+# the head continues from n, extra_dir_dl from n+n2, the family wave from n+50; 500 is
+# clear of all of them. Only the file names change.
+FAST_FILE_BASE = 500
+# build_queries' cap. Hints used to push the edit-family queries off the end of the list:
+# replayed over the 81 backend runs of the 2026-09-24 batch, 29 runs never searched
+# "<artist> <song> bass boosted" and 40 never searched "sped up", every one of them a clip
+# with 2+ comment hints (each hint spends 4 slots). The cap stays 16 because 24 queries
+# measured 6.3-7.8s against 4.4-5.4s for 16 on the same 4 query sets (search_edits, lab,
+# 2 runs each).
+# THE MAIN LIST IS STILL THE FIRST 16, BYTE FOR BYTE. A first draft re-ranked which 16
+# survived and so DROPPED queries the old list ran: on kelthraxx (one comment hint, 19
+# queries uncapped) it swapped "Wouldnt Believe mylancore" and "Wouldnt Believe kryd" out of the
+# main search, and every row only those two queries found left the pool. The treatment
+# forms that fall past the cap (QUERY_RESCUE of them, see build_queries) go to their own
+# search lane instead, whose rows are appended to the download list and never take a
+# head slot (RESCUE_DL), so the main pool and the 14-row head are exactly the old ones.
+QUERY_CAP = 16
+QUERY_RESCUE, RESCUE_DL = 4, 2
+# The creator lane's own deadline, counted from when THAT lane was submitted, which is
+# now before the comments fast path. It used to be submitted after the fast path (at
+# _t_main) and read with f_cre.result(WEB_DEADLINE - elapsed since _t_main), which is
+# all-or-nothing: on the 2026-09-24 merged run kelthraxx's lane had not finished 10.0s
+# after submit (tlog creator_search secs 2.321, nc 0), so the 108 rows it returned on the
+# baseline run were all thrown away, the creator's own "wouldnt believe flipp" was never
+# downloaded, and the crown was lost. Same 10s as before; what changes is the start
+# (earlier) and the read (partial, see _LaneSearch).
+CREATOR_DEADLINE = 10.0
+# The family wave (find_edit, after the main head is scored): a second, YouTube-first
+# search built from what the FIRST wave learned - the clip's direction, the family words on
+# the uploads that verified, the original artist when Shazam credited a re-upload account.
+# YouTube 20 deep because depth is free there (16 queries: 4.39/5.19s at ytsearch20 vs
+# 5.35/4.42s at ytsearch8, same lab, same day; ytsearch30 pays ~1s more, 1.96-3.24s) and
+# because Roham said it twice on one batch: "your best source of quality is always going
+# to be YouTube first". THE MAIN SEARCH DELIBERATELY STAYS AT ytsearch8: replayed
+# offline 2026-09-24, 20-deep YouTube in the main pool pushed mason's regression crown
+# ("Teach Me How To Dougie x Only Time", REEF EDM) from rank 7 of the 14-row head to
+# outside it - four more "Dougie ... slowed" rows outrank a mashup on the edit_char tier.
+# The wave widens without touching the head every existing clip is scored on.
+FAMILY_YT_PER, FAMILY_SC_PER, FAMILY_DL = 20, 30, 8
+# "settled" = a same-recording upload (core >= CORE_SAME) at the clip's own tempo. 0.03 is
+# rank_key's speed_exact bucket 0; a row 4% off passes the server's 0.06 gate and gets
+# crowned, which is exactly the #25 complaint ("you said 100% match but it wasn't").
+FAMILY_SETTLED_TOL = 0.03
 BASS_FIT_SPAN = 8.0  # dB from the bass target at which the bass fit falls to 0
 SPEED_TOL_OCT = 1.0  # octaves of speed mismatch at which the (gentle) speed fit hits 0
 ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
@@ -3282,11 +3345,21 @@ def creator_search(handle, nickname=None, title=None, per=6):
     Tagged `query="creator"` so `_creator_extra` can add download slots for it: an
     editor's own upload is routinely titled nothing like the base song ("Slow Down vs.
     Outside vs. Dynamite vs. Give Me Everything") and so scores near-zero on the generic
-    title-relevance sort that decides what gets downloaded."""
+    title-relevance sort that decides what gets downloaded.
+
+    find_edit no longer calls this: it starts the same queries as a _LaneSearch (so a
+    slow query cannot cost the lane the rows that already landed) and tags them with
+    _creator_rows. Kept for any caller that wants the lane in one blocking call."""
     qs = creator_queries(handle, nickname, title)
     if not qs:
         return []
-    found = search_edits(qs, per)
+    return _creator_rows(search_edits(qs, per))
+
+
+def _creator_rows(found):
+    """Tag creator-lane search rows in place (and return them): `query="creator"`, and
+    a longer first download for long uploads. Split out of creator_search unchanged so
+    the partial read in find_edit tags exactly as the blocking call does."""
     for c in found:
         c["query"] = "creator"
         # PULL MORE OF A LONG UPLOAD, IN THE FIRST DOWNLOAD, NOT AS A RETRY.
@@ -3482,7 +3555,8 @@ def _pair_queries(pair):
 
 
 def build_queries(credit_title, credit_author, base_title, base_artist, edit_label,
-                  handle=None, hints=None, shazam_reliable=True, pair=None):
+                  handle=None, hints=None, shazam_reliable=True, pair=None,
+                  with_rescue=False):
     """Queries that SURFACE the exact niche edit, not just a same-titled original.
     Trust order: (1) comment hints - the crowd naming the song, the only text signal
     when Shazam mis-IDs a bogus cover over an 'original sound' credit; (2) the named
@@ -3501,12 +3575,23 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         round trip. Appending here would displace an existing query on every clip, which
         is a ranking change for the whole corpus.
     It lives beside `_producer_search` instead - the established pattern for "chase this
-    specific person's own profile" - and runs concurrently, so it is purely additive."""
-    q, seen = [], set()
-    def add(s):
+    specific person's own profile" - and runs concurrently, so it is purely additive.
+
+    `with_rescue=True` returns (queries, rescue): `queries` is exactly the list this
+    function has always returned, and `rescue` is up to QUERY_RESCUE of the treatment
+    forms (bass boosted / slowed / slowed reverb / sped up) that the cap cut off, for
+    find_edit's rescue lane. Without it the return value is unchanged."""
+    q, seen, treat = [], set(), set()
+    # `treat` marks the unconditional treatment block below. Hints spend 4 slots each, so
+    # on a clip with 2+ hints that block is exactly what the cap used to cut: replayed
+    # over the 81 backend runs of the 2026-09-24 batch, 29 never searched "bass boosted"
+    # and 40 never searched "sped up" (#3 "its bass boosted", #24 "more bass").
+    def add(s, t=False):
         s = _clean(s)
         if s and len(s) > 1 and s.lower() not in seen:
             seen.add(s.lower()); q.append(s)
+            if t:
+                treat.add(s)
     edit_word = "slowed" if "slow" in (edit_label or "") else ("sped up" if "sped" in (edit_label or "") else "")
 
     # 0) THE PAIR. Only set when the mashup pass proved two songs against the audio, so
@@ -3576,7 +3661,7 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
             add("%s %s" % (base, producer))
         for tg in _tags_in(credit_title, base_title):
             add("%s %s" % (base, tg))
-        add("%s %s bass boosted" % (base_artist or "", base))
+        add("%s %s bass boosted" % (base_artist or "", base), True)
         # SLOWED/SPED - UNCONDITIONAL, same lesson as MASHUP above. edit_word only
         # fires when Shazam's OWN counter-speed sweep already caught the pitch shift -
         # but Shazam routinely matches a heavily slowed clip straight to the original
@@ -3592,16 +3677,229 @@ def build_queries(credit_title, credit_author, base_title, base_artist, edit_lab
         # googling "trophies slowed" - was never searched for. Always try both
         # directions; the verifier throws out whichever doesn't match the clip.
         if edit_word != "slowed":
-            add("%s %s slowed" % (base_artist or "", base))
-            add("%s %s slowed reverb" % (base_artist or "", base))
+            add("%s %s slowed" % (base_artist or "", base), True)
+            add("%s %s slowed reverb" % (base_artist or "", base), True)
         else:
-            add("%s %s slowed reverb" % (base_artist or "", base))
+            add("%s %s slowed reverb" % (base_artist or "", base), True)
         if edit_word != "sped up":
-            add("%s %s sped up" % (base_artist or "", base))
+            add("%s %s sped up" % (base_artist or "", base), True)
         h = re.sub(r"[._]+", " ", handle or "").strip()
         if h and base and not _is_named_credit(credit_title):
             add("%s %s" % (h, base))
-    return q[:16]
+    if not with_rescue:
+        return q[:QUERY_CAP]
+    # THE FIRST 16 ARE NOT TOUCHED. Re-ranking which 16 survive (the first draft of this
+    # change) always drops something the old list searched, and a row only that query
+    # found then leaves the pool. The cut treatment forms ride their own lane instead.
+    return q[:QUERY_CAP], [s for s in q[QUERY_CAP:] if s in treat][:QUERY_RESCUE]
+
+
+# A Shazam title that IS an edit ("Outside (Sped Up)", "Fearless (Slowed)", "... Radio Edit
+# slowed"). Its artist is then the re-upload account (skyemane & AIDEN MUSIC, Riley B,
+# velours), not the song's artist, and every "<artist> <song> ..." query above is aimed at
+# the wrong name. Same shape as server.py's _SPEED_CLAIM, kept here because the engine
+# cannot import server.
+_SPEED_TAG = re.compile(r"\b(slowed|slow(ed)? ?(and|\+|&) ?reverb|sped ?up|speed ?up|"
+                        r"nightcore|daycore|super ?slowed|ultra ?slowed)\b", re.I)
+# Function words that must never count as a lane term ("But It's the best part" -> the
+# terms are "best" and "part", not "but" / "its" / "the").
+_LANE_STOP = {"the", "and", "but", "its", "for", "you", "with", "from", "this", "that",
+              "feat", "featuring", "vs"}
+# Edit-family words worth carrying from a verified upload's title into the next search.
+# Pure speed words are NOT here - they come from the measurement, not from a title.
+_FAMILY_WORDS = (("hoodtrap", re.compile(r"\bhood ?trap\b", re.I)),
+                 ("remix", re.compile(r"\bremix\b", re.I)),
+                 ("loop", re.compile(r"\bloop(ed)?\b|\bbest part\b", re.I)),
+                 ("bass boosted", re.compile(r"\bbass ?boost", re.I)),
+                 ("tiktok version", re.compile(r"\btik ?tok\b", re.I)),
+                 ("jersey club", re.compile(r"\bjersey ?club\b", re.I)),
+                 ("phonk", re.compile(r"\bphonk\b", re.I)))
+
+
+def original_artist_from_pool(core_title, credited, rows):
+    """The song's real artist, read off the search results we already hold.
+
+    Only meaningful when Shazam credited a re-upload account (see _SPEED_TAG). Uploaders
+    title by "Artist - Song" or "Song - Artist" almost without exception, so the name on
+    the OTHER side of the separator from the song title, counted across the pool, is the
+    artist: on #25 the rows read "dj antoine | welcome to st. tropez (slowed + reverb)",
+    "DJ Antoine vs. Timati ft. Kalenna :: Welcome to St. Tropez [...]" while Shazam said
+    "velours"; on #7 "Calvin Harris - Outside (Slowed Tiktok Remix)", "Calvin Harris ft.
+    Ellie Goulding - Outside (OFFICIAL DRILL REMIX)" while Shazam said "skyemane & AIDEN
+    MUSIC". Needs two agreeing rows, never the credited name, never a name that is itself
+    an edit word (a "Nightcore - Outside" row votes for nobody). Zero network."""
+    ct = {w for w in _clean(core_title or "").lower().split() if len(w) >= 3}
+    if not ct:
+        return None
+    cred = set(clean_name(credited or "").lower().split())
+    counts = {}
+    for c in rows or []:
+        t = _ascii_fold(c.get("title") or "")
+        parts = [p for p in re.split(r"\s+[-|:]+\s+|\s*::\s*", t) if p.strip()]
+        if len(parts) < 2:
+            continue
+        for i, p in enumerate(parts):
+            words = set(re.sub(r"[^a-z0-9 ]", " ", p.lower()).split())
+            if len(ct & words) / float(len(ct)) < 0.6:
+                continue                        # not the song half
+            other = parts[1] if i == 0 else parts[0]
+            a = re.sub(r"[\(\[].*?[\)\]]", " ", other)
+            a = re.split(r"\b(?:feat|ft|featuring|vs|x)\b\.?", a, flags=re.I)[0]
+            a = _clean(a).lower().strip()
+            if (not a or len(a) < 3 or EDIT_WORDS.search(a) or OTHER_RENDITION.search(a)
+                    or _SPEED_TAG.search(a)):
+                break
+            aw = set(a.split())
+            if aw & cred or aw & ct:
+                break
+            counts[a] = counts.get(a, 0) + 1
+            break
+    if not counts:
+        return None
+    best = max(counts.items(), key=lambda kv: kv[1])
+    return best[0] if best[1] >= 2 else None
+
+
+def _strip_speed_words(title):
+    """An upload title with its speed / bass qualifiers removed: the FAMILY it belongs to.
+    "Gun Lean - Hood Trap Remix - Digga D Only - Slowed + bass boost" -> "Gun Lean Hood
+    Trap Remix Digga D Only", which is the query that reaches the un-slowed member."""
+    t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", title or "")
+    t = _SPEED_TAG.sub(" ", t)
+    t = re.sub(r"\b(reverb(ed)?|bass ?boost(ed)?|boost(ed)?|slow|version|edit)\b", " ", t,
+               flags=re.I)
+    return _clean(t)
+
+
+def _first_artist(artist):
+    """The first credited name: "Russ Millions, Ms Banks & Lethal Bizzle" -> "Russ
+    Millions". Platform search is literal, so a five-name credit finds nothing."""
+    return _clean(re.split(r",|&|\bx\b|\band\b|\bft\.?\b|\bfeat\.?\b|\bvs\.?\b",
+                           artist or "", 1, flags=re.I)[0]).strip()
+
+
+def family_queries(base_title, base_artist, edit_label, known_dir, hints, credit_title,
+                   credit_author, cands, cap=6):
+    """The second search, built from what the first one LEARNED. Returns (queries, why).
+
+    Roham, on #21: "maybe you can play around with the mixes you can find in soundcloud
+    when you already found one" - the engine had the right family at core 1.000 and the
+    wrong speed and stopped. Everything here is a derivation, not a guess:
+      * DIRECTION is the caller's speed call against the original (known_dir), else what
+        the best same-recording row says: a plain-titled upload at vspeed 0.90 means the
+        clip is slowed. A row TITLED slowed / sped up that the clip does not run at is a
+        SEED: its title minus the speed words is the family, searched plain (that reaches
+        the un-slowed member - "Gun Lean - Hood Trap Remix - Digga D Only", 153K plays,
+        sits at rank 9 of that query on SoundCloud) and with the direction word.
+      * FAMILY WORDS (hoodtrap, remix, loop, bass boosted, ...) are read off the titles of
+        uploads that verified at CORE_EDIT or better, plus the hints and the credit.
+      * NO VERIFIED ROW means only the clip's own words (credit, hints) can name a family:
+        then just those are searched, and with none of them there is no wave at all
+        (returns [], "...no-evidence").
+      * THE ORIGINAL ARTIST replaces a re-upload account (original_artist_from_pool), and
+        only the first credited name is used, because search is literal.
+      * "bass boosted" and, for a slowed clip, "slowed down" are always tried: the first is
+        the treatment uploaders most often leave out of a title (#3, #24 notes), the
+        second is how the un-reverbed slows are titled ("( slowed down ) love me like you
+        do", 1.0M views, absent from every "<song> slowed" top-8, present at rank 10 of
+        "<song> slowed down"; measured 2026-09-24 for #30).
+    Capped at `cap`, one search round."""
+    core = re.sub(r"[\(\[].*?[\)\]]", "", base_title or "").strip() or (base_title or "")
+    core = _clean(core)
+    if not core:
+        return [], "no title"
+    art = _first_artist(base_artist)
+    why = []
+    reup = bool(_SPEED_TAG.search(base_title or ""))
+    if reup:
+        orig = original_artist_from_pool(core, base_artist, cands)
+        if orig:
+            art = _first_artist(orig); why.append("artist<-pool:%s" % orig)
+        else:
+            art = ""; why.append("reupload-artist-dropped")
+    direction = None
+    if known_dir and not reup:             # relative to a re-upload it means nothing
+        direction = "slowed" if "slow" in known_dir else "sped up"
+    # the best same-recording row, and what it says
+    scored = [c for c in cands or [] if (c.get("core") or 0) >= CORE_EDIT and c.get("vspeed")]
+    scored.sort(key=lambda c: (-(c.get("core") or 0),
+                               abs(float(np.log2(max(0.25, min(4.0, c.get("vspeed") or 1.0)))))))
+    seed, seed_dir = None, None
+    if scored:
+        top = scored[0]
+        v = max(0.25, min(4.0, float(top.get("vspeed") or 1.0)))
+        off = abs(float(np.log2(v)))
+        claims = _SPEED_TAG.search(top.get("title") or "")
+        if not claims:
+            if v < 0.97:
+                direction = direction or "slowed"
+            elif v > 1.03:
+                direction = direction or "sped up"
+        elif off > FAMILY_SETTLED_TOL:
+            seed = _strip_speed_words(top.get("title"))
+            # another member of the SAME titled family first (#25: five "slowed +
+            # reverb" uploads within 3-6% of the clip, the exact one is a sixth); the
+            # OTHER direction only when the clip is clearly past plain speed.
+            own = "slowed" if "slow" in claims.group(0).lower() else "sped up"
+            seed_dir = direction or own
+            if off > 0.12 and not direction:
+                seed_dir = "sped up" if v > 1.0 else "slowed"
+            why.append("seed:%s" % seed)
+    # NO EVIDENCE, NO WAVE. The wave derives its questions from a verified row; with no
+    # row at CORE_EDIT the only family evidence left is the clip's OWN text - the credit
+    # and the comment hints - and search-result titles are not that (the main list
+    # always asks "<song> hoodtrap" and the canon, so the pool carries hoodtrap rows on
+    # any clip). The first draft fell back to a hoodtrap prior here and ran it on
+    # kelthraxx (2026-09-24 merged run, tlog family_wave why "prior:hoodtrap", 2.19s),
+    # whose credit is "original sound" and whose one hint is a SoundCloud link. "tiktok
+    # version" does not count as clip evidence: comments say TikTok all the time (mason's
+    # sound-page hint is "in so many TikTok videos!!").
+    clip_txt = " ".join([credit_title or ""] + [h for h in (hints or []) if h])
+    clip_fam = [word for word, rx in _FAMILY_WORDS
+                if word != "tiktok version" and rx.search(clip_txt) and not rx.search(core)]
+    if not scored and not clip_fam:
+        return [], ";".join(why + ["no-evidence"])
+    fam = []
+    blob = " ".join([clip_txt] + [c.get("title") or "" for c in scored[:6]])
+    for word, rx in _FAMILY_WORDS:
+        if rx.search(blob) and word not in fam and not rx.search(core):
+            fam.append(word)
+    if not scored:
+        fam = clip_fam
+    if fam:
+        why.append("family:%s" % ",".join(fam))
+    if direction:
+        why.append("dir:%s" % direction)
+    dw = direction or seed_dir or ""
+    out, seen = [], set()
+
+    def add(s):
+        s = _clean(s)
+        if s and len(s) > 3 and s.lower() not in seen and len(out) < cap:
+            seen.add(s.lower()); out.append(s)
+    if not scored:
+        # nothing verified: search the family the clip's own words name, in the measured
+        # direction, and nothing speculative on top.
+        for word in fam[:2]:
+            add("%s %s %s %s" % (art, core, word, dw))
+        why.append("clip-words-only")
+        return out, ";".join(why)
+    if seed and len(seed.split()) >= 2:
+        add(seed)
+        add("%s %s" % (seed, seed_dir))
+    if direction:
+        add("%s %s %s" % (art, core, direction))
+        if direction == "slowed":
+            add("%s slowed down" % core)
+    for word in fam[:2]:
+        add("%s %s %s %s" % (art, core, word, dw))
+    add("%s %s bass boosted %s" % (art, core, dw))
+    if reup and art:
+        add("%s %s" % (art, core))            # the real original, as a reference
+    if not direction and not seed:
+        add("%s %s slowed" % (art, core))
+        add("%s %s sped up" % (art, core))
+    return out, ";".join(why)
 
 
 def _num(s):
@@ -3650,7 +3948,7 @@ def _run_search(spec):
     return rows
 
 
-def search_edits(queries, per=5, sc_per=None):
+def search_edits(queries, per=5, sc_per=None, yt_per=None, yt_first=False, dedup=True):
     """SoundCloud + YouTube, all queries fired CONCURRENTLY. Carry plays + likes so
     ranking can surface the popular upload of the matching edit.
 
@@ -3663,19 +3961,89 @@ def search_edits(queries, per=5, sc_per=None):
     every artist-qualified query MISSES it at any depth; only the bare title reaches it,
     at #32. Uploaders misspell and mislabel constantly - depth on the plain title is the
     only thing that survives that."""
+    specs = _edit_specs(queries, per, sc_per, yt_per, yt_first)
+    with ThreadPoolExecutor(max_workers=min(16, len(specs) or 1)) as ex:
+        return _merge_rows(ex.map(_run_search, specs), dedup)
+
+
+def _edit_specs(queries, per=5, sc_per=None, yt_per=None, yt_first=False):
+    """search_edits' (prefix, source, query) specs, in the order it runs and merges
+    them. Shared with _LaneSearch so a lane is the same search, not a copy of it."""
     sc_per = sc_per or min(60, max(per * 6, 50))
+    # `yt_per` / `yt_first` are OPT-IN so every existing caller (the comments fast path
+    # takes the first FAST_POOL rows of this list, in order) sees the same rows in the
+    # same order. ONLY THE FAMILY WAVE asks for YouTube first and 20 deep; the broad
+    # search keeps the old sc50 + yt8 call (FAMILY_YT_PER says why). First, because a
+    # YouTube view count already wins a _dl_priority tie against a SoundCloud play
+    # count, so order only settles exact ties, and because Roham's instruction is
+    # "YouTube first"; 20 deep because depth is free there.
+    yt_per = yt_per or per
     specs = []
     for q in queries:
-        specs.append(("scsearch%d:" % sc_per, "soundcloud", q))
-        specs.append(("ytsearch%d:" % per, "youtube", q))
+        pair = [("scsearch%d:" % sc_per, "soundcloud", q),
+                ("ytsearch%d:" % yt_per, "youtube", q)]
+        specs.extend(reversed(pair) if yt_first else pair)
+    return specs
+
+
+def _merge_rows(results, dedup=True):
+    """Per-spec result lists -> one candidate list, first occurrence wins.
+    `dedup=False` keeps a url once PER QUERY instead of once overall. The family wave
+    groups rows by the query that returned them, and cross-query dedup hands a row to
+    whichever query happened to run first: on #30 "( slowed down ) love me like you do"
+    was returned by both "<artist> <song> slowed" and "<song> slowed down" and landed in
+    the first lane, where it was one of seventeen "slowed" rows instead of the best row
+    of the lane built to find it. Every other caller keeps the old behaviour."""
     cands, seen = [], set()
-    with ThreadPoolExecutor(max_workers=min(16, len(specs) or 1)) as ex:
-        for rows in ex.map(_run_search, specs):
-            for r in rows:
-                if r["url"] in seen:
-                    continue
-                seen.add(r["url"]); cands.append(r)
+    for rows in results:
+        for r in rows:
+            k = r["url"] if dedup else (r["query"], r["url"])
+            if k in seen:
+                continue
+            seen.add(k); cands.append(r)
     return cands
+
+
+class _LaneSearch(object):
+    """search_edits for a WIDENER lane: started now, read later, and read PARTIALLY.
+
+    search_edits blocks until its slowest query answers (each yt-dlp call may run to
+    _run_search's 25s timeout), and the creator lane used to be joined on a deadline with
+    all-or-nothing semantics: one slow query and every row that HAD landed was thrown
+    away with it. On the 2026-09-24 merged run the creator lane on kelthraxx came back
+    with nc 0 after 10.0s, while the same lane returned 108 rows on the baseline run,
+    the creator's own upload (the crown) among them.
+
+    `collect(timeout)` waits at most `timeout`, then returns (rows, pending): the rows of
+    every spec that has answered, merged in spec order with the same url dedup, and how
+    many specs had not. With pending == 0 the rows are exactly
+    search_edits(queries, per, sc_per) - same specs, same order, same merge - so a lane
+    that finishes in time changes nothing. Its own executor, shut down immediately with
+    wait=False: queued calls still run, find_edit can return or raise without joining
+    them, and no idle thread outlives them in a long-lived server."""
+
+    def __init__(self, queries, per=5, sc_per=None):
+        self.t0 = time.time()
+        self.specs = _edit_specs(queries or [], per, sc_per)
+        self.futs = []
+        if self.specs:
+            ex = ThreadPoolExecutor(max_workers=min(16, len(self.specs)))
+            self.futs = [ex.submit(_run_search, sp) for sp in self.specs]
+            ex.shutdown(wait=False)
+
+    def collect(self, timeout):
+        if self.futs:
+            _cf_wait(self.futs, timeout=max(0.0, timeout))
+        got, pending = [], 0
+        for f in self.futs:
+            if not f.done():
+                pending += 1
+                continue
+            try:
+                got.append(f.result())
+            except Exception:
+                got.append([])
+        return _merge_rows(got), pending
 
 
 _DDG_LINK = re.compile(r'href="[^"]*uddg=([^"&]+)[^"]*"[^>]*>(.*?)</a>', re.I | re.S)
@@ -4380,9 +4748,12 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     APPENDED to the download head, never substituted into it, so the pool every existing
     clip is scored on is unchanged and the only reachable outcome is that a new,
     audio-verified candidate wins."""
-    queries = build_queries(credit_title, credit_author, base_title, base_artist,
-                            edit_label, handle=handle, hints=hints,
-                            shazam_reliable=shazam_reliable, pair=pair)
+    # `queries` is the list build_queries has always returned; `rescue_q` holds the
+    # treatment forms its cap cut off (see QUERY_CAP), searched on their own lane below.
+    queries, rescue_q = build_queries(credit_title, credit_author, base_title,
+                                      base_artist, edit_label, handle=handle, hints=hints,
+                                      shazam_reliable=shazam_reliable, pair=pair,
+                                      with_rescue=True)
     # The links, as rows. Built before anything else so the fast path can try them too:
     # they are the cheapest evidence on the belt and the whole point is not to search.
     # Their titles are resolved on a thread from here, because BOTH paths need them and
@@ -4429,6 +4800,29 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
         f_sc = _sc_ex.submit(search_edits, queries, 8)
         _sc_ex.shutdown(wait=False)
 
+    # ------------------------------------------- THE CREATOR LANE STARTS NOW TOO
+    # It used to be submitted after the fast path, next to the web search, and read on
+    # the web search's clock. On a fast-path miss that start came late by the whole fast
+    # path (kelthraxx: 4.3s on the 2026-09-24 merged run, 16.33s -> 20.63s; 5.9s on the
+    # baseline run), and it then shared the machine with the tail of the broad search
+    # and wave 1; it had not returned 10.0s after it was submitted and came back with
+    # nothing (tlog creator_search secs 2.321, nc 0). Started here it runs while the fast
+    # path runs, and it is read with _LaneSearch.collect on CREATOR_DEADLINE counted from
+    # THIS moment (see the join).
+    # Nothing it needs is computed later: the creator, the nickname and the song title
+    # are all arguments. On a fast-path exit its rows are dropped unread, exactly like
+    # f_sc; the up-to-12 yt-dlp searches it started finish on their own threads.
+    prod_title = None
+    if base_title and shazam_reliable:
+        prod_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
+    elif _is_named_credit(credit_title):
+        prod_title = credit_title
+    _cre_handle = (creator or {}).get("creator") if isinstance(creator, dict) else creator
+    _cre_nick = (creator or {}).get("nickname") if isinstance(creator, dict) else None
+    _cre_nick = _cre_nick or credit_author
+    _cre_lane = (_LaneSearch(creator_queries(_cre_handle, _cre_nick, prod_title), 6)
+                 if _cre_handle else None)
+
     # ---------------------------------------------------------------- FAST PATH
     # COMMENTS FIRST. When the crowd has already named the edit in the comments, the
     # entire broad hunt is wasted work: measured on @kyks.edits7's clip the comment read
@@ -4449,6 +4843,10 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # search at all. It is APPENDED to the hint pool rather than replacing it (the pool
     # every existing clip sees is unchanged, exactly as with the download head) and the
     # exit bar is untouched at FAST_EXIT_CORE - the audio still decides.
+    # Rows the fast path scored but could not exit on (the hit was off-tempo, see
+    # FAST_EXIT_TEMPO). Carried into the broad pool with their scores and files, so the
+    # evidence is not paid for twice and the family wave can read the family off them.
+    _fast_carry, _fast_tmp = [], None
     if hints or pair or cm_cands:
         hq, seen_hq = [], set()
         for q in _pair_queries(pair):
@@ -4492,11 +4890,24 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                     def _fast_hit(c):
                         if (c.get("core") or 0) >= FAST_EXIT_CORE:
                             on_cand(c)
-                _download_and_score(hc, clip_audio, ftmp, 0, FAST_POOL + len(cm_cands),
+                _download_and_score(hc, clip_audio, ftmp, FAST_FILE_BASE,
+                                    FAST_POOL + len(cm_cands),
                                     clip_ctx=fctx, on_scored=_fast_hit)
                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
                 good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
-                if good:
+                # THE SHORTCUT NEEDS A ROW THE SERVER WILL KEEP. core alone says "same
+                # recording"; the gate also wants the clip's tempo. #21 exited here on a
+                # 1.176x row and got "unsure" for it. Naive vspeed defaults to 1.0 when
+                # it cannot read, which lands inside the band, i.e. exactly today's
+                # behaviour - this only ever declines on a CONFIDENT off-tempo reading.
+                on_tempo = [c for c in good if abs(float(np.log2(
+                    max(0.25, min(4.0, c.get("vspeed") or 1.0))))) <= FAST_EXIT_TEMPO]
+                if good and not on_tempo:
+                    tlog("fast_declined", 0.0, n=len(good),
+                         v=round(float(good[0].get("vspeed") or 1.0), 4))
+                    _fast_carry, _fast_tmp = hc, ftmp
+                    hc = []                     # fall through to the broad hunt
+                if good and on_tempo:
                     for c in good:
                         c["editmatch"] = True; c["strong_core"] = True
                         c["final"] = c.get("core")
@@ -4515,7 +4926,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                             "clip_tilt": 0.0, "target_tilt": 0.0,
                             "tmp": ftmp, "fast_path": True,
                             "ref_paths": [c["path"] for c in good if c.get("path")][:3]}
-                _cleanup_dir(ftmp)
+                if _fast_tmp is None:
+                    _cleanup_dir(ftmp)
 
     # SC/YT search + open-web search run concurrently. The web (DuckDuckGo - Google
     # itself can't be scraped, it hard-gates non-JS clients in an infinite redirect
@@ -4558,12 +4970,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # definitively after the web results land (web titles could in principle carry a
     # "(prod. X)" credit the speculative pass didn't see; when the lists differ the
     # chase is simply re-run with the definitive list, so the candidate pool is
-    # byte-identical to the serial version's).
-    prod_title = None
-    if base_title and shazam_reliable:
-        prod_title = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
-    elif _is_named_credit(credit_title):
-        prod_title = credit_title
+    # byte-identical to the serial version's). `prod_title` is set above, next to the
+    # creator lane, which needs it before the fast path.
 
     def _prod_handles_now(pool):
         prod_handles = _extract_prod_handles(
@@ -4580,18 +4988,20 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
 
     # THE CREATOR LANE. The sound's owner is the person who MADE this audio, and an
     # editor's own catalogue is a tiny, on-topic corner of SoundCloud/YouTube next to the
-    # whole platform. Submitted alongside the main search rather than after it, exactly
-    # like the producer chase, so its ~2s of SC/YT round trips hides under the main
-    # search's 7-8s and the hunt's wall time is unchanged unless it is the slowest leg.
-    _cre_handle = (creator or {}).get("creator") if isinstance(creator, dict) else creator
-    _cre_nick = (creator or {}).get("nickname") if isinstance(creator, dict) else None
-    _cre_nick = _cre_nick or credit_author
+    # whole platform. It is already running: `_cre_lane` was started before the fast
+    # path (see THE CREATOR LANE STARTS NOW TOO), so its SC/YT round trips hide under the
+    # fast path and the main search, and it is joined after wave 1 on its own clock.
     _t_main = time.time()
+    # THE RESCUE LANE: the treatment forms build_queries' cap cut off (QUERY_CAP). Started
+    # here rather than before the fast path because it only exists on clips with enough
+    # hints to overflow the cap, and those are the clips the fast path usually answers.
+    # Read after wave 1 and the producer chase with a ZERO wait, so it never holds the
+    # hunt up; its rows are appended to the download list (RESCUE_DL), never put in the
+    # head.
+    _rx_lane = _LaneSearch(rescue_q, 8) if rescue_q else None
     # see the note at the producer chase: a `with` block would shutdown(wait=True) and
     # undo the web deadline entirely. ex is shut down (wait=False) after the web join.
     ex = ThreadPoolExecutor(max_workers=3)
-    f_cre = (ex.submit(creator_search, _cre_handle, _cre_nick, prod_title)
-             if _cre_handle else None)
     if f_sc is None:                      # SPEED_EARLY_BROAD_SEARCH off: same as before
         _sc_t0 = _t_main
         f_sc = ex.submit(search_edits, queries, 8)
@@ -4619,6 +5029,23 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     except Exception:
         ex.shutdown(wait=False)
         raise
+    # the declined fast-path rows join the pool: scores and files travel with them, a URL
+    # the broad search also found inherits them instead of being fetched again.
+    if _fast_carry:
+        _by_fast = {c["url"]: c for c in cands}
+        _carry_keys = ("_spec", "path", "spectral", "fp", "arr", "core", "vscore", "score",
+                       "same", "vspeed", "bass_delta", "lag", "clip_tilt", "cand_tilt",
+                       "slope_delta", "clip_slope", "cand_slope", "_done")
+        for fc in _fast_carry:
+            hit = _by_fast.get(fc["url"])
+            if hit is None:
+                fc["fast_carry"] = True
+                cands.append(fc); _by_fast[fc["url"]] = fc
+            else:
+                for k in _carry_keys:
+                    if k in fc:
+                        hit[k] = fc[k]
+                hit["fast_carry"] = True
 
     # ---- WAVE 1: download the main-search head WHILE the web search and producer
     # chase are still running. The web deadline used to be dead air - measured 4.2-5.2s
@@ -4628,7 +5055,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # the parity strip below), so this changes WHEN work happens, never WHAT is scored.
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
-    tmp = tempfile.mkdtemp()
+    tmp = _fast_tmp or tempfile.mkdtemp()      # carried fast-path files live here too
 
     # key terms = the CORE song identity, NOT the edit qualifiers. Including
     # "instrumental"/"slowed" made instrumental uploads out-title-match the popular
@@ -4716,7 +5143,14 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # landed within 0.02 of each other on fp/arr while sitting on opposite sides of
     # true/false). Checking whether the confirmed artist's name actually appears is a
     # cheap, independent signal that doesn't depend on fragile low-level audio scoring.
-    _ARTIST_STOP = {"the", "feat", "featuring", "and", "ft", "with", "vs", "official"}
+    # "music" / "sounds" / "records" are channel words, not names: on #7 Shazam credited
+    # the sped-up re-upload "skyemane & AIDEN MUSIC", and the artist tier then pulled
+    # "TikTok Music", "Music Leaks", "Clout Music RnB #4" and "TrueNightMusic" uploads of
+    # OTHER "Outside" songs into five of the six rows shown, while every hoodtrap row
+    # (VaultVision, Malenyx, MD production) waited outside the head. None of the four live
+    # regression artists (Luhh Dyl, 42RAIN, TrippieXzay, Hoodfellas) carries these words.
+    _ARTIST_STOP = {"the", "feat", "featuring", "and", "ft", "with", "vs", "official",
+                    "music", "sounds", "records"}
     artist_toks = ([w for w in re.sub(r"[^a-z0-9 ]", " ", (base_artist or "").lower()).split()
                    if len(w) >= 3 and w not in _ARTIST_STOP]
                   if (shazam_reliable and base_artist) else [])
@@ -4777,7 +5211,11 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
 
     _wave1_done = []
     if cands:
-        wave1 = _sc_quota(sorted(cands, key=_dl_priority), max_dl)[:max_dl]
+        # carried fast-path rows never take a head slot: they are appended below, the
+        # same rule as the creator lane and the comment links, so the 14-row head is the
+        # one every clip without hints is scored on.
+        wave1 = _sc_quota(sorted([c for c in cands if not c.get("fast_carry")],
+                                 key=_dl_priority), max_dl)[:max_dl]
         _tw1 = time.time()
         n = _download_and_score(wave1, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx,
                                 on_scored=_hit)
@@ -4819,15 +5257,23 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     if not cands and not cm_cands:
         return result
 
-    # ---- creator lane results. Joined on the SAME deadline the web search gets, for the
-    # same reason: it is a widener, so a slow SoundCloud must not set the floor for the
-    # whole lookup. Measured on the two live cases below it lands in ~2s, well inside.
-    if f_cre is not None:
+    # ---- creator lane results. A widener, so a slow SoundCloud must not set the floor
+    # for the whole lookup - but ITS OWN CLOCK, and a partial read. The wait is
+    # CREATOR_DEADLINE minus the time since `_cre_lane.t0`, and t0 was taken when the
+    # lane was submitted, before the fast path and before the broad search is awaited;
+    # nothing between there and here moves it. So a slower YouTube only moves THIS line
+    # later, which can only lengthen the lane's run (now - t0 grows) and shorten the wait
+    # (the max() floor aside); it can never shrink the time the lane gets. Against the
+    # old read (submitted at _t_main, which is after the fast path, WEB_DEADLINE from
+    # there): the lane now starts no later, so its run by this line is no shorter and the
+    # wait here is no longer. And collect() keeps every query that HAS answered, so one
+    # slow query costs only its own rows. Measured before: ~2s on the live cases, and
+    # >10.0s (nothing kept) on kelthraxx under the 2026-09-24 merged run's load.
+    if _cre_lane is not None:
         _tc0 = time.time()
-        try:
-            _cre = f_cre.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
-        except Exception:
-            _cre = []
+        _cre, _cre_pend = _cre_lane.collect(
+            max(1.0, CREATOR_DEADLINE - (time.time() - _cre_lane.t0)))
+        _creator_rows(_cre)
         # A URL THE MAIN SEARCH ALREADY FOUND STILL GAINS ITS PROVENANCE. Dropping the
         # duplicate outright threw away the whole point of the lane in the measured case:
         # the main search's plain "<artist> <song> slowed" query DOES surface
@@ -4848,7 +5294,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 c["creator_upload"] = True
                 cands.append(c); _by_url[c["url"]] = c; _new += 1
         tlog("creator_search", time.time() - _tc0, handle=_cre_handle,
-             nc=len(_cre), new=_new, dup=len(_cre) - _new)
+             nc=len(_cre), new=_new, dup=len(_cre) - _new, pending=_cre_pend,
+             ran=round(time.time() - _cre_lane.t0, 3))
 
     # ---- producer chase results, with the DEFINITIVE handle list (now that web titles
     # are in the pool). Nearly always identical to the speculative list, in which case
@@ -4871,7 +5318,32 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             tlog("producer_search", time.time() - _tp0, handles=final_handles,
                  overlapped=bool(f_prod is not None and final_handles == spec_handles))
 
-    # title relevance for the candidates that arrived since wave 1 (web + producer)
+    # ---- rescue lane results: zero wait, whatever has landed. Rows the main search
+    # already holds stay main rows (their head eligibility is the old one); rows only this
+    # lane found are tagged `rescue_q` and can only be APPENDED to the download list (see
+    # WAVE 2), so the head every clip is scored on does not move.
+    # JOINED AFTER THE PRODUCER CHASE, NOT BEFORE IT. Joined first, a rescue row did two
+    # things the old pool never saw (offline stubbed find_edit, 2026-09-24): (1) its
+    # title fed _prod_handles_now above, so a "(prod. X)" on a rescue row changed the
+    # definitive handle list, threw the overlapped producer search away and re-ran it
+    # blocking with a different handle ("kelthraxx", "Lil Tony Official" became "Zed",
+    # "kelthraxx"); (2) a URL the producer chase also returned was already held as a
+    # rescue row, so the producer's copy was dropped as a duplicate and the row lost its
+    # head eligibility - a creator upload notesbase downloaded in its head was not
+    # downloaded at all once three better-sorted rescue rows took both RESCUE_DL slots.
+    # Here the pool the producer chase sees and extends is exactly the old one.
+    if _rx_lane is not None:
+        _rx, _rx_pend = _rx_lane.collect(0.0)
+        _by_url = {c["url"]: c for c in cands}
+        _rx_new = 0
+        for c in _rx:
+            if c["url"] not in _by_url:
+                c["rescue_q"] = True
+                cands.append(c); _by_url[c["url"]] = c; _rx_new += 1
+        tlog("rescue_lane", 0.0, nq=len(rescue_q), nc=len(_rx), new=_rx_new,
+             pending=_rx_pend, ran=round(time.time() - _rx_lane.t0, 3))
+
+    # title relevance for the candidates that arrived since wave 1 (web + producer + rescue)
     _term_hits([c for c in cands if "title_hits" not in c])
 
     # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial
@@ -4884,7 +5356,9 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # spectral, no path), which is exactly what it would have been serially.
     cands.sort(key=_dl_priority)
     _tm0 = time.time()
-    head = _producer_quota(_web_quota(_sc_quota(cands, max_dl), max_dl), max_dl)
+    head = _producer_quota(_web_quota(_sc_quota(
+        [c for c in cands if not c.get("fast_carry") and not c.get("rescue_q")],
+        max_dl), max_dl), max_dl)
     # APPENDED, NOT SUBSTITUTED - see _creator_extra. The head above is exactly what this
     # engine downloaded before the creator lane existed, so nothing that used to be
     # scored stops being scored.
@@ -4923,7 +5397,14 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # before any of them sets `_done`).
     _seen_head = {id(c) for c in head}
     _appended = []
-    for c in _cre_extra + _cm_extra:
+    # carried fast-path rows are already scored (_done); listing them in the head keeps
+    # the parity strip below from discarding evidence that was paid for.
+    # RESCUE ROWS (the treatment forms past the query cap) take RESCUE_DL appended slots,
+    # best _dl_priority first - after `_cre_settled` above was read, so a rescue row can
+    # never switch the creator lane off.
+    _rx_extra = [c for c in cands if c.get("rescue_q") and not c.get("_done")][:RESCUE_DL]
+    for c in (_cre_extra + _cm_extra + [c for c in cands if c.get("fast_carry")]
+              + _rx_extra):
         if id(c) not in _seen_head:
             _seen_head.add(id(c)); _appended.append(c)
     head = head + _appended
@@ -4957,6 +5438,117 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                             on_scored=_hit)
         cands += more
         tlog("extra_dir_dl", time.time() - _te0, n=len(more))
+
+    # ---- THE FAMILY WAVE: search again with what the first wave learned.
+    #
+    # Roham's notes on the 2026-09-24 batch, all sources problems: #25 "the SoundCloud
+    # one is too slow ... your first source should always be YouTube and then maybe you
+    # stage the YouTube waves and you compare"; #21 "play around with the mixes you can
+    # find when you already found one"; #30 "maybe you want just slowed no reverb"; #3
+    # "its bass boosted"; #43 "you actually have to find the right song" (a sped-up loop).
+    # In every one the first wave had the family and not the member: five St. Tropez
+    # uploads at core 1.000 and 3-6% off tempo, a Gun Lean hoodtrap at 1.000 and 18% off,
+    # the Ellie Goulding official at 1.000 and 0.90x. So this runs ONLY when nothing is
+    # settled - no row at CORE_SAME inside speed_exact bucket 0 - and asks the questions
+    # the first wave could not have asked before it ran (family_queries). YouTube first
+    # and 20 deep, SoundCloud 30 deep with two reserved slots, at most FAMILY_DL new
+    # downloads, all of it flowing into the SAME keep / editmatch / lock / rank pass
+    # below, so nothing here decides anything: verify() still has the only vote.
+    #
+    # Cost: one search round (12 concurrent yt-dlp calls, 1.2-2.6s each measured) plus one
+    # download wave under dl_clip's 6s direct cap, on unsettled clips only, and only when
+    # there is evidence for a family (family_queries returns nothing without a row at
+    # CORE_EDIT or a family word in the credit / hints). A settled clip pays a list
+    # comprehension. The four live regression crowns all sit at core 1.000 and vspeed
+    # 0.9991-1.0006 (kelthraxx, mason, bouch; kyks 1.0193 exits on the fast path before
+    # this line), so this block never runs on them; and when kelthraxx's creator lane
+    # does not deliver its crown (the 2026-09-24 merged run), nothing verifies at
+    # CORE_EDIT and its credit and hint name no family, so it still does not run.
+    _fw_t0 = time.time()
+    _settled = any((c.get("core") or 0) >= CORE_SAME and abs(float(np.log2(
+        max(0.25, min(4.0, c.get("vspeed") or 1.0))))) <= FAMILY_SETTLED_TOL
+        for c in cands)
+    if not _settled and base_title and shazam_reliable:
+        fq, _fw_why = family_queries(base_title, base_artist, edit_label, known_dir,
+                                     hints, credit_title, credit_author, cands)
+        if fq:
+            # A ROW THE MAIN SEARCH FOUND BUT NEVER DOWNLOADED IS FAIR GAME. The head is
+            # 14 deep and the pool is 300-500; on #21 the un-slowed "Gun Lean - Hood Trap
+            # Remix - Digga D Only" (153K plays) and on #30 every plain "slowed" upload
+            # (young & in love., 274K; "( slowed down )", 1.0M) were in the pool and
+            # outside the head, so a wave that only admitted NEW urls could not reach
+            # them (replayed 2026-09-24). Rows already scored (_done) are skipped.
+            _by_url = {c["url"]: c for c in cands}
+            found = search_edits(fq, per=FAMILY_YT_PER, sc_per=FAMILY_SC_PER,
+                                 yt_per=FAMILY_YT_PER, yt_first=True, dedup=False)
+            by_q, fresh = {}, []
+            for c in found:
+                hit = _by_url.get(c["url"])
+                if hit is not None and hit.get("_done"):
+                    continue
+                if hit is None:
+                    if _is_compilation(c):
+                        continue
+                    fresh.append(c); _by_url[c["url"]] = c; hit = c
+                elif "title_hits" not in hit:
+                    _term_hits([hit])
+                hit.setdefault("wave_query", c.get("query"))
+                by_q.setdefault(c.get("query"), []).append(hit)
+            _term_hits([c for c in fresh if "title_hits" not in c])
+            # ROUND-ROBIN OVER THE QUERIES. A single term-count sort let the "bass
+            # boosted slowed" query fill all eight slots on #30 with "slowed + reverb +
+            # bass boosted" farms while the plain slows the wave was built to find took
+            # none; each query is a different hypothesis and gets its turn. INSIDE a lane
+            # the order is: how many of that query's own edit words the title carries
+            # (so "slowed down" takes "( slowed down ) love me like you do" before a
+            # "slowed + reverb" farm, and the seed "Hood Trap Remix Digga D Only" takes
+            # the Digga D Only uploads before the official remix), YouTube before
+            # SoundCloud, then plays, then the platform's own rank. Plays alone handed
+            # every lane's first slot to the 600M-view official video (replayed
+            # 2026-09-24 on #3, #7, #30, #43); the word count comes first so that a row
+            # carrying none of the lane's words is not an answer to that query and is
+            # skipped, and among rows that do answer it the popular upload wins.
+            # the song's own words are not lane terms; the parenthetical is stripped
+            # because a Shazam title like "... (Radio Edit slowed)" would otherwise make
+            # "slowed" a song word and leave the slowed lane with no filter at all (#25).
+            _song_words = set(_clean("%s %s" % (
+                _first_artist(base_artist), re.sub(r"[\(\[].*?[\)\]]", "", base_title or "")))
+                .lower().split()) | _LANE_STOP
+            lanes = []
+            for qq in fq:
+                terms = [w for w in qq.lower().split() if len(w) >= 3 and w not in _song_words]
+                lane = []
+                for rank, c in enumerate(by_q.get(qq, [])):
+                    if c.get("title_hits", 0) < 1:
+                        continue
+                    t = _ascii_fold(c.get("title") or "").lower()
+                    nmatch = sum(1 for w in terms if w in t)
+                    if terms and nmatch == 0:
+                        continue
+                    lane.append((-nmatch, 0 if c.get("source") == "youtube" else 1,
+                                 -(c.get("plays") or 0), rank, c))
+                lane.sort(key=lambda x: x[:4])
+                lanes.append([x[4] for x in lane])
+            ordered, seen_ids = [], set()
+            while any(lanes):
+                for lane in lanes:
+                    while lane:
+                        c = lane.pop(0)
+                        if id(c) not in seen_ids:
+                            seen_ids.add(id(c)); ordered.append(c)
+                            break
+            more = _sc_quota(ordered, FAMILY_DL, min_sc=2)[:FAMILY_DL]
+            for c in more:
+                c["family_wave"] = True
+            _download_and_score(more, clip_audio, tmp, n + 50, FAMILY_DL, clip_ctx=clip_ctx,
+                                on_scored=_hit)
+            _more_ids = {id(c) for c in more}
+            cands += [c for c in fresh if id(c) in _more_ids]
+            tlog("family_wave", time.time() - _fw_t0, nq=len(fq), nfound=len(found),
+                 nc=len(more), why=_fw_why,
+                 hit=sum(1 for c in more if (c.get("core") or 0) >= CORE_EDIT))
+        else:
+            tlog("family_wave", time.time() - _fw_t0, nq=0, nc=0, why=_fw_why)
 
     # ---- CREATOR-LANE ALIGNMENT.
     #

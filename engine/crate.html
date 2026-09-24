@@ -1919,6 +1919,11 @@ function editBadge(d){
   // skill's core-saturation finding). Keep the result, drop the certainty.
   if(d.lyric_guess)
     return '<span class="badge soft">Matched from on-screen text'+(who?' · '+esc(who):'')+'</span>';
+  // THE CREDIT IS A SLOWED / SPED COPY AND NOTHING MEASURED THE CLIP AGAINST THE ORIGINAL.
+  // No speed here means "not known", not "unedited" - "Original" would be a claim the
+  // engine does not have (clip 7: slowed against a sped-up copy, so either way).
+  if(!sp && d.reupload)
+    return '<span class="badge soft">Speed not measured'+(who?' · '+esc(who):'')+'</span>';
   if(!sp||sp==='as posted'){
     return '<span class="badge orig">Original'+(who?' · '+esc(who):'')+'</span>';}
   var s=sp.charAt(0).toUpperCase()+sp.slice(1);
@@ -2697,7 +2702,7 @@ function renderResult(d,partial){
   // candidate and a real reason, and hiding that would be hiding evidence.
   else if(d.unsure && cands.length && !d.crown_rejected && !d.crowd_version
           && (!cands[0] || (cands[0].core||0) < CORE_KEEP)
-          && (!d.speed || d.speed==='as posted')){ shelf=''; plain=true; }
+          && (!d.speed || d.speed==='as posted') && !(d.reupload && !d.speed)){ shelf=''; plain=true; }
   else if(d.unsure && cands.length){
     // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
     // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),

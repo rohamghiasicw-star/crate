@@ -18,7 +18,7 @@ Run:  python3 server.py            # -> http://127.0.0.1:8788
 import asyncio, json, math, os, queue, re, tempfile, threading, time, unicodedata, uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 import crate_engine as E
 import wrong_song
@@ -960,6 +960,22 @@ def _phase1(url, key, t0):
                 res["credit_override"] = {"was": base_title, "now": _cq}
                 base_title = _cq
                 res["base_song"] = _cq
+        # THE CREDIT IS A TEMPO COPY, SO THE SWEEP'S LABEL IS RELATIVE TO THE COPY. Keep the
+        # credit, say only the direction that survives composing the two ("as posted" on a
+        # "(Slowed)" copy is slowed), and let phase 2 put a number on it against the
+        # original. The sweep's own reading stays on the payload as speed_vs_credit. See
+        # _reupload_base. Inert on any title without a tempo word; ctx["mdir"] is left
+        # alone because it seeds find_edit's queries.
+        reup = (_reupload_base(base_title) if (REUPLOAD_BASE and fp and base_title)
+                else None)
+        if reup:
+            reup["expect"] = _reup_expect(reup["dir"], speed_label, mdir)
+            reup["artist"], reup["via"] = _reup_artist_evidence(reup, base_artist, hint_texts)
+            res["reupload"] = {"title": reup["title"], "tag": reup["tag"],
+                               "artist": reup["artist"], "via": reup["via"],
+                               "speed_vs_credit": speed_label}
+            if REUPLOAD_LABEL != "credit":
+                res["speed"] = reup["expect"]
         _claim_from = hint_texts
         if not fp and not base_title and not _claim_from:
             # LAST RESORT: the bare caption. `comment_song_hints` deliberately refuses a
@@ -1041,7 +1057,8 @@ def _phase1(url, key, t0):
         ctx = {"src": src, "fp": fp, "base_title": base_title, "base_artist": base_artist,
                "edit_label": edit_label, "mdir": mdir, "hint_texts": hint_texts,
                "shazam_reliable": shazam_reliable, "t0": t0, "key": key, "url": url,
-               "res": res, "worth": worth, "comment_links": comment_links}
+               "res": res, "worth": worth, "comment_links": comment_links,
+               "reupload": reup}
         # Joined last so it never delays the fingerprint. By now it has had the whole
         # Shazam sweep to finish in, so the budget is a backstop, not a wait.
         #
@@ -1847,6 +1864,360 @@ def _official_refs(src, base_title, base_artist, prefix="om"):
         return None
 
 
+# ---- A SHAZAM CREDIT THAT IS ITSELF A RE-UPLOAD -----------------------------------------
+# Shazam's catalogue holds the slowed / sped-up / tekk copies that mills distribute, and on
+# a pitched clip it often answers with one of THOSE instead of the recording they copied.
+# 7 of 43 clips in the 2026-09-24 batch: "Doubt (Slowed) - Magix" (twenty one pilots),
+# "Outside (Sped Up) - skyemane & AIDEN MUSIC" and "Outside (卡点变速版) - 莹酱" (Calvin
+# Harris), "Fearless (Slowed) - Riley B" (Lost Sky), "Welcome to St. Tropez (DJ Antoine vs.
+# Mad Mark Radio Edit slowed) - velours" (DJ Antoine), "Blank Space (Slowed) - Lethargic
+# Sounds & slowed songs" (Taylor Swift), "BOSS BITCH TEKK (Super Slowed) - wharoxmane"
+# (Doja Cat) and "BK BACK (feat. Baby Kia) [Slowed] - CRASH OUTS" (Baby Kia). The iTunes
+# catalogue lists velours, 42RAIN, wharoxmane and skyemane as accounts that release
+# nothing but slowed / sped / tekk copies. Every speed fact was then relative to the COPY:
+#   - phase 1 printed the sweep's label, which is the clip against the copy. A straight
+#     hit on a slowed copy read "as posted" on a clip that is slowed.
+#   - the speed references were searched under the re-upload's name, which finds copies.
+#     Clip 25 (ShazamKit run) read "sped up ~1.06x" off one reference at 1.0613, the exact
+#     ratio the clip reads against fw.jona913's "Welcome to St tropez slowed", on a clip the
+#     blind review puts at ~0.85x slowed (Roham: the crowned slowed upload was "too slow").
+#     The shazamio run read 0.8502 off one reference; the same velours query today returns
+#     a single pick, DJ Antoine's official video.
+#   - _reconcile_single_ref took the sweep's ratio as a witness, so a correct reading
+#     against the original would be thrown out for disagreeing with a ratio to the copy.
+# The fix leaves the CREDIT alone (the title on clip 2 was graded right) and moves only the
+# speed: the label carries a direction and no number until something measured the clip
+# against the ORIGINAL, whose references are fetched by the original's title and artist.
+#
+# WHY THIS LIVES ON HEAVY SLOWS. FINE_SWEEP stops at a 1.50 counter-speed, so a clip slowed
+# below ~0.67x of the original can only ever match a copy that is itself slowed. On a
+# super / ultra slowed clip a re-upload credit is the expected answer, not an accident.
+#
+# ONLY THE TITLE TRIGGERS IT. A base title with none of these words is never touched, which
+# is what keeps kelthraxx, mason and bouch inert. kyks is NOT inert: Shazam credits it
+# "Three (Slowed)" - 42RAIN, so its card loses the copy-relative "~0.71x" and its speed is
+# measured against Cult Member's own uploads instead. Remix / tekk / hoodtrap words are NOT
+# tempo words: a remix is its own recording, and it stays the reference exactly as
+# "Blow (Electro Remix)" is on bouch. "BOSS BITCH TEKK (Super Slowed)" is measured against
+# "BOSS BITCH TEKK", not against Doja Cat's master.
+REUPLOAD_BASE = (os.environ.get("CRATE_REUPLOAD_BASE", "1").strip().lower()
+                 not in ("0", "false", "no", "off"))
+# WHAT THE CARD SAYS WHILE NOTHING HAS MEASURED THE CLIP AGAINST THE ORIGINAL. "original"
+# (default): the direction that survives composing the copy's tempo word with the sweep,
+# or nothing. "credit": the sweep's own label against the credited copy, as before this
+# fix. Open question for Roham: he graded clip 2 "perfect" and clip 40 "correct" on cards
+# reading "as posted" against the slowed copy, and clip 23 "correct" at the copy-relative
+# 0.93x. Either way a measurement against the original replaces it, and the copy's ratio
+# is never used as a witness.
+REUPLOAD_LABEL = os.environ.get("CRATE_REUPLOAD_LABEL", "original").strip().lower()
+_REUP_SLOW = re.compile(r"\b(?:(?:super|ultra|extra|mega)\s*)?slowed(?:\s*down)?\b|"
+                        r"\bdaycore\b|降速|慢速", re.I)
+_REUP_FAST = re.compile(r"\b(?:(?:super|ultra)\s*)?(?:sped\s*up|spedup|speed\s*up)\b|"
+                        r"\bnightcore\b|加速", re.I)
+# a tempo word that does not say which way: reverb-only copies are usually slowed but not
+# always, and 变速 is just "speed changed" (卡点变速版 = beat-synced speed-change version)
+_REUP_NODIR = re.compile(r"\breverb(?:ed)?\b|变速", re.I)
+# what is left in a bracket once its tempo words are gone and it still says nothing
+_REUP_FILL = re.compile(r"\b(?:tik\s*tok|tiktok|version|ver|and|with|x)\b\.?|[+&/,|\-]|卡点|版",
+                        re.I)
+_REUP_CAT = {}                   # catalogue term -> [(title, artist)], negatives included
+_REUP_CAT_CAP = 256
+
+
+def _reup_strip(text):
+    """`text` with its tempo words removed. A bracket left holding only those words (and
+    connectors) goes; any other bracket keeps its content, so "(DJ Antoine vs. Mad Mark
+    Radio Edit slowed)" becomes "(DJ Antoine vs. Mad Mark Radio Edit)"."""
+    def _drop(s):
+        return _REUP_NODIR.sub(" ", _REUP_FAST.sub(" ", _REUP_SLOW.sub(" ", s)))
+
+    def _br(m):
+        kept = _drop(m.group(2))
+        if not _REUP_FILL.sub(" ", kept).strip():
+            return " "
+        kept = re.sub(r"\s+", " ", kept).strip(" -+&/,|")
+        return "%s%s%s" % (m.group(1), kept, m.group(3))
+    t = re.sub(r"([\(\[\{])([^\(\)\[\]\{\}]*)([\)\]\}])", _br, text or "")
+    t = re.sub(r"\s+", " ", _drop(t))
+    t = re.sub(r"(?:\s*(?:[-\u2013\u2014+&/,|:]|\band\b|\bx\b|\bwith\b))+\s*$", "", t,
+               flags=re.I)
+    return t.strip(" -\u2013\u2014+&/,|:")
+
+
+def _reupload_base(base_title):
+    """{"title", "tag", "dir"} when the Shazam title names a tempo copy, else None.
+    `title` is the ORIGINAL's title, `dir` is which way the copy was pitched ("slowed",
+    "sped up", or None when the words do not say). NFKC, not _ascii_fold: the fold
+    deletes CJK outright, and it is the CJK that names 莹酱's copy on clip 7."""
+    if not base_title:
+        return None
+    t = unicodedata.normalize("NFKC", base_title)
+    tags = [m.group(0).strip() for rx in (_REUP_SLOW, _REUP_FAST, _REUP_NODIR)
+            for m in rx.finditer(t)]
+    if not tags:
+        return None
+    slow, fast = bool(_REUP_SLOW.search(t)), bool(_REUP_FAST.search(t))
+    orig = _reup_strip(t)
+    if len(re.sub(r"\W", "", orig)) < 2:
+        return None                 # nothing but tempo words: no title left to look up
+    return {"title": orig, "tag": " + ".join(tags).lower(),
+            "dir": ("slowed" if slow and not fast else "sped up" if fast and not slow
+                    else None)}
+
+
+def _reup_expect(copy_dir, speed_label, mdir):
+    """Which way the clip must run against the ORIGINAL, from the copy's own tempo word and
+    the sweep's reading against the copy, or None when that cannot be told. A straight hit
+    on a slowed copy is slowed; slowed further still is slowed; slowed against a SPED-UP
+    copy (clip 7) could be anything, so it says nothing."""
+    if not copy_dir:
+        return None
+    if not mdir and speed_label == "as posted":
+        return copy_dir
+    return copy_dir if mdir == copy_dir else None
+
+
+def _reup_artist_evidence(reup, base_artist, hint_texts):
+    """(artist, via) for the ORIGINAL from what phase 1 already holds, else (None, None).
+    No network. The comments come first, because under a re-upload the crowd is exactly
+    who names the real artist ("Three by cult member ultra slowed", "BK Back- by baby
+    kia"); then a "(feat. X)" the re-uploader left in the title. The re-uploader's own name
+    never counts as evidence for itself."""
+    want = reup["title"]
+    core = re.sub(r"[\(\[].*?[\)\]]", "", want).strip() or want
+    try:
+        import hint_confirm as _HCF
+        for h in (hint_texts or [])[:6]:
+            for song, artist, _ph in _HCF.probe_shapes(h):
+                if not artist:
+                    continue
+                artist = _reup_strip(artist)
+                if len(artist) < 2 or (base_artist and L._close(artist, base_artist)):
+                    continue
+                if (_HCF._title_ok(song, core, strict=False)
+                        or _HCF._title_ok(song, want, strict=False)):
+                    return artist, "comments"
+    except Exception:
+        pass
+    m = re.search(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+([^\)\]]+)[\)\]]", want, re.I)
+    if m and not (base_artist and L._close(m.group(1), base_artist)):
+        return m.group(1).strip(), "credit"
+    return None, None
+
+
+def _reup_catalogue_rows(term):
+    """iTunes song search, (title, artist) rows. Memoised with negatives; a dead endpoint
+    is not memoised, because it is not an answer."""
+    key = (term or "").strip().lower()
+    if not key:
+        return []
+    hit = _REUP_CAT.get(key)
+    if hit is not None:
+        return hit
+    try:
+        d = L._get("https://itunes.apple.com/search?term=%s&entity=song&limit=10"
+                   % quote(key))
+    except Exception:
+        return []
+    rows = [(r.get("trackName") or "", r.get("artistName") or "")
+            for r in (d.get("results") or [])]
+    if len(_REUP_CAT) >= _REUP_CAT_CAP:
+        _REUP_CAT.clear()
+    _REUP_CAT[key] = rows
+    return rows
+
+
+def _reup_resolve(reup, base_title, base_artist, hint_texts, pool_titles=None):
+    """(artist, via) for the original recording, or (None, None).
+
+    A name phase 1 found is kept as found; the catalogue only canonicalises it. That is
+    hint_confirm's rule - confirmation adds weight, it never vetoes - and it matters here:
+    Baby Kia's "BK Back" is not in iTunes at all.
+
+    Without one, the catalogue PROPOSES and something independent of the re-uploader has
+    to SECOND it. These endpoints always answer: the first exact "Outside" is Staind, the
+    first "Fearless" is LE SSERAFIM, the first exact "Three" is Lily Allen (all measured
+    2026-09-24). So a catalogue artist is taken only when the Shazam title itself names
+    them ("... (DJ Antoine vs. Mad Mark Radio Edit slowed)"), a comment does, or after the
+    hunt an upload title does ("Calvin Harris - Outside (Slowed Tiktok Remix)")."""
+    core = re.sub(r"[\(\[].*?[\)\]]", "", reup["title"]).strip() or reup["title"]
+    if reup.get("artist"):
+        try:
+            hit = L._itunes(core, reup["artist"])
+        except Exception:
+            hit = None
+        if hit and hit.get("artist"):
+            return hit["artist"], "%s+catalogue" % reup.get("via")
+        return reup["artist"], reup.get("via")
+    rows = list(_reup_catalogue_rows(reup["title"]))
+    if core.lower() != reup["title"].lower():
+        rows += _reup_catalogue_rows(core)
+    want = L._norm(core)
+    ba = L._norm(base_artist)
+    evidence = ([("credit", L._norm(base_title))]
+                + [("comments", L._norm(h)) for h in (hint_texts or []) if h]
+                + [("uploads", L._norm(t)) for t in (pool_titles or []) if t])
+    for title, who in rows:
+        if not want or L._norm(title) != want:
+            continue
+        for part in re.split(r"\s*(?:,|&|\band\b|\bfeat\.?|\bft\.?|\bx\b|\bvs\.?|\bwith\b)\s*",
+                             who, flags=re.I):
+            p = L._norm(part)
+            if len(p) < 3 or (ba and (p == ba or p in ba)):
+                continue
+            for kind, e in evidence:
+                if re.search(r"\b%s\b" % re.escape(p), e):
+                    return who, "catalogue+%s" % kind
+    return None, None
+
+
+# Titles that are somebody's re-work of the original, which _official_refs' filter lets
+# through because none of them is in EDIT_WORDS. Measured on the 2026-09-24 searches: all
+# five picks for "Calvin Harris Outside official audio" were bootlegs or a mashup ("F4LLEN
+# Bootleg", "Buried Outside (Logic X Calvin Harris)"), and the Baby Kia head carried
+# "Bk Back (Fast)" and "Bk Back (Dirt Mix)". A reference has to be the original at the
+# original's speed, so these go - unless the original's own title carries the word, which
+# is how "BOSS BITCH TEKK" keeps its tekk references.
+_REUP_REF_REJECT_WORDS = ("bootleg", "mix", "mixx", "remixx", "mash", "rework", "reworked",
+                          "parody", "preview", "loop", "x", "fast", "faster", "fastt", "quick",
+                          "chopped", "screwed", "pitch", "pitched", "tekk", "hardtekk", "slow",
+                          "daycore", "8d")
+
+
+def _reup_ref_reject(orig_title):
+    have = set(re.findall(r"[a-z0-9]+", E._ascii_fold(orig_title or "").lower()))
+    words = [w for w in _REUP_REF_REJECT_WORDS if w not in have]
+    return re.compile(r"\b(?:%s)\b" % "|".join(words), re.I) if words else None
+
+
+def _reup_official_refs(src, orig_title, artist, prefix="ro"):
+    """Confirmed normal-speed references of the ORIGINAL. Same two queries, same 5-row
+    download and the same confirm_ref gate as _official_refs; three things differ, and
+    each one was measured on the 2026-09-24 searches:
+      - EDIT_WORDS the original's OWN title carries are allowed. DJ Antoine's own upload
+        "Welcome to St. Tropez (DJ Antoine vs. Mad Mark Radio Edit)" is the original of
+        clip 25 and was thrown out for the word "Edit".
+      - the re-work filter above.
+      - order: uploads naming the original's artist first, then by plays. _official_refs
+        keeps search order, which is SoundCloud's 50 rows before YouTube's 4, so the head
+        filled with DJ bootlegs while "Calvin Harris - Outside (Official Video)" at 861M
+        views sat past it. Title containment is folded (links._norm) so "Welcome To St
+        Tropez" without the dot still counts.
+    _official_refs itself is untouched: every other clip's references stay byte-identical.
+    Returns a list, or None if it threw, like _official_refs."""
+    try:
+        core_t = re.sub(r"[\(\[].*?[\)\]]", "", orig_title).strip() or orig_title
+        want = L._norm(core_t)
+        if not want:
+            return []
+        keep = {m.group(0).lower() for m in E.EDIT_WORDS.finditer(E._ascii_fold(orig_title))}
+        reject = _reup_ref_reject(orig_title)
+        names = [p for p in (L._norm(x) for x in re.split(
+                     r"\s*(?:,|&|\band\b|\bfeat\.?|\bft\.?|\bx\b|\bvs\.?|\bwith\b)\s*",
+                     artist or "", flags=re.I)) if len(p) >= 3]
+        offs = E.search_edits(["%s %s official audio" % (artist, core_t),
+                               "%s %s audio" % (artist, core_t)], 4)
+        pick = []
+        for c in offs:
+            t = c.get("title") or ""
+            ft = E._ascii_fold(t)
+            if want not in L._norm(t):
+                continue
+            if any(m.group(0).lower() not in keep for m in E.EDIT_WORDS.finditer(ft)):
+                continue
+            if E.OTHER_RENDITION.search(ft) or (reject is not None and reject.search(ft)):
+                continue
+            pick.append(c)
+        who = lambda c: L._norm("%s %s" % (c.get("title") or "", c.get("uploader") or ""))
+        pick.sort(key=lambda c: (0 if any(n in who(c) for n in names) else 1,
+                                 -(c.get("plays") or 0)))
+        pick = pick[:5]
+        if not pick:
+            return []
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            got = [p for p in ex.map(
+                lambda ic: E.dl_clip(ic[1]["url"],
+                                     os.path.join(src["tmp"], "%s%d.wav" % (prefix, ic[0]))),
+                list(enumerate(pick))) if p]
+        if not got:
+            return []
+        with ThreadPoolExecutor(max_workers=min(5, len(got))) as _cex:
+            _ok2 = list(_cex.map(
+                lambda p: speed_from_master.confirm_ref(src["audio"], p), got))
+        return [p for p, o in zip(got, _ok2) if o]
+    except Exception:
+        return None
+
+
+def _reupload_refs(src, reup, base_title, base_artist, hint_texts, pool_titles=None,
+                   prefix="ro"):
+    """{"artist", "via", "refs"}: the ORIGINAL's confirmed speed references, fetched under
+    the original's name by _reup_official_refs. refs is None when it threw, [] when nothing
+    confirmed or no artist could be named - never a reference searched under the
+    re-uploader."""
+    out = {"artist": None, "via": None, "refs": []}
+    try:
+        out["artist"], out["via"] = _reup_resolve(reup, base_title, base_artist,
+                                                  hint_texts, pool_titles)
+    except Exception:
+        return out
+    if out["artist"]:
+        out["refs"] = _reup_official_refs(src, reup["title"], out["artist"], prefix)
+    return out
+
+
+def _reup_witness(measured, reup, speed_vs_credit, from_original=False):
+    """(measured, note). The copy's own tempo word as a witness against a reading - see
+    "THE COPY'S OWN TEMPO WORD IS A WITNESS" in _phase2. None when the reading is on the
+    wrong side of 1.0, or too close to 1.0 to have a side; relabelled when it sits inside
+    the deadband on the right side.
+
+    When the words cannot say which way the copy was pitched (clip 7: 变速, or slowed
+    against a sped-up copy) there is no witness, and then only a reading taken against the
+    ORIGINAL's references stands. One taken off the re-uploader's search or the hunt's pool
+    is the very reading this fix exists to stop trusting: the ShazamKit run of clip 25
+    read 1.0613 off exactly such a reference."""
+    if not measured:
+        return measured, None
+    if not reup.get("expect"):
+        if from_original:
+            return measured, None
+        return None, ("the credit is a re-upload (%s) and the only references were found "
+                      "under its name, so a reading of %.3fx cannot be said to be against "
+                      "the original" % (reup.get("tag"), float(measured.get("speed") or 0)))
+    mv = float(measured.get("speed") or 0)
+    side = (mv > 0 and abs(math.log2(mv)) > _TEMPO_EXACT
+            and ((mv < 1.0) == (reup["expect"] == "slowed")))
+    if not side:
+        return None, ("the credit is a %s copy and the sweep matched it at %s, so the clip "
+                      "is %s against the original; a reading of %.3fx is not at the "
+                      "original's speed" % (reup["dir"], speed_vs_credit, reup["expect"], mv))
+    if measured.get("label") == "as posted":
+        return dict(measured, label="%s ~%.2fx" % (reup["expect"], mv),
+                    reason="inside the deadband, on the side the credited copy's own "
+                           "tempo word gives"), None
+    return measured, None
+
+
+def _reupload_speed_refs(src, reup, fut, edit, base_title, base_artist, hint_texts, rec):
+    """Confirmed references of the ORIGINAL, or None when there are none. Collects the
+    prefetch; when that could not name an artist, the hunt's own upload titles are now in
+    hand to second a catalogue proposal, so it runs once more, inline (clips 7 and 39)."""
+    got = None
+    if fut is not None:
+        try:
+            got = fut.result(timeout=30)
+        except Exception:
+            got = None
+    if not (got or {}).get("artist"):
+        pool = [c.get("title") for c in (edit.get("ranked") or []) if c.get("title")]
+        got = _reupload_refs(src, reup, base_title, base_artist, hint_texts, pool, "ro")
+    got = got or {}
+    rec.update(artist=got.get("artist"), via=got.get("via"),
+               refs=len(got.get("refs") or []))
+    return got.get("refs") or None
+
+
 # SPEED LEVER, free, default on. Set CRATE_PREFETCH_REFS=0 to revert to the serial order.
 SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower()
                        not in ("0", "false", "no", "off"))
@@ -1884,6 +2255,18 @@ def _phase2(ctx, on_cand=None):
         _ref_ex = ThreadPoolExecutor(max_workers=1)
         _ref_fut = _ref_ex.submit(_official_refs, src, base_title, base_artist, "pre_om")
         _ref_ex.shutdown(wait=False)     # queued work still runs; no idle thread is kept
+    # A RE-UPLOAD CREDIT GETS THE ORIGINAL'S REFERENCES TOO, on its own thread so it hides
+    # under find_edit like the hunt above. The re-uploader's set above still runs: it is
+    # the fallback when the original cannot be named or confirmed, and prefetching it keeps
+    # that fallback free. `_reup` is None on every title without a tempo word.
+    _reup = ctx.get("reupload")
+    _reup_fut = None
+    _reup_rec = {}
+    if (_reup is not None and SPEED_PREFETCH_REFS and fp and shazam_reliable and base_title):
+        _reup_ex = ThreadPoolExecutor(max_workers=1)
+        _reup_fut = _reup_ex.submit(_reupload_refs, src, _reup, base_title, base_artist,
+                                    hint_texts, None, "pre_ro")
+        _reup_ex.shutdown(wait=False)
     # THE EDIT HUNT REPORTS ITSELF TOO. Phase 1 got real milestones; without the same
     # here the bar climbs to the song, then parks in the 60s for the 20-60s the hunt
     # takes and only jumps when a candidate happens to verify. Each candidate CHECKED
@@ -2080,9 +2463,20 @@ def _phase2(ctx, on_cand=None):
             _tsm = time.time()
             if fp and shazam_reliable and base_title:
                 try:
+                    # A RE-UPLOAD CREDIT MEASURES AGAINST THE ORIGINAL. When references of
+                    # the original confirm, they are the whole set: the pool's plain titles
+                    # and the re-uploader's search can be the copy itself, and one copy in
+                    # the consensus drags the cluster toward the copy's own slow. When none
+                    # confirm, the block below runs exactly as it always has and the reading
+                    # it makes is cross-examined further down. None for every other title.
+                    _orig_refs = None
+                    if _reup is not None:
+                        _orig_refs = _reupload_speed_refs(src, _reup, _reup_fut, edit,
+                                                          base_title, base_artist,
+                                                          hint_texts, _reup_rec)
                     # parallel confirm_ref, order preserved - each call is an
                     # independent pure check and the serial loop paid them in sequence.
-                    _rp = list(edit.get("ref_paths") or [])
+                    _rp = list(edit.get("ref_paths") or []) if not _orig_refs else []
                     if _rp:
                         with ThreadPoolExecutor(max_workers=min(5, len(_rp))) as _cex:
                             _ok = list(_cex.map(
@@ -2090,7 +2484,7 @@ def _phase2(ctx, on_cand=None):
                         refs = [p for p, o in zip(_rp, _ok) if o]
                     else:
                         refs = []
-                    if len(refs) < 2 and base_artist:
+                    if len(refs) < 2 and base_artist and not _orig_refs:
                         # collect the hunt that has been running under find_edit. If it
                         # was never started, or it failed, do exactly what this arm has
                         # always done, inline and under its own prefix.
@@ -2105,6 +2499,8 @@ def _phase2(ctx, on_cand=None):
                         if _pre is None:
                             raise RuntimeError("official_refs_failed")
                         refs += _pre
+                    if _orig_refs:
+                        refs = list(_orig_refs)
                     if refs:
                         r = speed_from_master.measure_consensus(src["audio"], refs)
                         if r and r.get("confident"):
@@ -2115,10 +2511,46 @@ def _phase2(ctx, on_cand=None):
                 # or crown a source. See _reconcile_single_ref. `res["speed"]` is still
                 # the phase-1 label here (nothing below has written it yet), which is the
                 # sweep's number when the sweep moved and "as posted" when it did not.
-                measured, _srnote = _reconcile_single_ref(measured, res.get("speed"), verified,
-                                                          base_title)
+                # (on a re-upload credit it gets the composed direction instead, which
+                # carries no ratio: the sweep's ratio is against the copy, not the song)
+                measured, _srnote = _reconcile_single_ref(
+                    measured, res.get("speed") if _reup is None else _reup.get("expect"),
+                    verified, base_title)
                 if _srnote:
                     res["speed_disputed"] = _srnote
+                # THE COPY'S OWN TEMPO WORD IS A WITNESS. With a re-upload credit the sweep's
+                # ratio is against the copy, so _reconcile_single_ref was handed only the
+                # composed direction, which carries no ratio. What does survive is the
+                # direction: a straight hit on a "(Slowed)" copy is a slowed clip, so a
+                # reading of "as posted" or "sped up" against the original means the refs
+                # were not the original after all. Clip 25's ShazamKit run is that case,
+                # 1.0613 off a lone ref (the clip's ratio to a slowed upload) on a clip the
+                # sweep had matched straight to a slowed copy. A contradicted reading is
+                # dropped; the label keeps the direction and prints no number.
+                #
+                # The other side of the same witness: a reading INSIDE the deadband but on
+                # the side the copy predicts is corroborated, not contradicted. Clip 41's
+                # shazamio run read 0.9663 off Baby Kia's own video; the deadband prints
+                # that "as posted", while a straight hit on a "[Slowed]" copy says the clip
+                # is slower than the original. Two independent facts agree, so it prints
+                # "slowed ~0.97x". Anything within _TEMPO_EXACT (~2%) of 1.0 is too close
+                # to call a side, and counts as a contradiction. With no direction to go on
+                # (变速, or slowed against a sped-up copy), only a reading taken against the
+                # original's own references stands.
+                #
+                # It runs BEFORE the pool fallback below, so a reading it drops leaves the
+                # gap the pool exists to fill, the same as a reading _reconcile_single_ref
+                # drops. Run after it, a dropped reading had already skipped the pool and
+                # the card went without a number the pool could have given. The pool's
+                # own reading is then held to the same witness.
+                if measured and _reup is not None:
+                    measured, _wnote = _reup_witness(
+                        measured, _reup, res.get("reupload", {}).get("speed_vs_credit"),
+                        from_original=bool(_reup_rec.get("refs"))
+                        and measured.get("source") != "pool")
+                    if _wnote:
+                        _srnote = _wnote
+                        res["speed_disputed"] = _wnote
                 if not measured:
                     # NO READING AT ALL, BUT THE POOL AGREES. Clip 16 (Side To Side): the
                     # tightened ref filter rightly stopped measuring against the
@@ -2136,6 +2568,14 @@ def _phase2(ctx, on_cand=None):
                                     "label": _lbl, "source": "pool",
                                     "reason": "no confident reference; %d plain uploads of the "
                                               "same recording agree" % _pn}
+                        if _reup is not None:
+                            measured, _wnote = _reup_witness(
+                                measured, _reup,
+                                res.get("reupload", {}).get("speed_vs_credit"),
+                                from_original=False)
+                            if _wnote:
+                                _srnote = _wnote
+                                res["speed_disputed"] = _wnote
                 if measured and measured.get("source") == "pool":
                     res["speed_source"] = "pool"
                 E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured),
@@ -2197,11 +2637,23 @@ def _phase2(ctx, on_cand=None):
             # rank_key put it, so core still decides the song and this only picks the
             # family member. A source row (clip re-pitched from it) never outranks a row
             # inside the tempo band.
+            #
+            # A RE-UPLOAD CREDIT'S GATES READ THE SWEEP'S OWN LABEL. Phase 1 rewrote
+            # res["speed"] to the composed direction (see _reupload_base), and handing that
+            # to _crown_contradicts moved crowns: on a straight hit "slowed" is not "as
+            # posted", so both of its rules stand down. Replayed on the saved payloads,
+            # clip 41's ShazamKit run then crowns "Bk Back - Baby Kia (Bass Boosted +
+            # Reverbed)" at 24.9 dB off the clip's EQ, which the tilt rule refuses today,
+            # and clip 25's shazamio run clears a 13.0 dB row the same way. That is a
+            # ranking change and needs the gate, so the gates keep the label they have
+            # always read. speed_vs_credit is that label, byte for byte.
+            _gate_label = (res.get("speed") if _reup is None
+                           else (res.get("reupload") or {}).get("speed_vs_credit"))
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
                 _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title)
                 if not _why:
-                    _why = _crown_contradicts(_cand, res.get("speed"), mdir,
+                    _why = _crown_contradicts(_cand, _gate_label, mdir,
                                               measured=measured,
                                               tilt_readable=(_sv is None))
                 if _why:
@@ -2298,6 +2750,20 @@ def _phase2(ctx, on_cand=None):
             # (the speed measurement used to live HERE, below the gates. It is now above
             #  them - see "MEASURE THE SPEED *BEFORE* JUDGING THE CROWN". `measured` is
             #  already populated by the time we reach this line.)
+
+            # A re-upload credit's phase-1 label is direction-only, None, or (with
+            # CRATE_REUPLOAD_LABEL=credit) relative to the copy, so a confident "as posted"
+            # against the ORIGINAL is a finding the branches below would keep as silence.
+            # Say it. Written after the gates, which read the sweep's label (_gate_label),
+            # so no gate sees a label it did not see before. `measured` itself is new on
+            # this path, and the gates do read that.
+            if _reup is not None:
+                if (measured and measured.get("confident")
+                        and measured.get("label") == "as posted"):
+                    res["speed"] = "as posted"
+                if isinstance(res.get("reupload"), dict):
+                    res["reupload"].update({k: v for k, v in _reup_rec.items()
+                                            if v is not None})
 
             if top:
                 # the winning upload NAMES its own transform ("slowed"/"sped") - a strong
