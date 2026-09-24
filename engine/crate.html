@@ -1035,6 +1035,19 @@ button.savecard[disabled]{pointer-events:none}
 .secbtn.on{color:var(--good)} .secbtn.on svg{color:var(--good)}
 .secbtn.dim{opacity:.45;pointer-events:none}
 .secbtn span{text-align:center;line-height:1.2}
+/* Konnor: a clear way out of the result screen. One primary "find another song", then a
+   row with Back and a link back to the clip's own app (TikTok or Instagram). */
+.navrow{display:flex;flex-direction:column;gap:8px;margin-top:18px}
+.navrow .r2{display:flex;gap:8px}
+.navbtn{display:flex;align-items:center;justify-content:center;gap:8px;padding:13px 12px;
+  border-radius:14px;font:inherit;font-size:14px;font-weight:650;color:var(--text);
+  background:var(--raise);border:1px solid var(--line);text-decoration:none;cursor:pointer;
+  transition:transform .12s,filter .15s}
+.navbtn svg{color:var(--text)}
+.navbtn.half{flex:1;min-width:0}
+.navbtn.half span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navbtn.go{background:var(--accent);border-color:transparent;color:var(--on-accent)}
+.navbtn.go svg{color:var(--on-accent)}
 .autonote{text-align:center;font-size:11.5px;color:var(--faint);margin-top:10px}
 .autonote button{color:var(--accent2);font-weight:600}
 .playermeta{display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -1143,6 +1156,11 @@ button.savecard[disabled]{pointer-events:none}
 .clippill .cdot{width:18px;height:18px;border-radius:50%;flex:none;background:linear-gradient(140deg,var(--accent2),var(--accent))}
 .clippill .h{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .clippill .cp{color:var(--faint);flex:none}
+/* the source chip is a link back to the clip you scanned */
+a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:filter .15s}
+a.clippill:hover{filter:brightness(1.12)}
+.clippill .cgo{display:grid;color:var(--faint);flex:none;margin-left:1px}
+.clippill .cgo svg{width:11px;height:11px}
 /* item 5: open in - quiet search marker */
 .opl{position:relative}
 .opsrch{position:absolute;top:6px;right:6px;display:grid;color:var(--faint)}
@@ -1355,7 +1373,7 @@ button.savecard[disabled]{pointer-events:none}
   <!-- ============ MATCH ============ -->
   <section class="screen" id="s-match">
     <div class="hd">
-      <button class="ib plain" id="back" title="Scan another" aria-label="Scan another"></button>
+      <button class="ib plain" id="back" title="Back" aria-label="Back"></button>
       <div class="ttl" id="matchttl">Match found</div>
       <button class="ib plain" id="share" title="Copy link" aria-label="Copy link"></button>
     </div>
@@ -1466,6 +1484,7 @@ var IC={
   bignote:'<svg width="58" height="58" viewBox="0 0 24 24" fill="#fff"><path d="M20 4.2v11.1a3.2 3.2 0 1 1-1.8-2.87V7.6l-7.4 1.66v8.05a3.2 3.2 0 1 1-1.8-2.87V6.9c0-.42.29-.78.7-.87l9.2-2.06c.56-.13 1.1.3 1.1.87z"/></svg>',
   note:'<svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4.2v11.1a3.2 3.2 0 1 1-1.8-2.87V7.6l-7.4 1.66v8.05a3.2 3.2 0 1 1-1.8-2.87V6.9c0-.42.29-.78.7-.87l9.2-2.06c.56-.13 1.1.3 1.1.87z"/></svg>',
   rchev:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6 15.5 12 9.5 18"/></svg>',
+  lchev:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6 8.5 12 14.5 18"/></svg>',
   chev:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5 12 15.5 18 9.5"/></svg>',
   x:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   quote:'<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M9.5 6.5C6.9 7.8 5.3 10 5.3 12.6c0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2zm8.2 0c-2.6 1.3-4.2 3.5-4.2 6.1 0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2z"/></svg>',
@@ -1522,7 +1541,7 @@ document.getElementById('ico-mic').innerHTML=IC.mic;
 document.getElementById('ico-search').innerHTML=IC.search;
 document.getElementById('cancel').innerHTML=IC.x;
 document.getElementById('lcancel').innerHTML=IC.x;
-document.getElementById('back').innerHTML=IC.chev;
+document.getElementById('back').innerHTML=IC.lchev;
 document.getElementById('share').innerHTML=IC.share;
 if(document.getElementById('export')) document.getElementById('export').innerHTML=IC.down;
 document.getElementById('plpic').innerHTML=waveGlyph(22);
@@ -2489,8 +2508,17 @@ function renderResult(d,partial){
      the reel, not the title". The engine already carries that as res.poster; handle is
      only the fallback where a platform does not supply one. */
   var _who = urlHandle(d.url) || urlHandle(curURL) || d.poster || d.handle || '';
-  var clip = _who ? '<div class="clip"><span class="clippill">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
-    '<span class="h">@'+esc(_who)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'')+'</span></div>' : '';
+  // Konnor: the source chip at the top (the poster and "@name · TikTok") should take you
+  // back to the clip you scanned. d.url is the video the engine read; curURL is the link
+  // the user pasted. Either one opens the reel again, so the pill becomes a real link when
+  // we have one and stays a plain label when we don't.
+  var _vid = d.url || curURL || '';
+  var _pillInner = (d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
+    '<span class="h">@'+esc(_who)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'');
+  var clip = _who ? '<div class="clip">'+
+    (_vid ? '<a class="clippill tap" href="'+esc(_vid)+'" target="_blank" rel="noopener" aria-label="Open this '+(_plat||'clip')+' video">'+_pillInner+'<span class="cgo">'+IC.open+'</span></a>'
+          : '<span class="clippill">'+_pillInner+'</span>')+
+    '</div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
   // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
@@ -2850,6 +2878,19 @@ function renderResult(d,partial){
      absent, so the theme switcher, the resize listener and the scan-finish callers all
      become harmless no-ops rather than four edits in four unrelated places. */
   var wavebar='';
+  /* WAY OUT OF THE RESULT (Konnor's ask). Once a song is found the header back can feel
+     hidden, so put the moves on the card itself: a primary "Find another song" that
+     returns to the scan screen, a Back that does the same as the header arrow, and a link
+     straight back to the clip's own app when we know where it came from. */
+  var _plabel = _plat==='Instagram' ? 'Back to Instagram' : (_plat==='TikTok' ? 'Back to TikTok' : 'Open the video');
+  var _picon = _plat==='Instagram' ? IC.ig : (_plat==='TikTok' ? IC.tt : IC.open);
+  var actions='<div class="navrow">'+
+    '<button class="navbtn go" id="againbtn" type="button">'+IC.scan+'<span>Find another song</span></button>'+
+    '<div class="r2">'+
+      '<button class="navbtn half" id="backbtn" type="button">'+IC.lchev+'<span>Back</span></button>'+
+      (_vid?'<a class="navbtn half" id="tikbtn" href="'+esc(_vid)+'" target="_blank" rel="noopener">'+_picon+'<span>'+_plabel+'</span></a>':'')+
+    '</div>'+
+  '</div>';
   // ORDER, top to bottom: the clip it came from, the song with its cover and the version
   // pill standing alone, the save confirmation directly under that pill, where to open it,
   // then the evidence.
@@ -2864,7 +2905,7 @@ function renderResult(d,partial){
      It just stops the header claiming the half we did not get. */
   if(!partial) document.getElementById('matchttl').textContent =
       noCrown ? 'Song identified' : 'Match found';
-  result.innerHTML='<div class="card">'+head+clip+hero+card+openin+wavebar+mash+shelf+plat+quotes+'</div>';
+  result.innerHTML='<div class="card">'+head+clip+hero+card+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
@@ -2889,6 +2930,12 @@ function renderResult(d,partial){
   var ab=document.getElementById('autobtn');
   if(ab) ab.onclick=function(){
     openSheet();};
+  // Find another song / Back both return to the scan screen, the same place the header
+  // arrow goes. The TikTok link is a plain anchor, so it needs no handler here.
+  var agb=document.getElementById('againbtn');
+  if(agb) agb.onclick=goHome;
+  var bkb=document.getElementById('backbtn');
+  if(bkb) bkb.onclick=goHome;
   // Auto-save off: one tap saves this match without turning the setting back on.
   var sb=document.getElementById('savebtn');
   if(sb) sb.onclick=function(){
