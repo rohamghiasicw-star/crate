@@ -149,14 +149,25 @@ a{color:inherit;text-decoration:none}
 .smic svg,.sclear svg{width:18px;height:18px}
 .smic:disabled{color:var(--faint);opacity:.5;cursor:default}
 .shint{margin:7px 2px 0;font-size:11.5px;color:var(--faint)}
-.sex{display:flex;flex-direction:column;gap:8px}
-.sexrow{display:flex;align-items:center;gap:12px;min-height:50px;padding:0 14px;border-radius:14px;text-align:left;
+.sexcap{margin:-4px 2px 11px;font-size:12.5px;color:var(--muted)}
+.sex{display:flex;flex-direction:column;gap:9px}
+.sexrow{display:flex;align-items:center;gap:12px;min-height:62px;padding:11px 14px;border-radius:14px;text-align:left;
   background:var(--raise);border:1px solid var(--line);transition:background-color .15s,transform .15s var(--ease)}
 .sexrow:active{transform:scale(.985);background:var(--raise2)}
 .sexi{width:22px;display:grid;place-items:center;color:var(--accent2);flex:none}
 .sexi svg{width:15px;height:15px}
-.sext{flex:1;min-width:0;font-size:14px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sexm{font-size:11px;font-weight:650;color:var(--faint);flex:none}
+.sexb{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.sexhd{display:flex;align-items:center;gap:8px;min-width:0}
+.sexk{font-size:10px;font-weight:750;letter-spacing:.05em;text-transform:uppercase;color:var(--accent2);flex:none;
+  background:color-mix(in oklab,var(--accent) 15%,transparent);padding:2px 8px;border-radius:var(--r-pill)}
+.sexd{font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sext{min-width:0;font-size:14.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sexgo{color:var(--faint);flex:none;display:grid;place-items:center}
+.sexgo svg{width:16px;height:16px}
+.showsrch{display:flex;align-items:flex-start;gap:12px;padding:15px;border-radius:16px;margin-top:22px;
+  background:var(--raise);border:1px solid var(--line);color:var(--muted);font-size:12.5px;line-height:1.5}
+.showsrch .sexi{margin-top:1px}
+.showsrch b{display:block;color:var(--text);font-weight:650;font-size:13.5px;margin-bottom:2px}
 .srecent{display:flex;gap:7px;flex-wrap:wrap}
 .srecent button{font-size:12px;font-weight:600;color:var(--muted);padding:8px 13px;border-radius:var(--r-pill);
   background:var(--raise);border:1px solid var(--line);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3383,8 +3394,9 @@ document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();
    - Every row plays a clip. With a lyric or a vibe, hearing it is the only way to confirm.
      Playback is the platform's own embed player via data-play, never our audio.
    - Hum to search ships greyed out until it is real. */
-var S_EX=[['"mmm whatcha say"','lyric','quote'],['slowed, female vocal, gym reel','vibe','spark'],
-          ['edits by @fastmusic954','creator','at']];
+var S_EX=[['"mmm whatcha say"','lyric','quote','A line you remember'],
+          ['slowed, female vocal, gym reel','vibe','spark','How it sounds or where it played'],
+          ['edits by @fastmusic954','creator','at','Who posts the edits']];
 var sState={q:'',mode:'auto',busy:false,res:null,err:''}, sSeq=0;
 function sRecent(){return lsGet('addify-recent-searches','[]');}
 function sRemember(q){var a=sRecent().filter(function(x){return x.toLowerCase()!==q.toLowerCase();});
@@ -3436,12 +3448,18 @@ function renderSearch(){
         b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label','Saved to Finds');};});
     return;}
   var rec=sRecent();
-  body.innerHTML='<div class="sect">Try something like</div><div class="sex">'+
+  body.innerHTML='<div class="sect">Three ways to search</div>'+
+    '<p class="sexcap">Tap one to try it. No reel needed.</p><div class="sex">'+
     S_EX.map(function(e){return '<button type="button" class="sexrow" data-q="'+esc(e[0])+'" data-m="'+e[1]+'">'+
-      '<span class="sexi">'+IC[e[2]]+'</span><span class="sext">'+esc(e[0])+'</span>'+
-      '<span class="sexm">'+e[1]+'</span></button>';}).join('')+'</div>'+
+      '<span class="sexi">'+IC[e[2]]+'</span>'+
+      '<span class="sexb"><span class="sexhd"><span class="sexk">'+e[1]+'</span>'+
+        '<span class="sexd">'+esc(e[3])+'</span></span>'+
+        '<span class="sext">'+esc(e[0])+'</span></span>'+
+      '<span class="sexgo">'+IC.rchev+'</span></button>';}).join('')+'</div>'+
     (rec.length?'<div class="sect">Recent searches</div><div class="srecent">'+
-      rec.map(function(q){return '<button type="button" data-q="'+esc(q)+'">'+esc(q)+'</button>';}).join('')+'</div>':'');
+      rec.map(function(q){return '<button type="button" data-q="'+esc(q)+'">'+esc(q)+'</button>';}).join('')+'</div>':'')+
+    '<div class="showsrch"><span class="sexi">'+IC.spark+'</span>'+
+      '<span><b>What comes back</b>Best guesses, not exact matches. Tap any one to hear a clip, then save the one that fits.</span></div>';
   Array.prototype.forEach.call(body.querySelectorAll('[data-q]'),function(b){
     b.onclick=function(){var q=b.getAttribute('data-q'); inp.value=q; sRun(q,b.getAttribute('data-m')||'auto');};});}
 function sRun(q,mode){
