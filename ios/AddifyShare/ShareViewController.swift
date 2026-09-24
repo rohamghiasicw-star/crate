@@ -17,6 +17,12 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        /* The extension draws nothing of its own, but iOS still presents this controller as
+           a card while it does its work. Left on the default light appearance that card
+           paints solid white over the TikTok feed for the split second before we dismiss,
+           which is the "quick white screen" people are seeing. Forcing dark and keeping the
+           view clear lets the host app show through instead of flashing white. */
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
     }
 
@@ -34,7 +40,15 @@ final class ShareViewController: UIViewController {
             comps.host = "scan"
             comps.queryItems = [URLQueryItem(name: "url", value: link)]
             if let u = comps.url { _ = self.openHostApp(u) }
-            self.finish(error: false)
+            /* Do not complete the request the instant the open is fired. completeRequest
+               tears this extension process down, and on current iOS that teardown can land
+               before the system has routed the addify:// open to the app, so the app never
+               comes forward and the whole thing reads as "white flash, nothing happened". A
+               short beat lets the launch take hold. If the open is blocked anyway the inbox
+               still delivers the link the next time Addify is opened. */
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.finish(error: false)
+            }
         }
     }
 
