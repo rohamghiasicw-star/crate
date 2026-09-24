@@ -21,10 +21,10 @@ Read `engine/SHARE-SHEET.md` first for the share flow this implements.
 | `Addify/ResultToast.swift` | Native "Match found" toast. |
 | `Addify/SettingsView.swift` | Engine URL field, Test, Reset. |
 | `Addify/Info.plist`, `Addify.entitlements` | URL scheme `addify`, mic usage string, ATS, app group. |
-| `Addify/Assets.xcassets` | Placeholder icon (solid `#5B4BE8`) + launch colour. |
+| `Addify/Assets.xcassets` | App icon (white waveGlyph wave on brand purple `#6B5FE0`, 1024 RGB, no alpha) + launch colour. |
 | `AddifyShare/ShareViewController.swift` | The share sheet icon. Plain `UIViewController`, no compose sheet. |
 | `AddifyShare/Info.plist`, `AddifyShare.entitlements` | Activation rule (web URL or text), app group. |
-| `tools/make_icon.py` | Regenerates the placeholder PNG (stdlib only). |
+| `tools/make_icon.py` | Renders the app icon from the exact `waveGlyph` path (numpy + Pillow). `tools/icon_preview.py` draws `icon-preview.png`. |
 | `tools/hosttests.swift` | Host-side checks for the app-group contract; run by `validate.sh`. |
 | `validate.sh` | Everything a Mac without Xcode can prove. Not a build. |
 
@@ -149,6 +149,4 @@ window, which the rotating free tunnel cannot promise; the hosted backend is on 
 
 - Never compiled (no Xcode here). See above.
 - Action Extension target.
-- Real app icon: replace `AppIcon-1024.png` with a rasterised `engine` `/icon.svg`
-  (`rsvg-convert -w 1024 -h 1024 icon.svg`). Store icons must be opaque.
 - `DEVELOPMENT_TEAM` is empty in both targets on purpose.
