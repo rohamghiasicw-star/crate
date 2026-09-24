@@ -18,11 +18,6 @@
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<!-- addify://scan?url=... is how the Share Extension hands a link to the app. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -36,23 +31,25 @@
 			</array>
 		</dict>
 	</array>
-	<!-- Declared so canOpenURL can ask which music apps are installed; the handoff
-	     itself goes through universal links and needs nothing here. -->
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>spotify</string>
 		<string>music</string>
 		<string>soundcloud</string>
 	</array>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Addify listens to a few seconds of the song playing near you to identify it. Audio is matched and discarded, never stored.</string>
-	<!-- https only, plus plain http to LAN addresses so a dev engine on the Mac works.
-	     No NSAllowsArbitraryLoads: a release build must not talk to an http tunnel. -->
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Addify listens to a few seconds of the song playing near you to identify it. Audio is matched and discarded, never stored.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

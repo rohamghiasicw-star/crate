@@ -4,7 +4,6 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<!-- This is the label under the icon in the share sheet. -->
 	<key>CFBundleDisplayName</key>
 	<string>Addify</string>
 	<key>CFBundleExecutable</key>
@@ -21,20 +20,18 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
-			<!-- Instagram shares a URL item; TikTok often shares plain TEXT with the
-			     link inside ("Check out ... https://vt.tiktok.com/..."). Listing only
-			     web URLs would keep Addify out of TikTok's sheet, so both are accepted
-			     and ShareViewController pulls the first http(s) link out of either. -->
 			<key>NSExtensionActivationRule</key>
 			<dict>
-				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-				<integer>1</integer>
 				<key>NSExtensionActivationSupportsText</key>
 				<true/>
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+				<integer>1</integer>
 			</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
