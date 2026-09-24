@@ -1739,6 +1739,44 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None):
                                 "faster" if v > 1.0 else "slower")), None
 
 
+_OTHER_SONG_SKIP = {"the", "and", "feat", "ft", "with", "remix", "slowed", "sped", "up", "reverb",
+                    "version", "edit", "mix", "official", "audio", "video", "lyrics", "original",
+                    "sound", "prod", "bass", "boosted", "loop", "hoodtrap", "tekk"}
+
+
+def _crown_other_song(top, base_title, reup=None, res=None):
+    """A crown that NAMES A DIFFERENT SONG and whose audio does not prove the recording.
+
+    Clip 7 (2026-09-24, the "Outside (卡点变速版)" re-upload) crowned "Celo & Abdi -
+    FRANZAFORTA DEUX (feat. DJ Rafik) (1.1x Sped up + Reverb)" at core 0.729: another song,
+    under CORE_SAME, sharing not one word with Outside. core is built to see through speed and
+    EQ and it saturates on hard, low-transient audio (findings/core-saturation.md), so below
+    CORE_SAME a title that names nothing of the song is the stronger evidence. Every crown the
+    owner graded right shares a word with its song ("believe", "three", "dougie", "blow",
+    "bad blood", "popular" inside "mrpopular"); a core >= CORE_SAME row is never touched."""
+    if (top.get("core") or 0) >= E.CORE_SAME:
+        return None
+    names = [base_title or ""]
+    if reup and reup.get("title"):
+        names.append(reup["title"])
+    for sec in ((res or {}).get("sections") or []):
+        if isinstance(sec, dict) and sec.get("title"):
+            names.append(sec["title"])
+    words = set()
+    for n in names:
+        for w in (E._title_key(n) or "").split():
+            if len(w) >= 3 and w not in _OTHER_SONG_SKIP:
+                words.add(w)
+    if not words:
+        return None                      # nothing distinctive to judge by
+    hay = " ".join([E._title_key(top.get("title") or ""),
+                    E._title_key(top.get("uploader") or "")])
+    if any(w in hay for w in words):
+        return None
+    return ("this upload names a different song and its audio match (%d%%) is not strong "
+            "enough to prove it is the same recording" % round((top.get("core") or 0) * 100))
+
+
 def _crown_contradicts(top, speed_label, mdir, measured=None, tilt_readable=True):
     """Why this candidate must not be crowned as the exact edit, or None if it may be.
 
@@ -2656,6 +2694,8 @@ def _phase2(ctx, on_cand=None):
                     _why = _crown_contradicts(_cand, _gate_label, mdir,
                                               measured=measured,
                                               tilt_readable=(_sv is None))
+                if not _why:
+                    _why = _crown_other_song(_cand, base_title, _reup, res)
                 if _why:
                     _rejects[_i] = (_why, _cand)
                     continue
