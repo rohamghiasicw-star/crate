@@ -188,6 +188,34 @@ SWEEP_NEED = int(os.environ.get("CRATE_SWEEP_NEED", 99))   # 99 = never exit ear
 # because the scan already covered every window.
 LATER_WINDOW = _speed_flag("CRATE_LATER_WINDOW", True)
 LATER_WINDOW_MIN_SECS = 16.0
+# CORRECTION 2026-09-25: ZSqgEBw8E never reaches this probe. Its 1.0x scan HIT at all
+# three windows (0/6/12, span 12; tlog_batchA, tlog_batchB, tlog_n3), so the base came
+# from the corroboration step, not Phase 2, and the second half had already been asked
+# at 1.0x and overruled. The rate and length tests would have passed (1.08, 19.8s).
+# What fixes that clip is RENDITION_AS_POSTED below; this probe is unchanged.
+
+# THE AS-POSTED READ CAN BE A DIFFERENT RENDITION, NOT A WRONG SONG. Corroboration lets a
+# counter-speed consensus overrule a 1.0x hit, because a slowed clip once matched a
+# COMPLETELY different song at 1.0x. On ZSqgEBw8E the 1.0x scan hit in all three windows
+# and its off-0 read, keyed differently from the original (rate 1.08 is only reachable
+# through `pk != posted`; a fake-Shazam replay of the logged probe order proves it), lost
+# to "I Don't Like (feat. Lil Reese)" at 1.08/1.12/1.15. The audio is the Cruel Summer
+# remix, measured offline 2026-09-25 (verify arr, fpcalc down so fp = 0): the whole clip
+# is 0.879 against the official remix (soundcloud.com/chiefkeef/i-dont-like-remix) at
+# 1.0x and 0.501 against the original re-pitched 0.934x; its second half is 0.754 against
+# the remix and 0.329 (spectral 0.446) against the original anywhere in 200s. The remix
+# reuses Keef's hook re-pitched, so re-pitching the clip finds the original. So when the
+# rival is the SAME song by a SAME credited artist, the 1.0x read held
+# >= RENDITION_MIN_WINDOWS windows at Shazam's own |frequencyskew| <= RENDITION_MAX_SKEW,
+# no tempo word is involved (that is the re-upload case) and no comment decided it, the
+# 1.0x read rides along as `rendition`. ATTACH ONLY: base, songs, rate and every search
+# seed are unchanged, so no pool and no crown can move. server.py names it on screen and
+# keeps the sweep's label for the gates.
+RENDITION_AS_POSTED = _speed_flag("CRATE_RENDITION_AS_POSTED", True)
+RENDITION_MIN_WINDOWS = 2
+RENDITION_MAX_SKEW = 0.06
+_TEMPO_WORDS = re.compile(r"\b(slowed|sped|speed ?up|nightcore|daycore|reverb|chopped|"
+                          r"screwed)\b", re.I)
 
 # A SECOND WINDOW BEFORE SAYING "NO SONG". The sweep runs at windows_for(dur)[0], the
 # TAIL window, so on a 37.7s clip (ZSqgEGsBP, a KHL hits compilation with the poster's
@@ -382,6 +410,28 @@ FAMILY_YT_PER, FAMILY_SC_PER, FAMILY_DL = 20, 30, 8
 # rank_key's speed_exact bucket 0; a row 4% off passes the server's 0.06 gate and gets
 # crowned, which is exactly the #25 complaint ("you said 100% match but it wasn't").
 FAMILY_SETTLED_TOL = 0.03
+# THE LENGTH LANE (evidence_rows): download slots picked by the one field every search row
+# already carries and nothing ranks on, its DURATION. Appended, never in the head, and only
+# on an unsettled clip that has a measured direction or a family wave (see find_edit).
+#   * SECTION rows: a short edit-titled upload of the song, 0.5x to max(90s, 3x) the clip's
+#     own length. A TikTok sound is a cut, and verify() reads only a candidate's FIRST 20s
+#     (hard-rules.md), so a full-length upload of the right edit reads as a near-miss while
+#     a short upload of that section starts on it. They lose every head slot to plays and
+#     to the artist tier (they rarely carry the artist's name). Found in the pool, never
+#     downloaded (offline replay 2026-09-25, cached SC/YT titles): #3 "XO tour LLif3
+#     (distorted x Last part x Ultra Bass boosted x Slowed)", godmagnitude, 41s, 103K
+#     plays, uploaded a week after the clip's sound; #43 "lana del rey- west coast (edit
+#     audio; speed up)", 47s against a 44s sound. 30.0s SoundCloud rows are label previews
+#     of full tracks, not cuts, and are skipped.
+#   * SPEED-FIT rows, only when nothing verified at CORE_EDIT and the sweep measured a
+#     ratio: a full-length upload titled with the clip's direction whose length says it
+#     runs at the clip's speed (song length / upload length within 3% of the ratio). The
+#     song length is the tightest +-1.5% cluster of plain artist uploads (_ref_length):
+#     XO TOUR Llif3 181.0s, Love Me Like You Do 254.0s, West Coast 257.6s. On #30 (0.89x)
+#     that is "love me like you do - slowed" (young & in love., 285s, the plain slow Roham
+#     asked for) and "(slowed + reverb) Tiktok Version" (SELF Blue, 279s); the uploads
+#     the head did download sit at 0.82x (307-308s) or are covers.
+EVIDENCE_SECTION_DL, EVIDENCE_FIT_DL, EVIDENCE_FIT_TOL = 2, 2, 0.03
 BASS_FIT_SPAN = 8.0  # dB from the bass target at which the bass fit falls to 0
 SPEED_TOL_OCT = 1.0  # octaves of speed mismatch at which the (gentle) speed fit hits 0
 ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
@@ -2194,7 +2244,39 @@ def settle_source(out):
     tlog("tt_audio_xcheck", time.time() - started, vid_ok=bool(vid_audio))
     before = out.get("audio")
     _apply_xcheck(out, vid_audio)
+    fill_sound_creator(out, "settle")
     return out.get("audio") != before
+
+
+def fill_sound_creator(out, at=""):
+    """The sound owner's @handle out of tikwm's canonical title, read AFTER get_source.
+
+    THE KELTHRAXX FLAKE (2 of 16 lab runs, 2026-09-24/25). get_source reads
+    _TT_SOUND_CREDIT the moment the sound mp3 lands, but with SPEED_DEFER_XCHECK the
+    tikwm call that fills it (tt_video_audio, the _xcheck future) is still in flight.
+    When embed/v2 wins the fetch its credit is the bare "original sound", so
+    sound_creator came out None - 5 of the 16 runs, all embed-leg. Three of those still
+    opened the lane because creator_check landed inside phase 1's 0.2s budget (int r1
+    lost anyway: its lane came back nc 0 on the build before the lane started early);
+    final r1 and int2 r1 had neither and crowned the 432 Hz upload. Before the defer
+    the inline 12s wait always ran first, so this is the old read, just after the wait
+    instead of before it. Same key, same parser, zero requests; a no-op once set.
+    Returns the handle when this call filled it."""
+    if not out or out.get("sound_creator") or not out.get("_cred_keys"):
+        return None
+    _cred = {}
+    for k in out["_cred_keys"]:
+        _cred = _TT_SOUND_CREDIT.get(k) or {}
+        if _cred:
+            break
+    h = handle_from_credit(_cred.get("title"))
+    if not h:
+        return None
+    out["sound_creator"], out["sound_creator_from"] = h, "credit_late"
+    if out.get("poster"):
+        out["sound_is_posters"] = (h.lower() == out["poster"].lower())
+    tlog("sound_creator_late", 0.0, handle=h, at=at)
+    return h
 
 
 def get_source(url, defer_crosscheck=False):
@@ -2331,6 +2413,9 @@ def get_source(url, defer_crosscheck=False):
         or handle_from_credit(out["credit_title"])
     if out["sound_creator"]:
         out["sound_creator_from"] = "credit"
+    else:
+        # tikwm had not answered YET - see fill_sound_creator, which re-reads it later.
+        out["_cred_keys"] = (full, url)
     if out["sound_id"]:
         out["sound_url"] = "https://www.tiktok.com/music/x-%s" % out["sound_id"]
     # did the person who POSTED this clip also make the sound? A "no" is the interesting
@@ -2949,6 +3034,24 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
             return len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])})
 
         hw = _hint_words(hints)
+        # See RENDITION_AS_POSTED: the raw 1.0x hit of every window that carries the
+        # posted key, and the one hook the three override returns below go through.
+        # Logged either way, so a gate run shows whether it fired (the scan's titles are
+        # logged nowhere else).
+        _posted_raw = [h for h in res if h and _title_key(h.get("title")) == posted]
+
+        def _rend(primary, rival):
+            try:
+                r = _rendition_as_posted(_posted_raw, rival, hw)
+                tlog("rendition_as_posted", 0.0, fired=bool(r), windows=len(_posted_raw),
+                     posted=(hits[0].get("title") or "")[:80],
+                     posted_by=(hits[0].get("artist") or "")[:80],
+                     rival=(rival.get("title") or "")[:80])
+            except Exception:
+                r = None          # attach-only: a note is never a reason to fail an ID
+            if r:
+                primary["rendition"] = r
+            return primary
 
         def _key(k):
             # the rung is 2=exact / 1=fuzzy / 0=none, so two DIFFERENT real songs each
@@ -2981,7 +3084,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                 primary = dict(merged[0])
                 primary["songs"] = merged
                 primary["multi"] = len(merged) > 1
-                return primary
+                return _rend(primary, win)
             if best != posted and _key(best) == key_posted:
                 # The 3 cheap probes are GENUINELY TIED between two plausible songs -
                 # this happened between "Ark" (an actual NCS release, matching a
@@ -3015,7 +3118,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                     primary = dict(merged[0])
                     primary["songs"] = merged
                     primary["multi"] = len(merged) > 1
-                    return primary
+                    return _rend(primary, win)
                 # The catalogue did not name a winner, so nothing has been decided and the
                 # sweep runs exactly as it always did. Deliberately NOT skipped when the
                 # confirmation merely favours the as-posted read: the sweep's other job is
@@ -3037,7 +3140,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
                     primary = dict(merged[0])
                     primary["songs"] = merged
                     primary["multi"] = len(merged) > 1
-                    return primary
+                    return _rend(primary, win)
 
     # A cover-mill hit is a FALSE POSITIVE, not an ID. Accepting one here is what made
     # the engine stop dead: a Rihanna hoodtrap matched "Fade To Blue (Cover)" by
@@ -3196,6 +3299,47 @@ def _key_alias(k, known):
         if n and kw[:n] == ow[:n]:
             return o
     return k
+
+
+def _artist_names(s):
+    """Credited names as a set: "Kanye West, Chief Keef, Pusha T, Big Sean & Jadakiss"
+    -> {"kanye west", "chief keef", "pusha t", "big sean", "jadakiss"}."""
+    parts = re.split(r",|&|\bfeat\.?|\bft\.?|\bwith\b|\band\b", s or "", flags=re.I)
+    return {" ".join(clean_name(p).lower().split()) for p in parts} - {""}
+
+
+def _rendition_as_posted(posted_hits, rival, hw=None):
+    """See RENDITION_AS_POSTED. `posted_hits` are the raw 1.0x scan hits (one per window)
+    carrying the as-posted title key; `rival` is the counter-speed hit about to overrule
+    them. -> the rendition to attach, or None. Pure: no probes, no network."""
+    if not (RENDITION_AS_POSTED and posted_hits and rival):
+        return None
+    p = posted_hits[0]
+    pk, rk = _title_key(p.get("title")), _title_key(rival.get("title"))
+    if not pk or not rk or pk == rk or _junk_id(p) or _junk_id(rival):
+        return None
+    if _TEMPO_WORDS.search(_ascii_fold("%s %s" % (p.get("title"), rival.get("title")))):
+        return None
+    if hw and _hint_support(rk, hw)[0] > _hint_support(pk, hw)[0]:
+        return None                  # a comment named the rival: the crowd decided it
+
+    def _cw(k):
+        return {w for w in k.split() if len(w) >= 2 and not w.isdigit()}
+    # SAME SONG: the shorter key's words all sit in the longer one ("don t like 1" and
+    # "i don t like"), with at least one real word, and SAME ARTIST: one credited name on
+    # both sides. Shared title words alone are too generic to call it one song.
+    a, b = sorted((_cw(pk), _cw(rk)), key=len)
+    if not a or not a <= b or not any(len(w) >= 4 for w in a):
+        return None
+    if not (_artist_names(p.get("artist")) & _artist_names(rival.get("artist"))):
+        return None
+    sk = [float(h["freqskew"]) for h in posted_hits if h.get("freqskew") is not None
+          and abs(float(h["freqskew"])) <= RENDITION_MAX_SKEW]
+    if len(sk) < RENDITION_MIN_WINDOWS:
+        return None                  # not held, or Shazam's own pitch reading disagrees
+    return {"title": p.get("title"), "artist": p.get("artist"), "url": p.get("url"),
+            "art": p.get("art"), "windows": len(sk),
+            "freqskew": round(statistics.median(sk), 4)}
 
 
 def _mash_runs(seq, target):
@@ -4275,6 +4419,82 @@ def family_queries(base_title, base_artist, edit_label, known_dir, hints, credit
     return out, ";".join(why)
 
 
+# "slowed ~0.89x" -> 0.89, the sweep's measured ratio (server builds edit_label from it).
+_LABEL_RATIO = re.compile(r"~\s*(\d+(?:\.\d+)?)x")
+# words a short upload of one SECTION carries when it has no treatment word ("best part",
+# "Last part", "loop", "tiktok", "bass"); EDIT_WORDS covers the treatments.
+_SECTION_WORD = re.compile(r"\b(part|loop(ed)?|tik ?tok|chorus|outro|intro|ending|hook|"
+                           r"drop|bass)\b", re.I)
+
+
+def _ref_length(rows, artist_hit):
+    """The song's own running time, read off the pool. Zero network. Plain-titled uploads
+    by the confirmed artist that carry every song word, 90-480s; the tightest +-1.5%
+    cluster of their lengths wins, its median is the answer, None under three rows. A
+    median over ALL plain rows is off by 2-4% (lyric-video cuts, skits: XO TOUR Llif3 187 vs
+    181, Love Me Like You Do 247 vs 254), which is the whole EVIDENCE_FIT_TOL window. The
+    known failure: a video cut re-uploaded more often than the audio (Love Sosa clusters at
+    219s, the single is 204s), so it only ever orders speed-fit downloads."""
+    ds = []
+    for c in rows or []:
+        t = _ascii_fold(c.get("title") or "").lower()
+        d = _dur_s(c)
+        if (90 <= d <= 480 and (c.get("song_cov") or 0) >= 1.0 and artist_hit(c)
+                and not (EDIT_WORDS.search(t) or OTHER_RENDITION.search(t)
+                         or _SPEED_TAG.search(t) or _MIXY.search(t))):
+            ds.append(d)
+    ds.sort()
+    best = []
+    for d0 in ds:
+        w = [d for d in ds if abs(float(np.log(d / d0))) <= 0.015]
+        if len(w) > len(best):
+            best = w
+    return best[len(best) // 2] if len(best) >= 3 else None
+
+
+def evidence_rows(rows, clip_secs, known_dir, edit_label, song_terms, artist_hit, verified):
+    """THE LENGTH LANE (see EVIDENCE_SECTION_DL): up to EVIDENCE_SECTION_DL section rows and
+    EVIDENCE_FIT_DL speed-fit rows from rows the searches ALREADY returned. Returns
+    (rows, why). Zero network; the caller downloads them and verify() decides."""
+    L = float(clip_secs or 0)
+    if L <= 0 or not song_terms:
+        return [], "no-clip-length" if L <= 0 else "no-song-words"
+    kd = known_dir or ""
+    rx = _FAST_SLOW_CLAIM if "slow" in kd else (_FAST_QUICK_CLAIM if "sped" in kd else None)
+    short_max = max(90.0, 3.0 * L)
+
+    def fair(c, t):
+        return (not c.get("_done") and (c.get("song_cov") or 0) >= 1.0
+                and not _is_compilation(c) and not OTHER_RENDITION.search(t)
+                and not (c.get("source") == "soundcloud" and abs(_dur_s(c) - 30.0) < 0.01))
+    sec, fit = [], []
+    for i, c in enumerate(rows or []):
+        t = _ascii_fold(c.get("title") or "").lower()
+        d = _dur_s(c)
+        if not fair(c, t):
+            continue
+        if 0.5 * L <= d <= short_max and (EDIT_WORDS.search(t) or _SECTION_WORD.search(t)):
+            # the clip's MEASURED direction first, then the length nearest the clip's own
+            sec.append((0 if (rx and rx.search(t)) else 1, abs(float(np.log(d / L))),
+                        -(c.get("plays") or 0), i, c))
+        elif d > short_max and rx and rx.search(t):
+            fit.append((-(c.get("plays") or 0), i, d, c))
+    sec.sort(key=lambda x: x[:4])
+    out = [x[-1] for x in sec[:EVIDENCE_SECTION_DL]]
+    why = ["section:%d" % len(sec)]
+    m = _LABEL_RATIO.search(edit_label or "")
+    ratio = float(m.group(1)) if m else None
+    if fit and ratio and not verified and abs(float(np.log(ratio))) > FAMILY_SETTLED_TOL:
+        ref = _ref_length(rows, artist_hit)
+        if ref:
+            fit = [x for x in fit
+                   if abs(float(np.log(ref / x[2] / ratio))) <= EVIDENCE_FIT_TOL]
+            fit.sort(key=lambda x: x[:2])
+            out += [x[-1] for x in fit[:EVIDENCE_FIT_DL]]
+            why.append("fit:%d@%.0fs/%.2f" % (len(fit), ref, ratio))
+    return out, ";".join(why)
+
+
 def _num(s):
     try:
         return int(s)
@@ -5193,8 +5413,23 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     _cre_handle = (creator or {}).get("creator") if isinstance(creator, dict) else creator
     _cre_nick = (creator or {}).get("nickname") if isinstance(creator, dict) else None
     _cre_nick = _cre_nick or credit_author
-    _cre_lane = (_LaneSearch(creator_queries(_cre_handle, _cre_nick, prod_title), 6)
-                 if _cre_handle else None)
+    # NO HANDLE AT ALL (tikwm late or dead AND creator_check late): the sound page's own
+    # author name, when the credit is a bare "original sound" and the name is shaped like
+    # a unique id. A GUESS - measured over the saved TikTok payloads that name is the real
+    # handle on only 7 of 21 clips - so the lane starts now, on the same clock as a real
+    # one, but its rows are kept only if the main pool vouches for the name (see the
+    # join). On kelthraxx it is the name every passing run searched: handle "kelthraxx",
+    # nickname "kelthraxx", so creator_queries is byte-identical to theirs.
+    # OPT-IN (`allow_guess`, set only by server._phase2): the section hunt and the CLI
+    # pass no creator and must keep running without a lane at all.
+    _cre_guess = None
+    if (not _cre_handle and isinstance(creator, dict) and creator.get("allow_guess")
+            and not _is_named_credit(credit_title)
+            and len(credit_author or "") >= 3 and _is_handleish(credit_author)):
+        _cre_guess = credit_author
+    _cre_lane = (_LaneSearch(creator_queries(_cre_handle or _cre_guess, _cre_nick,
+                                             prod_title), 6)
+                 if (_cre_handle or _cre_guess) else None)
 
     # ---------------------------------------------------------------- FAST PATH
     # COMMENTS FIRST. When the crowd has already named the edit in the comments, the
@@ -5657,6 +5892,24 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # wait here is no longer. And collect() keeps every query that HAS answered, so one
     # slow query costs only its own rows. Measured before: ~2s on the live cases, and
     # >10.0s (nothing kept) on kelthraxx under the 2026-09-24 merged run's load.
+    # THE GUESSED LANE NEEDS A SECOND WITNESS. Kept only when the main pool (plus hints,
+    # the same inputs the producer chase reads) credits "(prod. <name>)" or carries an
+    # upload BY an account of that exact name. Unconfirmed, it is dropped unread, like a
+    # fast-path exit: its searches ran on their own threads and nothing downloads.
+    # Both failing kelthraxx runs pass this: their producer_search handles were
+    # ["kelthraxx", "Mista"], and "Mista" at index 1 is only reachable if the "(prod. X)"
+    # extraction itself returned "kelthraxx" first (credit_author and the feat artist
+    # are appended after it).
+    if _cre_lane is not None and _cre_guess:
+        _vouch = {h.lower() for h in _extract_prod_handles(
+            [c.get("title") for c in cands] + list(hints or []))}
+        _vouch |= {clean_name(c.get("uploader") or "").lower() for c in cands}
+        _kept = _cre_guess.lower() in _vouch
+        tlog("creator_guess", 0.0, handle=_cre_guess, kept=_kept)
+        if _kept:
+            _cre_handle = _cre_guess
+        else:
+            _cre_lane = None
     if _cre_lane is not None:
         _tc0 = time.time()
         _cre, _cre_pend = _cre_lane.collect(
@@ -5859,6 +6112,21 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     if not _settled and base_title and shazam_reliable:
         fq, _fw_why = family_queries(base_title, base_artist, edit_label, known_dir,
                                      hints, credit_title, credit_author, cands)
+        # THE LENGTH LANE rides this block (EVIDENCE_SECTION_DL). Its gate is this block's
+        # own (unsettled) plus a family wave or a MEASURED direction, so every settled
+        # crown and kelthraxx's creator-miss run (as posted, no family) never reach it.
+        # A TEMPO COPY AS THE BASE ("Three (Slowed)" by 42RAIN on kyks) makes known_dir
+        # and the edit_label ratio relative to that copy, not to the song, so the lane
+        # takes neither from it - the rule family_queries already applies (`reup`).
+        _ev_reup = bool(_SPEED_TAG.search(base_title or ""))
+        _ev_dir = None if _ev_reup else known_dir
+        _ev_lbl = "" if _ev_reup else edit_label
+        _ev_on = bool(fq) or bool(_ev_dir)
+        _verified = any((c.get("core") or 0) >= CORE_EDIT for c in cands)
+        try:
+            _clip_len = duration_of(clip_audio) if _ev_on else 0
+        except Exception:
+            _clip_len = 0
         if fq:
             # A ROW THE MAIN SEARCH FOUND BUT NEVER DOWNLOADED IS FAIR GAME. The head is
             # 14 deep and the pool is 300-500; on #21 the un-slowed "Gun Lean - Hood Trap
@@ -5928,15 +6196,34 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
             more = _sc_quota(ordered, FAMILY_DL, min_sc=2)[:FAMILY_DL]
             for c in more:
                 c["family_wave"] = True
-            _download_and_score(more, clip_audio, tmp, n + 50, FAMILY_DL, clip_ctx=clip_ctx,
-                                on_scored=_hit)
+            # the length lane's rows are APPENDED to the wave's eight and ride its batch,
+            # so the eight are exactly the ones this wave has always picked.
             _more_ids = {id(c) for c in more}
+            _ev, _ev_why = (evidence_rows([c for c in cands + fresh if id(c) not in _more_ids],
+                                          _clip_len, _ev_dir, _ev_lbl, song_terms,
+                                          _artist_hit, _verified) if _ev_on else ([], ""))
+            _download_and_score(more + _ev, clip_audio, tmp, n + 50, FAMILY_DL + len(_ev),
+                                clip_ctx=clip_ctx, on_scored=_hit)
+            _more_ids |= {id(c) for c in _ev}
             cands += [c for c in fresh if id(c) in _more_ids]
             tlog("family_wave", time.time() - _fw_t0, nq=len(fq), nfound=len(found),
                  nc=len(more), why=_fw_why,
                  hit=sum(1 for c in more if (c.get("core") or 0) >= CORE_EDIT))
+            tlog("evidence_lane", 0.0, nc=len(_ev), why=_ev_why, wave=True,
+                 hit=sum(1 for c in _ev if (c.get("core") or 0) >= CORE_EDIT))
         else:
             tlog("family_wave", time.time() - _fw_t0, nq=0, nc=0, why=_fw_why)
+            # NO WAVE, MEASURED DIRECTION (#3, #30): no search, just the rows the searches
+            # above already returned, in one download batch.
+            if _ev_on:
+                _te0 = time.time()
+                _ev, _ev_why = evidence_rows(cands, _clip_len, _ev_dir, _ev_lbl,
+                                             song_terms, _artist_hit, _verified)
+                if _ev:
+                    _download_and_score(_ev, clip_audio, tmp, n + 50, len(_ev),
+                                        clip_ctx=clip_ctx, on_scored=_hit)
+                tlog("evidence_lane", time.time() - _te0, nc=len(_ev), why=_ev_why,
+                     wave=False, hit=sum(1 for c in _ev if (c.get("core") or 0) >= CORE_EDIT))
 
     # ---- CREATOR-LANE ALIGNMENT.
     #

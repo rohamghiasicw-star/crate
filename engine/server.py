@@ -494,6 +494,75 @@ def _prune_sessions():
             _cleanup((s.get("src") or {}).get("tmp"))
 
 
+# THE CLIP PLAYS A RENDITION OF THE BASE, AS POSTED (crate_engine RENDITION_AS_POSTED).
+# ZSqgEBw8E: the sweep named "I Don't Like (feat. Lil Reese)" slowed ~0.93x by re-pitching
+# Keef's hook and overruled a 1.0x read of the clip, which is the Kanye West / Pusha T
+# remix as posted (verify arr 0.879 against the official remix at 1.0x). Roham: "you
+# missed the Pusha T voice so you just put the original song". Name what
+# played; say what it is a version of. `base_title`/`base_artist` stay the SEARCH SEEDS
+# and the sweep's label is handed back to res["speed"] for all of phase 2, so the pool,
+# every gate and the crown are byte-identical. Only what the user reads moves.
+def _name_rendition(res, fp):
+    """Phase 1. -> True when the rendition now names the result. Inert without one."""
+    rd = (fp or {}).get("rendition")
+    if not (rd and rd.get("title") and res.get("base_song")):
+        return False
+    sk = rd.get("freqskew")
+    # Shazam's own pitch reading against the rendition, same 4% deadband phase 1 uses
+    sp = ("as posted" if sk is None or abs(sk) < 0.04 else
+          "%s ~%.2fx" % ("slowed" if sk < 0 else "sped up", 1.0 + sk))
+    res["rendition"] = {"title": rd["title"], "artist": rd.get("artist"),
+                        "shazam": rd.get("url"), "windows": rd.get("windows"),
+                        "of_song": res.get("base_song"), "of_artist": res.get("base_artist"),
+                        "of_shazam": res.get("shazam"),
+                        "speed": sp, "speed_vs_source": res.get("speed")}
+    res["base_song"], res["base_artist"] = rd["title"], rd.get("artist")
+    if rd.get("url"):
+        res["shazam"] = rd["url"]
+    if rd.get("art"):
+        res["art"] = rd["art"]
+    res["speed"] = sp
+    return True
+
+
+def _rendition_final_speed(res):
+    """End of phase 2: the source-relative label becomes `speed_vs_source`, the rendition
+    names the result again and the user reads the speed against it, keeping a measured
+    bass boost. Inert when phase 2 withdrew the base (shazam_suspect): that answer is
+    "uncertain" and its guess stays exactly what it was."""
+    rd = res.get("rendition")
+    if not isinstance(rd, dict) or not res.get("base_song"):
+        return
+    rd["speed_vs_source"] = res.get("speed")
+    # A NAMED REMIX IS NOT CROWNED WITH THE ORIGINAL. #11 (2026-09-25): Shazam heard "Don't
+    # Like.1" (Kanye West, Chief Keef, Pusha T, Big Sean & Jadakiss) as posted in 3 of 3
+    # windows, but the hunt ran on the source title and crowned "Chief Keef - I Dont Like Bass
+    # Boosted" at a hook-saturated core 1.000, so the card named the remix and presented the
+    # original as "the exact version playing". Roham: "you missed the Pusha T voice so you just
+    # put the original song". When the rendition is credited to several artists and the crown
+    # names at most one of them, and neither "remix" nor the rendition's own title, it is shown
+    # as a close upload, not the answer.
+    ex = res.get("exact")
+    if isinstance(ex, dict):
+        def _names(s):
+            return {a.strip().lower() for a in re.split(r",|&|\band\b|\bx\b|\bfeat\.?|\bft\.?", s or "")
+                    if len(a.strip()) >= 3}
+        credit = _names(rd.get("artist"))
+        hay = ("%s %s" % (ex.get("title") or "", ex.get("uploader") or "")).lower()
+        named = [a for a in credit if a in hay]
+        if (len(credit) >= 2 and len(named) <= 1 and "remix" not in hay
+                and (rd.get("title") or "").lower() not in hay):
+            res["crown_rejected"] = ("this upload is the original %s, not the %s the clip plays"
+                                     % (rd.get("of_song") or "song", rd.get("title")))
+            res["exact"] = None
+            E.tlog("rendition_crown_withheld", 0.0, crown=(ex.get("title") or "")[:80])
+    res["base_song"], res["base_artist"] = rd["title"], rd.get("artist")
+    sp = rd.get("speed") or "as posted"
+    if res.get("bass_boosted"):
+        sp = "bass boosted" if sp == "as posted" else sp + " + bass boosted"
+    res["speed"] = sp
+
+
 def _phase1(url, key, t0):
     """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
@@ -701,6 +770,10 @@ def _phase1(url, key, t0):
         _swapped = E.settle_source(src)
     except Exception:
         _swapped = False
+    # settle_source can fill the sound owner late (fill_sound_creator); show it too.
+    for _k in ("sound_creator", "sound_is_posters"):
+        if src.get(_k) is not None and res.get(_k) is None:
+            res[_k] = src[_k]
     if _swapped:
         _t = time.time()
         res["peaks"] = _peaks(src["audio"])
@@ -1030,9 +1103,15 @@ def _phase1(url, key, t0):
         # doctrine turns on (see review/caselaw-corrections.md). Runs on the phase-1
         # budget: two keyless APIs in parallel behind a 6s cap, and a failure is silent
         # because a missing link must never cost the user their answer.
+        # (see _name_rendition: the links follow the name on screen, not the search seed)
+        _named = _name_rendition(res, fp)
+        if _named:
+            E.tlog("rendition_named", 0.0, title=res["base_song"], of=base_title,
+                   speed=res["speed"])
         if base_title:
             try:
-                _lk = L.official_links(base_title, base_artist)
+                _lk = L.official_links(*((res["base_song"], res["base_artist"]) if _named
+                                         else (base_title, base_artist)))
                 if _lk.get("links"):
                     res["links"] = _lk["links"]
                 if _lk.get("preview"):
@@ -1171,6 +1250,231 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
     finally:
         _cleanup(tmp)
     return rows
+
+
+# ---- LYRIC LANE: WHAT THE WORDS SAY, WHEN THE FINGERPRINT HEARD TWO THINGS -------------
+# Clip 36 (vt.tiktok.com/ZSq3RMRFh). Roham: "this should be nonstop (if you listened to
+# the lyrics x winning song)". Drake's "Nonstop" vocals over Lord Wyse's "Winning" beat.
+# Shazam only ever names the beat (windows: Winning x3, Orange Soda x2, Monaco x1): a
+# vocal over someone else's instrumental has no fingerprint of its own, and nothing else
+# names it (48 of its 73 comments read, empty caption, a sound page of one video).
+#
+# So read the words. whisper.cpp is already on this Mac (brew whisper-cpp, base.en model in
+# ~/.cache/whisper): 0.3-0.6s for the 13s clip, identical output run to run on the same
+# file. Two flags are load-bearing, measured on clip 36's own get_source audio: without
+# "-nt" base.en returns "[MUSIC]" for the whole clip, and without "-sns" so does "-nt".
+# large-v3-turbo hears only "Monaco". TikTok served two different encodes of this clip
+# (md5 e392.. and 7106..) and whisper misreads different lines on each, so the lane asks
+# only the lines whisper is sure of (mean token p >= LYRIC_MIN_P: the lines Genius matched
+# sat at 0.61-0.94, misheard ones at 0.21-0.51) and asks Genius, through the /search
+# breaker and budget.
+#
+# Songs that QUOTE a verse come back from Genius too (a freestyle, a parody, a cover), so
+# one window proves nothing. A song is named only when two separate windows, with
+# different words, both return it; most windows wins and a tie goes to Genius's order.
+# Measured: both encodes -> Drake - Nonstop (runs of 9-11 and 6 words), 3 Genius calls;
+# 12 other clips (gated or not) -> nothing named.
+#
+# DISPLAY ONLY. Runs on its own thread beside the hunt, is joined after every crown
+# decision, and only APPENDS a section with role "vocals". It never seeds a query, never
+# scores, never renames the base. Gated on the fingerprint having heard two titles
+# (fp mashup / mashup_rejected, i.e. mashup tier 2 ran): 6 of the 43 last-batch clips,
+# and none of the four regression-gate clips in any logged run.
+LYRIC_LANE = os.environ.get("CRATE_LYRIC_LANE", "1").strip() == "1"
+WHISPER_BIN = os.environ.get("CRATE_WHISPER_BIN", "/opt/homebrew/bin/whisper-cli")
+WHISPER_MODEL = os.environ.get("CRATE_WHISPER_MODEL",
+                               os.path.expanduser("~/.cache/whisper/ggml-base.en.bin"))
+LYRIC_SECS = 30          # transcribe at most this much of the clip
+LYRIC_MIN_P = 0.5        # whisper's mean token probability for a line worth asking
+LYRIC_MAX_Q = 3          # Genius lyric searches per clip, from the optional budget
+LYRIC_MIN_RUN = 5        # consecutive words a window must share with Genius's excerpt
+LYRIC_VOTES = 2          # separate windows that must name the same song
+LYRIC_JOIN = 6.0         # most the finished hunt ever waits on this lane
+_LYRIC_STOP = {"the", "and", "you", "that", "this", "with", "for", "are", "but", "its",
+               "was", "she", "her", "him", "his", "they", "them", "what", "dont", "yea",
+               "yeah", "have", "from", "all"}
+# Genius also hosts TV scripts and its own translations; those are not songs.
+_LYRIC_NOT_MUSIC = re.compile(r"^genius\b|\((?:tv|film|movie|podcast)\)", re.I)
+
+
+def _lyric_lane_on(fp):
+    return bool(LYRIC_LANE and fp and (fp.get("mashup") or fp.get("mashup_rejected"))
+                and os.path.exists(WHISPER_BIN) and os.path.exists(WHISPER_MODEL))
+
+
+def _lyric_transcript(audio):
+    """-> [(line, confidence)] for the clip's first LYRIC_SECS: whisper's lines (it marks
+    sung lines with a note sign) with the mean probability of their tokens, or []."""
+    import shutil, subprocess
+    tmp = tempfile.mkdtemp()
+    try:
+        wav = os.path.join(tmp, "stt.wav")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-t", str(LYRIC_SECS),
+                        "-i", audio, "-ac", "1", "-ar", "16000", wav],
+                       check=True, timeout=20)
+        subprocess.run([WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-sns", "-np",
+                        "-t", "2", "-ojf", "-of", os.path.join(tmp, "stt")],
+                       capture_output=True, timeout=30)
+        with open(os.path.join(tmp, "stt.json"), "rb") as f:
+            segs = json.loads(f.read().decode("utf-8", "replace")).get("transcription") or []
+    finally:
+        # Transient, like every other copy. Not _cleanup(): that also empties the speed
+        # decode cache, which the hunt running beside this thread is still using.
+        shutil.rmtree(tmp, ignore_errors=True)
+    out = []
+    for seg in segs:
+        cur, ps = "", []
+        for tk in (seg.get("tokens") or []) + [{"text": u"\u266a"}]:
+            t = tk.get("text") or ""
+            if t.startswith("[_") or t.startswith("<|"):
+                continue                 # whisper's own control tokens
+            if re.search(u"[\u266a\u266b\n]", t):
+                ln = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", cur).strip(" -.,!?")
+                if _s_toks(ln) and ps:
+                    out.append((ln, sum(ps) / len(ps)))
+                cur, ps = "", []
+                continue
+            cur += t
+            ps.append(float(tk.get("p") or 0.0))
+    return out
+
+
+def _lyric_windows(lines):
+    """The Genius queries, best-heard first, from lines at LYRIC_MIN_P or better. A short
+    confident line takes the confident line after it ("Give me my respect" + "I just took
+    it left"): four words alone match half of Genius. Windows never share a line."""
+    wins, cur = [], []
+    for ln, p in lines + [("", 0.0)]:
+        if cur and (p < LYRIC_MIN_P or len(_s_toks(" ".join(x for x, _ in cur))) >= 6):
+            wins.append(cur)
+            cur = []
+        if p >= LYRIC_MIN_P:
+            cur.append((ln, p))
+    wins = [(" ".join(x for x, _ in w)[:200], sum(q for _, q in w) / len(w)) for w in wins]
+    return [w for w, _ in sorted(wins, key=lambda w: -w[1])
+            if len(_s_toks(w)) >= LYRIC_MIN_RUN]
+
+
+def _lyric_run(a, b):
+    """Longest run of consecutive tokens shared by token lists a and b."""
+    best, cur = [], {}
+    for i in range(len(a)):
+        nxt = {}
+        for j in range(len(b)):
+            if a[i] == b[j]:
+                nxt[j] = cur.get(j - 1, 0) + 1
+                if nxt[j] > len(best):
+                    best = a[i - nxt[j] + 1:i + 1]
+        cur = nxt
+    return best
+
+
+def _lyric_same(a, b):
+    """Two song-title cores name the same song ("nonstop" / "nonstop freestyle")."""
+    return bool(a and b and (" %s " % a in " %s " % b or " %s " % b in " %s " % a))
+
+
+def _lyric_cands(win, hits):
+    """Every song one window could be: [(rank, hit, run)] for the Genius hits sharing
+    LYRIC_MIN_RUN+ consecutive words with the window, 3 of them real words."""
+    q = _s_toks(win)
+    out = []
+    for i, h in enumerate(hits or []):
+        if _LYRIC_NOT_MUSIC.search(h.get("artist") or ""):
+            continue
+        r = max([_lyric_run(q, _s_toks(f)) for f in (h.get("frags") or [])] +
+                [_lyric_run(q, _s_toks(h.get("highlight")))], key=len)
+        if len(r) >= LYRIC_MIN_RUN and len([w for w in r if len(w) >= 3
+                                            and w not in _LYRIC_STOP]) >= 3:
+            out.append((i + 1, h, r))
+    return out
+
+
+def _lyric_vocals(audio, known):
+    """-> {"song", "artist", "heard", ...} for a song the clip's WORDS name that is not
+    one of `known` (the titles already on screen), or {"none": why}.
+
+    A song counts a window when Genius returns it with a shared run (_lyric_cands). It is
+    named only when LYRIC_VOTES windows, with different words, each return it; most
+    windows wins, then the lowest summed Genius rank. On clip 36 a freestyle (Jag Gatz)
+    and a parody (blaccmass "NonSense") carry the same Nonstop lines, and Genius ranked
+    both below Drake in every window measured.
+
+    Votes are kept per SONG (Genius artist + title), never per title family. Review
+    2026-09-25: grouping by shared title words let two different songs pool one vote each
+    ("You" + "Thinking of You" reached two windows between them) and then named whichever
+    member ranked best in ANY window, so a lookalike ("Doodseskader - Nonstop", "Matt 06 -
+    Nonstop Want", both in every clip-36 window at #2/#3) would take the row the moment it
+    outranked Drake once. And if ANY song two windows agree on is already on screen, the
+    words are that song: a quote that outranks it (a freestyle over the same verse) must
+    not become a second row."""
+    t = time.time()
+    wins = _lyric_windows(_lyric_transcript(audio))[:LYRIC_MAX_Q]
+    stt = round(time.time() - t, 2)
+    if len(wins) < LYRIC_VOTES:
+        return {"none": "no words heard" if not wins else "one window only", "stt": stt}
+    if not _s_genius_budget(len(wins)):
+        return {"none": "Genius budget", "stt": stt}
+    known = [k for k in (_s_core(x) for x in known if x) if k]
+    songs, asked = {}, 0      # (artist key, title core) -> [best (rank, hit), {window: (rank, run)}]
+    for wi, win in enumerate(wins):
+        asked += 1
+        try:
+            cands = _lyric_cands(win, _s_genius("lyric", win, 10))
+        except Exception:
+            continue
+        for rank, h, run in cands:
+            sk = (_s_akey(h.get("artist")), _s_core(h.get("title")))
+            if not sk[1]:
+                continue
+            sg = songs.setdefault(sk, [(rank, h), {}])
+            if rank < sg[0][0]:
+                sg[0] = (rank, h)
+            if wi in sg[1] or any(_lyric_same(" ".join(run), " ".join(r))
+                                  for r_, r in sg[1].values()):
+                continue                # one window, or a repeated chorus line: one vote
+            sg[1][wi] = (rank, run)
+        n = sorted([len(g[1]) for g in songs.values()], reverse=True) + [0, 0]
+        if n[0] >= LYRIC_VOTES and n[1] + len(wins) - asked < n[0]:
+            break                        # nothing left to ask could tie it
+    def _key(g):
+        return -len(g[1]), sum(r for r, _ in g[1].values())
+    ranked = sorted([g for g in songs.values() if len(g[1]) >= LYRIC_VOTES], key=_key)
+    if not ranked:
+        return {"none": "no song in two windows", "stt": stt, "asked": asked,
+                "seen": [(g[0][1].get("artist"), g[0][1].get("title"), len(g[1]))
+                         for g in songs.values()][:6]}
+    same = next((g for g in ranked if any(_lyric_same(_s_core(g[0][1].get("title")), k)
+                                          for k in known)), None)
+    if same is not None:
+        return {"none": "the words are the song already named", "stt": stt, "asked": asked,
+                "song": None, "same_as": same[0][1].get("title")}
+    if len(ranked) > 1 and _key(ranked[0]) == _key(ranked[1]):
+        return {"none": "two songs tie", "stt": stt, "asked": asked}
+    (rank, h), ev = ranked[0]
+    heard = max(ev.items(), key=lambda kv: len(kv[1][1]))
+    return {"song": h.get("title"), "artist": h.get("artist"), "art": h.get("art"),
+            "heard": wins[heard[0]], "run": len(heard[1][1]), "lines": len(ev),
+            "stt": stt, "asked": asked}
+
+
+def _lyric_attach(res, lv, base_title, base_artist, exact=None):
+    """Append the vocals row to the mix. A clip the mashup pass did not split still
+    gets its base as the first row, so the screen reads "A x vocals from B". `exact` is
+    the crown: res["exact"] is still phase 1's None when this runs."""
+    secs = list(res.get("sections") or [])
+    if not secs:
+        secs = [{"start": 0.0, "end": res.get("clip_secs"), "layered": True,
+                 "song": base_title, "artist": base_artist, "shazam": res.get("shazam"),
+                 "exact": exact, "candidates": [], "hunted": "whole clip"}]
+    secs.append({"start": None, "end": None, "layered": True, "role": "vocals",
+                 "via": "lyrics", "song": lv["song"], "artist": lv["artist"],
+                 "art": lv.get("art"), "heard": lv["heard"], "exact": None,
+                 "candidates": [],
+                 "hunted": "not hunted: named from the lyrics, no fingerprint of its own"})
+    res["sections"] = secs
+    res["vocals"] = {"song": lv["song"], "artist": lv["artist"], "heard": lv["heard"],
+                     "source": "lyrics (Genius)", "lines": lv.get("lines")}
 
 
 # ---- COVER ART (display only) ---------------------------------------------------------
@@ -2311,6 +2615,17 @@ def _phase2(ctx, on_cand=None):
     base_title, base_artist = ctx["base_title"], ctx["base_artist"]
     edit_label, mdir = ctx["edit_label"], ctx["mdir"]
     hint_texts, shazam_reliable = ctx["hint_texts"], ctx["shazam_reliable"]
+    # THE GATES READ THE SWEEP'S LABEL AND THE SOURCE'S NAME, NOT THE RENDITION'S (see
+    # _name_rendition). The speed is not the only thing a gate reads off `res`:
+    # _crown_other_song builds its known-artist set from res["base_artist"], so the
+    # rendition's five credited names would stand down its "A - B" refusal (replayed: "I
+    # Don't Like (Remix) - Kanye West ft. Pusha T" at core 0.80, REFUSE live, ok with
+    # only the speed handed back). All three go back for the whole hunt;
+    # _rendition_final_speed puts the rendition back at the end.
+    _rd = res.get("rendition")
+    if isinstance(_rd, dict):
+        res["speed"] = _rd.get("speed_vs_source")
+        res["base_song"], res["base_artist"] = _rd.get("of_song"), _rd.get("of_artist")
     # ---- THE SPEED REFERENCE HUNT STARTS NOW, NOT AFTER THE EDIT HUNT ----
     # The fallback arm of the speed measurement below needs only base_title, base_artist
     # and src["audio"], all of which were settled at phase1_done - yet it did not begin
@@ -2341,6 +2656,15 @@ def _phase2(ctx, on_cand=None):
         _reup_fut = _reup_ex.submit(_reupload_refs, src, _reup, base_title, base_artist,
                                     hint_texts, None, "pre_ro")
         _reup_ex.shutdown(wait=False)
+    # THE LYRIC LANE hides under the hunt the same way (see _lyric_vocals). Its ffmpeg
+    # read of src["audio"] is its first step, long before the temp dir is removed.
+    _lyric_fut = None
+    if _lyric_lane_on(fp):
+        _lyric_known = [base_title] + [s.get("title") or s.get("song") for s in
+                                       (fp.get("songs") or []) + (fp.get("sections") or [])]
+        _lyric_ex = ThreadPoolExecutor(max_workers=1)
+        _lyric_fut = _lyric_ex.submit(_lyric_vocals, src["audio"], _lyric_known)
+        _lyric_ex.shutdown(wait=False)
     # THE EDIT HUNT REPORTS ITSELF TOO. Phase 1 got real milestones; without the same
     # here the bar climbs to the song, then parks in the 60s for the 20-60s the hunt
     # takes and only jumps when a candidate happens to verify. Each candidate CHECKED
@@ -2391,12 +2715,33 @@ def _phase2(ctx, on_cand=None):
             # canonical "original sound - <handle>" title at zero network cost and it
             # covers 180 of 204 recorded TikTok clips; creator_check's sound-page
             # resolution is the fallback for the rest.
+            # LATE, NOT MISSING (the kelthraxx flake). Both primaries can land after phase 1
+            # stopped looking: tikwm's title (re-read here, free) and creator_check (taken
+            # only if already finished - zero wait, the hunt is not held for it). When
+            # both are still empty find_edit may take a vouched guess (allow_guess below).
+            # Wrapped: an exception here would propagate out of _phase2 and cost the user
+            # the whole hunt, and both reads are optional evidence.
+            try:
+                if E.fill_sound_creator(src, "hunt"):
+                    for _k in ("sound_creator", "sound_is_posters"):
+                        if src.get(_k) is not None:
+                            res[_k] = src[_k]
+                _ch = ctx.get("creator_h")
+                if _ch is not None and not res.get("creator") and _ch[1].done():
+                    _creator_attach(res, ctx.pop("creator_h"), budget=0.0)
+                    E.tlog("creator_late", 0.0, ok=bool(res.get("creator")))
+            except Exception:
+                pass
             _cev = res.get("creator") or {}
             _creator = {"creator": (src.get("sound_creator")
                                     or (_cev.get("sound_owner") if _cev.get("ok") else None)),
                         "nickname": src.get("sound_name") or src.get("credit_author")}
             if not _creator["creator"]:
-                _creator = None
+                # still no handle: let find_edit try its vouched guess (see _cre_guess).
+                # A dict with creator None opens no lane unless that guess is taken.
+                # TikTok only: Instagram never had a creator lane and this is no place
+                # to start one untested.
+                _creator["allow_guess"] = src.get("platform") == "tiktok"
             _t = time.time()
             # The engine hands back the raw candidate; the row shape is ours to build.
             # Wrapped so a dead client socket can never propagate into the hunt.
@@ -3005,6 +3350,26 @@ def _phase2(ctx, on_cand=None):
             res["note"] = ("Couldn't confidently ID this one - Shazam matched a likely-wrong "
                            "cover, and nothing in the caption or comments named the real track.")
 
+        # VOCALS FROM THE LYRICS, collected only now: every crown decision above is final,
+        # so this can add a row to the mix and nothing else. A crown whose own title
+        # already names the song (an "A x B" mashup upload) needs no extra row.
+        if _lyric_fut is not None:
+            _t = time.time()
+            try:
+                _lv = _lyric_fut.result(timeout=LYRIC_JOIN)
+            except Exception as _ex:
+                _lv = {"none": type(_ex).__name__}
+            try:                         # display only: it can never fail the request
+                _named = bool(_lv.get("song") and not res.get("base_uncertain") and not (
+                    exact and _lyric_same(_s_core(_lv["song"]), _s_core(exact.get("title")))))
+                if _named:
+                    _lyric_attach(res, _lv, base_title, base_artist, exact)
+            except Exception as _ex:
+                _named, _lv = False, dict(_lv, none="attach %s" % type(_ex).__name__)
+            E.tlog("lyric_lane", time.time() - _t, stt=_lv.get("stt"), song=_lv.get("song"),
+                   run=_lv.get("run"), lines=_lv.get("lines"), why=_lv.get("none"),
+                   attached=bool(_named))
+
         if exact or (fp and not res.get("base_uncertain")):
             res["result"] = "found"
             res["exact"] = exact
@@ -3013,6 +3378,7 @@ def _phase2(ctx, on_cand=None):
             res["result"] = "uncertain"
         else:
             res["result"] = "no_match"
+        _rendition_final_speed(res)
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key)

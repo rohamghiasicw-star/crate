@@ -2016,6 +2016,15 @@ var SPEED_BAND=0.03,       // |log2 vspeed|; crate_engine rank_key, speed_exact 
        different figures for one upload: renderResult runs on the /base payload before
        the first candidate streams, so the live rows already see it. */
     CLIP_PITCHED=false;
+/* THE HUNTED FAMILY'S SPEED (server `rendition`). With a rendition named, d.speed is read
+   against that rendition, but every candidate was hunted from the source it is a version
+   of and every server gate read the source-relative label. So the shelf (CLIP_PITCHED,
+   candFlag, the source / stale / crowd sentences) reads speed_vs_source. On #11's saved
+   shelf d.speed would have put "EQ 15.2 dB off" and "Titled a speed edit, but the clip
+   measured as posted" on 5 of 6 rows of a clip that plays ~0.93x against them. Without a
+   rendition this is d.speed exactly. */
+function famSpeed(d){var r=d&&d.rendition;
+  return (r&&r.of_song)?(r.speed_vs_source||''):((d&&d.speed)||'');}
 function vmatch(c){
   var core=c?c.core:null;
   if(core===null||core===undefined) return null;
@@ -2131,7 +2140,7 @@ function candFlag(c,d,lead){
   if(lead&&c.claim) return c.claim;
   // "nothing measured a shift" - the only state where a title's speed or EQ claim can be
   // contradicted. A bass-boosted-but-unpitched clip still counts as normal tempo.
-  if(/slow|sped|speed|nightcore|daycore/i.test(d.speed||'')) return '';
+  if(/slow|sped|speed|nightcore|daycore/i.test(famSpeed(d))) return '';
   if(RX_SPEEDCLAIM.test(t)) return 'Titled a speed edit, but the clip measured as posted';
   var tilt=Math.abs(c.bass||0);
   if(tilt>TILT_MAX) return 'Its EQ is '+tilt.toFixed(1)+' dB off the clip';
@@ -2389,7 +2398,7 @@ function renderResult(d,partial){
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
   // label the /base payload did not (the consensus re-measure, see the stale-speed note
   // in the no-crown branch), and this runs again on that payload, so the shelf follows.
-  CLIP_PITCHED=/slow|sped|speed|nightcore|daycore/i.test((d&&d.speed)||'');
+  CLIP_PITCHED=/slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
   if(d.result==='engine_down'){
     result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
@@ -2614,25 +2623,30 @@ function renderResult(d,partial){
   var _clen=(typeof clipSecs==='number'&&clipSecs>0)?clipSecs:0;
   if(secs.length>1 || alt.length>1){
     var parts = secs.length>1 ? secs.map(function(s){
-        return {song:s.song, artist:s.artist, at:s.start, to:s.end, ex:s.exact, sz:s.shazam};})
+        return {song:s.song, artist:s.artist, at:s.start, to:s.end, ex:s.exact, sz:s.shazam,
+                voc:s.role==='vocals'};})
       : alt.map(function(s){return {song:s.song, artist:s.artist, at:s.at, sz:s.shazam};});
     var _layered=d.mashup&&d.mashup.shape==='layered';
     mash='<div class="sect">Songs in this mix</div>'+
       '<div class="list mix">'+parts.map(function(p,i){
-        var when=mmss(p.at||0)+(p.to?' - '+mmss(p.to):'');
+        /* VOCALS FROM THE LYRICS (server `_lyric_vocals`): no timestamp and no bar, the
+           words were heard but a vocal over another beat has no fingerprint to place. */
+        var when=p.voc?'vocals \u00B7 from the lyrics':mmss(p.at||0)+(p.to?' - '+mmss(p.to):'');
         var link=(p.ex&&p.ex.url)||p.sz||'';
         var art=(secs.length>1?secs[i]:alt[i])||{};
         var bar='';
-        if(_clen){var a0=Math.max(0,Math.min(1,(p.at||0)/_clen)), a1=Math.max(a0,Math.min(1,(p.to||_clen)/_clen));
+        if(_clen&&!p.voc){var a0=Math.max(0,Math.min(1,(p.at||0)/_clen)), a1=Math.max(a0,Math.min(1,(p.to||_clen)/_clen));
           bar='<span class="mbar"><i style="left:'+(a0*100).toFixed(1)+'%;width:'+((a1-a0)*100).toFixed(1)+'%"></i></span>';}
         var inner='<span class="mthumb" style="--mt:hsl('+((i*137+_hu)%360)+' 55% 52%)">'+
             (art.art?'<img src="'+esc(art.art)+'" alt="" loading="lazy" onerror="this.remove()">':'')+'</span>'+
           '<span class="tt"><div class="nm">'+esc(p.song||'Unknown')+'</div>'+
-          '<div class="mt">'+(p.artist?esc(p.artist)+' · ':'')+'<span class="mono">'+when+'</span></div>'+bar+'</span>'+
+          '<div class="mt">'+(p.artist?esc(p.artist)+' · ':'')+'<span'+(p.voc?'':' class="mono"')+'>'+when+'</span></div>'+bar+'</span>'+
           (link?'<span class="op">'+IC.open+'</span>':'');
         return link ? '<a class="trk" href="'+esc(link)+'" target="_blank" rel="noopener">'+inner+'</a>'
                     : '<div class="trk">'+inner+'</div>';}).join('')+'</div>'+
-      (_layered?'<p class="mixnote">Layered across the whole clip</p>':'');
+      (_layered?'<p class="mixnote">Layered across the whole clip</p>':'')+
+      (d.vocals&&d.vocals.heard?'<p class="mixnote">Vocals named from the lyrics: the transcript ("'+esc(d.vocals.heard)+
+        '") matches '+esc(d.vocals.song)+' on Genius in '+(d.vocals.lines||2)+' separate lines. No fingerprint can confirm a vocal over another beat, so no upload was hunted for it.</p>':'');
   }
   /* ---------- THE VERSION SHELF ----------
      One crown was never the whole answer and the payload always knew it: up to six
@@ -2706,7 +2720,7 @@ function renderResult(d,partial){
                                   exExact?'The exact version playing':
                                   exBeat?'Our pick':'The closest version we found')+'</div>'+
       (xsrc?'<div class="heldcard"><b>Source, not the exact edit</b><span>The clip is this '+
-        'recording played '+esc(d.speed||'at a different speed')+'. We did not find an upload at '+
+        'recording played '+esc(famSpeed(d)||'at a different speed')+'. We did not find an upload at '+
         'that speed, so this is what it was made from, not the version itself.</span></div>':'')+
       '<div class="list">'+
       trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
@@ -2750,7 +2764,7 @@ function renderResult(d,partial){
   // candidate and a real reason, and hiding that would be hiding evidence.
   else if(d.unsure && cands.length && !d.crown_rejected && !d.crowd_version
           && (!cands[0] || (cands[0].core||0) < CORE_KEEP)
-          && (!d.speed || d.speed==='as posted') && !(d.reupload && !d.speed)){ shelf=''; plain=true; }
+          && (!famSpeed(d) || famSpeed(d)==='as posted') && !(d.reupload && !famSpeed(d))){ shelf=''; plain=true; }
   else if(d.unsure && cands.length){
     // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
     // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),
@@ -2770,7 +2784,7 @@ function renderResult(d,partial){
     // the saved runs: testruns/r45/e_4.json - "Obsessed", held back for "clip measured as
     // posted, candidate titles itself a speed edit", badge reads "Slowed ~0.93x".
     var stale = held && /measured as posted/.test(why) &&
-                /slow|sped|speed|nightcore|daycore/i.test(d.speed||'');
+                /slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
     // A 0% ROW IS NOT A CLOSE VERSION, IT IS A REJECTED ONE.
     // Roham, on a Bobby Shmurda shelf that led with "0% match": "if its a 0% match, why
     // even put it there?" He is right. core is the audio verdict; at or near zero the
@@ -2790,7 +2804,7 @@ function renderResult(d,partial){
       crowdCard='<div class="heldcard crowd"><b>The comments already name it</b><span>'+
         '\u201C'+esc(_cv.hint)+'\u201D'+
         (_cv.agrees===true
-          ? '. The audio agrees: '+esc(d.speed||_fam)+'. That exact upload is not public or we could not find it; the closest public ones are below.'
+          ? '. The audio agrees: '+esc(famSpeed(d)||_fam)+'. That exact upload is not public or we could not find it; the closest public ones are below.'
           : '. We cannot measure '+esc(_fam||'that')+' against the clip, so it stays the crowd\u2019s word, not ours. The closest public uploads are below.')+
         '</span></div>';}
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
@@ -2815,7 +2829,7 @@ function renderResult(d,partial){
       (held
         ? '<div class="heldcard"><b>Held back on purpose</b><span>The top upload lines up with the '+
             'clip audio, but we would not crown it: '+esc(why)+'. Listed, not presented as '+
-            'the version.'+(stale?' Note: the final speed read came back '+esc(d.speed)+
+            'the version.'+(stale?' Note: the final speed read came back '+esc(famSpeed(d))+
             ', after that check ran.':'')+'</span></div>'
         : '<div class="heldcard"><b>Under our bar to call it</b><span>None of these lined up with '+
             'the clip audio closely enough to crown. These are the closest the search got, and '+
@@ -2884,6 +2898,15 @@ function renderResult(d,partial){
     quotes+='<div class="quotes"><div class="qh">Later in the clip</div><div class="quote">'+IC.quote+
       '<span>'+esc(_lw.title)+(_lw.artist?' \u00B7 '+esc(_lw.artist):'')+' (heard at '+Math.round(_lw.t0)+'-'+
       Math.round(_lw.t1)+'s). This may be a remix or a second song; the version hunt did not chase it.</span></div></div>';}
+  /* THE CLIP PLAYS A RENDITION (server `rendition`): Shazam named this version as posted in
+     several windows and the song above is it; the base the sweep found by re-pitching the
+     clip is what it is a version of. Built for the Kanye / Pusha T "I Don't Like" remix. */
+  var _rd=d.rendition||null;
+  if(_rd&&_rd.of_song){
+    quotes+='<div class="quotes"><div class="qh">Version of</div><div class="quote">'+IC.quote+
+      '<span>'+esc(_rd.of_song)+(_rd.of_artist?' \u00B7 '+esc(_rd.of_artist):'')+'. Shazam heard this version as posted in '+
+      (+_rd.windows||0)+' windows; the original only matches the clip re-pitched'+
+      (_rd.speed_vs_source?' ('+esc(_rd.speed_vs_source)+')':'')+'.</span></div></div>';}
   /* ---------- THE WAVEFORM IS GONE (layout spec item 1) ----------
      It used to draw on every edit result. Its stated job was to be the thing the shelf
      rows and the matched window are read against, and on a plain original there was
