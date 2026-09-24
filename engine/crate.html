@@ -10,18 +10,27 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Addify">
 <title>Addify. Name the sound in any clip</title>
+<script>if(window.ADDIFY_NATIVE||/Addify-iOS\//.test(navigator.userAgent))document.documentElement.classList.add('native');</script>
 <style>
 :root{
-  --bg:#1B1140; --bg2:#241650;
-  --card:#3A2A78; --raise:#4A3894; --raise2:#5643A8;
-  --line:rgba(255,255,255,.13); --line2:rgba(255,255,255,.20);
-  --text:#FFFFFF; --muted:#CFC4F5; --faint:#A294DC;
-  --accent:#5B4BE8; --accent2:#8172FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
-  --signal:#A855F7; --cool:#2DD4BF; --good:#2ED8A7;
+  /* DARK, NOT PURPLE (Konnor's spec, 2026-09-23). Page #17141F, cards #211C2E, brand
+     purple #6B5FE0 ONLY on play buttons, pills and main buttons, mint #5DCAA5 for success.
+     The old theme was purple on purple on purple, so nothing could be the bright thing.
+     Mapping: --card is the app SURFACE (his "page"), --raise is every row, tile and card
+     sitting on it (his "cards"). --bg is only the browser page behind the phone card on
+     the web; inside the iOS app the card fills the screen and --bg never shows.
+     Contrast measured against --raise #211C2E: --faint 4.6:1, --muted 7.6:1, --accent2
+     as link text 5.2:1, white on --accent 4.8:1. */
+  --bg:#0F0D15; --bg2:#141119;
+  --card:#17141F; --raise:#211C2E; --raise2:#2A2439;
+  --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+  --text:#F4F2FA; --muted:#B4AEC6; --faint:#8C85A1;
+  --accent:#6B5FE0; --accent2:#8C82F0; --accent-press:#5A4ECB; --on-accent:#FFFFFF;
+  --signal:#A855F7; --cool:#2DD4BF; --good:#5DCAA5;
   /* --warn is for a caveat, never for an error: a held-back crown and an upload whose
      title outruns its measurement are both "read this before you trust it", not failures. */
   --warn:#F5B94D;
-  --scan:#1A1140; --dialtrack:rgba(255,255,255,.085);
+  --scan:#141119; --dialtrack:rgba(255,255,255,.07);
   --r-card:26px; --r-mid:18px; --r-pill:999px;
   /* Exponential ease-out. This used to be a token named --spring whose curve ended
      past its end point, so every animated element overshot and settled back, on thirteen
@@ -31,36 +40,40 @@
      next person reading it. Same curve the reveal animations already use, so the whole
      app now decelerates the same way. */
   --ease:cubic-bezier(.16,1,.3,1);
-  --shadow:0 24px 60px rgba(8,4,30,.55);
+  --shadow:0 24px 60px rgba(0,0,0,.55);
 }
 :root[data-theme="light"]{
-  --bg:#EFEBFF; --bg2:#F7F5FF;
-  --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
-  --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
-  --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
-  --accent:#5B4BE8; --accent2:#7360FF; --accent-press:#4A3AD4; --on-accent:#FFFFFF;
+  --bg:#ECEAF1; --bg2:#F5F4F8;
+  --card:#FAF9FC; --raise:#FFFFFF; --raise2:#F0EEF5;
+  --line:rgba(23,20,31,.09); --line2:rgba(23,20,31,.16);
+  --text:#17141F; --muted:#524B61; --faint:#756E84;
+  --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE; --on-accent:#FFFFFF;
   --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
-  --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
-  --shadow:0 20px 50px rgba(60,40,140,.16);
+  --scan:#F5F4F8; --dialtrack:rgba(23,20,31,.08);
+  --shadow:0 20px 50px rgba(23,20,31,.12);
 }
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
-    --bg:#EFEBFF; --bg2:#F7F5FF; --card:#FFFFFF; --raise:#F1EDFF; --raise2:#E6E0FF;
-    --line:rgba(30,18,80,.10); --line2:rgba(30,18,80,.18);
-    --text:#1A1140; --muted:#5F5391; --faint:#8A7FBC;
+    --bg:#ECEAF1; --bg2:#F5F4F8; --card:#FAF9FC; --raise:#FFFFFF; --raise2:#F0EEF5;
+    --line:rgba(23,20,31,.09); --line2:rgba(23,20,31,.16);
+    --text:#17141F; --muted:#524B61; --faint:#756E84;
+    --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE;
     --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
-    --scan:#FBFAFF; --dialtrack:rgba(30,18,80,.09);
-    --shadow:0 20px 50px rgba(60,40,140,.16);
+    --scan:#F5F4F8; --dialtrack:rgba(23,20,31,.08);
+    --shadow:0 20px 50px rgba(23,20,31,.12);
   }
 }
 *{box-sizing:border-box}
+/* Any class that sets display (grid, flex) silently beats the UA [hidden] rule, so an
+   element toggled with .hidden stayed visible - the search clear button did exactly that. */
+[hidden]{display:none!important}
 html,body{margin:0;padding:0}
 body{
   background:var(--bg); color:var(--text); min-height:100vh;
   font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
   -webkit-font-smoothing:antialiased;
   background-image:
-    radial-gradient(80% 50% at 50% 0%, color-mix(in oklab,var(--accent) 30%,transparent), transparent 66%);
+    radial-gradient(80% 50% at 50% 0%, color-mix(in oklab,var(--accent) 12%,transparent), transparent 66%);
   background-attachment:fixed;
   display:flex; justify-content:center;
   padding:22px 16px 40px;
@@ -70,6 +83,129 @@ body{
 button,input{font:inherit; color:inherit}
 button{background:none;border:0;cursor:pointer}
 a{color:inherit;text-decoration:none}
+
+/* ---------- finds (Konnor's page 4) ---------- */
+.lhd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:2px 0 14px}
+.lsub{margin:4px 0 0;font-size:13px;color:var(--muted)}
+#libsort{border:1px solid var(--line2);border-radius:12px;width:38px;height:38px;flex:none}
+#libsort svg{transition:transform .2s var(--ease)}
+#libsort.flip svg{transform:scaleY(-1)}
+#s-lib .search{margin-bottom:12px}
+.chipf.amber{color:var(--warn);background:transparent;border-color:color-mix(in oklab,var(--warn) 45%,transparent)}
+.chipf.amber.on{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn)}
+.mrow{display:flex;gap:12px;overflow-x:auto;scrollbar-width:none;margin:0 -2px;padding:2px 2px 4px}
+.mrow::-webkit-scrollbar{display:none}
+.mtile{flex:none;width:102px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.mcov{position:relative;width:102px;height:102px;border-radius:16px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;color:#fff;margin-bottom:7px;
+  background:linear-gradient(155deg,color-mix(in oklab,var(--mt) 82%,#fff 18%),var(--mt));
+  box-shadow:0 8px 20px rgba(0,0,0,.28);transition:transform .15s var(--ease),box-shadow .15s}
+.mtile.on .mcov{box-shadow:0 0 0 2.5px var(--card),0 0 0 4.5px var(--text)}
+.mtile:active .mcov{transform:scale(.97)}
+.mg{display:grid}
+.ml{font-size:10px;font-weight:800;letter-spacing:.14em;opacity:.92}
+.mtile b{font-size:13px;font-weight:650}
+.mtile>span:last-child{font-size:11.5px;color:var(--faint)}
+.flist{display:flex;flex-direction:column;gap:8px}
+.frow,.urow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;
+  background:var(--raise);border:1px solid var(--line);cursor:pointer}
+.fart{position:relative;width:48px;height:48px;border-radius:10px;overflow:hidden;flex:none;
+  display:grid;place-items:center;background:var(--raise2);color:var(--faint)}
+.fart img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1}
+.frow .tt,.urow .tt{flex:1;min-width:0}
+.frow .tt b,.urow .tt b{display:block;font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmeta{display:flex;align-items:center;gap:7px;margin-top:5px;min-width:0}
+.fsrc{font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vchip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
+.vchip.orig{color:var(--good);background:color-mix(in oklab,var(--good) 15%,transparent)}
+.vchip.edit{color:var(--accent2);background:color-mix(in oklab,var(--accent) 16%,transparent);
+  border:1px solid color-mix(in oklab,var(--accent) 38%,transparent)}
+.fplay{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;color:var(--accent2);position:relative}
+.fplay svg{width:13px;height:13px}
+.fplay::after{content:"";position:absolute;inset:-4px;border-radius:50%}
+.urow{cursor:default;border-color:color-mix(in oklab,var(--warn) 40%,transparent);
+  background:color-mix(in oklab,var(--warn) 7%,var(--raise))}
+.uq{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;flex:none;font-weight:800;
+  color:var(--warn);background:color-mix(in oklab,var(--warn) 18%,transparent)}
+.urow .tt span{display:block;font-size:11.5px;color:var(--warn);margin-top:3px;opacity:.9}
+.urow .retry{font-size:12px;font-weight:700;color:var(--accent2);padding:8px 12px;border-radius:10px;flex:none}
+
+/* ---------- search (Konnor's third tab) ---------- */
+.shd{margin:2px 0 14px}
+.shtitle{margin:0;font-size:24px;font-weight:750;letter-spacing:-.02em;line-height:1.15}
+.shsub{margin:4px 0 0;font-size:13.5px;color:var(--accent2);font-weight:550}
+.sbox{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 8px 0 14px;border-radius:16px;
+  background:var(--raise);border:1.5px solid color-mix(in oklab,var(--accent) 55%,transparent);
+  transition:border-color .2s var(--ease),box-shadow .2s var(--ease)}
+.sbox:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in oklab,var(--accent) 18%,transparent)}
+.sbox .sico{display:grid;color:var(--faint);flex:none}
+.sbox input{flex:1;min-width:0;background:none;border:0;outline:none;font-size:16px;color:var(--text);padding:12px 0}
+.sbox input::placeholder{color:var(--faint)}
+.sbox input::-webkit-search-cancel-button{display:none}
+.sclear,.smic{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;flex:none;color:var(--muted)}
+.smic svg,.sclear svg{width:18px;height:18px}
+.smic:disabled{color:var(--faint);opacity:.5;cursor:default}
+.shint{margin:7px 2px 0;font-size:11.5px;color:var(--faint)}
+.sex{display:flex;flex-direction:column;gap:8px}
+.sexrow{display:flex;align-items:center;gap:12px;min-height:50px;padding:0 14px;border-radius:14px;text-align:left;
+  background:var(--raise);border:1px solid var(--line);transition:background-color .15s,transform .15s var(--ease)}
+.sexrow:active{transform:scale(.985);background:var(--raise2)}
+.sexi{width:22px;display:grid;place-items:center;color:var(--accent2);flex:none}
+.sexi svg{width:15px;height:15px}
+.sext{flex:1;min-width:0;font-size:14px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sexm{font-size:11px;font-weight:650;color:var(--faint);flex:none}
+.srecent{display:flex;gap:7px;flex-wrap:wrap}
+.srecent button{font-size:12px;font-weight:600;color:var(--muted);padding:8px 13px;border-radius:var(--r-pill);
+  background:var(--raise);border:1px solid var(--line);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sresh{font-size:12.5px;color:var(--muted);margin:18px 2px 10px}
+.slist{display:flex;flex-direction:column;gap:9px}
+.srow{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:16px;
+  background:var(--raise);border:1px solid var(--line)}
+.srow.top{border-color:color-mix(in oklab,var(--accent) 60%,transparent);
+  background:color-mix(in oklab,var(--accent) 9%,var(--raise))}
+.sart{position:relative;width:52px;height:52px;border-radius:11px;overflow:hidden;flex:none;
+  background:var(--raise2);display:grid;place-items:center;color:#fff;cursor:pointer}
+.sart img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sart::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.32)}
+.sart svg{position:relative;z-index:1;width:16px;height:16px}
+.srow .tt{flex:1;min-width:0}
+.srow .nm{font-size:14.5px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .ar{font-size:12px;color:var(--accent2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .smeta{display:flex;align-items:center;gap:7px;margin-top:6px;flex-wrap:wrap;font-size:11px;color:var(--faint)}
+.conf{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:var(--r-pill)}
+.conf.strong{color:var(--good);background:color-mix(in oklab,var(--good) 16%,transparent)}
+.conf.possible{color:var(--muted);background:color-mix(in oklab,var(--text) 7%,transparent)}
+.sadd{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;
+  color:var(--accent2);border:1.5px solid color-mix(in oklab,var(--accent) 45%,transparent)}
+.srow.top .sadd{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.sadd.did,.srow.top .sadd.did{background:transparent;color:var(--good);border-color:color-mix(in oklab,var(--good) 45%,transparent)}
+.sadd svg{width:15px;height:15px}
+.snone{display:flex;align-items:center;gap:12px;padding:14px;border-radius:16px;margin-top:9px;
+  border:1.5px dashed var(--line2);color:var(--muted);font-size:12.5px}
+.snone .sexi{color:var(--faint)}
+.snone b{display:block;color:var(--text);font-weight:650;font-size:13.5px}
+.snone .soon{margin-left:auto;font-size:10.5px;font-weight:700;color:var(--faint);padding:3px 8px;
+  border-radius:var(--r-pill);border:1px solid var(--line2);flex:none}
+.sskel{height:76px;border-radius:16px;background:linear-gradient(90deg,var(--raise) 0%,var(--raise2) 50%,var(--raise) 100%);
+  background-size:200% 100%;animation:sk 1.2s linear infinite}
+@keyframes sk{from{background-position:200% 0}to{background-position:-200% 0}}
+.smsg{padding:22px 16px;border-radius:16px;background:var(--raise);text-align:center;margin-top:14px}
+.smsg b{display:block;font-size:14px;font-weight:650}
+.smsg span{display:block;font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.45}
+.smsg button{margin-top:12px;font-size:13px;font-weight:650;color:var(--on-accent);background:var(--accent);
+  padding:9px 18px;border-radius:var(--r-pill)}
+
+/* ---------- inside the iOS app: the card IS the screen ----------
+   The app has injected window.ADDIFY_NATIVE at document start since the first build, and
+   nothing ever read it, so TestFlight rendered a rounded card with a border and shadow
+   floating 22px inside the phone - a web page pretending to be an app. The WebView is
+   edge to edge (contentInsetAdjustmentBehavior .never) and leaves safe areas to the page,
+   so the insets come from env() here. */
+html.native body{padding:0;background:var(--card);background-image:none}
+html.native .app{max-width:none;border-radius:0;border:0;box-shadow:none;min-height:100vh;
+  min-height:100dvh;animation:none;
+  padding:max(14px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right))
+          max(10px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left))}
 
 /* ---------- the phone card ---------- */
 .app{
@@ -100,8 +236,7 @@ a{color:inherit;text-decoration:none}
   grid-column:1/3;justify-self:start}
 .ib{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--muted);
   background:var(--raise);transition:background .15s,color .15s}
-.ib:hover{background:var(--raise2);color:var(--text)}
-.ib.plain{background:none}.ib.plain:hover{background:var(--raise)}
+.ib.plain{background:none}
 
 /* ---------- orb ---------- */
 .orbwrap{position:relative;width:190px;height:190px;display:grid;place-items:center;margin:0 auto}
@@ -119,8 +254,7 @@ a{color:inherit;text-decoration:none}
      Two black layers instead, a tight contact shadow and a wide soft one. */
   box-shadow:0 2px 6px rgba(0,0,0,.34),
              0 18px 38px rgba(0,0,0,.46);
-  transition:transform .18s var(--ease)}
-.orb:hover{transform:scale(1.04)} .orb:active{transform:scale(.96)}
+  transition:transform .18s var(--ease)} .orb:active{transform:scale(.96)}
 .orb[disabled]{pointer-events:none}
 
 /* ---------- home ---------- */
@@ -137,15 +271,12 @@ a{color:inherit;text-decoration:none}
 .form input{flex:1;min-width:0;background:none;border:0;outline:none;padding:9px 0;font-size:14px;color:var(--text)}
 .form input::placeholder{color:var(--faint)}
 .go{background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);padding:9px 15px;font-weight:650;
-  font-size:13.5px;flex:none;transition:background .15s,transform .12s}
-.go:hover{background:var(--accent-press)} .go:active{transform:scale(.96)} .go[disabled]{opacity:.5;pointer-events:none}
+  font-size:13.5px;flex:none;transition:background .15s,transform .12s} .go:active{transform:scale(.96)} .go[disabled]{opacity:.5;pointer-events:none}
 /* Secondary to "Find it": the clipboard shortcut, quiet enough not to compete with it. */
 .pastebtn{background:transparent;color:var(--faint);border-radius:var(--r-pill);padding:9px 11px;
-  font-weight:600;font-size:13px;flex:none;transition:color .15s,transform .12s}
-.pastebtn:hover{color:var(--accent2)} .pastebtn:active{transform:scale(.96)}
+  font-weight:600;font-size:13px;flex:none;transition:color .15s,transform .12s} .pastebtn:active{transform:scale(.96)}
 .subacts{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--faint)}
 .subacts button{color:var(--accent2);font-weight:600}
-.subacts button:hover{text-decoration:underline}
 
 /* ---------- scanning ----------
    The scan is a takeover, not a state of the home screen: the card drops to a darker
@@ -216,11 +347,11 @@ a{color:inherit;text-decoration:none}
 canvas#tlwave{width:100%;height:36px;display:block}
 
 /* ---------- tab bar ----------
-   Four tabs, no more: Home, Trending, Library, Profile. It only exists on the four tab
-   states - a scan is a takeover and the result screen has its own header. */
+   Four tabs, no more: Home, Search, Finds, You (Konnor's spec, 2026-09-23). Trending is a
+   sub-screen of Home now. A scan is a takeover and the result has its own header. */
 .tabbar{display:none;align-items:stretch;gap:2px;margin:14px -6px -10px;padding-top:10px;
   border-top:1px solid var(--line)}
-.app[data-state="idle"] .tabbar,.app[data-state="trending"] .tabbar,
+.app[data-state="idle"] .tabbar,.app[data-state="trending"] .tabbar,.app[data-state="search"] .tabbar,
 .app[data-state="library"] .tabbar,.app[data-state="profile"] .tabbar{display:flex}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0 4px;
   font-size:10px;font-weight:650;color:var(--faint);border-radius:12px;transition:color .15s}
@@ -228,22 +359,33 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .tab.on{color:var(--text)}
 .tab.on svg{color:var(--accent2)}
 .app[data-state="trending"] #s-trend,.app[data-state="library"] #s-lib,
-.app[data-state="profile"] #s-prof,.app[data-state="listening"] #s-listen{display:flex}
+.app[data-state="profile"] #s-prof,.app[data-state="listening"] #s-listen,
+.app[data-state="search"] #s-search{display:flex}
 
 /* tab pages scroll inside the card */
-#s-home,#s-trend,#s-lib,#s-prof{overflow-y:auto;scrollbar-width:none;margin:0 -4px;padding:0 4px}
+#s-home,#s-trend,#s-lib,#s-prof,#s-search{overflow-y:auto;scrollbar-width:none;margin:0 -4px;padding:0 4px}
 #s-home::-webkit-scrollbar,#s-trend::-webkit-scrollbar,#s-lib::-webkit-scrollbar,
 #s-prof::-webkit-scrollbar{display:none}
 
 /* ---------- home (brief layout) ---------- */
-.pill{font-size:11px;font-weight:700;color:var(--accent2);background:var(--raise);
-  border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 11px;white-space:nowrap;
+.pill{font-size:11px;font-weight:650;color:var(--muted);background:transparent;
+  border:1px solid var(--line2);border-radius:var(--r-pill);padding:5px 11px;white-space:nowrap;
   justify-self:end}
 .scanword{font-size:11px;font-weight:800;letter-spacing:.24em;color:#fff;opacity:.94}
 /* the home orb is flex, not grid: the wave and the SCAN word sit as one centred stack */
 #s-home .orb{width:148px;height:148px;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:6px}
 #s-home .orbwrap{width:164px;height:164px}
+/* THE ONE BRIGHT THING (Konnor, 2026-09-23): "Scan button is the only bright thing on the
+   screen, with a soft purple glow behind it." A coloured SHADOW was removed from .orb for
+   good reason (offset tinted light reads as an effect, not depth) and that stays gone; the
+   orb keeps its black contact shadows. This is different in kind: ambient light centred
+   BEHIND the orb, no offset, so it reads as the orb lighting the dark ground around it. */
+#s-home .orbwrap::before{content:"";position:absolute;inset:-26px;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,color-mix(in oklab,var(--accent) 52%,transparent),transparent 80%)}
+#s-home .orbwrap::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  border:1px solid color-mix(in oklab,var(--accent2) 22%,transparent)}
+#s-home .orb{position:relative;z-index:1}
 #s-home .tap{font-size:14px;max-width:320px;text-wrap:balance;line-height:1.45}
 #s-home .miccopy{margin-top:-4px}
 #s-home .form{margin-top:4px}
@@ -254,7 +396,6 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .plcard{display:flex;align-items:center;gap:12px;width:100%;margin-top:16px;padding:12px 13px;
   border-radius:var(--r-mid);background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 32%,var(--raise)),var(--raise));
   border:1px solid var(--line2);text-align:left;transition:filter .15s}
-button.plcard:hover{filter:brightness(1.07)}
 .plcard .pic{width:42px;height:42px;border-radius:11px;flex:none;display:grid;place-items:center;
   background:linear-gradient(150deg,var(--accent2),var(--accent));color:#fff}
 .plcard .pt{flex:1;min-width:0}
@@ -268,12 +409,10 @@ button.plcard:hover{filter:brightness(1.07)}
 .secthd{display:flex;align-items:baseline;justify-content:space-between;margin:20px 0 9px}
 .secthd .sect{margin:0}
 .secthd button,.secthd a{font-size:12px;font-weight:650;color:var(--accent2)}
-.secthd button:hover,.secthd a:hover{text-decoration:underline}
 
 /* trending rows */
 .trow{display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:14px;
   background:var(--raise);border:1px solid transparent;transition:border-color .15s;width:100%;text-align:left}
-.trow:hover{border-color:var(--line2)}
 .trow .rk{width:16px;font-size:13px;font-weight:750;color:var(--faint);text-align:center;flex:none;
   font-variant-numeric:tabular-nums}
 .trow .rk.hot{color:#FF8A4C}
@@ -285,7 +424,6 @@ button.plcard:hover{filter:brightness(1.07)}
 .trow .up{color:var(--good);font-weight:700}
 .trow .addp{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
   color:var(--accent2);background:var(--card);transition:background .15s,color .15s}
-.trow .addp:hover{background:var(--accent);color:#fff}
 .trow .addp.did{color:var(--good);background:transparent}
 
 /* library rows reuse .trow minus the rank; search + chips */
@@ -318,6 +456,9 @@ button.plcard:hover{filter:brightness(1.07)}
   background:linear-gradient(150deg,var(--accent2),var(--accent));color:#fff;font-size:19px;font-weight:750}
 .avarow b{display:block;font-size:16px;font-weight:700}
 .avarow span{display:block;font-size:12px;color:var(--muted);margin-top:1px}
+/* .ava is itself a span, so the rule above (0,1,1) outranked .ava (0,1,0) and turned the
+   avatar into a 12px block: the initial sat in the top-left corner outside its circle. */
+.avarow .ava{display:grid;font-size:19px;font-weight:750;color:#fff;margin-top:0}
 .upcard{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:var(--r-mid);
   border:1px solid color-mix(in oklab,var(--accent2) 45%,transparent);
   background:color-mix(in oklab,var(--accent) 14%,transparent);margin-bottom:6px}
@@ -357,20 +498,18 @@ button.plcard:hover{filter:brightness(1.07)}
 .guessrow span{display:block;font-size:11.5px;color:var(--muted)}
 .vrow{display:flex;gap:8px;margin-top:12px}
 .vbtn{flex:1;padding:11px 0;border-radius:12px;font-size:13px;font-weight:700;transition:filter .15s}
-.vbtn:hover{filter:brightness(1.1)}
 .vbtn.yes{background:var(--accent);color:#fff}
 .vbtn.no{background:var(--raise2);color:var(--text)}
 .trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
 .cta{display:block;width:100%;margin-top:14px;padding:13px 0;border-radius:13px;text-align:center;
   background:var(--accent);color:#fff;font-size:14px;font-weight:700;transition:filter .15s}
-.cta:hover{filter:brightness(1.1)}
 /* IC.mic carries no width/height (it is sized by its container elsewhere), so without an
    explicit size here it expanded to fill the whole CTA button. */
 .cta.mic svg{width:17px;height:17px;vertical-align:-3px;margin-right:7px}
 .miccopy svg,.setrow .si svg{width:14px;height:14px}
 
 /* ---------- playlist picker sheet ---------- */
-.picker{position:fixed;inset:0;background:rgba(8,4,26,.6);display:flex;align-items:flex-end;
+.picker{position:fixed;inset:0;background:rgba(6,5,10,.6);display:flex;align-items:flex-end;
   justify-content:center;z-index:60;backdrop-filter:blur(3px)}
 .picker[hidden]{display:none}
 .pkcard{width:100%;max-width:400px;background:var(--card);border-radius:24px 24px 0 0;
@@ -381,7 +520,6 @@ button.plcard:hover{filter:brightness(1.07)}
 .pkh{font-size:15px;font-weight:700;margin-bottom:11px}
 .pkrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:10px 11px;
   border-radius:13px;background:var(--raise);transition:filter .15s}
-.pkrow:hover{filter:brightness(1.08)}
 .pkrow+.pkrow{margin-top:7px}
 .pkrow.def{border:1px solid var(--accent2);
   background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 30%,var(--raise)),var(--raise))}
@@ -411,7 +549,7 @@ button.plcard:hover{filter:brightness(1.07)}
 .spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--ease) both}
 
 /* ---------- onboarding ---------- */
-.onb{position:fixed;inset:0;z-index:80;background:rgba(8,4,26,.65);backdrop-filter:blur(4px);
+.onb{position:fixed;inset:0;z-index:80;background:rgba(6,5,10,.65);backdrop-filter:blur(4px);
   display:grid;place-items:center;padding:18px}
 .onb[hidden]{display:none}
 .onbcard{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);
@@ -432,14 +570,11 @@ button.plcard:hover{filter:brightness(1.07)}
 .obs{font-size:13.5px;color:var(--muted);text-align:center;line-height:1.5;margin:10px auto 0;max-width:260px}
 .obcta{display:block;width:100%;margin-top:24px;padding:14px 0;border-radius:14px;text-align:center;
   background:var(--accent);color:#fff;font-size:14.5px;font-weight:700;transition:filter .15s}
-.obcta:hover{filter:brightness(1.1)}
 .oblater{display:block;width:100%;text-align:center;font-size:12.5px;color:var(--faint);margin-top:12px}
-.oblater:hover{color:var(--muted)}
 /* connect rows */
 .obrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 13px;
   border-radius:14px;background:var(--raise);border:1px solid transparent;font-size:13.5px;font-weight:650;
   transition:border-color .15s,filter .15s}
-.obrow:hover{filter:brightness(1.07)}
 .obrow+.obrow{margin-top:8px}
 .obrow.done{border-color:color-mix(in oklab,var(--good) 55%,transparent)}
 .obrow .oi{width:24px;display:grid;place-items:center;flex:none}
@@ -552,7 +687,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   38%{opacity:.55}100%{opacity:.22;transform:translateX(-50%) scale(1)}}
 .hero>*{position:relative;z-index:1}
 .art{width:150px;height:150px;border-radius:20px;object-fit:cover;display:block;
-  box-shadow:0 18px 44px rgba(8,4,30,.5), 0 0 0 1px rgba(255,255,255,.07) inset;
+  box-shadow:0 18px 44px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.07) inset;
   animation:artin .72s cubic-bezier(.16,1,.3,1) both}
 @keyframes artin{from{opacity:0;transform:scale(.86) translateY(14px)}
   to{opacity:1;transform:none}}
@@ -582,9 +717,8 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .artwrap{position:relative;display:inline-block;line-height:0}
 .artplay{position:absolute;right:-7px;bottom:-7px;width:46px;height:46px;border-radius:50%;
   background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer;z-index:3;
-  box-shadow:0 8px 22px rgba(8,4,30,.42), 0 0 0 4px var(--card);
+  box-shadow:0 8px 22px rgba(0,0,0,.42), 0 0 0 4px var(--card);
   transition:transform .14s,filter .15s}
-.artplay:hover{transform:scale(1.06);filter:brightness(1.06)}
 .artplay svg{width:18px;height:18px}
 .artplay.out svg{width:19px;height:19px}
 .artplay:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
@@ -629,7 +763,6 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px 9px;
   border-radius:14px;background:var(--raise);border:1px solid var(--line);text-align:center;
   transition:border-color .15s,filter .15s}
-.opl:hover{filter:brightness(1.1);border-color:var(--line2)}
 .opl.ex{background:var(--raise2);border-color:var(--line2)}
 .opl svg{width:24px;height:24px;flex:none}
 /* break-word, never `anywhere`: `anywhere` split "SoundCloud" across two lines at 375px. */
@@ -653,11 +786,10 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .trk{display:flex;align-items:center;gap:8px;background:transparent;border-radius:12px;
   padding:9px 7px;border:1px solid transparent;transition:background .14s,border-color .14s}
 .trk+.trk{margin-top:2px}
-.trk:hover{background:var(--raise);border-color:var(--line)}
 /* the crown is the only card on the shelf - it earns elevation, the others do not */
 .trk.top{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 30%,var(--raise2)),var(--raise2));
   border-color:color-mix(in oklab,var(--accent2) 45%,transparent);border-radius:16px;padding:13px 14px;
-  box-shadow:0 10px 26px rgba(8,4,30,.32)}
+  box-shadow:0 10px 26px rgba(0,0,0,.32)}
 .trk .pl{width:28px;height:28px;border-radius:50%;background:color-mix(in oklab,var(--accent) 55%,var(--raise2));
   color:#fff;display:grid;place-items:center;flex:none;transition:transform .14s,background .14s}
 /* THE CROWN IS A CARD, NOT A ROW (layout spec item 5). The mock stacks it: a big play
@@ -673,7 +805,6 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   /* The crowned row's play button. The accent already fills it; a 55% accent shadow
      under it was the same hue a second time, as light. */
   box-shadow:0 5px 14px rgba(0,0,0,.42)}
-.trk:hover .pl{transform:scale(1.07);background:var(--accent)}
 .trk .pl svg{width:11px;height:11px}
 .trk.top .pl svg{width:17px;height:17px}
 /* KONNOR: "for the 'exact version' and for the other version make sure there's a photo
@@ -714,7 +845,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    width of the card. Colour still carries the tier the .cf classes already define. */
 .trk .op{font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:3px;flex:none;
   opacity:0;transform:translateX(-3px);transition:opacity .14s,transform .14s}
-.trk:hover .op,.trk.top .op{opacity:1;transform:none}
+.trk.top .op{opacity:1;transform:none}
 .trk .op svg{width:11px;height:11px}
 /* THE CROWN DOES NOT NEED TO BE NUMBERED "1". It is the only row under "the exact version
    playing", so the digit is noise - and on a 375px card the rank column plus the word
@@ -829,7 +960,6 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .othv>summary .cvn+.cv{margin-left:8px}
 .othv>summary::-webkit-details-marker{display:none}
 .othv>summary::marker{content:""}
-.othv>summary:hover{color:var(--muted)}
 .othv>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
 .othv>summary .cv{margin-left:auto;display:grid;place-items:center;flex:none;color:var(--faint);
   transition:transform .18s}
@@ -860,7 +990,6 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 /* Auto-save off: nothing was written, so the card must not look like a confirmation.
    Neutral until tapped, then it flips to the same green saved state. */
 button.savecard{width:100%;text-align:left;font:inherit;transition:filter .15s}
-button.savecard:hover{filter:brightness(1.09)}
 button.savecard[disabled]{pointer-events:none}
 .savecard.off{background:var(--raise2);border-color:var(--line2)}
 .savecard.off b{color:var(--text)}
@@ -869,7 +998,6 @@ button.savecard[disabled]{pointer-events:none}
 .secrow{display:flex;gap:7px;margin-top:8px}
 .secbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 6px;border-radius:14px;
   background:var(--raise2);font-size:12px;color:var(--muted);transition:transform .12s,filter .15s}
-.secbtn:hover{transform:translateY(-1px);filter:brightness(1.09)}
 .secbtn svg{color:var(--text)}
 .secbtn.on{color:var(--good)} .secbtn.on svg{color:var(--good)}
 .secbtn.dim{opacity:.45;pointer-events:none}
@@ -891,7 +1019,7 @@ button.savecard[disabled]{pointer-events:none}
 .trk .pl{position:relative;z-index:2}
 .trk .pl::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:44px;height:44px;border-radius:50%}
-.sheet{position:fixed;inset:0;background:rgba(8,4,26,.66);display:grid;place-items:end center;z-index:50;
+.sheet{position:fixed;inset:0;background:rgba(6,5,10,.66);display:grid;place-items:end center;z-index:50;
   padding:16px;animation:fade .25s var(--ease) both}
 .sheet[hidden]{display:none}
 .sheetcard{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
@@ -924,7 +1052,6 @@ button.savecard[disabled]{pointer-events:none}
 .otherwrap[hidden]{display:none}
 .prow{display:flex;align-items:center;gap:11px;background:var(--raise2);border-radius:14px;padding:12px 13px;
   transition:transform .12s,background .15s}
-.prow:hover{transform:translateY(-1px);background:var(--raise2);filter:brightness(1.08)}
 .prow .pi{width:26px;height:26px;display:grid;place-items:center;flex:none}
 .prow .pn{flex:1;font-size:14px;font-weight:600}
 .prow .pp{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--muted);flex:none}
@@ -947,21 +1074,105 @@ button.savecard[disabled]{pointer-events:none}
 .fh b{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
 .fh .acts{display:flex;gap:6px}
 .fh button{font-size:12px;color:var(--muted);padding:5px 10px;border-radius:var(--r-pill);border:1px solid var(--line)}
-.fh button:hover{color:var(--text);border-color:var(--line2)}
 .saved{display:flex;align-items:center;gap:12px;background:var(--raise);border-radius:16px;padding:11px 13px;
   transition:transform .12s,background .15s}
-.saved:hover{transform:translateY(-1px)}
 .saved .sq{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;color:#fff}
 .saved img{width:42px;height:42px;border-radius:12px;object-fit:cover;flex:none}
 .saved .tt{flex:1;min-width:0}
 .saved .nm{font-size:14px;font-weight:640;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .saved .mt{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .saved .rm{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:var(--faint);flex:none}
-.saved .rm:hover{background:var(--raise2);color:var(--text)}
 .empty{text-align:center;padding:26px 12px;border:1px dashed var(--line2);border-radius:var(--r-mid)}
 .empty b{display:block;font-size:14.5px;margin:10px 0 4px}
 .empty span{font-size:13px;color:var(--muted)}
 .foot{text-align:center;font-size:11.5px;color:var(--faint);padding-top:2px}
+
+/* ---------- result screen, Konnor's 2026-09-23 spec ---------- */
+/* item 2: glow at the top from the artwork's own colour (set by artGlow) */
+#s-match{position:relative;isolation:isolate}
+#s-match::before{content:"";position:absolute;left:-22px;right:-22px;top:-24px;height:380px;z-index:-1;
+  pointer-events:none;transition:background .6s ease;
+  background:radial-gradient(75% 62% at 50% 0%,color-mix(in oklab,var(--rg,transparent) 46%,transparent),transparent 74%)}
+/* item 4: the version pill stands alone - purple tint + border for edits and mashups,
+   mint for a measured original, neutral for a claim or a held slot */
+.badge{background:color-mix(in oklab,var(--accent) 16%,transparent);color:var(--text);
+  border:1px solid color-mix(in oklab,var(--accent) 60%,transparent);padding:7px 15px;font-size:13px;
+  display:inline-flex;align-items:center;gap:7px}
+.badge svg{width:13px;height:13px;flex:none;color:var(--accent2)}
+.badge.orig{border-color:color-mix(in oklab,var(--good) 45%,transparent)}
+.badge.orig svg{color:var(--good)}
+.badge.mash svg{color:var(--accent2)}
+/* source pill under the header, centred (mockup) */
+.clip{justify-content:center}
+.clippill{display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:var(--r-pill);
+  background:var(--raise);border:1px solid var(--line);max-width:100%}
+.clippill img{width:22px;height:22px;border-radius:50%}
+.clippill .cdot{width:18px;height:18px;border-radius:50%;flex:none;background:linear-gradient(140deg,var(--accent2),var(--accent))}
+.clippill .h{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clippill .cp{color:var(--faint);flex:none}
+/* item 5: open in - quiet search marker */
+.opl{position:relative}
+.opsrch{position:absolute;top:6px;right:6px;display:grid;color:var(--faint)}
+.opsrch svg{width:10px;height:10px}
+/* item 6: the exact version card is a dark card with a purple edge, not a purple slab */
+.trk.top{background:var(--raise);border:1px solid color-mix(in oklab,var(--accent) 50%,transparent)}
+/* item 8: one wide action and a heart */
+.secbtn.wide{flex-direction:row;justify-content:center;gap:9px;padding:14px 12px;font-size:13.5px;
+  font-weight:600;color:var(--text);background:var(--raise);border:1px solid var(--line)}
+.secbtn.sq{flex:0 0 52px;justify-content:center;padding:0;background:var(--raise);border:1px solid var(--line)}
+.secbtn.sq svg{width:19px;height:19px}
+.secbtn.sq.on svg{color:#F3697F}
+/* mashup: songs in this mix */
+.list.mix .trk{background:var(--raise);border:1px solid var(--line);padding:10px 12px;gap:12px}
+.mthumb{position:relative;width:42px;height:42px;border-radius:10px;overflow:hidden;flex:none;
+  background:linear-gradient(150deg,color-mix(in oklab,var(--mt) 85%,#fff 15%),var(--mt))}
+.mthumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mbar{display:block;position:relative;height:3px;border-radius:2px;background:var(--dialtrack);margin-top:7px;overflow:hidden}
+.mbar i{position:absolute;top:0;bottom:0;border-radius:2px;background:var(--accent2)}
+.mixnote{margin:8px 2px 0;font-size:11.5px;color:var(--faint)}
+/* a chip with no platform mark used to be a translucent red or orange pill - the
+   "red chip that clashed with the buttons above it" Konnor caught. Neutral now, like
+   every chip that carries a logo. */
+.src.soundcloud:not(.hasmark),.src.youtube:not(.hasmark){background:var(--raise2);color:var(--muted)}
+.itick{display:inline-grid;vertical-align:-2px;margin-left:4px}
+.itick svg{width:12px;height:12px}
+.obtag .itick{margin:0 5px 0 0}
+
+
+/* HOVER ONLY WHERE THERE IS A POINTER THAT HOVERS. On a phone :hover applies on tap and
+   STICKS until something else is tapped, so a song row's + stayed purple after you
+   touched it - the "stuck hover state on a song row" Konnor caught. Every hover rule
+   in the app lives here now; touch keeps the :active feedback, which ends on release. */
+@media (hover:hover) and (pointer:fine){
+  .ib:hover{background:var(--raise2);color:var(--text)}
+  .ib.plain:hover{background:var(--raise)}
+  .orb:hover{transform:scale(1.04)}
+  .go:hover{background:var(--accent-press)}
+  .pastebtn:hover{color:var(--accent2)}
+  .subacts button:hover{text-decoration:underline}
+  button.plcard:hover{filter:brightness(1.07)}
+  .secthd button:hover, .secthd a:hover{text-decoration:underline}
+  .trow:hover{border-color:var(--line2)}
+  .trow .addp:hover{background:var(--accent);color:#fff}
+  .vbtn:hover{filter:brightness(1.1)}
+  .cta:hover{filter:brightness(1.1)}
+  .pkrow:hover{filter:brightness(1.08)}
+  .obcta:hover{filter:brightness(1.1)}
+  .oblater:hover{color:var(--muted)}
+  .obrow:hover{filter:brightness(1.07)}
+  .artplay:hover{transform:scale(1.06);filter:brightness(1.06)}
+  .opl:hover{filter:brightness(1.1);border-color:var(--line2)}
+  .trk:hover{background:var(--raise);border-color:var(--line)}
+  .trk:hover .pl{transform:scale(1.07);background:var(--accent)}
+  .trk:hover .op{opacity:1;transform:none}
+  .othv>summary:hover{color:var(--muted)}
+  button.savecard:hover{filter:brightness(1.09)}
+  .secbtn:hover{transform:translateY(-1px);filter:brightness(1.09)}
+  .prow:hover{transform:translateY(-1px);background:var(--raise2);filter:brightness(1.08)}
+  .fh button:hover{color:var(--text);border-color:var(--line2)}
+  .saved:hover{transform:translateY(-1px)}
+  .saved .rm:hover{background:var(--raise2);color:var(--text)}
+}
 </style>
 </head>
 <body>
@@ -1007,21 +1218,43 @@ button.savecard[disabled]{pointer-events:none}
 
   <!-- ============ TRENDING ============ -->
   <section class="screen" id="s-trend">
-    <div class="hd"><div class="brand" style="font-size:17px">Trending edits</div></div>
+    <div class="hd"><button class="ib plain" id="trendback" aria-label="Back to Home"></button>
+      <div class="ttl">Trending edits</div><span></span></div>
     <p class="sub" style="text-align:left;margin:-2px 0 12px">What everyone's using right now · live from TikTok</p>
     <div class="chips" id="trendchips"></div>
     <div id="trendbody"></div>
   </section>
 
+  <!-- ============ SEARCH ============
+       Konnor's third tab: "for when the reel is gone and all they remember is a lyric or
+       a vibe". Every answer here is a GUESS - there is no clip audio to verify against -
+       so nothing on this screen wears a percentage. See renderSearch. -->
+  <section class="screen" id="s-search">
+    <div class="shd">
+      <h1 class="shtitle">Search</h1>
+      <p class="shsub">Lost the reel? Describe it instead.</p>
+    </div>
+    <form class="sbox" id="sform" autocomplete="off" role="search">
+      <span class="sico" aria-hidden="true"></span>
+      <input id="sq" type="search" enterkeyhint="search" spellcheck="false" autocapitalize="off"
+             placeholder='a lyric, a vibe, or "that gym reel song"' aria-label="Search by lyric, vibe or creator">
+      <button type="button" class="sclear" id="sclear" hidden aria-label="Clear search"></button>
+      <button type="button" class="smic" id="smic" disabled aria-label="Hum to search is coming soon"></button>
+    </form>
+    <p class="shint" id="shint">Hum to search is coming soon</p>
+    <div id="sbody" aria-live="polite"></div>
+  </section>
+
   <!-- ============ LIBRARY ============ -->
   <section class="screen" id="s-lib">
-    <div class="hd">
-      <div class="brand" style="font-size:17px">Your finds</div>
-      <button class="ib plain" id="export" title="Export" aria-label="Export"></button>
+    <div class="lhd">
+      <div><h1 class="shtitle">Your finds</h1><p class="lsub" id="libsub"></p></div>
+      <button type="button" class="ib plain" id="libsort" aria-label="Oldest first"></button>
     </div>
     <div class="search"><span id="ico-search"></span>
       <input id="libq" type="text" placeholder='"that song from the gym reel..."' aria-label="Search your finds"></div>
     <div class="chips" id="libchips"></div>
+    <div id="libmonths"></div>
     <div id="libbody"></div>
   </section>
 
@@ -1101,9 +1334,9 @@ button.savecard[disabled]{pointer-events:none}
   <!-- four tabs, no more - settings and accounts live under Profile so the bar stays clean -->
   <nav class="tabbar" id="tabbar" aria-label="Tabs">
     <button class="tab on" data-tab="idle" id="tb-home"><span class="ticon"></span>Home</button>
-    <button class="tab" data-tab="trending" id="tb-trend"><span class="ticon"></span>Trending</button>
+    <button class="tab" data-tab="search" id="tb-search"><span class="ticon"></span>Search</button>
     <button class="tab" data-tab="library" id="tb-lib"><span class="ticon"></span>Finds</button>
-    <button class="tab" data-tab="profile" id="tb-prof"><span class="ticon"></span>Profile</button>
+    <button class="tab" data-tab="profile" id="tb-prof"><span class="ticon"></span>You</button>
   </nav>
 </div>
 
@@ -1167,6 +1400,13 @@ button.savecard[disabled]{pointer-events:none}
 <script>
 /* ---------- icons ---------- */
 var IC={
+  bubble:'<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4C7 4 3 7.3 3 11.4c0 2.3 1.3 4.4 3.3 5.8-.2 1.1-.8 2.2-1.6 3 1.8 0 3.4-.7 4.5-1.6.9.2 1.8.3 2.8.3 5 0 9-3.3 9-7.5S17 4 12 4z"/></svg>',
+  mail:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="6" width="17" height="12.5" rx="2.4"/><path d="m4.3 7.2 7.7 6 7.7-6"/></svg>',
+  clock:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  layers:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.5 8.5 4.5L12 12.5 3.5 8z"/><path d="m3.5 12.2 8.5 4.5 8.5-4.5M3.5 16.2l8.5 4.5 8.5-4.5"/></svg>',
+  pladd:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h11M4 11.5h11M4 16.5h7M18 13v7M14.5 16.5h7"/></svg>',
+  sort:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4v15M4.5 7.5 8 4l3.5 3.5M16 20V5M12.5 16.5 16 20l3.5-3.5"/></svg>',
+  at:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.6"/><path d="M15.6 12v1.6a2.6 2.6 0 0 0 5.2 0V12A8.8 8.8 0 1 0 17.3 19"/></svg>',
   moon:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg>',
   sun:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg>',
   link:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13.5a3.6 3.6 0 0 0 5.2.3l2.6-2.6a3.6 3.6 0 1 0-5.1-5.1l-1.3 1.3"/><path d="M14 10.5a3.6 3.6 0 0 0-5.2-.3l-2.6 2.6a3.6 3.6 0 1 0 5.1 5.1l1.3-1.3"/></svg>',
@@ -1242,11 +1482,11 @@ document.getElementById('cancel').innerHTML=IC.x;
 document.getElementById('lcancel').innerHTML=IC.x;
 document.getElementById('back').innerHTML=IC.chev;
 document.getElementById('share').innerHTML=IC.share;
-document.getElementById('export').innerHTML=IC.down;
+if(document.getElementById('export')) document.getElementById('export').innerHTML=IC.down;
 document.getElementById('plpic').innerHTML=waveGlyph(22);
 document.getElementById('plgo').innerHTML=IC.play;
 document.getElementById('spmark').innerHTML=waveGlyph(44);
-(function(){var t={ 'tb-home':IC.home,'tb-trend':IC.flame,'tb-lib':IC.rows,'tb-prof':IC.user };
+(function(){var t={ 'tb-home':IC.home,'tb-search':IC.search,'tb-lib':IC.save,'tb-prof':IC.user };
   Object.keys(t).forEach(function(id){document.querySelector('#'+id+' .ticon').innerHTML=t[id];});})();
 
 function readPal(){var s=getComputedStyle(root); return {signal:s.getPropertyValue('--signal').trim(), cool:s.getPropertyValue('--cool').trim(),
@@ -1936,12 +2176,34 @@ function eraseMyFeedback(){
   return Promise.all(ids.map(function(id){
     return fetch(ENGINE+'/feedback/erase',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({id:id})}).catch(function(){});}));}
+/* ITEM 2, "glow at the top pulled from the artwork colours, so every result looks
+   different". The cover host (mzstatic, Shazam's covers too) sends Access-Control-Allow-
+   Origin: *, so the page can read the pixels. It averages the SATURATED pixels only -
+   an average over everything turns most album art into mud grey. If the cover cannot be
+   read, the fallback is the hue already derived from the song name for the placeholder
+   sleeve, so the glow is still that song's colour and never a random one. */
+function artGlow(src, fallback){
+  var el=document.getElementById('s-match'); if(!el) return;
+  el.style.setProperty('--rg', fallback||'transparent');
+  if(!src) return;
+  var img=new Image(); img.crossOrigin='anonymous'; img.decoding='async';
+  img.onload=function(){try{
+    var c=document.createElement('canvas'); c.width=c.height=24;
+    var x=c.getContext('2d'); x.drawImage(img,0,0,24,24);
+    var px=x.getImageData(0,0,24,24).data, r=0,g=0,b=0,n=0, ar=0,ag=0,ab=0;
+    for(var i=0;i<px.length;i+=4){var R=px[i],G=px[i+1],B=px[i+2], mx=Math.max(R,G,B), mn=Math.min(R,G,B);
+      ar+=R; ag+=G; ab+=B;
+      if(mx-mn>38 && mx>60){r+=R; g+=G; b+=B; n++;}}
+    if(n<12){n=px.length/4; r=ar; g=ag; b=ab;}
+    el.style.setProperty('--rg','rgb('+Math.round(r/n)+','+Math.round(g/n)+','+Math.round(b/n)+')');
+  }catch(e){}};
+  img.src=src;}
 function renderResult(d,partial){
   lastResult=d;
   if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
   if(d.result==='engine_down'){
     result.innerHTML=errCard('sat',"You're offline",'No stress - we kept your scan.<br>It’ll run the second you’re back.',
-      (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted)">⏱ 1 scan queued'+
+      (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
         '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
     var rb=document.getElementById('retrybtn');
     if(rb) rb.onclick=function(){engineUp=null; var u=curURL; lsSet('addify-queue',[]); goHome(); if(u) run(u);};
@@ -2033,7 +2295,9 @@ function renderResult(d,partial){
     ? imgTag({'class':'art', src:d.art, alt:'', width:150, height:150,
                'data-ph':'--phc:'+_phc+';--phc2:'+_phc2})
     : '<div class="art ph" style="--phc:'+_phc+';--phc2:'+_phc2+'">'+IC.bignote+'</div>';
-  var clip = d.handle ? '<div class="clip">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'')+'<span class="h">@'+esc(d.handle)+'</span></div>' : '';
+  var _plat=/instagram\.com|instagr\.am/i.test(curURL||'')?'Instagram':(/tiktok\.com/i.test(curURL||'')?'TikTok':'');
+  var clip = d.handle ? '<div class="clip"><span class="clippill">'+(d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
+    '<span class="h">@'+esc(d.handle)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'')+'</span></div>' : '';
   document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
   var head='';
   // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
@@ -2042,8 +2306,14 @@ function renderResult(d,partial){
   // a tap never lies about where it lands.
   var lk=(d.links||[]);
   var openin = lk.length ? '<div class="sect">Open in</div><div class="openin">'+lk.map(function(l){
-      return '<a class="opl'+(l.exact?' ex':'')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener">'+
-        (IC[l.kind]||'')+'<b>'+esc(l.name)+'</b>'+(l.exact?'':'<i>search</i>')+'</a>';}).join('')+'</div>' : '';
+      /* Konnor, item 5: "one row of four, logo on top, name below". The uppercase SEARCH
+         word under three of the four tiles is what made the row read as unfinished on his
+         Circles screenshot. The honesty it carried stays: a search fallback still says so,
+         as a small magnifier in the corner and in the accessible name, so a tap never lies
+         about where it lands - it just stops shouting it. */
+      return '<a class="opl'+(l.exact?' ex':' srch')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener"'+
+        ' aria-label="'+(l.exact?'Open in ':'Search ')+esc(l.name)+'">'+
+        (IC[l.kind]||'')+'<b>'+esc(l.name)+'</b>'+(l.exact?'':'<span class="opsrch" aria-hidden="true">'+IC.search+'</span>')+'</a>';}).join('')+'</div>' : '';
   // The badge is a VERDICT ("Original" / "Slowed ~0.71x + bass boosted"), and while the
   // hunt is still running there isn't one yet - /base's speed call is provisional and the
   // crowned edit can change it. Now that this card is on screen DURING the hunt (versions
@@ -2053,6 +2323,12 @@ function renderResult(d,partial){
   // `soft`, not `orig`: the hunt has not finished, so this is a held slot, not a mint
   // "measured as the original". Same words, same shape, no verdict implied.
   var badge = partial ? '<span class="badge soft">Checking versions</span>' : editBadge(d);
+  /* Item 4, "version pill stands alone. Mint for originals, purple for edits and mashups".
+     A measured verdict (not a caption claim or a held slot, which stay neutral) gets the
+     tick, the same mark the save card uses for "this is settled". */
+  if(!partial) badge=badge.replace(/^<span class="badge( orig)?">/, function(m){return m+IC.tick;});
+  var _mparts=(d.sections&&d.sections.length>1)?d.sections:((d.songs&&d.songs.length>1)?d.songs:null);
+  if(!partial && _mparts) badge='<span class="badge mash">'+IC.layers+'Mashup · '+_mparts.length+' songs</span>';
   /* ---------- PREVIEW ON THE COVER (layout spec item 7) ----------
      Two honesty guards, both of them real failure modes:
      1. WHAT IS PLAYING. The sleeve is the BASE song's cover while the thing this button
@@ -2089,22 +2365,33 @@ function renderResult(d,partial){
   // straight miss. Showing the parts is the honest answer, and it is already paid for.
   var secs=(d.sections||[]), alt=(d.songs||[]);
   var mash='';
+  /* Konnor's mashup screen: "Songs in this mix", each part with where it sits in the clip.
+     The bar is drawn from the engine's own section timestamps against the clip length, so
+     it is a measurement, not decoration; with no clip length there is no bar. The mockup
+     also labels each part's role (vocals / beat). The engine does not measure roles, so
+     that label is left out rather than guessed. */
+  var _clen=(typeof clipSecs==='number'&&clipSecs>0)?clipSecs:0;
   if(secs.length>1 || alt.length>1){
     var parts = secs.length>1 ? secs.map(function(s){
         return {song:s.song, artist:s.artist, at:s.start, to:s.end, ex:s.exact, sz:s.shazam};})
       : alt.map(function(s){return {song:s.song, artist:s.artist, at:s.at, sz:s.shazam};});
-    mash='<div class="sect">'+(d.mashup&&d.mashup.shape==='layered'
-            ? 'Two songs layered' : parts.length+' songs in this clip')+'</div>'+
-      '<div class="list">'+parts.map(function(p,i){
+    var _layered=d.mashup&&d.mashup.shape==='layered';
+    mash='<div class="sect">Songs in this mix</div>'+
+      '<div class="list mix">'+parts.map(function(p,i){
         var when=mmss(p.at||0)+(p.to?' - '+mmss(p.to):'');
         var link=(p.ex&&p.ex.url)||p.sz||'';
-        var inner='<span class="rk">'+(i+1)+'</span>'+
+        var art=(secs.length>1?secs[i]:alt[i])||{};
+        var bar='';
+        if(_clen){var a0=Math.max(0,Math.min(1,(p.at||0)/_clen)), a1=Math.max(a0,Math.min(1,(p.to||_clen)/_clen));
+          bar='<span class="mbar"><i style="left:'+(a0*100).toFixed(1)+'%;width:'+((a1-a0)*100).toFixed(1)+'%"></i></span>';}
+        var inner='<span class="mthumb" style="--mt:hsl('+((i*137+_hu)%360)+' 55% 52%)">'+
+            (art.art?'<img src="'+esc(art.art)+'" alt="" loading="lazy" onerror="this.remove()">':'')+'</span>'+
           '<span class="tt"><div class="nm">'+esc(p.song||'Unknown')+'</div>'+
-          '<div class="mt"><span class="mono">'+when+'</span>'+
-            (p.artist?' · '+esc(p.artist):'')+'</div></span>'+
-          (link?'<span class="op">Open'+IC.open+'</span>':'');
+          '<div class="mt">'+(p.artist?esc(p.artist)+' · ':'')+'<span class="mono">'+when+'</span></div>'+bar+'</span>'+
+          (link?'<span class="op">'+IC.open+'</span>':'');
         return link ? '<a class="trk" href="'+esc(link)+'" target="_blank" rel="noopener">'+inner+'</a>'
-                    : '<div class="trk">'+inner+'</div>';}).join('')+'</div>';
+                    : '<div class="trk">'+inner+'</div>';}).join('')+'</div>'+
+      (_layered?'<p class="mixnote">Layered across the whole clip</p>':'');
   }
   /* ---------- THE VERSION SHELF ----------
      One crown was never the whole answer and the payload always knew it: up to six
@@ -2281,17 +2568,20 @@ function renderResult(d,partial){
   // what is left is the two the spec keeps: Other playlist, and Like.
   var plat=
     '<div class="secrow">'+
-      '<button class="secbtn" id="otherbtn">'+IC.plus+'<span>Other playlist</span></button>'+
-      '<button class="secbtn" id="likebtn">'+IC.heart+'<span>Like</span></button>'+
+      '<button class="secbtn wide" id="otherbtn">'+IC.pladd+'<span>Add to another playlist</span></button>'+
+      '<button class="secbtn sq" id="likebtn" aria-label="Like" aria-pressed="false">'+IC.heart+'</button>'+
     '</div>'+
     '<div class="otherwrap" id="otherwrap" hidden><div class="sect">Add to another playlist</div><div class="plat">'+
       prow('Spotify',d.base_song,d.base_artist,'spotify')+
       prow('Apple Music',d.base_song,d.base_artist,'apple')+
       prow('SoundCloud',d.base_song,d.base_artist,'soundcloud')+
       prow('YouTube',d.base_song,d.base_artist,'youtube')+
-    '</div></div>'+
-    '<div class="autonote">Auto-save is '+(on?'on':'off')+' · <button id="autobtn">change in settings</button></div>';
-  var hints=(d.comment_hints||[]).slice(0,3);
+    '</div></div>';   // Konnor item 8: the auto-save note lives in You > Scanning now
+  /* A one-word comment is not evidence. Konnor's own screenshot had "opinions" sitting
+     under "circles by post malone" with equal weight, and another scan surfaced "fearles".
+     Keep a hint only when it has at least two words and some length to it. */
+  var hints=(d.comment_hints||[]).filter(function(h){
+      h=String(h||'').trim(); return h.length>=8 && h.split(/\s+/).length>=2;}).slice(0,3);
   var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
   /* ---------- THE WAVEFORM IS GONE (layout spec item 1) ----------
      It used to draw on every edit result. Its stated job was to be the thing the shelf
@@ -2326,6 +2616,7 @@ function renderResult(d,partial){
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
   paintRecCanvas();
+  artGlow(d.art, _phc);
   autoSave(d);                                   // scan = saved, no tap required
   var ob=document.getElementById('otherbtn');
   if(ob) ob.onclick=function(){
@@ -2336,7 +2627,9 @@ function renderResult(d,partial){
     ob.classList.toggle('on', !w.hidden);};
   var lb=document.getElementById('likebtn');
   if(lb) lb.onclick=function(){lb.classList.toggle('on');
-    lb.innerHTML=(lb.classList.contains('on')?IC.heartfill:IC.heart)+'<span>Like</span>';};
+    var on2=lb.classList.contains('on');
+    lb.innerHTML=on2?IC.heartfill:IC.heart; lb.setAttribute('aria-pressed',String(on2));
+    lb.setAttribute('aria-label',on2?'Liked':'Like');};
   var ab=document.getElementById('autobtn');
   if(ab) ab.onclick=function(){
     openSheet();};
@@ -2521,7 +2814,7 @@ function saveOne(d){
   var a=loadCrate();
   var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
             url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||'',
-            handle:d.handle||'',ts:Date.now(),listen:!!d.listen};
+            handle:d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||''};
   if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return false;
   a.unshift(item); storeCrate(a); return true;
 }
@@ -2578,7 +2871,7 @@ function scanKey(){var d=new Date(); return 'addify-scans-'+d.getFullYear()+'-'+
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function useScan(){try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
 function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed());
-  document.getElementById('scanpill').textContent = left>0 ? left+' free scan'+(left===1?'':'s')
+  document.getElementById('scanpill').textContent = left>0 ? left+' scan'+(left===1?'':'s')+' left'
     : 'demo · unlimited';}
 function speedKind(sp){sp=(sp||'').toLowerCase();
   if(!sp||sp==='as posted') return 'original';
@@ -2598,15 +2891,20 @@ function exportFinds(){var a=loadCrate(); if(!a.length) return;
   var txt=a.map(function(x){return x.song+' - '+(x.artist||'')+(x.url?'  '+x.url:'');}).join('\n');
   var u=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); var el=document.createElement('a');
   el.href=u; el.download='addify.txt'; el.click(); URL.revokeObjectURL(u);}
-document.getElementById('export').onclick=exportFinds;
+if(document.getElementById('export')) document.getElementById('export').onclick=exportFinds;
 
 /* ============================================================
    TABS + the four tab pages
    ============================================================ */
-var TABS=['idle','trending','library','profile'];
+var TABS=['idle','search','library','profile'];
 function nav(state){setState(state);
-  var map={idle:'tb-home',trending:'tb-trend',library:'tb-lib',profile:'tb-prof'};
-  TABS.forEach(function(s){document.getElementById(map[s]).classList.toggle('on',s===state);});
+  /* Konnor, 2026-09-23: tabs are Home, Search, Finds, You. Trending keeps its screen but
+     stops owning a tab - it is reached from "See all" on Home, so while it is open the
+     Home tab stays lit and the header carries a back button. */
+  var map={idle:'tb-home',trending:'tb-home',search:'tb-search',library:'tb-lib',profile:'tb-prof'};
+  ['tb-home','tb-search','tb-lib','tb-prof'].forEach(function(id){
+    document.getElementById(id).classList.toggle('on',map[state]===id);});
+  if(state==='search') renderSearch();
   if(state==='idle') paintHome();
   if(state==='trending') renderTrend();
   if(state==='library') renderLib();
@@ -2617,7 +2915,9 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
 /* ---------- home: playlist card + trending teaser + recent finds ---------- */
 function paintHome(){
   var a=loadCrate();
-  var sub=songs(a.length)+(SP.connected()?' · synced to Spotify':' · saved on this device');
+  /* Konnor: "saved on this device" reads like something went wrong. It is a playlist,
+     so say how big it is, and only mention Spotify when it genuinely is synced. */
+  var sub=songs(a.length)+(SP.connected()?' · synced to Spotify':'');
   document.getElementById('plsub').textContent=sub;
   paintPill();
   /* trending teaser: two rows off the REAL chart (see fetchTrending) */
@@ -2633,15 +2933,16 @@ function paintHome(){
     tt.innerHTML='<div class="dashcard"><b>Your finds will land here</b>'+
       '<span>Every scan also saves to your playlist automatically</span></div>';
   } else tt.innerHTML='';
-  /* recent finds: the latest one, with its own See-all into Library */
+  /* RECENT FINDS COME OFF HOME (Konnor, 2026-09-23): "Finds has its own tab and the
+     playlist card is right here - three copies of the same list was too many." */
   var rb=document.getElementById('recentbox');
-  if(a.length){
+  if(false){
     var x=a[0];
     rb.innerHTML='<div class="secthd"><div class="sect">Your recent finds</div>'+
       '<button id="tolib">Library</button></div>'+
       '<button class="trow" id="recentrow"><span class="sq" style="background:'+SQ[0]+'">'+IC.note+'</span>'+
       '<span class="tt"><b>'+esc(x.song)+' - '+esc(speedLabel(x))+'</b>'+
-      '<span>'+(x.ts?ago(x.ts)+' · ':'')+'saved '+'✓'+'</span></span>'+
+      '<span>'+(x.ts?ago(x.ts)+' · ':'')+'saved'+'<span class="itick">'+IC.tick+'</span></span></span>'+
       '<span class="go2">'+IC.rchev+'</span></button>';
     document.getElementById('tolib').onclick=function(){nav('library');};
     document.getElementById('recentrow').onclick=function(){nav('library');};
@@ -2667,7 +2968,7 @@ function trendTag(r){
 function trowHTML(r,rank){
   var tag=trendTag(r);
   return '<button class="trow" data-i="'+(rank-1)+'">'+
-    '<span class="rk'+(rank<=3?' hot':'')+'">'+rank+'</span>'+
+    '<span class="rk'+(rank===1?' hot':'')+'">'+rank+'</span>'+
     '<span class="sq" style="background:'+SQ[rank%SQ.length]+'">'+
       (r.art?'<img src="'+esc(r.art)+'" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:9px" onerror="this.remove()">':IC.note)+'</span>'+
     '<span class="tt"><b>'+esc(r.title)+'</b>'+
@@ -2704,53 +3005,213 @@ function renderTrend(){
   wireTrows(b);}
 
 /* ---------- library ---------- */
-var libFilter='All', libQ='';
+/* ---------- finds (Konnor's page 4, 2026-09-23) ----------
+   "Renamed to match Found with Addify. Search by where you found it, not just the title."
+   - Subtitle counts: songs, and how many of them are edits.
+   - Filters All / Edits / Originals / Unmatched; Unmatched in amber so a failed scan reads as
+     a to-do, not a dead end.
+   - Monthly playlists: each month its own cover colour, "so the library becomes a time capsule".
+     Tapping one narrows the list to that month; tapping it again lets go.
+   - Every row carries the version chip and the source handle, "the two things that make a find
+     yours rather than just a song". The triangle plays in-app (platform embed), the rest of the
+     row opens the song, same rule as the result screen.
+   - Grouped Today / Yesterday / date, newest first; the header button flips the order.
+   One deliberate difference from the mockup: it says unmatched scans are "Retrying as the edit
+   database grows". Nothing retries on its own, and doing it silently would spend the shared
+   Shazam quota behind the user's back (a batch of retries is exactly what trips the throttle
+   that ruins live scans). So the copy says what is true and the Retry button stays. */
+var libFilter='All', libQ='', libMonth='', libOldest=false;
+var MONTH_TINT=['#3B6FD8','#B04A7A','#2A8C7C','#8A6BD8','#C2703A','#2E8FB0',
+                '#1F7A5C','#A83A62','#6B5FE0','#B7792A','#5B6B8C','#8C3A3A'];
+var MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+function monthKey(ts){var d=new Date(ts||0); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2);}
+function isEdit(x){return !!(x.speed&&x.speed!=='as posted');}
+function dayGroup(ts){
+  var g=dayOf(ts); if(g!=='Earlier') return g;
+  var d=new Date(ts||0), n=new Date();
+  return d.toLocaleDateString(undefined, d.getFullYear()===n.getFullYear()
+    ? {weekday:'short',month:'short',day:'numeric'} : {month:'short',day:'numeric',year:'numeric'});}
+function vchip(x){
+  var sp=(x.speed||'').toLowerCase(), lbl=speedLabel(x);
+  var cls=!isEdit(x)?'orig':'edit';
+  return '<span class="vchip '+cls+'">'+esc(lbl.charAt(0).toUpperCase()+lbl.slice(1))+'</span>';}
+function srcLine(x){
+  if(x.listen) return 'listen mode';
+  if(x.via==='search') return 'from search';
+  if(x.handle) return 'from @'+esc(x.handle);
+  return '';}
 function renderLib(){
-  var a=loadCrate(), un=unmatched();
-  var chips=[['All',a.length],['Edits',a.filter(function(x){return x.speed&&x.speed!=='as posted';}).length],
-             ['Unmatched',un.length]];
+  var all=loadCrate(), un=unmatched();
+  var edits=all.filter(isEdit).length;
+  document.getElementById('libsub').textContent = all.length
+    ? songs(all.length)+(edits?' · '+edits+' of them edit'+(edits===1?'':'s'):'') : 'Nothing saved yet';
+  var chips=[['All',all.length],['Edits',edits],['Originals',all.length-edits]];
+  if(un.length) chips.push(['Unmatched',un.length]);
   document.getElementById('libchips').innerHTML=chips.map(function(c){
-    return '<button class="chipf'+(libFilter===c[0]?' on':'')+'" data-k="'+c[0]+'">'+c[0]+
-      (c[1]?' · '+c[1]:'')+'</button>';}).join('');
+    return '<button type="button" class="chipf'+(libFilter===c[0]?' on':'')+(c[0]==='Unmatched'?' amber':'')+
+      '" data-k="'+c[0]+'">'+c[0]+(c[1]?' '+c[1]:'')+'</button>';}).join('');
   Array.prototype.forEach.call(document.querySelectorAll('#libchips .chipf'),function(c){
     c.onclick=function(){libFilter=c.getAttribute('data-k'); renderLib();};});
+
+  /* monthly playlists */
+  var months={}, order=[];
+  all.forEach(function(x){var k=monthKey(x.ts); if(!months[k]){months[k]=0; order.push(k);} months[k]++;});
+  order.sort().reverse();
+  var mb=document.getElementById('libmonths');
+  if(order.length && libFilter!=='Unmatched'){
+    mb.innerHTML='<div class="sect">Your monthly playlists</div><div class="mrow">'+order.map(function(k){
+      var y=+k.slice(0,4), m=+k.slice(5)-1, tint=MONTH_TINT[m];
+      return '<button type="button" class="mtile'+(libMonth===k?' on':'')+'" data-m="'+k+'" aria-pressed="'+(libMonth===k)+'">'+
+        '<span class="mcov" style="--mt:'+tint+'"><span class="mg">'+waveGlyph(22)+'</span>'+
+          '<span class="ml">'+MONTHS[m].slice(0,3).toUpperCase()+' '+String(y).slice(2)+'</span></span>'+
+        '<b>'+MONTHS[m]+'</b><span>'+songs(months[k])+'</span></button>';}).join('')+'</div>';
+    Array.prototype.forEach.call(mb.querySelectorAll('.mtile'),function(t){
+      t.onclick=function(){var k=t.getAttribute('data-m'); libMonth=(libMonth===k)?'':k; renderLib();};});
+  } else mb.innerHTML='';
+
   var b=document.getElementById('libbody'), q=libQ.toLowerCase(), html='';
   function match(x){if(!q) return true;
-    return [x.song,x.artist,x.handle,x.speed].join(' ').toLowerCase().indexOf(q)>=0;}
+    return [x.song,x.artist,x.handle,x.speed,x.listen?'listen mode':'',x.via==='search'?'search':''].join(' ').toLowerCase().indexOf(q)>=0;}
   if(libFilter!=='Unmatched'){
-    var list=a.filter(function(x){return match(x)&&(libFilter!=='Edits'||(x.speed&&x.speed!=='as posted'));});
-    var groups={};
-    list.forEach(function(x){var g=dayOf(x.ts); (groups[g]=groups[g]||[]).push(x);});
-    ['Today','Yesterday','Earlier'].forEach(function(g){
-      if(!groups[g]) return;
-      html+='<div class="daylbl">'+g+'</div>'+groups[g].map(function(x){
-        var i=a.indexOf(x);
-        var srcline=x.listen?'listen mode':(x.handle?'from @'+esc(x.handle):(x.src||''));
-        return '<button class="trow" data-i="'+i+'"><span class="sq" style="background:'+SQ[i%SQ.length]+'">'+IC.note+'</span>'+
-          '<span class="tt"><b>'+esc(x.song)+' - '+esc(speedLabel(x))+'</b>'+
-          '<span>'+(srcline?srcline+' · ':'')+'saved ✓</span></span>'+
-          (x.url?'<span class="addp" title="Open">'+IC.play+'</span>':'')+
-          '<span class="addp rmx" title="Remove">'+IC.x+'</span></button>';}).join('');});
-    /* unmatched teaser rides along under All */
-    if(libFilter==='All'&&un.length&&!q)
-      html+='<div class="daylbl">Pending</div>'+un.map(unRow).join('');
-  } else html=un.length?un.map(unRow).join(''):'';
-  if(!html) html='<div class="dashcard"><b>'+(q?'No matches for that search':'Nothing here yet')+'</b>'+
-    '<span>'+(q?'Try the song name, the creator, or "slowed".':'Songs you dig up land here.')+'</span></div>';
+    var list=all.filter(function(x){
+      if(!match(x)) return false;
+      if(libMonth && monthKey(x.ts)!==libMonth) return false;
+      if(libFilter==='Edits') return isEdit(x);
+      if(libFilter==='Originals') return !isEdit(x);
+      return true;});
+    list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
+    var groups={}, gorder=[];
+    list.forEach(function(x){var g=dayGroup(x.ts); if(!groups[g]){groups[g]=[]; gorder.push(g);} groups[g].push(x);});
+    gorder.forEach(function(g){
+      html+='<div class="daylbl">'+esc(g)+'</div><div class="flist">'+groups[g].map(function(x){
+        var i=all.indexOf(x), sl=srcLine(x);
+        return '<div class="frow" role="button" tabindex="0" data-i="'+i+'">'+
+          '<span class="fart">'+(x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.note+'</span>'+
+          '<span class="tt"><b>'+esc(x.song)+'</b>'+
+            '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span>'+
+          (x.url?'<span class="fplay" role="button" tabindex="0" aria-label="Play '+esc(x.song)+'"'+
+            ' data-play="'+esc(x.url)+'" data-src="" data-title="'+esc(x.song)+'">'+IC.play+'</span>':'')+
+          '</div>';}).join('')+'</div>';});
+    if(libFilter==='All'&&un.length&&!q&&!libMonth)
+      html+='<div class="daylbl">Not matched yet</div><div class="flist">'+un.map(unRow).join('')+'</div>';
+  } else html=un.length?'<div class="flist">'+un.map(unRow).join('')+'</div>':'';
+  if(!html) html='<div class="dashcard"><b>'+(q?'No finds match that':(libMonth?'Nothing from that month here':'Nothing here yet'))+'</b>'+
+    '<span>'+(q?'Try the reel you found it in, the creator, or "slowed".':'Songs you scan land here automatically.')+'</span></div>';
   b.innerHTML=html;
-  Array.prototype.forEach.call(b.querySelectorAll('.trow[data-i]'),function(row){
-    var i=+row.getAttribute('data-i'), x=loadCrate()[i]; if(!x) return;
-    row.onclick=function(){if(x.url) window.open(x.url,'_blank');};
-    var rm=row.querySelector('.rmx');
-    if(rm) rm.onclick=function(ev){ev.stopPropagation(); var a2=loadCrate(); a2.splice(i,1); storeCrate(a2);};});
-  Array.prototype.forEach.call(b.querySelectorAll('.trow[data-url]'),function(row){
+  Array.prototype.forEach.call(b.querySelectorAll('.frow[data-i]'),function(row){
+    var x=loadCrate()[+row.getAttribute('data-i')]; if(!x) return;
+    row.onclick=function(){if(x.url) window.open(x.url,'_blank','noopener');};
+    row.onkeydown=function(e){if(e.key==='Enter'&&e.target===row) row.onclick();};});
+  Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
     row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); dropUnmatched(u); run(u);};});}
-function unRow(x){return '<div class="trow unm" data-url="'+esc(x.url)+'"><span class="sq">?</span>'+
+function unRow(x){return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
   '<span class="tt"><b>Unmatched scan'+(x.handle?' · @'+esc(x.handle):'')+'</b>'+
-  '<span>We’ll retry as our edit database grows</span></span>'+
-  '<button class="retry">Retry</button></div>';}
+  '<span>Not matched yet · tap Retry to scan it again</span></span>'+
+  '<button type="button" class="retry">Retry</button></div>';}
 document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();};
+(function(){var s=document.getElementById('libsort'); if(!s) return;
+  s.innerHTML=IC.sort;
+  s.onclick=function(){libOldest=!libOldest; s.setAttribute('aria-label',libOldest?'Newest first':'Oldest first');
+    s.classList.toggle('flip',libOldest); renderLib();};})();
+
+
+/* ---------- search ----------
+   Contract with the engine: GET /search?q=&mode=lyric|vibe|creator|auto returns
+   {ok, mode, results:[{title, artist, version, url, src, art, plays, confidence, why}]}.
+   Konnor's rules for this screen, all load-bearing:
+   - Three modes taught by example rows. Nobody types into an empty box unless they know
+     what is allowed.
+   - "Best guesses", not matches. A lyric or a vibe has no clip audio behind it, so there
+     is nothing to score; a percentage here would be the one number in the app that is
+     made up. Confidence is a chip, and "strong" only arrives with a stated reason.
+   - Every row plays a clip. With a lyric or a vibe, hearing it is the only way to confirm.
+     Playback is the platform's own embed player via data-play, never our audio.
+   - Hum to search ships greyed out until it is real. */
+var S_EX=[['"mmm whatcha say"','lyric','quote'],['slowed, female vocal, gym reel','vibe','spark'],
+          ['edits by @fastmusic954','creator','at']];
+var sState={q:'',mode:'auto',busy:false,res:null,err:''}, sSeq=0;
+function sRecent(){return lsGet('addify-recent-searches','[]');}
+function sRemember(q){var a=sRecent().filter(function(x){return x.toLowerCase()!==q.toLowerCase();});
+  a.unshift(q); lsSet('addify-recent-searches',a.slice(0,8));}
+function renderSearch(){
+  var body=document.getElementById('sbody'), inp=document.getElementById('sq');
+  document.getElementById('sclear').hidden=!inp.value;
+  if(sState.busy){
+    body.innerHTML='<p class="sresh">Looking…</p><div class="slist"><div class="sskel"></div><div class="sskel"></div><div class="sskel"></div></div>';
+    return;}
+  if(sState.err){
+    body.innerHTML='<div class="smsg"><b>Search did not answer</b><span>'+esc(sState.err)+'</span>'+
+      '<button type="button" id="sretry">Try again</button></div>';
+    document.getElementById('sretry').onclick=function(){sRun(sState.q,sState.mode);};
+    return;}
+  if(sState.res){
+    var r=sState.res;
+    if(!r.length){
+      body.innerHTML='<div class="smsg"><b>Nothing close</b><span>Try fewer words, or the one line you remember best.</span></div>';
+      return;}
+    body.innerHTML='<p class="sresh">Best guesses - tap to hear a clip</p><div class="slist">'+
+      r.map(function(x,i){
+        var sub=[x.artist,x.version].filter(Boolean).join(' · ');
+        var saved=loadCrate().some(function(c){return c.song===x.title&&c.artist===x.artist;});
+        return '<div class="srow'+(i===0?' top':'')+'">'+
+          '<span class="sart" role="button" tabindex="0" aria-label="Play '+esc(x.title||'')+'"'+
+            ' data-play="'+esc(x.url||'')+'" data-src="'+esc(x.src||'')+'" data-title="'+esc(x.title||'')+'">'+
+            (x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.play+'</span>'+
+          '<span class="tt"><div class="nm">'+esc(x.title||'Untitled')+'</div>'+
+            (sub?'<div class="ar">'+esc(sub)+'</div>':'')+
+            '<div class="smeta">'+
+              (x.confidence==='strong'?'<span class="conf strong" title="'+esc(x.why||'')+'">Strong match</span>'
+                                      :'<span class="conf possible">Possible</span>')+
+              (x.src?srcChip(x.src):'')+
+              (x.plays?'<span>'+plays(x.plays)+' plays</span>':'')+'</div></span>'+
+          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+(saved?'Saved to Finds':'Save to Finds')+'">'+
+            (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>'+
+      '<div class="snone"><span class="sexi">'+IC.mic+'</span><span><b>None of these?</b>Humming it will narrow it down</span>'+
+        '<span class="soon">Soon</span></div>';
+    Array.prototype.forEach.call(body.querySelectorAll('.sadd'),function(b){
+      b.onclick=function(){var x=sState.res[+b.getAttribute('data-i')]; if(!x||b.classList.contains('did')) return;
+        saveOne({base_song:x.title,base_artist:x.artist,art:x.art||'',exact:{url:x.url},
+                 speed:x.version||'',handle:'',listen:false,via:'search'});
+        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label','Saved to Finds');};});
+    return;}
+  var rec=sRecent();
+  body.innerHTML='<div class="sect">Try something like</div><div class="sex">'+
+    S_EX.map(function(e){return '<button type="button" class="sexrow" data-q="'+esc(e[0])+'" data-m="'+e[1]+'">'+
+      '<span class="sexi">'+IC[e[2]]+'</span><span class="sext">'+esc(e[0])+'</span>'+
+      '<span class="sexm">'+e[1]+'</span></button>';}).join('')+'</div>'+
+    (rec.length?'<div class="sect">Recent searches</div><div class="srecent">'+
+      rec.map(function(q){return '<button type="button" data-q="'+esc(q)+'">'+esc(q)+'</button>';}).join('')+'</div>':'');
+  Array.prototype.forEach.call(body.querySelectorAll('[data-q]'),function(b){
+    b.onclick=function(){var q=b.getAttribute('data-q'); inp.value=q; sRun(q,b.getAttribute('data-m')||'auto');};});}
+function sRun(q,mode){
+  q=(q||'').trim(); if(!q) return;
+  var seq=++sSeq; sRemember(q);
+  sState={q:q,mode:mode||'auto',busy:true,res:null,err:''}; renderSearch();
+  var ctl=('AbortController' in window)?new AbortController():null;
+  var to=setTimeout(function(){if(ctl) ctl.abort();},14000);
+  fetch(ENGINE+'/search?q='+encodeURIComponent(q)+'&mode='+encodeURIComponent(sState.mode),ctl?{signal:ctl.signal}:{})
+    .then(function(r){return r.json().catch(function(){return {ok:false,error:'The engine sent back something unreadable.'};});})
+    .then(function(d){ if(seq!==sSeq) return;          // a newer search won
+      clearTimeout(to);
+      if(!d||!d.ok){sState.busy=false; sState.err=(d&&d.error)||'Try again in a moment.'; renderSearch(); return;}
+      sState.busy=false; sState.res=(d.results||[]).slice(0,6); renderSearch();})
+    .catch(function(e){ if(seq!==sSeq) return; clearTimeout(to);
+      sState.busy=false;
+      sState.err=(e&&e.name==='AbortError')?'It took too long to answer. Try again.':'Could not reach the engine. Check your connection and try again.';
+      renderSearch();});}
+(function(){
+  var f=document.getElementById('sform'), inp=document.getElementById('sq');
+  document.querySelector('#sform .sico').innerHTML=IC.search;
+  document.getElementById('smic').innerHTML=IC.mic;
+  document.getElementById('sclear').innerHTML=IC.x;
+  f.onsubmit=function(e){e.preventDefault(); inp.blur(); sRun(inp.value,'auto');};
+  inp.oninput=function(){document.getElementById('sclear').hidden=!inp.value;
+    if(!inp.value){sSeq++; sState={q:'',mode:'auto',busy:false,res:null,err:''}; renderSearch();}};
+  document.getElementById('sclear').onclick=function(){inp.value=''; inp.oninput(); inp.focus();};
+  var tb=document.getElementById('trendback');
+  if(tb){tb.innerHTML=IC.chev; tb.style.transform='rotate(90deg)'; tb.onclick=function(){nav('idle');};}
+})();
 
 /* ---------- profile ---------- */
 function monthlyOn(){try{return localStorage.getItem('addify-monthly')==='on';}catch(e){return false;}}
@@ -2764,7 +3225,7 @@ function renderProf(){
       '<button class="upbtn" id="upbtn">Upgrade</button></div>'+
     '<div class="sect">Connected accounts</div><div class="setlist">'+
       '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
-        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected ✓':'Connect')+'</button></div>'+
+        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected<span class="itick">'+IC.tick+'</span>':'Connect')+'</button></div>'+
       '<div class="setrow" style="opacity:.55"><span class="si">'+IC.apple+'</span><span class="st">Apple Music</span>'+
         '<span class="sv">iOS app</span></div></div>'+
     '<div class="sect">Scanning</div><div class="setlist">'+
@@ -3172,7 +3633,7 @@ function openPicker(d){
       var isDef=p.id===defId;
       return '<button class="pkrow'+(isDef?' def':'')+'" data-id="'+esc(p.id)+'">'+
         '<span class="sq" style="background:'+SQ[1]+'">'+(p.img?'<img src="'+esc(p.img)+'" alt="">':IC.note)+'</span>'+
-        '<span class="tt"><b>'+esc(p.name)+'</b><span>'+(isDef?'Default · already saved ✓':songs(p.n))+'</span></span>'+
+        '<span class="tt"><b>'+esc(p.name)+'</b><span>'+(isDef?'Default · already saved<span class="itick">'+IC.tick+'</span>':songs(p.n))+'</span></span>'+
         '<span class="pp'+(isDef?' did':'')+'">'+(isDef?IC.tick:IC.plus)+'</span></button>';}).join('')+
       '<button class="pkrow new" id="pknew"><span class="sq" style="background:none;border:1.5px dashed var(--line2);color:var(--faint)">'+IC.plus+'</span>'+
       '<span class="tt"><b>New playlist</b></span></button>';
@@ -3183,7 +3644,7 @@ function openPicker(d){
         pp.innerHTML='…';
         SP.addTo(pid,d.base_song,d.base_artist).then(function(){
           pp.classList.add('did'); pp.innerHTML=IC.tick;
-          row.querySelector('.tt span').textContent='Added ✓';
+          row.querySelector('.tt span').innerHTML='Added'+'<span class="itick">'+IC.tick+'</span>';
         }).catch(function(e){
           pp.innerHTML=IC.plus;
           row.querySelector('.tt span').textContent=
@@ -3194,7 +3655,7 @@ function openPicker(d){
       nw.querySelector('b').textContent='Creating…';
       SP.create(name).then(function(p){
         return SP.addTo(p.id,d.base_song,d.base_artist).then(function(){
-          nw.querySelector('b').textContent=p.name+' · added ✓';});
+          nw.querySelector('b').innerHTML=esc(p.name)+' · added'+'<span class="itick">'+IC.tick+'</span>';});
       }).catch(function(){nw.querySelector('b').textContent='Failed - tap to retry';});};
   }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists - reconnect Spotify in Profile.</div>';});}
 document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
@@ -3236,7 +3697,7 @@ function paintOnb(){
       '<div class="obs">We\'ll create your <b>Found with Addify</b> playlist there. Every scan saves automatically.</div>'+
       '<div style="margin-top:18px">'+
         '<button class="obrow'+(on?' done':'')+'" id="ob-sp"><span class="oi">'+IC.spotify+'</span>Connect Spotify'+
-          '<span class="ov'+(on?' ok':'')+'">'+(on?'Connected ✓':'›')+'</span></button>'+
+          '<span class="ov'+(on?' ok':'')+'">'+(on?'Connected<span class="itick">'+IC.tick+'</span>':'›')+'</span></button>'+
         '<button class="obrow" disabled><span class="oi">'+IC.apple+'</span>Connect Apple Music<span class="ov">iOS app</span></button>'+
         '<button class="obrow" disabled><span class="oi">'+IC.soundcloud+'</span>Connect SoundCloud<span class="ov">soon</span></button>'+
       '</div>'+
@@ -3248,8 +3709,11 @@ function paintOnb(){
       '<div class="obs">Pin it in your share sheet once - then it\'s the first icon every time you share a reel.</div>'+
       '<div class="pinmock">'+
         '<span class="pic2"><span class="ap addify">'+waveGlyph(22)+'<span class="n1">1</span></span>Addify</span>'+
-        '<span class="pic2"><span class="ap" style="background:#3F9B43">💬</span>Messages</span>'+
-        '<span class="pic2"><span class="ap" style="background:#2A6BD8">✉️</span>Mail</span>'+
+        /* These were 💬 and ✉️ emoji beside the real Addify icon - the "emoji that looked
+           cheap next to real iOS icons" Konnor caught. Drawn glyphs now, same stroke
+           family as the rest of the app. */
+        '<span class="pic2"><span class="ap" style="background:#34C759">'+IC.bubble+'</span>Messages</span>'+
+        '<span class="pic2"><span class="ap" style="background:#1A8CFF">'+IC.mail+'</span>Mail</span>'+
       '</div>'+
       '<div class="pinsteps">'+
         '<div class="ps"><i>1</i>Share any reel → scroll the app row to the end</div>'+
@@ -3263,7 +3727,7 @@ function paintOnb(){
     h='<div class="okring">'+IC.tick+'</div>'+
       '<div class="obh">You\'re set.</div>'+
       '<div class="obs">'+left+' free scans on us.<br>Go find that song.</div>'+
-      (SP.connected()?'<div class="obtag">✓ Spotify connected · playlist ready</div>':'')+
+      (SP.connected()?'<div class="obtag"><span class="itick">'+IC.tick+'</span>Spotify connected · playlist ready</div>':'')+
       '<button class="obcta" id="ob-next">Start scanning</button>';
   }
   b.innerHTML=h;

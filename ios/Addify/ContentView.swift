@@ -5,7 +5,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color(red: 0.04, green: 0.04, blue: 0.06).ignoresSafeArea()
+            Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea()
 
             EngineWebView(bridge: bridge)
                 .ignoresSafeArea()
@@ -75,7 +75,7 @@ struct UnreachableView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.04, green: 0.04, blue: 0.06).ignoresSafeArea())
+        .background(Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea())
         .foregroundStyle(.white)
     }
 }

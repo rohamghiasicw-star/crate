@@ -37,7 +37,7 @@ struct EngineWebView: UIViewRepresentable {
         wv.allowsBackForwardNavigationGestures = false
         wv.scrollView.contentInsetAdjustmentBehavior = .never   // the page manages its own safe areas
         wv.isOpaque = false
-        wv.backgroundColor = UIColor(red: 0.04, green: 0.04, blue: 0.06, alpha: 1)
+        wv.backgroundColor = UIColor(red: 0.090, green: 0.078, blue: 0.122, alpha: 1)   // #17141F, the page ground, so launch never flashes a second black
         bridge.webView = wv
         context.coordinator.load(wv)
         return wv
