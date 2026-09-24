@@ -429,6 +429,11 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .trow .addp{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
   color:var(--accent2);background:var(--card);transition:background .15s,color .15s}
 .trow .addp.did{color:var(--good);background:transparent}
+/* Roham, 2026-09-24: the chart rows sat shoulder to shoulder. Air between cards, and a
+   beat of space under the filter chips, only on the Trending screen. */
+#trendbody .list{gap:12px}
+#trendbody .trow{padding:13px 12px}
+#trendbody{margin-top:4px}
 
 /* library rows reuse .trow minus the rank; search + chips */
 .search{display:flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--line);
