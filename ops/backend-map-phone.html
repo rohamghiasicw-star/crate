@@ -11,63 +11,94 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:390px;height:844px;background:var(--bg);color:var(--ink);
     font-family:-apple-system,"SF Pro Display",Inter,Segoe UI,Roboto,sans-serif;overflow:hidden}
-  .wrap{padding:14px 14px 0}
-  h1{font-size:17px;font-weight:800;letter-spacing:-.2px;line-height:1.15}
-  .sub{color:var(--dim);font-size:10px;margin:3px 0 9px}
-  .band{background:var(--band);border:1px solid var(--line);border-radius:11px;
-    padding:8px 10px;margin-bottom:7px;position:relative}
+  .wrap{padding:13px 14px 0}
+  .kicker{font-size:9px;font-weight:800;letter-spacing:1.4px;color:var(--accent);text-transform:uppercase}
+  h1{font-size:16px;font-weight:800;letter-spacing:-.2px;line-height:1.15;margin-top:2px}
+  .sub{color:var(--dim);font-size:9.5px;margin:3px 0 10px;line-height:1.4}
+
+  /* routed map: a spine line with numbered nodes hung off it */
+  .map{position:relative;padding-left:34px}
+  .map::before{content:"";position:absolute;left:12px;top:4px;bottom:4px;width:2px;
+    background:linear-gradient(var(--accent),var(--amber) 55%,var(--red));border-radius:2px}
+  .node{position:relative;margin-bottom:6px}
+  .num{position:absolute;left:-34px;top:2px;width:24px;height:24px;border-radius:50%;
+    background:var(--accent);color:#fff;border:3px solid var(--bg);z-index:2;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px}
+  .card{background:var(--band);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
   .top{display:flex;align-items:center;gap:7px;margin-bottom:4px}
-  .num{width:19px;height:19px;border-radius:6px;background:var(--accent);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex:0 0 auto}
-  .name{font-size:12.5px;font-weight:700}
-  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:auto;flex:0 0 auto}
+  .name{font-size:12px;font-weight:700}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto}
+  .top .dot{margin-left:auto}
   .d-green{background:var(--green)} .d-amber{background:var(--amber)} .d-red{background:var(--red)}
-  .body{font-size:10px;line-height:1.45;color:var(--dim)}
+  .body{font-size:9.5px;line-height:1.42;color:var(--dim)}
   .body b{color:var(--ink);font-weight:600}
-  .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:9px;color:var(--blue)}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:8.5px;color:var(--blue)}
   .tag{display:inline-block;font-size:8px;font-weight:700;padding:1px 5px;border-radius:9px;
-    margin-left:3px;vertical-align:middle}
+    margin-left:2px;vertical-align:middle}
   .t-green{background:rgba(56,211,159,.16);color:var(--green)}
   .t-amber{background:rgba(255,180,84,.16);color:var(--amber)}
   .t-red{background:rgba(255,107,107,.16);color:var(--red)}
-  .conn{text-align:center;color:var(--dim);font-size:9px;margin:-4px 0 3px}
-  .legend{display:flex;gap:10px;justify-content:center;font-size:9px;color:var(--dim);
-    margin-top:5px}
+  /* route label riding the spine between two nodes */
+  .route{position:relative;height:15px;margin:1px 0 5px}
+  .route span{position:absolute;left:-27px;top:0;font-size:8px;color:var(--dim);
+    background:var(--bg);padding:1px 4px}
+  .route b{color:var(--accent);font-weight:800;margin-right:4px}
+
+  .legend{display:flex;gap:8px;justify-content:center;font-size:8.5px;color:var(--dim);
+    border:1px solid var(--line);border-radius:10px;padding:6px 8px;margin-top:8px}
   .legend span{display:flex;align-items:center;gap:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Addify backend, storage to phone</h1>
-  <div class="sub">One Mac, no cloud database, no accounts. Nothing hosted yet. Dot color = state.</div>
+  <div class="kicker">Addify backend map</div>
+  <h1>How a scan travels, storage to phone</h1>
+  <div class="sub">One Mac, no cloud database, no accounts, nothing hosted yet. Follow the line. Dot color is the state of each stop.</div>
 
-  <div class="band">
-    <div class="top"><div class="num">1</div><div class="name">Storage, on Roham's Mac</div><span class="dot d-green"></span></div>
-    <div class="body"><span class="mono">~/crate</span> live code + UI, <span class="mono">~/crate-repo</span> git history. <b>No cloud DB, no sign-up, no saved user data. Audio deleted after every scan.</b></div>
-  </div>
-  <div class="conn">&#9660; a scan arrives as a TikTok or Instagram link</div>
+  <div class="map">
+    <div class="node">
+      <div class="num">1</div>
+      <div class="card">
+        <div class="top"><div class="name">Storage, on Roham's Mac</div><span class="dot d-green"></span></div>
+        <div class="body"><span class="mono">~/crate</span> live code + UI, <span class="mono">~/crate-repo</span> git history. <b>No cloud DB, no sign-up, no saved user data. Audio deleted after every scan.</b></div>
+      </div>
+    </div>
+    <div class="route"><span><b>&#9660;</b>a scan arrives as a TikTok or Instagram link</span></div>
 
-  <div class="band">
-    <div class="top"><div class="num">2</div><div class="name">Ingest, pull the clip audio</div><span class="dot d-amber"></span></div>
-    <div class="body">TikTok + Instagram via <span class="mono">curl_cffi</span> TLS trick<span class="tag t-amber">unofficial</span>, no login. Or <b>listen mode</b>, mic 12s<span class="tag t-green">works</span>. Browsers can't: no CORS on the audio.</div>
-  </div>
-  <div class="conn">&#9660;</div>
+    <div class="node">
+      <div class="num">2</div>
+      <div class="card">
+        <div class="top"><div class="name">Ingest, pull the clip audio</div><span class="dot d-amber"></span></div>
+        <div class="body">TikTok + Instagram via <span class="mono">curl_cffi</span> TLS trick<span class="tag t-amber">unofficial</span>, no login. Or <b>listen mode</b>, mic 12s<span class="tag t-green">works</span>. Browsers can't: no CORS on the audio.</div>
+      </div>
+    </div>
+    <div class="route"><span><b>&#9660;</b>hand the audio to the engine</span></div>
 
-  <div class="band">
-    <div class="top"><div class="num">3</div><div class="name">Engine <span class="mono">server.py :8788</span></div><span class="dot d-amber"></span></div>
-    <div class="body">Serves the app AND the API on one origin. <b>Name the song</b> Shazam + counter-speed sweep<span class="tag t-amber">unofficial</span>. <b>Find the exact edit</b> SoundCloud + YouTube, chromaprint verify<span class="tag t-green">works</span>. Caption + comment fallback, mashups.</div>
-  </div>
-  <div class="conn">&#9660; it calls out to these while it works</div>
+    <div class="node">
+      <div class="num">3</div>
+      <div class="card">
+        <div class="top"><div class="name">Engine <span class="mono">server.py :8788</span></div><span class="dot d-amber"></span></div>
+        <div class="body">Serves the app AND the API on one origin. <b>Name the song</b> Shazam + counter-speed sweep<span class="tag t-amber">unofficial</span>. <b>Find the exact edit</b> SoundCloud + YouTube, chromaprint verify<span class="tag t-green">works</span>. Caption + comment fallback, mashups.</div>
+      </div>
+    </div>
+    <div class="route"><span><b>&#9660;</b>call out to these while it works</span></div>
 
-  <div class="band">
-    <div class="top"><div class="num">4</div><div class="name">Outside services</div><span class="dot d-red"></span></div>
-    <div class="body">Shazam<span class="tag t-red">unofficial, Apple owns it</span> SoundCloud + YouTube search, <b>save blocked</b><span class="tag t-red">API access</span> Apple Music + Deezer links<span class="tag t-green">works</span> Spotify auto-playlist<span class="tag t-red">5-user cap</span></div>
-  </div>
-  <div class="conn">&#9660; result goes back to the phone</div>
+    <div class="node">
+      <div class="num">4</div>
+      <div class="card">
+        <div class="top"><div class="name">Outside services</div><span class="dot d-red"></span></div>
+        <div class="body">Shazam<span class="tag t-red">unofficial, Apple owns it</span> SoundCloud + YouTube search, <b>save blocked</b><span class="tag t-red">API access</span> Apple Music + Deezer links<span class="tag t-green">works</span> Spotify auto-playlist<span class="tag t-red">5-user cap</span></div>
+      </div>
+    </div>
+    <div class="route"><span><b>&#9660;</b>result goes back to the phone</span></div>
 
-  <div class="band">
-    <div class="top"><div class="num">5</div><div class="name">Delivery, Mac to phone</div><span class="dot d-amber"></span></div>
-    <div class="body"><span class="mono">cloudflared</span> tunnel, one Mac<span class="tag t-amber">sleeps = down</span> <b>crate.html</b> UI loads from the engine, live instantly. Native iOS app <span class="mono">ios/</span> <b>not compiled yet</b><span class="tag t-red">TestFlight</span></div>
+    <div class="node">
+      <div class="num">5</div>
+      <div class="card">
+        <div class="top"><div class="name">Delivery, Mac to phone</div><span class="dot d-amber"></span></div>
+        <div class="body"><span class="mono">cloudflared</span> tunnel, one Mac<span class="tag t-amber">sleeps = down</span> <b>crate.html</b> UI loads from the engine, live instantly. Native iOS app <span class="mono">ios/</span> <b>not compiled yet</b><span class="tag t-red">TestFlight</span></div>
+      </div>
+    </div>
   </div>
 
   <div class="legend">
