@@ -768,8 +768,12 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .iprgbg{stroke:rgba(255,255,255,.14)}
 .iprgfg{stroke:var(--accent);stroke-linecap:round;
   stroke-dasharray:182.2;stroke-dashoffset:182.2;transition:stroke-dashoffset .25s linear}
-.ipvid{flex:1;min-width:0;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}
-.ipvid iframe{width:100%;height:100%;border:0;display:block}
+.ipvid{position:relative;flex:1;min-width:0;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}
+.ipvid iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;z-index:1}
+/* The real YouTube thumbnail sits ON TOP until the live frame is playing, so the box is a
+   real video frame from the very first paint instead of the black loading rectangle. */
+.ipposter{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2}
+.ipvid.playing .ipposter{opacity:0;pointer-events:none;transition:opacity .3s}
 .iplx{position:absolute;top:9px;right:9px;width:26px;height:26px;border-radius:50%;
   background:rgba(8,6,14,.55);color:#fff;display:grid;place-items:center;z-index:4;cursor:pointer}
 .iplx svg{width:12px;height:12px}
@@ -3999,23 +4003,33 @@ function ipOpen(vid,url){
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
   if(!ipl||!slot) return;
   var corner=document.getElementById('artplay'); if(corner) corner.hidden=true;
-  ipl.hidden=false; ipGlyph(true); ipRing(0);
+  ipl.hidden=false; ipGlyph(true); ipRing(0); slot.classList.remove('playing');
   var origin=encodeURIComponent(location.origin);
+  // Poster first (a real YouTube frame the instant the box appears), the autoplay iframe
+  // behind it. maxresdefault is not guaranteed to exist, hqdefault always is; fall back.
   slot.innerHTML='<iframe id="ipframe" title="Player" allow="autoplay; encrypted-media" '+
     'allowfullscreen playsinline src="https://www.youtube-nocookie.com/embed/'+vid+
-    '?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin='+origin+'"></iframe>';
+    '?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin='+origin+'"></iframe>'+
+    '<img class="ipposter" alt="" src="https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg" '+
+    'onerror="this.onerror=null;this.src=\'https://i.ytimg.com/vi/'+vid+'/0.jpg\'">';
+  // Reveal the live video ONLY once real frames are rendering (state PLAYING, or the
+  // playhead has actually advanced). If it is still buffering or the API is blocked the
+  // poster stays, so the box is always a real video frame, never the black loading square.
+  var _reveal=function(){slot.classList.add('playing');};
   withYT(function(){
     try{
       _ipPlayer=new YT.Player('ipframe',{events:{
         onReady:function(e){try{e.target.playVideo();}catch(_){}},
         onStateChange:function(e){
           if(!window.YT||!YT.PlayerState) return;
-          ipGlyph(e.data===YT.PlayerState.PLAYING);
+          if(e.data===YT.PlayerState.PLAYING){ipGlyph(true); _reveal();}
+          else ipGlyph(e.data===YT.PlayerState.PLAYING);
           if(e.data===YT.PlayerState.ENDED) ipRing(1);
         }}});
       _ipTimer=setInterval(function(){
         try{var d=_ipPlayer.getDuration&&_ipPlayer.getDuration();
           var t=_ipPlayer.getCurrentTime&&_ipPlayer.getCurrentTime();
+          if(t>0.1) _reveal();                 // real frames are up, drop the poster
           if(d>0) ipRing(t/d);}catch(_){}
       },250);
     }catch(_){}
