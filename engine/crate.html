@@ -2935,9 +2935,10 @@ function renderResult(d,partial){
   /* A one-word comment is not evidence. Konnor's own screenshot had "opinions" sitting
      under "circles by post malone" with equal weight, and another scan surfaced "fearles".
      Keep a hint only when it has at least two words and some length to it. */
-  var hints=(d.comment_hints||[]).filter(function(h){
-      h=String(h||'').trim(); return h.length>=8 && h.split(/\s+/).length>=2;}).slice(0,3);
-  var quotes = hints.length ? '<div class="quotes"><div class="qh">From the comments</div>'+hints.map(function(h){return '<div class="quote">'+IC.quote+'<span>'+esc(h)+'</span></div>';}).join('')+'</div>' : '';
+  // Konnor: the "From the comments" section is gone from the result screen. The label and
+  // the quoted comment lines are removed so "Find another song" rises into that space. The
+  // "Later in the clip" and "Version of" notes below are separate and stay.
+  var quotes = '';
   /* A LATER WINDOW HEARD A DIFFERENT TITLE (server `later_window`, one extra Shazam
      probe on the second half of a clip the sweep answered from one slice). Shown as a
      note next to the comments, never as the answer: the version hunt did not chase it
