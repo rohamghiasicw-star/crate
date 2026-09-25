@@ -3877,10 +3877,12 @@ function embedFor(url, src){
   // to YouTube" was): a v= param anywhere in the query, youtu.be, /shorts/, /embed/, /v/,
   // /live/. Video ids are 11 chars. Host-guarded so a stray ?v= on another platform never
   // gets loaded into a YouTube frame. autoplay=1 starts the recording from the top and the
-  // embed runs the whole thing, start to finish.
+  // embed runs the whole thing, start to finish. playsinline=1 is what keeps iOS WKWebView
+  // playing it INSIDE the sheet instead of throwing it into the native fullscreen player
+  // (or handing off to the YouTube app), which on a phone reads as "it took me to YouTube".
   if(src==='youtube'||/youtube\.com|youtu\.be/.test(url)){
     var yt=url.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/);
-    if(yt) return 'https://www.youtube-nocookie.com/embed/'+yt[1]+'?autoplay=1&rel=0';
+    if(yt) return 'https://www.youtube-nocookie.com/embed/'+yt[1]+'?autoplay=1&rel=0&playsinline=1';
   }
   return null;
 }
