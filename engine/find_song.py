@@ -223,11 +223,30 @@ def _url_timeskew(u):
         return None
 
 
+# SHAZAMKIT AS THE THROTTLE VALVE (2026-09-25, launch week). Roham: "Shazamkit is live ... use
+# it and add it". Measured on 14 note clips + the 4-clip gate: ShazamKit as the PRIMARY is 2
+# better (#8 right song, #25 real credit), 3 worse (#27 wrong song, #36 loses Winning and
+# the Nonstop vocals, #43 loses the speed), gate unchanged. So shazamio stays first for
+# accuracy, and ShazamKit answers any probe shazamio cannot: an error (the 429 wall when many
+# testers scan at once) or no answer inside SHAZAMIO_SOFT seconds (a throttled call hangs).
+# A plain "no match" is an answer and is NOT retried, so healthy scans are untouched.
+SHAZAMKIT_FALLBACK = os.environ.get("CRATE_SHAZAMKIT_FALLBACK", "1") != "0"
+SHAZAMIO_SOFT = float(os.environ.get("CRATE_SHAZAMIO_SOFT", 2.0))
+
+
 async def shazam(path):
     # Dispatch only. Name, signature and return keys are what crate_engine imports and
     # what server.py reads (url, freqskew), so consumers never learn which backend ran.
     if SHAZAM_BACKEND == "shazamkit":
         return await _shazam_shazamkit(path)
+    if SHAZAMKIT_FALLBACK and os.path.exists(SHAZAMKIT_BRIDGE):
+        try:
+            return await asyncio.wait_for(_shazam_shazamio(path), timeout=SHAZAMIO_SOFT)
+        except Exception:
+            hit = await _shazam_shazamkit(path)
+            if hit:
+                hit["backend"] = "shazamkit-fallback"
+            return hit
     return await _shazam_shazamio(path)
 
 
