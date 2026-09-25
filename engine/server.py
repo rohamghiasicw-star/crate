@@ -2066,6 +2066,12 @@ _OTHER_SONG_SKIP = {"the", "and", "feat", "ft", "with", "remix", "slowed", "sped
                     "song", "new", "best", "full", "extended", "clean", "explicit"}
 
 
+_OTHER_SONG_COMMON = {"you", "your", "this", "that", "with", "are", "was", "from", "just", "have",
+                      "what", "when", "one", "all", "not", "but", "for", "its", "name", "who",
+                      "how", "why", "can", "his", "her", "they", "them", "our", "out", "got",
+                      "get", "like", "love", "lol", "bro"}
+
+
 def _crown_other_song(top, base_title, reup=None, res=None):
     """A crown that NAMES A DIFFERENT SONG and whose audio does not prove the recording.
 
@@ -2076,9 +2082,21 @@ def _crown_other_song(top, base_title, reup=None, res=None):
     CORE_SAME a title that names nothing of the song is the stronger evidence. Every crown the
     owner graded right shares a word with its song ("believe", "three", "dougie", "blow",
     "bad blood", "popular" inside "mrpopular"); a core >= CORE_SAME row is never touched."""
-    if (top.get("core") or 0) >= E.CORE_SAME:
+    # NO SONG IDENTIFIED = NOTHING TO CROWN AGAINST. 2026-09-25, Konnor's Messi edit
+    # (ZSbLB6ptR): Shazam named nothing, the hunt ran on hashtags, and "Die Young (LIL TEXAS
+    # Hardstyle Remix)" was crowned at core 0.659 while two unrelated songs sat at a saturated
+    # 1.000. Without a base the only thing that can name the song is a comment hint, so the
+    # crown must match one (kyks: "Three by cult member ultra slowed" -> the Cult Member edit);
+    # with no usable hint, nothing is crowned, whatever core says.
+    no_base = not (base_title or "").strip()
+    if no_base and (top.get("from_creator") or top.get("from_comment") or top.get("from_creator_link")):
+        return None                      # the sound's own creator uploaded it, or a comment linked it
+    if (top.get("core") or 0) >= E.CORE_SAME and not no_base:
         return None
     names = [base_title or ""]
+    if no_base:
+        names += [h for h in ([(res or {}).get("lyric_guess")] +
+                              list((res or {}).get("comment_hints") or [])) if h]
     if reup and reup.get("title"):
         names.append(reup["title"])
     for sec in ((res or {}).get("sections") or []):
@@ -2090,10 +2108,18 @@ def _crown_other_song(top, base_title, reup=None, res=None):
             if len(w) >= 3 and w not in _OTHER_SONG_SKIP:
                 words.add(w)
     if not words:
+        if no_base:
+            return "no song was identified in this clip, so no upload can be called the version"
         return None                      # nothing distinctive to judge by
     hay = " ".join([E._title_key(top.get("title") or ""),
                     E._title_key(top.get("uploader") or "")])
-    if not any(w in hay for w in words):
+    hay_words = set(hay.split())
+    # A short word must match a whole word ("you" is not "young"); a long one may sit inside
+    # a run-together title ("popular" inside "mrpopular").
+    words = {w for w in words if w not in _OTHER_SONG_COMMON}
+    if no_base and not words:
+        return "no song was identified in this clip, so no upload can be called the version"
+    if not any((w in hay_words) if len(w) < 5 else (w in hay) for w in words):
         return ("this upload names a different song and its audio match (%d%%) is not strong "
                 "enough to prove it is the same recording" % round((top.get("core") or 0) * 100))
     # THE SHARED WORD CAN BE THE OTHER ARTIST'S NAME. Kyks (2026-09-25, base "Three (Slowed)")
