@@ -1728,6 +1728,11 @@ function headline(t){document.getElementById('listening').textContent=t;}
    done. Between milestones it creeps slowly toward the next one and stops there, so it
    keeps moving without ever claiming progress the engine has not actually made. */
 var pgNow=0, pgCap=0, pgTimer=null;
+/* IT NEEDS TO BE FAST (Konnor, job 456): the base song lands in a few seconds and is shown
+   at once. The exact-version hunt is the long tail, and on some clips the engine sits near
+   the top of the bar for minutes before it emits "done". After this budget we stop waiting
+   and settle with the answer already on screen; a "done" that beats the budget still wins. */
+var HUNT_BUDGET_MS=12000;
 /* THE FINISHING RUN OWNS THE BAR. pgDone() used to drive the same pgTimer everything
    else uses, so the /progress poll - which is still running when the song lands, and
    which reports 60 the instant the edit hunt starts - would clearInterval() the run to
@@ -2466,6 +2471,9 @@ function renderResult(d,partial){
   if(d.result==='uncertain'||d.base_uncertain||d.result==='no_match'){
     /* the crown jewel (brief): the worst moment builds the edit database. When the engine
        has a base guess, one tap turns a failure into training data via /feedback. */
+    /* Set the header here too, not only in finish(): renderResult can be called on its own,
+       and a "No song here" card must never sit under a "Match found" title. */
+    var _mt=document.getElementById('matchttl'); if(_mt) _mt.textContent='No match';
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
@@ -2487,9 +2495,11 @@ function renderResult(d,partial){
       return;}
     result.innerHTML=errCard('?', d.result==='no_match'?'No song here':'Couldn’t nail this one',
       d.result==='no_match'
-        ? 'Listened through the whole clip. This one is most likely genuine original audio, not a track.'
+        ? 'We listened all the way through and couldn’t match it. It may be sped up, edited, or just not in our database yet.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
+      '<button class="cta" id="nm-search">Describe it instead</button>'+
       '<div class="trainnote">Saved as pending. We’ll retry as the edit database grows</div>');
+    var nms=document.getElementById('nm-search'); if(nms) nms.onclick=function(){goHome(); nav('search');};
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
@@ -3843,6 +3853,29 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // 43-to-60 leap on screen at the handover; the engine reports 60 itself the
         // moment the hunt starts, so the poll will carry the bar there smoothly.
         setProg(pgNow, 94, 'Hunting the exact version');
+        // Settle the screen exactly once, whether the hunt finished or the budget fired.
+        // FILL THE BAR THE USER IS WATCHING, THEN swap in the finished card. Doing it
+        // the other way round was why the hunt bar never showed 100: renderResult with
+        // partial=false deletes the progress element, so pgDone() was painting into
+        // nothing and the bar simply vanished somewhere in the 60s-90s. The percentage
+        // has to land before the thing displaying it is taken away.
+        var settledUI=false;
+        var settle=function(full){
+          if(settledUI) return; settledUI=true;
+          clearTimeout(huntBudget);
+          return pgDone().then(function(){
+            if(full&&full.result&&full.result!=='engine_down'){
+              if(full.wave)setWaveData(full.wave);
+              if(full.win)setWindow(full.win,full.clip_secs);
+              setSpeedFromLabel(full.speed); renderResult(full,false);}
+            else{
+              // Budget hit before "done". Keep the song we already named and fold in the
+              // versions that verified so far (LIVE), so nothing found is thrown away.
+              var dd=Object.assign({},d,{
+                candidates:(LIVE.length?LIVE.slice():(d.candidates||[])), edits_pending:false});
+              try{renderResult(dd,false);}catch(e){renderResult(d,false);}}
+            finish(full||d);});};
+        var huntBudget=setTimeout(function(){ say('Showing the closest match'); settle(null); }, HUNT_BUDGET_MS);
         return huntEdits(p.url,function(c,n){
           liveAdd(c);
           // No setProg here any more. This fires only on candidates that VERIFY, and the
@@ -3850,18 +3883,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           // and covers the common case where nothing verifies at all. Two sources both
           // writing the bar is what made it jump. This one just narrates.
           say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
-        }).then(function(full){
-          // FILL THE BAR THE USER IS WATCHING, THEN swap in the finished card. Doing it
-          // the other way round was why the hunt bar never showed 100: renderResult
-          // with partial=false deletes the progress element, so pgDone() was painting
-          // into nothing and the bar simply vanished somewhere in the 60s-90s. The
-          // percentage has to land before the thing displaying it is taken away.
-          return pgDone().then(function(){
-            if(full&&full.result&&full.result!=='engine_down'){
-              if(full.wave)setWaveData(full.wave);
-              if(full.win)setWindow(full.win,full.clip_secs);
-              setSpeedFromLabel(full.speed); renderResult(full,false);}
-            finish(full||d);});});
+        }).then(function(full){ return settle(full); });
         });
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
