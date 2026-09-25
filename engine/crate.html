@@ -2332,9 +2332,17 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
     // than taking it to soundcloud, but keep when you click anywhere else it takes you
     // into SoundCloud". The row is one <a>, so the triangle inherited the navigation.
     // data-play carries the url; the delegated handler below swallows the click.
-    '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
-      ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
-      ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>'+
+    // KONNOR AGAIN (job 296): "clicked the triangle and it took me to YouTube". The crown
+    // card is the same upload the hero cover already plays inline (job 293), so when the
+    // caller hands us its YouTube id (opt.ipid) the triangle opens THAT inline player
+    // instead of the sheet, so this triangle plays in the app like the hero one, never
+    // handing the user off to YouTube.
+    (opt.ipid
+      ? '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
+          ' data-ipopen="1" data-ipid="'+esc(opt.ipid)+'" data-ipurl="'+esc(opt.ipurl||c.url)+'">'+IC.play+'</span>'
+      : '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
+          ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
+          ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>')+
     '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
     '<div class="mt">'+confChip(c,!!top)+
       (src?srcChip(src):'')+
@@ -2775,7 +2783,13 @@ function renderResult(d,partial){
         'that speed, so this is what it was made from, not the version itself.</span></div>':'')+
       '<div class="list">'+
       trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
-        flagtag:xoc?'unverified claim':(xoff?'not exact':'')})+'</div>';
+        flagtag:xoc?'unverified claim':(xoff?'not exact':''),
+        ipid:_ytid||'', ipurl:_ytid?pv:''})+'</div>'+
+      // KONNOR (job 296): the inline video sits RIGHT ON the crown card, directly under the
+      // triangle he taps, so the pause button and the YouTube frame open where he is looking
+      // instead of a band up by the hero. Same #ipl element job 293 built and both triangles
+      // (the hero cover corner and this card) open it.
+      inlinePlayer;
     var others=cands.filter(function(c){return c.url!==ex.url;});
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
@@ -3004,7 +3018,9 @@ function renderResult(d,partial){
      It just stops the header claiming the half we did not get. */
   if(!partial) document.getElementById('matchttl').textContent =
       noCrown ? 'Song identified' : 'Match found';
-  result.innerHTML='<div class="card">'+head+clip+hero+inlinePlayer+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
+  // inlinePlayer is rendered inside the crown card (in `shelf`), not here, so the video
+  // opens on the card the user tapped. It stays out of this concat to avoid a second copy.
+  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
@@ -3030,7 +3046,8 @@ function renderResult(d,partial){
   // the corner x collapses it back to the triangle.
   var _cin=document.getElementById('artplay');
   if(_cin && _cin.classList.contains('inline')){
-    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));};
+    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));
+      var _b=document.getElementById('ipl'); if(_b&&_b.scrollIntoView) _b.scrollIntoView({behavior:'smooth',block:'center'});};
     _cin.onclick=_openIP;
     _cin.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault(); _openIP();}};
   }
@@ -3955,8 +3972,11 @@ function playHere(url, src, title){
   document.getElementById('playerttl').textContent=title||'Preview';
   document.getElementById('playersrc').innerHTML=src?srcChip(src):'';
   document.getElementById('playerout').href=url;
+  // playsinline + allowfullscreen match the hero embed job 293 proved plays inside the app;
+  // without them iOS WKWebView can throw a YouTube clip into the native/YouTube-app player,
+  // which reads to the user as "it took me to YouTube".
   document.getElementById('playerbody').innerHTML=
-    '<iframe title="Player" allow="autoplay" loading="lazy" src="'+esc(frame)+'"></iframe>';
+    '<iframe title="Player" allow="autoplay; encrypted-media" allowfullscreen playsinline loading="lazy" src="'+esc(frame)+'"></iframe>';
   box.hidden=false;
 }
 /* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
@@ -3996,6 +4016,8 @@ function ipClose(){
   ipStop();
   var ipl=document.getElementById('ipl'); if(ipl) ipl.hidden=true;
   var c=document.getElementById('artplay'); if(c) c.hidden=false;
+  // bring back any crown-card triangle we swapped for the band
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=false;});
   ipRing(0);
 }
 function ipOpen(vid,url){
@@ -4051,6 +4073,16 @@ function closePlayer(){
 // One delegated listener for every row, present and future, including the ones the live
 // hunt streams in after this runs.
 document.addEventListener('click', function(e){
+  // The crown card triangle opens the same inline cover player (job 293), in the app.
+  var ip=e.target.closest && e.target.closest('[data-ipopen]');
+  if(ip){
+    e.preventDefault(); e.stopPropagation();
+    ip.hidden=true;                              // the triangle becomes the band's pause button
+    ipOpen(ip.getAttribute('data-ipid'), ip.getAttribute('data-ipurl'));
+    var band=document.getElementById('ipl');
+    if(band&&band.scrollIntoView) band.scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
   var t=e.target.closest && e.target.closest('[data-play]');
   if(!t) return;
   e.preventDefault(); e.stopPropagation();     // the row's <a> must not fire
@@ -4058,6 +4090,13 @@ document.addEventListener('click', function(e){
 }, true);
 document.addEventListener('keydown', function(e){
   if(e.key==='Escape') closePlayer();
+  if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.hasAttribute&&e.target.hasAttribute('data-ipopen')){
+    e.preventDefault();
+    ipOpen(e.target.getAttribute('data-ipid'), e.target.getAttribute('data-ipurl'));
+    var band2=document.getElementById('ipl');
+    if(band2&&band2.scrollIntoView) band2.scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
   if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.hasAttribute&&e.target.hasAttribute('data-play')){
     e.preventDefault();
     playHere(e.target.getAttribute('data-play'), e.target.getAttribute('data-src'),
