@@ -2892,14 +2892,12 @@ function renderResult(d,partial){
     // now. They sit behind the "View closest ones" disclosure, the same neutral fold the
     // crowned screen uses, which is the look he pointed at. The gray notes below stay: they
     // are not yellow and they are the honest footnote on the list, not a talking section.
+    // Konnor, job 442: he circled every footnote that sat under this list ("Titles are not
+    // measurements", "N more uploads were checked and did not match", "Open the top few and
+    // listen") and said none of it needs to be here at any time. The list is now just the
+    // ranked rows behind the fold; the heading and the match percent on each row carry it.
     var _rows='<div class="list">'+cands.slice(0,12).map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div>'+
-      claimNote(cands.slice(1,12))+
-      tieNote(cands.slice(1), cands[0])+
-      (_dropped?'<div class="trainnote">'+_dropped+' more upload'+(_dropped===1?' was':'s were')+
-        ' checked and did not match the clip audio, so '+(_dropped===1?'it is':'they are')+
-        ' not listed.</div>':'')+
-      '<div class="trainnote">Open the top few and listen. Your ear settles this faster than ours does.</div>';
+        return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div>';
     shelf='<div class="sect">Closest versions</div>'+crowdCard+
       '<details class="othv"><summary><span>View closest ones</span>'+
       '<span class="cv">'+IC.chev+'</span></summary>'+_rows+'</details>';
