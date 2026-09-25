@@ -2779,9 +2779,6 @@ function renderResult(d,partial){
     shelf='<div class="sect">'+(xsrc?'The recording this clip was cut from':
                                   exExact?'The exact version playing':
                                   exBeat?'Our pick':'The closest version we found')+'</div>'+
-      (xsrc?'<div class="heldcard"><b>Source, not the exact edit</b><span>The clip is this '+
-        'recording played '+esc(famSpeed(d)||'at a different speed')+'. We did not find an upload at '+
-        'that speed, so this is what it was made from, not the version itself.</span></div>':'')+
       '<div class="list">'+
       trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
         flagtag:xoc?'unverified claim':(xoff?'not exact':''),
@@ -2795,7 +2792,6 @@ function renderResult(d,partial){
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
-    shelf+=shelfNote(others,ex);
     // COLLAPSED BY DEFAULT (layout spec item 6), and ONLY HERE - the crowned case, where
     // there is already an answer on screen and this list is the supporting evidence. Note
     // what stays outside the fold: shelfNote above it ("#3 scores higher on audio alone"),
@@ -2819,8 +2815,7 @@ function renderResult(d,partial){
       (_flagged?'<span class="cvn">'+_flagged+(_flagged===1?' has a note':' have notes')+'</span>':'')+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       _shown.map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div></details>'+
-      claimNote(_shown);}}
+        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div></details>';}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
