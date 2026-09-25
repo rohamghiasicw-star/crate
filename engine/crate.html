@@ -1454,6 +1454,70 @@ a.clippill:hover{filter:brightness(1.12)}
     </div>
 </div>
 
+<!-- Backend map - a viewable diagram of the whole path from storage on the Mac to the phone.
+     Roham wanted this ON the phone, so it lives here as a real overlay reachable from Profile,
+     not a repo-only file. Styles are scoped with mp- so nothing collides with the app. -->
+<div class="sheet" id="mapsheet" hidden>
+  <div class="sheetcard" role="dialog" aria-modal="true" aria-label="Backend map">
+    <div class="hd"><button class="ib plain" id="mapx" title="Close" aria-label="Close backend map"></button><div class="ttl">Backend map</div><span></span></div>
+    <style>
+      #mapsheet .mp-sub{color:var(--dim,#9aa0ad);font-size:11px;margin:-2px 0 4px;line-height:1.4}
+      #mapsheet .mp-band{background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+      #mapsheet .mp-top{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+      #mapsheet .mp-num{width:20px;height:20px;border-radius:6px;background:var(--accent);color:var(--on-accent,#fff);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex:0 0 auto}
+      #mapsheet .mp-name{font-size:13px;font-weight:700}
+      #mapsheet .mp-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:auto;flex:0 0 auto}
+      #mapsheet .mp-g{background:#38d39f} #mapsheet .mp-a{background:#ffb454} #mapsheet .mp-r{background:#ff6b6b}
+      #mapsheet .mp-body{font-size:11px;line-height:1.5;color:var(--dim,#9aa0ad)}
+      #mapsheet .mp-body b{color:var(--text);font-weight:600}
+      #mapsheet .mp-mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:10px;color:#5aa9ff}
+      #mapsheet .mp-tag{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:9px;margin-left:3px;vertical-align:middle}
+      #mapsheet .mp-tg{background:rgba(56,211,159,.16);color:#38d39f}
+      #mapsheet .mp-ta{background:rgba(255,180,84,.16);color:#ffb454}
+      #mapsheet .mp-tr{background:rgba(255,107,107,.16);color:#ff6b6b}
+      #mapsheet .mp-conn{text-align:center;color:var(--dim,#9aa0ad);font-size:10px;margin:2px 0}
+      #mapsheet .mp-legend{display:flex;gap:12px;justify-content:center;font-size:10px;color:var(--dim,#9aa0ad);margin-top:4px;flex-wrap:wrap}
+      #mapsheet .mp-legend span{display:flex;align-items:center;gap:5px}
+    </style>
+    <div class="mp-sub">One Mac, no cloud database, no accounts. Nothing hosted yet. Dot color shows the state.</div>
+
+    <div class="mp-band">
+      <div class="mp-top"><div class="mp-num">1</div><div class="mp-name">Storage, on Roham's Mac</div><span class="mp-dot mp-g"></span></div>
+      <div class="mp-body"><span class="mp-mono">~/crate</span> live code and UI, <span class="mp-mono">~/crate-repo</span> git history. <b>No cloud DB, no sign-up, no saved user data. Audio deleted after every scan.</b></div>
+    </div>
+    <div class="mp-conn">&#9660; a scan arrives as a TikTok or Instagram link</div>
+
+    <div class="mp-band">
+      <div class="mp-top"><div class="mp-num">2</div><div class="mp-name">Ingest, pull the clip audio</div><span class="mp-dot mp-a"></span></div>
+      <div class="mp-body">TikTok and Instagram via <span class="mp-mono">curl_cffi</span> TLS trick<span class="mp-tag mp-ta">unofficial</span>, no login. Or <b>listen mode</b>, mic 12s<span class="mp-tag mp-tg">works</span>. Browsers cannot: no CORS on the audio.</div>
+    </div>
+    <div class="mp-conn">&#9660;</div>
+
+    <div class="mp-band">
+      <div class="mp-top"><div class="mp-num">3</div><div class="mp-name">Engine <span class="mp-mono">server.py :8788</span></div><span class="mp-dot mp-a"></span></div>
+      <div class="mp-body">Serves the app AND the API on one origin. <b>Name the song</b> Shazam plus counter-speed sweep<span class="mp-tag mp-ta">unofficial</span>. <b>Find the exact edit</b> SoundCloud plus YouTube, chromaprint verify<span class="mp-tag mp-tg">works</span>. Caption and comment fallback, mashups.</div>
+    </div>
+    <div class="mp-conn">&#9660; it calls out to these while it works</div>
+
+    <div class="mp-band">
+      <div class="mp-top"><div class="mp-num">4</div><div class="mp-name">Outside services</div><span class="mp-dot mp-r"></span></div>
+      <div class="mp-body">Shazam<span class="mp-tag mp-tr">unofficial, Apple owns it</span> SoundCloud and YouTube search, <b>save blocked</b><span class="mp-tag mp-tr">API access</span> Apple Music and Deezer links<span class="mp-tag mp-tg">works</span> Spotify auto-playlist<span class="mp-tag mp-tr">5-user cap</span></div>
+    </div>
+    <div class="mp-conn">&#9660; result goes back to the phone</div>
+
+    <div class="mp-band">
+      <div class="mp-top"><div class="mp-num">5</div><div class="mp-name">Delivery, Mac to phone</div><span class="mp-dot mp-a"></span></div>
+      <div class="mp-body"><span class="mp-mono">cloudflared</span> tunnel, one Mac<span class="mp-tag mp-ta">sleeps = down</span> <b>crate.html</b> UI loads from the engine, live instantly. Native iOS app <span class="mp-mono">ios/</span> <b>not compiled yet</b><span class="mp-tag mp-tr">TestFlight</span></div>
+    </div>
+
+    <div class="mp-legend">
+      <span><span class="mp-dot mp-g"></span>working now</span>
+      <span><span class="mp-dot mp-a"></span>fragile or capped</span>
+      <span><span class="mp-dot mp-r"></span>launch blocker</span>
+    </div>
+  </div>
+</div>
+
 <!-- Playlist picker - also outside .app (same position:fixed containing-block trap as #sheet). -->
 <div class="picker" id="picker" hidden>
   <div class="pkcard" role="dialog" aria-modal="true" aria-label="Add to playlist">
@@ -3706,6 +3770,7 @@ function renderProf(){
       '<div class="setrow" style="opacity:.55"><span class="st">Notifications</span><span class="sv">iOS app</span></div></div>'+
     '<div class="sect">Manage</div><div class="setlist">'+
       '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
+      '<button class="setrow" id="pfmap"><span class="si">'+IC.gear+'</span><span class="st">Backend map</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
@@ -3721,6 +3786,7 @@ function renderProf(){
     try{localStorage.setItem('addify-monthly', monthlyOn()?'off':'on');}catch(e){}
     SP.forgetPlaylist(); renderProf();};
   document.getElementById('pfexp').onclick=exportFinds;
+  document.getElementById('pfmap').onclick=openMap;
   document.getElementById('pfdev').onclick=openSheet;
   document.getElementById('pfclear').onclick=function(){
     if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
@@ -4109,6 +4175,10 @@ document.addEventListener('keydown', function(e){
    the engine's pages instead of a 404 on its own host. */
 function legalURL(name){return ENGINE+'/'+name;}
 function openSheet(){document.getElementById('sheet').hidden=false; paintSheet();}
+function openMap(){document.getElementById('mapsheet').hidden=false;}
+document.getElementById('mapx').innerHTML=IC.x;
+document.getElementById('mapx').onclick=function(){document.getElementById('mapsheet').hidden=true;};
+document.getElementById('mapsheet').onclick=function(e){if(e.target.id==='mapsheet') e.target.hidden=true;};
 document.getElementById('playerx').innerHTML=IC.x;
 document.getElementById('playerx').onclick=closePlayer;
 document.getElementById('player').onclick=function(e){if(e.target.id==='player') closePlayer();};
@@ -4396,6 +4466,7 @@ window.addEventListener('keydown',function(e){if(e.key==='Escape'){
   var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
   var ipl=document.getElementById('ipl'); if(ipl&&!ipl.hidden){ipClose(); return;}
   var pw=document.getElementById('player'); if(pw&&!pw.hidden){closePlayer(); return;}
+  var mp=document.getElementById('mapsheet'); if(mp&&!mp.hidden){mp.hidden=true; return;}
   var sh=document.getElementById('sheet'); if(!sh.hidden){sh.hidden=true; return;}}});
 </script>
 </body>
