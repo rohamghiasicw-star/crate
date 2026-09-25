@@ -36,6 +36,10 @@ try:
     import creator_check as CC
 except Exception:                                    # never take the server down for it
     CC = None
+try:
+    import caption_song as CS                        # hashtag pair -> catalogue song
+except Exception:                                    # never take the server down for it
+    CS = None
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
@@ -212,6 +216,39 @@ def _creator_attach(res, h, budget=5.0):
         res["handle"] = ev["clip_creator"]
     if ev.get("third_party_edit"):
         res["third_party_edit"] = True
+
+
+def _creator_peek(h, budget=1.0):
+    """Read the creator evidence WITHOUT closing its executor, so _creator_attach at the
+    end of phase 1 still collects the same future (a finished future can be read again).
+    None on anything short of a usable answer inside `budget`."""
+    if not h:
+        return None
+    try:
+        ev = h[1].result(timeout=budget)
+    except Exception:
+        return None
+    return ev if (ev and ev.get("ok")) else None
+
+
+def _caption_song(src, cr_handle):
+    """The uploader's hashtags, checked as an (artist, title) PAIR against Deezer.
+
+    Only ever called when Shazam named nothing, no platform credit names the track and no
+    hint names an artist - the spot that used to end in "No song here". TikTok captions
+    arrive with the creator evidence (src["desc"] is empty on embed-fetched clips, measured
+    on ZSbLB6ptR / ZSbLBcfGV); Instagram captions carry their hashtags inline in desc. The
+    creator thread has had the whole Shazam sweep to land, so the 1s peek is a backstop."""
+    if CS is None:
+        return None
+    ev = _creator_peek(cr_handle) or {}
+    tags = list(ev.get("caption_tags") or []) + list(ev.get("origin_tags") or [])
+    tags += CS.hashtags(src.get("desc") or "")
+    if not tags:
+        return None
+    handles = [ev.get("clip_creator") or "", ev.get("sound_owner") or "",
+               src.get("handle") or ""]
+    return CS.caption_song(list(dict.fromkeys(tags)), handles=handles)
 
 
 def _edit_worthy(src, fp):
@@ -1056,6 +1093,35 @@ def _phase1(url, key, t0):
             if REUPLOAD_LABEL != "credit":
                 res["speed"] = reup["expect"]
         _claim_from = hint_texts
+        # THE HASHTAGS CAN NAME THE SONG WHEN NOTHING ELSE DOES (2026-09-25, Konnor's Messi
+        # edits ZSbLB6ptR / ZSbLBcfGV). Shazam missed 18 probes at every rate, the only
+        # comment was chatter ("You added an extra 1 by accident") which became a lyric seed,
+        # and the app said "No song here" while the caption carried #russmillions #gunlean.
+        # caption_song accepts only a catalogue row whose artist AND title each equal a
+        # different tag, so "#messi" (an artist called Messi) or "#lionelmessi" (four of
+        # Deezer's top five are songs titled Lionel Messi) can never fire alone. Replayed on the 40 saved clips that carry
+        # hashtags: fires on those two clips only, Russ Millions - Gun Lean on both. It lands
+        # as a caption claim, the standing an uploader's "SONG: Artist - Title" line already
+        # has, so verify() still decides every crown on the real audio. A hint that already
+        # names an artist keeps priority: that is a declaration, this is an inference.
+        if (not fp and not base_title
+                and not (_claim_from and _parse_named_song(_claim_from[0])[0])):
+            _t = time.time()
+            _cs = None
+            try:
+                _cs = _caption_song(src, _cr)
+            except Exception:
+                _cs = None
+            E.tlog("caption_song", time.time() - _t, hit=bool(_cs),
+                   song=(_cs or {}).get("title"), artist=(_cs or {}).get("artist"))
+            if _cs:
+                base_title, base_artist = _cs["title"], _cs["artist"]
+                res["base_song"], res["base_artist"] = _cs["title"], _cs["artist"]
+                res["from_caption"] = True       # named by the uploader, not fingerprinted
+                res["unverified_base"] = True
+                res["caption_song"] = {"artist": _cs["artist"], "title": _cs["title"],
+                                       "tags": _cs.get("tags"), "via": _cs.get("via")}
+                res["speed"] = None
         if not fp and not base_title and not _claim_from:
             # LAST RESORT: the bare caption. `comment_song_hints` deliberately refuses a
             # plain phrase like "tap out freestyle" - it has no "song is X", no
@@ -2113,6 +2179,15 @@ def _crown_other_song(top, base_title, reup=None, res=None):
         return None                      # nothing distinctive to judge by
     hay = " ".join([E._title_key(top.get("title") or ""),
                     E._title_key(top.get("uploader") or "")])
+    if no_base:
+        # WITH NO SONG, A HINT MUST MATCH THE SONG NAME, NOT THE UPLOAD'S TAGS. Konnor's clip
+        # ZSbLB6ptR (2026-09-25): the only comment was chatter ("You added an extra 1 by
+        # accident") and it matched "Mushkil bada.. Yeh pyaar hai.. [ BASS BOOSTED] | Gupt |
+        # ... | extra bass added" on "extra" and "added". Bracketed text and everything after
+        # the first " | " describe the upload, not the song, so they are left out here.
+        song_part = re.split(r"\s[|｜]\s", top.get("title") or "")[0]
+        song_part = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", song_part)
+        hay = E._title_key(song_part) or ""
     hay_words = set(hay.split())
     # A short word must match a whole word ("you" is not "young"); a long one may sit inside
     # a run-together title ("popular" inside "mrpopular").
@@ -2120,6 +2195,8 @@ def _crown_other_song(top, base_title, reup=None, res=None):
     if no_base and not words:
         return "no song was identified in this clip, so no upload can be called the version"
     if not any((w in hay_words) if len(w) < 5 else (w in hay) for w in words):
+        if no_base:
+            return "no song was identified in this clip, so no upload can be called the version"
         return ("this upload names a different song and its audio match (%d%%) is not strong "
                 "enough to prove it is the same recording" % round((top.get("core") or 0) * 100))
     # THE SHARED WORD CAN BE THE OTHER ARTIST'S NAME. Kyks (2026-09-25, base "Three (Slowed)")
@@ -5106,7 +5183,11 @@ def _s_flat(prefix, src, q, timeout=8.0):
     an 8s ceiling instead of 25s, so a hung search frees its slot in the shared 6-wide
     semaphore quickly. Raises on failure, so a dead source reads as dead, not empty."""
     import subprocess
-    out = subprocess.run(E.YTDLP + [prefix + q, "--flat-playlist", "--print", E._SEARCH_FMT],
+    # E.ytdlp_for, not E.YTDLP: Homebrew's yt-dlp takes 5-23s on a SoundCloud flat search
+    # (module: ~1.2-1.8s, same rows), so under this 8s ceiling the Search tab's SoundCloud
+    # lane would time out and read as a dead source. See crate_engine.YTDLP_SC.
+    out = subprocess.run(E.ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                               "--print", E._SEARCH_FMT],
                          capture_output=True, text=True, timeout=timeout).stdout
     rows = []
     for line in out.splitlines():
@@ -6257,8 +6338,25 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"pct": round(float(p.get("pct") or 0), 1),
                                     "label": p.get("label") or ""})
         if u.path == "/health":
+            # "service" STAYS "crate engine" until every installed build is gone: the iOS
+            # app's EngineConfig.healthCheck accepts ONLY that exact string, so renaming it
+            # here would make every TestFlight build already on a phone read the engine as
+            # "not the Addify engine" and refuse to scan. The iOS side now accepts both
+            # names (next build); flip this to "addify engine" once that build is the only
+            # one installed. "name" carries the real product name from today.
+            try:
+                import find_song as _FS
+                _shz = {"backend": _FS.SHAZAM_BACKEND,
+                        "from": getattr(_FS, "SHAZAM_BACKEND_FROM", "env-or-default"),
+                        # the throttle-valve fallback, when this find_song has it
+                        "kit_fallback": bool(getattr(_FS, "SHAZAMKIT_FALLBACK", False)
+                                             and os.path.exists(_FS.SHAZAMKIT_BRIDGE))}
+            except Exception:
+                _shz = None
             return self._send(200, {"ok": True, "service": "crate engine",
+                                    "name": "Addify engine",
                                     "build": _page_build(),
+                                    "shazam": _shz,
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
         if u.path == "/trending":
             try:

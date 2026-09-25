@@ -24,10 +24,37 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 # ShazamKit, the launch-blocker fix in ADDIFY-PLAN.md) and needs a build signed with an
 # Apple Developer Program identity - README.md in that folder has the evidence. Unknown
 # values fail HERE, at import, so a typo in the env never silently runs the wrong backend.
-SHAZAM_BACKEND = os.environ.get("CRATE_SHAZAM_BACKEND", "shazamio")
+#
+# THE CHOICE LIVES IN A FILE TOO, NOT ONLY IN THE ENVIRONMENT (2026-09-25). An env-only flag
+# does not survive the engine's own restarts: tunnel_watchdog.sh relaunches server.py with
+# exactly IG_LOCAL_SESSION, BIND and CRATE_TIMING, so the first watchdog restart after a
+# hand-set CRATE_SHAZAM_BACKEND=shazamkit would put the engine back on shazamio with nobody
+# told. `shazam_backend.txt` next to this file (one word) is read when the env var is unset.
+# No file = shazamio, so shipping this changes nothing until someone writes the file.
+# The env var still wins when set, so a lab can pin a backend without touching the file.
+# /health reports the live value and where it came from.
+SHAZAM_BACKEND_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "shazam_backend.txt")
+
+
+def _backend_choice():
+    env = (os.environ.get("CRATE_SHAZAM_BACKEND") or "").strip()
+    if env:
+        return env, "env"
+    try:
+        with open(SHAZAM_BACKEND_FILE) as f:
+            v = f.read().strip().lower()   # "ShazamKit" must not stop the engine starting
+        if v:
+            return v, "file"
+    except OSError:
+        pass
+    return "shazamio", "default"
+
+
+SHAZAM_BACKEND, SHAZAM_BACKEND_FROM = _backend_choice()
 if SHAZAM_BACKEND not in ("shazamio", "shazamkit"):
-    raise RuntimeError("CRATE_SHAZAM_BACKEND=%r; expected 'shazamio' or 'shazamkit'"
-                       % SHAZAM_BACKEND)
+    raise RuntimeError("shazam backend %r (from %s); expected 'shazamio' or 'shazamkit'"
+                       % (SHAZAM_BACKEND, SHAZAM_BACKEND_FROM))
 SHAZAMKIT_BRIDGE = os.environ.get("CRATE_SHAZAMKIT_BRIDGE", os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "shazamkit_bridge", "ShazamBridge.app",
     "Contents", "MacOS", "ShazamBridge"))

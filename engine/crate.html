@@ -623,7 +623,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .pinmock{display:flex;gap:10px;justify-content:center;background:var(--raise);border-radius:14px;
   padding:14px 12px;margin-top:18px}
 .pinmock .pic2{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
-.pinmock .ap{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;color:#fff;position:relative}
+.pinmock .ap{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;color:#fff;position:relative}
 /* iOS share sheet "More" tile: a plain grey square with three dots. */
 .pinmock .ap.more{background:linear-gradient(180deg,#5B5B62,#3C3C42);color:#fff}
 .pinmock .ap.addify{background:linear-gradient(150deg,var(--accent2),var(--accent));
@@ -1301,8 +1301,12 @@ a.clippill:hover{filter:brightness(1.12)}
   <!-- ============ TRENDING ============ -->
   <section class="screen" id="s-trend">
     <div class="hd"><button class="ib plain" id="trendback" aria-label="Back to Home"></button>
-      <div class="ttl">Trending edits</div><span></span></div>
-    <p class="sub" style="text-align:left;margin:-2px 0 12px">What everyone's using right now · live from TikTok</p>
+      <div class="ttl">Trending songs</div><span></span></div>
+    <!-- Roham 09-24: "those are not actually trending songs". Most rows come from an Apple
+         Music "TikTok Songs" playlist, only a few from the live TikTok sound chart, and they
+         are songs, not edits. So no "live from TikTok" and no "edits" until the engine
+         serves a real TikTok chart (trending_tiktok.py). -->
+    <p class="sub" style="text-align:left;margin:-2px 0 12px">Popular on TikTok, from charts and playlists</p>
     <div class="chips" id="trendchips"></div>
     <div id="trendbody"></div>
   </section>
@@ -1319,7 +1323,7 @@ a.clippill:hover{filter:brightness(1.12)}
     <form class="sbox" id="sform" autocomplete="off" role="search">
       <span class="sico" aria-hidden="true"></span>
       <input id="sq" type="search" enterkeyhint="search" spellcheck="false" autocapitalize="off"
-             placeholder='a lyric, a vibe, or "that song from the reel"' aria-label="Search by lyric, vibe or creator">
+             placeholder="a lyric, a vibe, or a creator" aria-label="Search by lyric, vibe or creator">
       <button type="button" class="sclear" id="sclear" hidden aria-label="Clear search"></button>
       <button type="button" class="smic" id="smic" disabled aria-label="Hum to search is coming soon"></button>
     </form>
@@ -1406,7 +1410,7 @@ a.clippill:hover{filter:brightness(1.12)}
     <div class="hd">
       <button class="ib plain" id="back" title="Back" aria-label="Back"></button>
       <div class="ttl" id="matchttl">Match found</div>
-      <button class="ib plain" id="share" title="Copy link" aria-label="Copy link"></button>
+      <button class="ib plain" id="share" title="Share" aria-label="Share"></button>
     </div>
     <div id="result"></div>
   </section>
@@ -1483,16 +1487,36 @@ a.clippill:hover{filter:brightness(1.12)}
 <script>
 /* ---------- icons ---------- */
 var IC={
-  /* Traced from Konnor's photos of the real iOS icons (2026-09-24). Messages is a PLUMP,
-     nearly round white bubble that fills most of the green tile, with a short curled tail
-     at the lower left. Bigger and rounder than the old flat blob so the change is obvious. */
-  bubble:'<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.3C6 3.3 1.2 7 1.2 11.6c0 2.7 1.6 5 4.1 6.5-.2 1.3-.9 2.6-2 3.5-.2.2-.1.6.2.6 2.2 0 4.2-.8 5.6-2 .9.2 1.9.3 2.9.3 6 0 10.8-3.7 10.8-8.4S18 3.3 12 3.3z"/></svg>',
-  /* The real iOS Mail glyph: a clean WHITE envelope on the blue tile (the tile gradient is
-     on the parent .ap). It is a white body rectangle with one downward flap triangle from the
-     two top corners to an apex just below centre, a faint crease along the flap edges and a
-     soft shadow under the flap so it has depth without going grey. The old version drew four
-     shaded faces meeting at the centre, which read like a folded map, not an envelope. */
-  mail:'<svg width="34" height="34" viewBox="0 0 24 24"><defs><linearGradient id="mflap" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#EEF3FB"/></linearGradient><clipPath id="mclip"><rect x="2.3" y="5.6" width="19.4" height="12.8" rx="2.7"/></clipPath></defs><g clip-path="url(#mclip)"><rect x="2.3" y="5.6" width="19.4" height="12.8" fill="#ffffff"/><path d="M2.3 5.6 12 12.9 21.7 5.6Z" fill="url(#mflap)"/><path d="M3.4 13.7 12 13.9 20.6 13.7" fill="none" stroke="#E9EFF8" stroke-width="1.1" stroke-linecap="round" opacity=".8"/><path d="M2.3 5.6 12 12.9 21.7 5.6" fill="none" stroke="#C4D3E7" stroke-width=".75" stroke-linecap="round" stroke-linejoin="round"/></g></svg>',
+  /* MESSAGES AND MAIL, MEASURED OFF KONNOR'S PHOTOS (219, 225, 286, 364), not drawn from memory.
+     Both glyphs fill the whole 44px tile (viewBox 0 0 100 100 = tile percent) so every
+     proportion below is the one read off the real icon, and the tile gradients on the .ap
+     spans in step 3 are sampled from the same photos.
+     Messages (photo 225): one plump bubble, ellipse centre 50/47.6, 73% of the tile wide and
+     60% tall, short curled tail at the lower left (tip 17/78). Fill fades from white at the
+     top to pale mint at the bottom, with a thin light rim. */
+  bubble:'<svg width="44" height="44" viewBox="0 0 100 100" aria-hidden="true"><defs>'+
+    '<linearGradient id="abG" x1="0" y1="17" x2="0" y2="79" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset=".27" stop-color="#F3FCF5"/><stop offset=".48" stop-color="#E1F8E4"/><stop offset=".64" stop-color="#CDF1D2"/><stop offset=".8" stop-color="#B2E9BE"/><stop offset="1" stop-color="#9DE5AF"/></linearGradient>'+
+    '<filter id="abS" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="1.2" stdDeviation="1.4" flood-color="#0C7A22" flood-opacity=".25"/></filter></defs>'+
+    '<path filter="url(#abS)" fill="url(#abG)" stroke="#fff" stroke-opacity=".5" stroke-width=".8" d="M32.9 74.3A36.4 30.2 0 1 0 19.47 64.05Q21.5 73 17.3 78.3Q25 78 32.9 74.3Z"/></svg>',
+  /* Mail (photos 219, 364; Konnor 20:33: "the top part of the logo is pure white and the left
+     bottom and right side is a different shade"). Envelope 75% of the tile wide, 52% tall,
+     centred with its top at 22.5% of the tile, rounded corners. A deep PURE WHITE flap from both top corners down to a rounded
+     point 2/3 of the way down (59% of the tile), the point rounded as wide as the real one. Under it, pale blue grey LEFT and RIGHT
+     faces (lighter at the top) and a slightly bluer BOTTOM face, split by thin white fold
+     highlights. A soft shadow under the flap, a white rim round the envelope and a faint
+     drop shadow onto the blue. No horizontal seam anywhere. */
+  mail:'<svg width="44" height="44" viewBox="0 0 100 100" aria-hidden="true"><defs>'+
+    '<linearGradient id="amB" x1="0" y1="24" x2="0" y2="76" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#EAF3FE"/><stop offset=".22" stop-color="#E0EDFC"/><stop offset=".375" stop-color="#D5E7FD"/><stop offset=".53" stop-color="#C3DCFC"/><stop offset=".68" stop-color="#ACCEFA"/><stop offset=".76" stop-color="#9DC3F7"/><stop offset="1" stop-color="#8FB8EF"/></linearGradient>'+
+    '<linearGradient id="amF" x1="0" y1="38" x2="0" y2="76" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#DCEBFC"/><stop offset=".67" stop-color="#AFCCF2"/><stop offset=".78" stop-color="#9CBFF0"/><stop offset=".88" stop-color="#89B4F2"/><stop offset="1" stop-color="#8AB4F1"/></linearGradient>'+
+    '<linearGradient id="amT" x1="0" y1="24" x2="0" y2="60" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F6F9FE"/></linearGradient>'+
+    '<filter id="amS" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="1.6" stdDeviation="1.6" flood-color="#0A3C9E" flood-opacity=".35"/></filter>'+
+    '<filter id="amFS" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="1.4" stdDeviation="1.2" flood-color="#3A6FB8" flood-opacity=".3"/></filter>'+
+    '<clipPath id="amC"><rect x="12.5" y="24" width="75" height="52" rx="5.5"/></clipPath></defs><g transform="translate(0 -1.5)">'+
+    '<rect filter="url(#amS)" x="12.5" y="24" width="75" height="52" rx="5.5" fill="url(#amB)"/>'+
+    '<g clip-path="url(#amC)"><path d="M12.5 76 50 38.5 87.5 76Z" fill="url(#amF)"/>'+
+    '<path d="M13.6 75 38.5 50.1M86.4 75 61.5 50.1" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="1" stroke-linecap="round"/>'+
+    '<path filter="url(#amFS)" d="M12.5 24H87.5L57.5 55.2Q50 63 42.5 55.2Z" fill="url(#amT)"/></g>'+
+    '<rect x="12.5" y="24" width="75" height="52" rx="5.5" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.4"/></g></svg>',
   more:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18" cy="12" r="1.9"/></svg>',
   clock:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
   layers:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.5 8.5 4.5L12 12.5 3.5 8z"/><path d="m3.5 12.2 8.5 4.5 8.5-4.5M3.5 16.2l8.5 4.5 8.5-4.5"/></svg>',
@@ -2345,9 +2369,11 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
     // caller hands us its YouTube id (opt.ipid) the triangle opens THAT inline player
     // instead of the sheet, so this triangle plays in the app like the hero one, never
     // handing the user off to YouTube.
-    (opt.ipid
+    // KONNOR 09-25: every crown behaves the same, so a SoundCloud crown (opt.ipsc) opens
+    // the same inline ring player, with SoundCloud's own widget beside the ring.
+    (opt.ipid||opt.ipsc
       ? '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
-          ' data-ipopen="1" data-ipid="'+esc(opt.ipid)+'" data-ipurl="'+esc(opt.ipurl||c.url)+'">'+IC.play+'</span>'
+          ' data-ipopen="1" data-ipid="'+esc(opt.ipid||'')+'" data-ipurl="'+esc(opt.ipurl||c.url)+'">'+IC.play+'</span>'
       : '<span class="pl" role="button" tabindex="0" aria-label="Play here"'+
           ' data-play="'+esc(c.url)+'" data-src="'+esc(src)+'"'+
           ' data-title="'+esc(c.title||'')+'">'+IC.play+'</span>')+
@@ -2661,14 +2687,23 @@ function renderResult(d,partial){
   var _ytid = (pv && (pvsrc==='youtube'||/youtube\.com|youtu\.be/.test(pv)))
     ? ((pv.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/)||[])[1]||null)
     : null;
+  // Konnor 09-25 ("for every crown, not only YouTube"): a SoundCloud crown gets the same
+  // inline ring player. The ring reads SoundCloud's real playhead off its Widget API, the
+  // same way the YouTube one reads the IFrame API. Only real soundcloud.com track links.
+  var _scurl = (!_ytid && pv && (pvsrc==='soundcloud'||/soundcloud\.com/.test(pv)) &&
+                /^https:\/\/([a-z0-9-]+\.)?soundcloud\.com\/[^\s"'<>]+$/i.test(pv)) ? pv : '';
+  // The track's own SoundCloud artwork covers the box until the widget is ready, so the
+  // player never opens as an empty grey rectangle. 500px art instead of the 200px thumb.
+  var _scart = _scurl ? String((ex&&ex.art)||'').replace(/-t\d+x\d+(\.\w+)$/,'-t500x500$1') : '';
+  if(_scart && !/^https:\/\//i.test(_scart)) _scart='';
   var inlinePlayer='';
   var corner='';
-  if(_ytid){
+  if(_ytid||_scurl){
     // No data-play attribute on purpose: the global sheet handler keys off [data-play],
     // and this control opens the inline player instead (wired below by id).
     corner='<span class="artplay inline" id="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
-      ' data-ytid="'+esc(_ytid)+'" data-url="'+esc(pv)+'">'+IC.play+'</span>';
-    inlinePlayer='<div class="ipl" id="ipl" hidden>'+
+      ' data-ytid="'+esc(_ytid||'')+'" data-url="'+esc(pv)+'">'+IC.play+'</span>';
+    inlinePlayer='<div class="ipl" id="ipl" hidden'+(_scart?' data-art="'+esc(_scart)+'"':'')+'>'+
       '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
         '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
         '<span class="ipgl">'+IC.pause+'</span>'+
@@ -2795,7 +2830,7 @@ function renderResult(d,partial){
                                   exBeat?'Our pick':'The closest version we found')+'</div>'+
       '<div class="list">'+
       trackRow(ex,true,'',false,{rank:1,
-        ipid:_ytid||'', ipurl:_ytid?pv:''})+'</div>'+
+        ipid:_ytid||'', ipsc:!!_scurl, ipurl:(_ytid||_scurl)?pv:''})+'</div>'+
       // KONNOR (job 296): the inline video sits RIGHT ON the crown card, directly under the
       // triangle he taps, so the pause button and the YouTube frame open where he is looking
       // instead of a band up by the hero. Same #ipl element job 293 built and both triangles
@@ -3360,7 +3395,7 @@ function paintHome(){
   var tt=document.getElementById('trendteaser');
   var top=(TREND.rows||[]).slice(0,4);
   if(top.length){
-    tt.innerHTML='<div class="secthd"><div class="sect">Trending edits this week</div>'+
+    tt.innerHTML='<div class="secthd"><div class="sect">Trending songs</div>'+
       '<button id="seeall">See all</button></div>'+
       '<div class="list">'+top.map(function(r,i){return trowHTML(r,i+1);}).join('')+'</div>';
     document.getElementById('seeall').onclick=function(){nav('trending');};
@@ -3432,7 +3467,7 @@ function renderTrend(){
   var b=document.getElementById('trendbody');
   if(!TREND.rows.length){
     b.innerHTML='<div class="dashcard"><b>Loading the chart…</b>'+
-      '<span>Live TikTok sounds, ranked by videos made with them.</span></div>';
+      '<span>Popular TikTok songs from public charts and playlists.</span></div>';
     if(!TREND.ts) fetchTrending();
     return;}
   var f=TREND.rows.map(function(r,i){return {r:r,i:i};})
@@ -3569,7 +3604,7 @@ document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();
      Playback is the platform's own embed player via data-play, never our audio.
    - Hum to search ships greyed out until it is real. */
 var S_EX=[['"mmm whatcha say"','lyric','quote','A line you remember'],
-          ['slowed, female vocal, gym reel','vibe','spark','How it sounds or where it played'],
+          ['slowed, female vocal, night drive','vibe','spark','How it sounds or where it played'],
           ['edits by @fastmusic954','creator','at','Who posts the edits']];
 var sState={q:'',mode:'auto',busy:false,res:null,err:''}, sSeq=0;
 function sRecent(){return lsGet('addify-recent-searches','[]');}
@@ -4003,7 +4038,21 @@ function withYT(cb){
   var s=document.createElement('script'); s.src='https://www.youtube.com/iframe_api';
   (document.head||document.body).appendChild(s);
 }
-var _ipPlayer=null, _ipTimer=null;
+/* SoundCloud's Widget API, loaded once on first use, same pattern as withYT. It drives the
+   ring off SoundCloud's REAL playhead (PLAY_PROGRESS relativePosition) and pauses/resumes
+   the widget from the round button. If the script is blocked the widget still autoplays
+   on its own; only the ring stays still. */
+var _scApiCbs=[];
+function withSC(cb){
+  if(window.SC&&SC.Widget){cb();return;}
+  _scApiCbs.push(cb);
+  if(window.__scLoading) return; window.__scLoading=true;
+  var s=document.createElement('script'); s.src='https://w.soundcloud.com/player/api.js';
+  s.onload=function(){_scApiCbs.splice(0).forEach(function(f){try{f();}catch(e){}});};
+  s.onerror=function(){window.__scLoading=false; _scApiCbs.length=0;};
+  (document.head||document.body).appendChild(s);
+}
+var _ipPlayer=null, _ipTimer=null, _ipSC=null, _ipGen=0;
 var IP_C=2*Math.PI*29;   // ring circumference, matches r=29 in the .iprg svg
 function ipRing(frac){
   var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
@@ -4015,9 +4064,13 @@ function ipGlyph(playing){
   var b=document.getElementById('iplbtn'); if(b) b.setAttribute('aria-label',playing?'Pause':'Play');
 }
 function ipStop(){
+  _ipGen++;                                      // a late API callback for the old frame is ignored
   if(_ipTimer){clearInterval(_ipTimer); _ipTimer=null;}
   try{if(_ipPlayer&&_ipPlayer.destroy) _ipPlayer.destroy();}catch(e){}
   _ipPlayer=null;
+  try{if(_ipSC&&window.SC&&SC.Widget){var E=SC.Widget.Events;
+    [E.READY,E.PLAY,E.PAUSE,E.FINISH,E.PLAY_PROGRESS].forEach(function(ev){_ipSC.unbind(ev);});}}catch(e){}
+  _ipSC=null;
   var v=document.getElementById('ipvid'); if(v) v.innerHTML='';   // kill the iframe so audio stops
 }
 function ipClose(){
@@ -4029,11 +4082,18 @@ function ipClose(){
   ipRing(0);
 }
 function ipOpen(vid,url){
-  if(!/^[A-Za-z0-9_-]{11}$/.test(String(vid||''))) return;
+  var isYT=/^[A-Za-z0-9_-]{11}$/.test(String(vid||''));
+  var isSC=!isYT && /^https:\/\/([a-z0-9-]+\.)?soundcloud\.com\/[^\s"'<>]+$/i.test(String(url||''));
+  if(!isYT&&!isSC) return;
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
   if(!ipl||!slot) return;
+  ipStop();                                      // one player at a time, never two playing
   var corner=document.getElementById('artplay'); if(corner) corner.hidden=true;
+  // Both triangles turn into the band's pause button, whichever one was tapped, so a
+  // play triangle never sits beside a player that is already going (ipClose restores both).
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=true;});
   ipl.hidden=false; ipGlyph(true); ipRing(0); slot.classList.remove('playing');
+  if(isSC){ ipOpenSC(url, ipl, slot); return; }
   var origin=encodeURIComponent(location.origin);
   // Poster first (a real YouTube frame the instant the box appears), the autoplay iframe
   // behind it. maxresdefault is not guaranteed to exist, hqdefault always is; fall back.
@@ -4065,7 +4125,37 @@ function ipOpen(vid,url){
     }catch(_){}
   });
 }
+/* The SoundCloud half of the inline player (Konnor 09-25: "for every crown"). SoundCloud's
+   own widget sits where the YouTube video would, beside the same ring button. visual=true
+   is the artwork player, which fills the 16:9 box instead of a strip of grey chrome. */
+function ipOpenSC(url, ipl, slot){
+  var art=ipl.getAttribute('data-art')||'';
+  var src='https://w.soundcloud.com/player/?url='+encodeURIComponent(url)+
+    '&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false'+
+    '&show_teaser=false&visual=true&color=%237c8cff';
+  slot.innerHTML='<iframe id="ipframe" title="Player" allow="autoplay; encrypted-media" src="'+esc(src)+'"></iframe>'+
+    (art?'<img class="ipposter" alt="" src="'+esc(art)+'" onerror="this.remove()">':'');
+  var gen=_ipGen, _reveal=function(){slot.classList.add('playing');};
+  withSC(function(){
+    if(gen!==_ipGen) return;                     // closed or reopened while the script loaded
+    var f=document.getElementById('ipframe'); if(!f) return;
+    try{
+      var w=SC.Widget(f), E=SC.Widget.Events; _ipSC=w;
+      w.bind(E.READY,function(){_reveal(); try{w.play();}catch(_){}});
+      w.bind(E.PLAY,function(){ipGlyph(true); _reveal();});
+      w.bind(E.PAUSE,function(){ipGlyph(false);});
+      w.bind(E.FINISH,function(){ipGlyph(false); ipRing(1);});
+      w.bind(E.PLAY_PROGRESS,function(e){
+        if(e&&typeof e.relativePosition==='number') ipRing(e.relativePosition);});
+    }catch(_){}
+  });
+}
 function ipToggle(){
+  if(_ipSC){
+    var w=_ipSC;
+    try{w.isPaused(function(p){try{if(p){w.play(); ipGlyph(true);}else{w.pause(); ipGlyph(false);}}catch(_){}});}catch(_){}
+    return;
+  }
   if(!_ipPlayer||!_ipPlayer.getPlayerState||!window.YT||!YT.PlayerState) return;
   try{
     if(_ipPlayer.getPlayerState()===YT.PlayerState.PLAYING){_ipPlayer.pauseVideo(); ipGlyph(false);}
@@ -4324,10 +4414,10 @@ function paintOnb(){
       '<div class="obs">Pin it in your share sheet once and it\'s the first icon every time you share a reel.</div>'+
       '<div class="pinmock">'+
         '<span class="pic2"><span class="ap addify">'+waveGlyph(22)+'<span class="n1">1</span></span>Addify</span>'+
-        /* Gradients match the real Messages and Mail app icons so the mock reads
-           as the actual iOS share sheet. */
-        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#5AF676,#12BF30)">'+IC.bubble+'</span>Messages</span>'+
-        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#40B6FF,#1E82F4)">'+IC.mail+'</span>Mail</span>'+
+        /* Tile gradients sampled from Konnor's photos of the real Messages (225) and
+           Mail (219) icons so the mock reads as the actual iOS share sheet. */
+        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#5FEC75,#22BE3A)">'+IC.bubble+'</span>Messages</span>'+
+        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#5DC0F9,#1A68F7)">'+IC.mail+'</span>Mail</span>'+
         /* The real share sheet ends in a grey More button, and step 2 below says "Tap More",
            so show it here too. */
         '<span class="pic2"><span class="ap more">'+IC.more+'</span>More</span>'+

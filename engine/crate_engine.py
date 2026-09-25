@@ -43,8 +43,37 @@ SR = 22050
 # comparison. Homebrew's yt-dlp (2026.07.04, own python) fetches them fine. Prefer it; fall
 # back to the module when it is not installed.
 _BREW_YTDLP = "/opt/homebrew/bin/yt-dlp"
-YTDLP = ([_BREW_YTDLP, "--no-warnings", "--quiet"] if os.path.exists(_BREW_YTDLP)
-         else [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"])
+_MOD_YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
+_HAVE_BREW_YTDLP = os.path.exists(_BREW_YTDLP)
+# ...BUT ONLY FOR YOUTUBE. The switch above moved SoundCloud onto Homebrew too, and there it
+# is 5-16x slower for the same rows (2026-09-25, alternating, 3 rounds, same queries: flat
+# scsearch30 median 1.23s on the module vs 6.33s on Homebrew, scsearch60 1.48s vs 11.44s,
+# worst Homebrew run 23.48s against the search's own 25s timeout). Row lists were
+# byte-identical on both. Live, search_scyt went from a 7.1s median (09-24 to 17:31) to
+# 24.4s and 27.2s after the switch, and the 17:53 Instagram lookup spent 24.4s of its 38.5s
+# hunt on that one search. YouTube stays on Homebrew (it is the reason for the switch and
+# ytsearch is no slower there: 1.25s vs 1.68s); SoundCloud goes back to the module.
+YTDLP_YT = [_BREW_YTDLP, "--no-warnings", "--quiet"] if _HAVE_BREW_YTDLP else _MOD_YTDLP
+YTDLP_SC = _MOD_YTDLP
+YTDLP = YTDLP_YT                  # legacy name: YouTube-capable runner
+# WHICH YOUTUBE CLIENTS THE FALLBACK DOWNLOAD ASKS FOR: `android`, on both yt-dlp builds.
+# TRIED AND REVERTED 2026-09-25: "default,android". It resolves an audio-only opus stream
+# (format 251, served by the ANDROID_VR client) in about 2s, but the sectioned download then
+# fails: ffmpeg gets HTTP 403 Forbidden on that googlevideo URL and yt-dlp exits "ffmpeg
+# exited with code 8" with no wav. Measured on dbGe3hVKbsU, tsP9IVRlDZs, 3ei9oX726_U,
+# 60gk8NxJs6g and t8t13tii-Sw (yt_fallback_bench.py, Homebrew yt-dlp 2026.07.04): 0 of 5
+# delivered with "default,android", 5 of 5 delivered 20.0s wavs in 2.5-3.1s with `android`.
+# `bestaudio/best` never falls back to format 18 after a 403, so the "faster" pick would
+# have silently dropped every YouTube candidate that reaches this fallback.
+_YT_CLIENTS = "youtube:player_client=android"
+
+
+def ytdlp_for(target):
+    """The yt-dlp runner for a URL or a search spec ("scsearch30:..." / "ytsearch5:...")."""
+    t = (target or "").lower()
+    if t.startswith("ytsearch") or "youtube.com" in t or "youtu.be" in t:
+        return YTDLP_YT
+    return YTDLP_SC
 # --- exact-edit matching thresholds (see find_edit ranking) ---
 CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
 CORE_EDIT = 0.62     # min core to count as a real edit match, not a coincidence
@@ -1395,8 +1424,10 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
     permalink because the flat search returns api.soundcloud.com ids, which slug-derived
     titles and dedup keys both choke on."""
     try:
-        out = subprocess.run(["yt-dlp", "scsearch10:%s" % handle, "--flat-playlist",
-                              "-J", "--no-warnings"],
+        # YTDLP_SC, not a bare "yt-dlp": on this server's PATH that is Homebrew's build,
+        # 5-16x slower on SoundCloud search than the module (see YTDLP_SC).
+        out = subprocess.run(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
+                                         "-J", "--no-warnings"],
                              capture_output=True, timeout=25).stdout
         j = json.loads(out or "{}")
     except Exception:
@@ -1426,7 +1457,7 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
         if "api.soundcloud.com" in u:
             try:
                 jj = json.loads(subprocess.run(
-                    ["yt-dlp", "-J", "--no-warnings", u],
+                    YTDLP_SC + ["-J", "--no-warnings", u],
                     capture_output=True, timeout=20).stdout or "{}")
                 u = jj.get("webpage_url") or u
             except Exception:
@@ -4530,7 +4561,8 @@ def _thumb(v):
 def _run_search(spec):
     prefix, src, q = spec
     try:
-        out = subprocess.run(YTDLP + [prefix + q, "--flat-playlist", "--print", _SEARCH_FMT],
+        out = subprocess.run(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                                  "--print", _SEARCH_FMT],
                              capture_output=True, text=True, timeout=25).stdout
     except Exception:
         return []
@@ -4859,7 +4891,7 @@ def web_search_edits(queries, budget=None):
 def _meta(url):
     """plays + title for a single URL (web results don't carry play counts)."""
     try:
-        out = subprocess.run(YTDLP + [url, "--skip-download", "--print",
+        out = subprocess.run(ytdlp_for(url) + [url, "--skip-download", "--print",
                                       "%(view_count)s\t%(title)s\t%(uploader)s\t%(thumbnail)s"],
                              capture_output=True, text=True, timeout=30).stdout.strip()
         v, t, up, th = (out.split("\t") + ["", "", "", ""])[:4]
@@ -5062,11 +5094,12 @@ def dl_clip(url, dst, seconds=20, timeout=15):
     except Exception:
         pass                                     # fall through to the proven subprocess
     is_yt = "youtube.com" in url or "youtu.be" in url
-    args = YTDLP + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
-                    "-o", dst.replace(".wav", ".%(ext)s"),
-                    "--download-sections", "*0-%d" % seconds, "--force-keyframes-at-cuts"]
+    args = ytdlp_for(url) + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
+                             "-o", dst.replace(".wav", ".%(ext)s"),
+                             "--download-sections", "*0-%d" % seconds,
+                             "--force-keyframes-at-cuts"]
     if is_yt:
-        args += ["--extractor-args", "youtube:player_client=android"]
+        args += ["--extractor-args", _YT_CLIENTS]      # see _YT_CLIENTS
     try:
         subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
     except Exception:

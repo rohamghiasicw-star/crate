@@ -67,6 +67,7 @@ Everything this returns is a CANDIDATE, never an answer. A web result goes throu
 download and scores below CORE_KEEP. This lane can waste time; it cannot crown anything.
 """
 import re
+import html
 import threading
 import time
 import urllib.parse
@@ -225,6 +226,27 @@ def _text(s):
     return re.sub(r"\s+", " ", _TAGS.sub(" ", s or "")).strip()
 
 
+# A BRAVE LINK'S TEXT CARRIES THE BREADCRUMB AND THE SITE NAME. Konnor's Messi edit
+# (2026-09-25) was crowned "YouTube youtube.com › watch Gun lean Hoodtrap remix SLOWED &amp;
+# REVERB [...] - YouTube". The leading "<Site> <domain> › <path>" run, a trailing
+# " - YouTube" style site suffix and HTML entities are page chrome, not the upload's title.
+_CRUMB = re.compile(r"^(?:[^\s›]{1,30}\s+)?(?:www\.|m\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}"
+                    r"(?:\s*›\s*[^\s›]+)*\s+", re.I)
+_SITE_TAIL = re.compile(r"\s+[-|\u2013]\s+(?:YouTube|SoundCloud|TikTok|Spotify|Instagram|"
+                        r"Apple Music|Audiomack|Bandcamp)\s*$", re.I)
+
+
+def _web_title(label):
+    t = html.unescape(_text(label))
+    if "›" in t or re.match(r"^\S+\s+(?:www\.)?[a-z0-9-]+\.[a-z]{2,}\s", t, re.I):
+        t = _CRUMB.sub("", t, count=1)
+    # SoundCloud's page title: "Stream <title> by <uploader> | Listen online for free on SoundCloud"
+    m = re.match(r"^Stream (.+) by [^|]+?\s*\|\s*Listen\b.*$", t, re.I)
+    if m:
+        t = m.group(1)
+    return _SITE_TAIL.sub("", t).strip()
+
+
 def ddg(query):
     """DuckDuckGo HTML. Returns [] on a block, and REPORTS the block through the pacer
     so the rest of the lookup stops spending its budget on a closed door."""
@@ -253,7 +275,7 @@ def ddg(query):
         if not u or u in seen:
             continue
         seen.add(u)
-        out.append({"title": _text(label), "url": u, "source": _src_of(u),
+        out.append({"title": _web_title(label), "url": u, "source": _src_of(u),
                     "uploader": "", "plays": 0, "query": "web", "engine": "ddg"})
     return out
 
@@ -278,7 +300,7 @@ def brave(query):
         if not u or u in seen:
             continue
         seen.add(u)
-        out.append({"title": _text(label), "url": u, "source": _src_of(u),
+        out.append({"title": _web_title(label), "url": u, "source": _src_of(u),
                     "uploader": "", "plays": 0, "query": "web", "engine": "brave"})
     return out
 
