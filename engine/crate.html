@@ -2784,7 +2784,12 @@ function renderResult(d,partial){
       '<div class="list">'+
       trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
         flagtag:xoc?'unverified claim':(xoff?'not exact':''),
-        ipid:_ytid||'', ipurl:_ytid?pv:''})+'</div>';
+        ipid:_ytid||'', ipurl:_ytid?pv:''})+'</div>'+
+      // KONNOR (job 296): the inline video sits RIGHT ON the crown card, directly under the
+      // triangle he taps, so the pause button and the YouTube frame open where he is looking
+      // instead of a band up by the hero. Same #ipl element job 293 built and both triangles
+      // (the hero cover corner and this card) open it.
+      inlinePlayer;
     var others=cands.filter(function(c){return c.url!==ex.url;});
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
@@ -3013,7 +3018,9 @@ function renderResult(d,partial){
      It just stops the header claiming the half we did not get. */
   if(!partial) document.getElementById('matchttl').textContent =
       noCrown ? 'Song identified' : 'Match found';
-  result.innerHTML='<div class="card">'+head+clip+hero+inlinePlayer+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
+  // inlinePlayer is rendered inside the crown card (in `shelf`), not here, so the video
+  // opens on the card the user tapped. It stays out of this concat to avoid a second copy.
+  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
@@ -3039,7 +3046,8 @@ function renderResult(d,partial){
   // the corner x collapses it back to the triangle.
   var _cin=document.getElementById('artplay');
   if(_cin && _cin.classList.contains('inline')){
-    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));};
+    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));
+      var _b=document.getElementById('ipl'); if(_b&&_b.scrollIntoView) _b.scrollIntoView({behavior:'smooth',block:'center'});};
     _cin.onclick=_openIP;
     _cin.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault(); _openIP();}};
   }
@@ -4008,6 +4016,8 @@ function ipClose(){
   ipStop();
   var ipl=document.getElementById('ipl'); if(ipl) ipl.hidden=true;
   var c=document.getElementById('artplay'); if(c) c.hidden=false;
+  // bring back any crown-card triangle we swapped for the band
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=false;});
   ipRing(0);
 }
 function ipOpen(vid,url){
@@ -4067,6 +4077,7 @@ document.addEventListener('click', function(e){
   var ip=e.target.closest && e.target.closest('[data-ipopen]');
   if(ip){
     e.preventDefault(); e.stopPropagation();
+    ip.hidden=true;                              // the triangle becomes the band's pause button
     ipOpen(ip.getAttribute('data-ipid'), ip.getAttribute('data-ipurl'));
     var band=document.getElementById('ipl');
     if(band&&band.scrollIntoView) band.scrollIntoView({behavior:'smooth',block:'center'});
