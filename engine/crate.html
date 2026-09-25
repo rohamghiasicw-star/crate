@@ -2487,9 +2487,11 @@ function renderResult(d,partial){
       return;}
     result.innerHTML=errCard('?', d.result==='no_match'?'No song here':'Couldn’t nail this one',
       d.result==='no_match'
-        ? 'Listened through the whole clip. This one is most likely genuine original audio, not a track.'
+        ? 'We listened all the way through and couldn’t match it. It may be sped up, edited, or just not in our database yet.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
+      '<button class="cta" id="nm-search">Describe it instead</button>'+
       '<div class="trainnote">Saved as pending. We’ll retry as the edit database grows</div>');
+    var nms=document.getElementById('nm-search'); if(nms) nms.onclick=function(){goHome(); nav('search');};
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
