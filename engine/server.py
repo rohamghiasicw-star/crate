@@ -149,7 +149,7 @@ PAGE = os.path.join(HERE, "crate.html")
 # they are served from the same origin the page and the API already share. Plain files
 # in engine/pages/, no templating: they are read from disk on every hit, like crate.html.
 PAGES = os.path.join(HERE, "pages")
-STATIC_PAGES = ("privacy", "support", "terms")
+STATIC_PAGES = ("privacy", "support", "terms", "backend-map")
 
 
 def _page_build():
