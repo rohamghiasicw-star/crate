@@ -8,6 +8,8 @@ import WebKit
      link on the page) is silently dropped unless createWebViewWith hands it to the OS.
    - Spotify's PKCE login navigates the page itself to accounts.spotify.com and back with
      ?code=; if that is bounced to Safari the code never returns to the page.
+   - The play triangles embed YouTube / SoundCloud players as iframes. Those are sub-frame
+     loads and must stay in the page; treating them like links threw users out to YouTube.
    - getUserMedia (listen mode) re-prompts on every scan unless the delegate grants it.
    - A non-persistent data store would wipe the Spotify token and the library (both in
      localStorage) on every launch. */
@@ -67,7 +69,8 @@ struct EngineWebView: UIViewRepresentable {
             wv.load(req)
         }
 
-        /* Hosts allowed to render INSIDE the web view. Everything else opens in the OS. */
+        /* Hosts allowed to render INSIDE the web view as the main page. Everything else opens
+           in the OS. Embedded players (sub-frames) are decided separately in decidePolicyFor. */
         private func staysInside(_ url: URL) -> Bool {
             guard let host = url.host?.lowercased() else { return true }   // about:blank etc.
             if let engineHost = EngineConfig.baseURL.host?.lowercased(), host == engineHost { return true }
@@ -85,6 +88,27 @@ struct EngineWebView: UIViewRepresentable {
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { decisionHandler(.allow); return }
             let scheme = url.scheme?.lowercased() ?? ""
+            /* A player the page embedded is a SUB-frame loading, not the page leaving. Every
+               play triangle on the result screen inserts an iframe (youtube-nocookie.com or
+               w.soundcloud.com), and each iframe load comes through here. Before this check
+               those loads fell into the host test below and were handed to the OS, so the
+               tap threw Konnor out to YouTube (09-25 09:08 and 10:38) instead of playing in
+               the card. Apple: targetFrame is nil for a new window, so only real frames of
+               this page match. Main-frame loads, target=_blank taps and a frame that tries
+               to navigate the whole page still go through the link-out rules below, so
+               tapping the title, the arrow or the YouTube logo inside the player still
+               opens YouTube. */
+            if let frame = action.targetFrame, !frame.isMainFrame {
+                if scheme == "http" || scheme == "https" || scheme == "about" || scheme == "blob" || scheme == "data" {
+                    decisionHandler(.allow)
+                    return
+                }
+                /* An embed trying an app scheme (youtube:, vnd.youtube:) inside its own frame
+                   only leaves the app when the user actually tapped a link in it. */
+                if action.navigationType == .linkActivated { bridge.openExternal(url) }
+                decisionHandler(.cancel)
+                return
+            }
             if scheme == "http" || scheme == "https" {
                 if staysInside(url) { decisionHandler(.allow) } else { bridge.openExternal(url); decisionHandler(.cancel) }
                 return

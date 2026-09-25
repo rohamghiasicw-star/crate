@@ -59,7 +59,8 @@ If Xcode refuses to open the hand-written project:
 written. Free tunnels rotate on every cloudflared restart, so it WILL go stale. Change it
 in-app: long-press the status-bar strip at the top of the screen for about a second, or
 open `addify://settings`. The "Engine unreachable" screen also has a Settings button. Test
-GETs `/health` and accepts only `ok:true, service:"crate engine"`.
+GETs `/health` and accepts only `ok:true` with `service` either `"addify engine"` or
+`"crate engine"` (the old name stays accepted until every installed build knows the new one).
 
 To test against an engine on the Mac itself use the LAN IP with `http://` (ATS allows
 local networking). Listen mode needs a secure context, so mic capture only works over

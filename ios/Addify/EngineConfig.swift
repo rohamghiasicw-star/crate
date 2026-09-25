@@ -131,7 +131,7 @@ enum EngineConfig {
         return nil
     }
 
-    /* Mirror of GET /health in server.py: {ok, service:"crate engine", build, does}. */
+    /* Mirror of GET /health in server.py: {ok, service, name, build, shazam, does}. */
     struct Health: Decodable {
         let ok: Bool
         let service: String
@@ -149,9 +149,14 @@ enum EngineConfig {
         }
     }
 
-    /* Only a body that says ok:true AND service:"crate engine" counts. A captive portal
+    /* Only a body that says ok:true AND names the engine counts. A captive portal
        or a tunnel that now points at someone else's app also returns 200 on /health, and
-       accepting that would show the reachability screen as green while every scan fails. */
+       accepting that would show the reachability screen as green while every scan fails.
+       BOTH NAMES ARE ACCEPTED (2026-09-25, Roham: stop calling it crate). The engine still
+       answers "crate engine" because every build already installed matches that exact
+       string; once this build is the only one on testers' phones the engine flips to
+       "addify engine" and nothing breaks. */
+    static let engineServiceNames: Set<String> = ["addify engine", "crate engine"]
     static func healthCheck(_ base: URL) async throws -> Health {
         guard let url = URL(string: base.absoluteString + "/health") else { throw HealthError.badURL }
         var req = URLRequest(url: url)
@@ -160,7 +165,7 @@ enum EngineConfig {
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw HealthError.http(h.statusCode) }
         let health = try JSONDecoder().decode(Health.self, from: data)
-        guard health.ok, health.service == "crate engine" else { throw HealthError.notEngine(health.service) }
+        guard health.ok, engineServiceNames.contains(health.service) else { throw HealthError.notEngine(health.service) }
         return health
     }
 }

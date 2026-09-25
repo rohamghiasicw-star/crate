@@ -23,6 +23,8 @@ final class EngineBridge: ObservableObject {
     weak var webView: WKWebView?
 
     private var pendingLink: String? = nil
+    private var lastDelivered: String? = nil
+    private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
 
     /* addify://scan?url=<link>  (from the Share Extension)
@@ -61,6 +63,15 @@ final class EngineBridge: ObservableObject {
           also survives the stale-shell reload, which parks the link in sessionStorage
           'addify-pending' and resumes it after reloading onto current code. */
     func deliver(_ link: String) {
+        /* One share can arrive twice: onOpenURL(addify://scan) and the scenePhase .active
+           inbox drain both fire when the Share Extension brings the app forward, and their
+           order is not fixed. If the drain lands first it starts the scan, and the second
+           copy then finds busy set and reloads /share, restarting the scan it just began.
+           The same link inside a few seconds is the same share, so it is taken once. */
+        let now = Date()
+        if link == lastDelivered, now.timeIntervalSince(lastDeliveredAt) < 5 { return }
+        lastDelivered = link
+        lastDeliveredAt = now
         pendingLink = link
         flushPending()
     }

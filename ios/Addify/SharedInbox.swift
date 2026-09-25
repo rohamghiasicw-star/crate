@@ -51,6 +51,15 @@ enum SharedInbox {
         return u
     }
 
+    /* True while a link is still waiting for the app. The app drains the inbox the moment
+       it receives a share (onOpenURL or foreground), so the extension reads "no longer
+       pending" as "Addify has it" and can close its card. */
+    static var hasPending: Bool {
+        let d = AppGroup.defaults
+        d.synchronize()   // pick up the app's drain from the other process before reading
+        return !(d.string(forKey: urlKey) ?? "").isEmpty
+    }
+
     /* Mirrors sharedLink() in crate.html: a share sheet hands over either a clean URL or
        a blob of text ("Check out this TikTok! https://...") with one inside. Same regex
        as the page so both sides agree on what counts as a link. */
