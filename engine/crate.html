@@ -962,8 +962,10 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 /* Under the keep bar is worth marking - it is the line we refuse to crown under - but it
    is a weak score, not an alarm, so the amber is pulled back toward the body colour. The
    flags are the only thing on this screen allowed to shout. */
-.cf.s0{color:color-mix(in oklab,var(--warn) 68%,var(--muted))}
-.cfl.s0{color:color-mix(in oklab,var(--warn) 68%,var(--muted))}
+/* Konnor, job 402: no yellow on a result, ever. A sub-bar score is just quiet now, the
+   amber tint is gone. The heading and the fold carry the "we did not crown one" meaning. */
+.cf.s0{color:var(--muted)}
+.cfl.s0{color:var(--muted)}
 /* The row a gate refused keeps its real score colour - colour always encodes the
    MEASUREMENT here, and this upload genuinely did match. The amber edge and the HELD BACK
    pill carry the verdict. Mixing the two channels (an amber rule under a green 100%) was
@@ -2349,8 +2351,10 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
       (src?srcChip(src):'')+
       (c.plays?'<span class="mono">'+plays(c.plays)+' plays</span>':'')+
       (tag?'<span class="lvtag">'+esc(tag)+'</span>':'')+'</div>'+
-      ((opt.flag||opt.flagtag)?'<span class="flag'+(opt.flagtag?' tag':'')+'">'+
-        (opt.flagtag?'<b>'+esc(opt.flagtag)+'</b>':'')+esc(opt.flag||'')+'</span>':'')+
+      // Konnor, job 402: the amber per-row caveat box and the HELD BACK / "unverified claim"
+      // pill are gone from every row. He wants no yellow on a result, ever - "I don't care if
+      // it's ... bass boosted ... GET RID OF THE YELLOW". The match percent and the heading
+      // still carry the honest ranking; opt.flag/opt.flagtag are ignored now, not rendered.
     '</span>'+
     '<span class="op">Open'+IC.open+'</span>'+confRule(c.core)+'</a>';}
 /* ---------- live edit hunt ----------
@@ -2780,8 +2784,7 @@ function renderResult(d,partial){
                                   exExact?'The exact version playing':
                                   exBeat?'Our pick':'The closest version we found')+'</div>'+
       '<div class="list">'+
-      trackRow(ex,true,'',false,{rank:1,flag:xoc||xoff,
-        flagtag:xoc?'unverified claim':(xoff?'not exact':''),
+      trackRow(ex,true,'',false,{rank:1,
         ipid:_ytid||'', ipurl:_ytid?pv:''})+'</div>'+
       // KONNOR (job 296): the inline video sits RIGHT ON the crown card, directly under the
       // triangle he taps, so the pause button and the YouTube frame open where he is looking
@@ -2808,14 +2811,14 @@ function renderResult(d,partial){
       // shelfNote stay outside as before, but they only speak to reverb, bass and spatial
       // claims, so they do not cover these. The summary now says how many rows carry a
       // note, which is true whether or not anyone taps.
-      var _flagged=0;
-      for(var _i=0;_i<_shown.length;_i++){ if(candFlag(_shown[_i],d)) _flagged++; }
+      // Konnor, job 402: the amber "N have notes" pill is gone with the per-row flags it
+      // counted - the fold is a plain neutral control now, which is exactly the look he
+      // pointed at ("that's perfect that should always show up").
       shelf+='<details class="othv"><summary>'+
       '<span>Other versions we checked · '+others.length+'</span>'+
-      (_flagged?'<span class="cvn">'+_flagged+(_flagged===1?' has a note':' have notes')+'</span>':'')+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       _shown.map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2,flag:candFlag(c,d)});}).join('')+'</div></details>';}}
+        return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>';}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
@@ -2859,24 +2862,20 @@ function renderResult(d,partial){
     // "under our bar, best audio match was 17%". Roham: "How do u not get it when it
     // says the song right there in the comments". Lead with the agreement; the shelf
     // of near-misses stays under it because it is still the evidence we have.
-    var _cv=d.crowd_version||null, crowdCard='';
-    if(_cv&&_cv.hint){
-      var _fam=(_cv.family||[]).join(' + ');
-      crowdCard='<div class="heldcard crowd"><b>The comments already name it</b><span>'+
-        '\u201C'+esc(_cv.hint)+'\u201D'+
-        (_cv.agrees===true
-          ? '. The audio agrees: '+esc(famSpeed(d)||_fam)+'. That exact upload is not public or we could not find it; the closest public ones are below.'
-          : '. We cannot measure '+esc(_fam||'that')+' against the clip, so it stays the crowd\u2019s word, not ours. The closest public uploads are below.')+
-        '</span></div>';}
+    // Konnor, job 402: the yellow "The comments already name it" box is gone with the rest
+    // of the yellow. If the comments named the version the "From the comments" section lower
+    // on the card still carries that quote, so the crowd's word is not lost, just not a
+    // yellow section over the list.
+    var crowdCard='';
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
       noCrown=true;
       shelf='<div class="sect">Closest versions. We did not crown one</div>'+crowdCard+
-        '<div class="heldcard"><b>Nothing came close</b><span>The search found '+
+        '<div class="trainnote">The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
         'matched the clip audio, so there is nothing worth listing. The song above is '+
-        'still the answer.</span></div>';
+        'still the answer.</div>';
     } else {
     cands = _kept;
     noCrown=true;
@@ -2887,17 +2886,14 @@ function renderResult(d,partial){
     // slowed+reverb upload of the right song. The row underneath carries the real figure
     // (vmatch); the card only has to say which of the two things happened.
     // Konnor, job 402: the yellow "Held back on purpose" / "Under our bar" caption box that
-    // sat under this heading is gone - he called it pointless. The heading already says we did
-    // not crown one, and row 1 still carries the HELD BACK pill and the gate's own claim (via
-    // `held`/`why` below), so no reason is lost by dropping the paragraph. The closest versions
-    // now sit behind a "View closest ones" disclosure, the same fold used on the crowned
-    // screen, instead of spilling the whole example list open by default - the other half of
-    // his ask, so the screen is a heading and one tappable control, not a wall of rows.
-    // Row 1 still carries both signals: the pill names the gate, its sentence names the claim.
+    // sat under this heading is gone, and so is the amber HELD BACK pill and per-row caveat on
+    // the rows - he wants no yellow on a result, ever. The heading already says we did not
+    // crown one, and the match percent on each row carries the ranking, so the rows are plain
+    // now. They sit behind the "View closest ones" disclosure, the same neutral fold the
+    // crowned screen uses, which is the look he pointed at. The gray notes below stay: they
+    // are not yellow and they are the honest footnote on the list, not a talking section.
     var _rows='<div class="list">'+cands.slice(0,12).map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+1, held:held&&i===0,
-          flag:(held&&i===0)?(c.claim||''):candFlag(c,d,i===0),
-          flagtag:(held&&i===0)?'held back':''});}).join('')+'</div>'+
+        return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div>'+
       claimNote(cands.slice(1,12))+
       tieNote(cands.slice(1), cands[0])+
       (_dropped?'<div class="trainnote">'+_dropped+' more upload'+(_dropped===1?' was':'s were')+
