@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --bg:#0B0B0F; --surface:#16161C; --hair:rgba(255,255,255,.08);
+  --text:#F5F5F7; --muted:#9A9AA2; --faint:#636369; --accent:#6B5FE0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);min-height:100vh;
+  font:16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",sans-serif;
+  -webkit-font-smoothing:antialiased;display:flex;flex-direction:column;padding:0 26px 40px}
+.visual{flex:1;display:flex;align-items:center;justify-content:center;min-height:300px}
+.disc{width:112px;height:112px;border-radius:26px;background:var(--accent);
+  display:flex;align-items:center;justify-content:center;box-shadow:0 16px 40px rgba(107,95,224,.32)}
+.dots{display:flex;gap:7px;justify-content:center;margin-bottom:26px}
+.dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.18)}
+.dots i.on{width:22px;border-radius:999px;background:var(--accent)}
+.h{font-size:30px;font-weight:700;letter-spacing:-.6px;line-height:1.15;margin-bottom:14px}
+.s{font-size:16px;color:var(--muted);line-height:1.5;margin-bottom:30px;max-width:320px}
+.cta{display:block;width:100%;text-align:center;background:var(--accent);color:#fff;
+  font-size:17px;font-weight:600;border-radius:16px;padding:17px;border:0;margin-bottom:16px}
+.skip{text-align:center;color:var(--faint);font-size:15px}
+</style></head><body>
+
+<div class="visual">
+  <div class="disc">
+    <svg width="60" height="60" viewBox="0 0 52 52" fill="none"><path d="M8 26c4-14 8-14 12 0s8 14 12 0 8-14 12 0" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div>
+</div>
+
+<div class="dots"><i class="on"></i><i></i><i></i><i></i></div>
+<div class="h">Heard it on a reel?<br>Keep it forever.</div>
+<div class="s">Slowed, sped up, bass boosted, reverb, remixed. We find the real song and save it straight to your playlist.</div>
+<button class="cta">Continue</button>
+<div class="skip">Skip</div>
+
+</body></html>

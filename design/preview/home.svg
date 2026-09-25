@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" font-family="-apple-system,'SF Pro Text',Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B5AD1"/><stop offset="1" stop-color="#4C3C93"/></linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2E9E8F"/><stop offset="1" stop-color="#1C5E56"/></linearGradient>
+    <clipPath id="mos"><rect x="34" y="456" width="56" height="56" rx="12"/></clipPath>
+  </defs>
+  <rect width="390" height="844" fill="#0B0B0F"/>
+
+  <!-- header -->
+  <text x="20" y="54" font-size="30" font-weight="700" fill="#F5F5F7" letter-spacing="-0.5">Addify</text>
+  <rect x="298" y="30" width="72" height="28" rx="14" fill="none" stroke="rgba(255,255,255,0.10)"/>
+  <text x="334" y="48" font-size="12" fill="#9A9AA2" text-anchor="middle">5 scans</text>
+
+  <!-- scan disc, flat, no glow -->
+  <circle cx="195" cy="188" r="62" fill="#6B5FE0" stroke="rgba(255,255,255,0.14)"/>
+  <path d="M167 190 q9 -28 18 0 q9 28 18 0" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <text x="195" y="296" font-size="19" font-weight="600" fill="#F5F5F7" text-anchor="middle">Share a reel to Addify</text>
+  <text x="195" y="320" font-size="13.5" fill="#9A9AA2" text-anchor="middle">or tap to listen to whatever is playing</text>
+
+  <!-- paste field -->
+  <rect x="20" y="344" width="350" height="52" rx="14" fill="#16161C" stroke="rgba(255,255,255,0.07)"/>
+  <path d="M42 373l7-7M41 370l-2 2a3.4 3.4 0 004 4l2-2M52 370l2-2a3.4 3.4 0 00-4-4l-2 2" fill="none" stroke="#636369" stroke-width="1.7" stroke-linecap="round"/>
+  <text x="64" y="375" font-size="14.5" fill="#636369">Paste a TikTok or Instagram link</text>
+  <text x="352" y="375" font-size="14.5" font-weight="600" fill="#6B5FE0" text-anchor="end">Paste</text>
+
+  <!-- playlist -->
+  <text x="22" y="432" font-size="12" font-weight="600" fill="#9A9AA2" letter-spacing="1">YOUR PLAYLIST</text>
+  <rect x="20" y="444" width="350" height="84" rx="18" fill="#16161C" stroke="rgba(255,255,255,0.07)"/>
+  <g clip-path="url(#mos)">
+    <rect x="34" y="456" width="28" height="28" fill="#5B6EE1"/><rect x="62" y="456" width="28" height="28" fill="#C2557A"/>
+    <rect x="34" y="484" width="28" height="28" fill="#3FA796"/><rect x="62" y="484" width="28" height="28" fill="#D6923B"/>
+  </g>
+  <text x="104" y="482" font-size="16" font-weight="600" fill="#F5F5F7">Found with Addify</text>
+  <text x="104" y="503" font-size="13" fill="#9A9AA2">6 songs, synced to Spotify</text>
+  <circle cx="340" cy="486" r="20" fill="#6B5FE0"/>
+  <path d="M335 478v16l13-8z" fill="#fff"/>
+
+  <!-- recent finds -->
+  <text x="22" y="566" font-size="12" font-weight="600" fill="#9A9AA2" letter-spacing="1">RECENT FINDS</text>
+  <rect x="20" y="580" width="48" height="48" rx="11" fill="url(#g1)"/>
+  <text x="80" y="602" font-size="15" font-weight="600" fill="#F5F5F7">Nightfall</text>
+  <text x="80" y="620" font-size="12.5" fill="#9A9AA2">Aria Vega, from @gymclipsdaily</text>
+  <rect x="300" y="592" width="64" height="24" rx="12" fill="none" stroke="rgba(107,95,224,0.5)"/>
+  <text x="332" y="608" font-size="11" font-weight="600" fill="#6B5FE0" text-anchor="middle">Slowed</text>
+
+  <rect x="20" y="644" width="48" height="48" rx="11" fill="url(#g2)"/>
+  <text x="80" y="666" font-size="15" font-weight="600" fill="#F5F5F7">Compa Coleto</text>
+  <text x="80" y="684" font-size="12.5" fill="#9A9AA2">Aria Vega, original</text>
+  <rect x="296" y="656" width="68" height="24" rx="12" fill="none" stroke="rgba(48,209,88,0.45)"/>
+  <text x="330" y="672" font-size="11" font-weight="600" fill="#30D158" text-anchor="middle">Original</text>
+
+  <!-- tab bar -->
+  <line x1="0" y1="772" x2="390" y2="772" stroke="rgba(255,255,255,0.07)"/>
+  <path d="M45 800l15-11 15 11v14h-9v-9h-12v9h-9z" fill="none" stroke="#6B5FE0" stroke-width="1.6" stroke-linejoin="round"/>
+  <text x="60" y="832" font-size="11" fill="#6B5FE0" text-anchor="middle">Home</text>
+  <circle cx="146" cy="798" r="8" fill="none" stroke="#636369" stroke-width="1.6"/><path d="M152 804l6 6" stroke="#636369" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="150" y="832" font-size="11" fill="#636369" text-anchor="middle">Search</text>
+  <path d="M234 788h18v24l-9-6-9 6z" fill="none" stroke="#636369" stroke-width="1.6" stroke-linejoin="round"/>
+  <text x="243" y="832" font-size="11" fill="#636369" text-anchor="middle">Finds</text>
+  <circle cx="330" cy="794" r="5" fill="none" stroke="#636369" stroke-width="1.6"/><path d="M322 812c1.5-6 5-7.5 8-7.5s6.5 1.5 8 7.5" fill="none" stroke="#636369" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="330" y="832" font-size="11" fill="#636369" text-anchor="middle">You</text>
+</svg>
