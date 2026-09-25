@@ -34,10 +34,14 @@ final class EngineBridge: ObservableObject {
         guard host == "scan" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let raw = comps?.queryItems?.first(where: { $0.name == "url" })?.value ?? ""
-        /* The extension already wrote the inbox before opening us; draining it here means
-           the link is consumed once whichever path arrives first. */
-        _ = SharedInbox.drain()
-        if let link = SharedInbox.firstURL(in: raw), SharedInbox.isScannable(link) {
+        /* The extension already wrote the inbox before opening us, so drain it here to keep
+           the link consumed once. Prefer the link carried on the addify:// URL, but fall
+           back to the drained inbox value: iOS can route the open with an empty or mangled
+           query, and discarding the inbox in that case strips the guaranteed path of its
+           only copy, so the share would never scan. */
+        let fromInbox = SharedInbox.drain()
+        let fromURL = SharedInbox.firstURL(in: raw).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+        if let link = fromURL ?? fromInbox, SharedInbox.isScannable(link) {
             deliver(link)
         }
     }
