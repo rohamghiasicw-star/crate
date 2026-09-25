@@ -83,17 +83,25 @@ final class ShareViewController: UIViewController {
         next()
     }
 
-    /* Extensions have no UIApplication, so there is no sanctioned way to open the host
-       app from a Share Extension. The responder chain does end in an object that answers
-       openURL: (the extension's UIApplication proxy), and calling it is the workaround
-       every share-to-app extension ships. Apple neither documents nor reliably blocks it;
-       if an iOS release closes it, the inbox path above still delivers the link. */
+    /* Extensions have no UIApplication.shared, so there is no sanctioned way to open the
+       host app from a Share Extension. The responder chain still ends in the extension's
+       UIApplication object, and asking THAT object to open the URL is the workaround every
+       share-to-app extension ships.
+
+       iOS 18 CHANGED THE RULES (2026-09-25, Roham: "the share extension doesn't work").
+       The old call here was perform(openURL:) on that object. From iOS 18 the deprecated
+       openURL: is a no-op that always returns NO and logs "The caller of
+       UIApplication.openURL(_:) needs to migrate to the non-deprecated
+       UIApplication.open(_:options:completionHandler:). Force returning false (NO)." So the
+       share sheet grabbed the link, parked it in the inbox, and Addify never came forward:
+       exactly what testers saw. Casting the responder to UIApplication and calling the
+       modern open(_:options:completionHandler:) is the fix; the type is available to
+       extensions, only .shared is not. The inbox stays as the backup path. */
     @objc private func openHostApp(_ url: URL) -> Bool {
-        let sel = sel_registerName("openURL:")
         var responder: UIResponder? = self
         while let r = responder {
-            if r.responds(to: sel), !(r is UIViewController), !(r is UIView) {
-                r.perform(sel, with: url)
+            if let application = r as? UIApplication {
+                application.open(url, options: [:], completionHandler: nil)
                 return true
             }
             responder = r.next
