@@ -37,7 +37,14 @@ except Exception:
     HAVE_CFFI = False
 
 SR = 22050
-YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
+# YOUTUBE BROKE THE BUNDLED DOWNLOADER (2026-09-25). The python module under this 3.9 runtime
+# is yt-dlp 2025.10.14, the last release that supports 3.9, and every YouTube candidate now
+# fails "Requested format is not available", so YouTube uploads silently never reached the
+# comparison. Homebrew's yt-dlp (2026.07.04, own python) fetches them fine. Prefer it; fall
+# back to the module when it is not installed.
+_BREW_YTDLP = "/opt/homebrew/bin/yt-dlp"
+YTDLP = ([_BREW_YTDLP, "--no-warnings", "--quiet"] if os.path.exists(_BREW_YTDLP)
+         else [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"])
 # --- exact-edit matching thresholds (see find_edit ranking) ---
 CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
 CORE_EDIT = 0.62     # min core to count as a real edit match, not a coincidence
