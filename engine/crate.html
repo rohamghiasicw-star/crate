@@ -2466,6 +2466,9 @@ function renderResult(d,partial){
   if(d.result==='uncertain'||d.base_uncertain||d.result==='no_match'){
     /* the crown jewel (brief): the worst moment builds the edit database. When the engine
        has a base guess, one tap turns a failure into training data via /feedback. */
+    /* Set the header here too, not only in finish(): renderResult can be called on its own,
+       and a "No song here" card must never sit under a "Match found" title. */
+    var _mt=document.getElementById('matchttl'); if(_mt) _mt.textContent='No match';
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
