@@ -3872,8 +3872,18 @@ function embedFor(url, src){
     return 'https://w.soundcloud.com/player/?url='+encodeURIComponent(url)+
            '&auto_play=true&hide_related=true&show_comments=false&show_teaser=false'+
            '&visual=false&color=%237c8cff';
-  var yt=url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/);
-  if(yt) return 'https://www.youtube-nocookie.com/embed/'+yt[1]+'?autoplay=1&rel=0';
+  // Mirror server.py's _YT_ID exactly so every YouTube link the engine recognises also
+  // plays in the sheet instead of falling through to window.open (which is what "takes me
+  // to YouTube" was): a v= param anywhere in the query, youtu.be, /shorts/, /embed/, /v/,
+  // /live/. Video ids are 11 chars. Host-guarded so a stray ?v= on another platform never
+  // gets loaded into a YouTube frame. autoplay=1 starts the recording from the top and the
+  // embed runs the whole thing, start to finish. playsinline=1 is what keeps iOS WKWebView
+  // playing it INSIDE the sheet instead of throwing it into the native fullscreen player
+  // (or handing off to the YouTube app), which on a phone reads as "it took me to YouTube".
+  if(src==='youtube'||/youtube\.com|youtu\.be/.test(url)){
+    var yt=url.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/);
+    if(yt) return 'https://www.youtube-nocookie.com/embed/'+yt[1]+'?autoplay=1&rel=0&playsinline=1';
+  }
   return null;
 }
 function playHere(url, src, title){
