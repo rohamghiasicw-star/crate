@@ -2871,7 +2871,7 @@ function renderResult(d,partial){
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
       noCrown=true;
-      shelf='<div class="sect">Closest versions. We did not crown one</div>'+crowdCard+
+      shelf='<div class="sect">No close version found</div>'+crowdCard+
         '<div class="trainnote">The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
         'matched the clip audio, so there is nothing worth listing. The song above is '+
@@ -2900,7 +2900,7 @@ function renderResult(d,partial){
         ' checked and did not match the clip audio, so '+(_dropped===1?'it is':'they are')+
         ' not listed.</div>':'')+
       '<div class="trainnote">Open the top few and listen. Your ear settles this faster than ours does.</div>';
-    shelf='<div class="sect">Closest versions. We did not crown one</div>'+crowdCard+
+    shelf='<div class="sect">Closest versions</div>'+crowdCard+
       '<details class="othv"><summary><span>View closest ones</span>'+
       '<span class="cv">'+IC.chev+'</span></summary>'+_rows+'</details>';
     }}
