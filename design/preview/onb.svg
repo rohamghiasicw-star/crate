@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" font-family="-apple-system,'SF Pro Text',Helvetica,Arial,sans-serif">
+  <rect width="390" height="844" fill="#0B0B0F"/>
+
+  <!-- product mark in clean space, no blurred home behind -->
+  <rect x="139" y="300" width="112" height="112" rx="26" fill="#6B5FE0"/>
+  <path d="M167 360 q14 -34 28 0 q14 34 28 0" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- page dots -->
+  <rect x="163" y="560" width="22" height="7" rx="3.5" fill="#6B5FE0"/>
+  <circle cx="196" cy="563.5" r="3.5" fill="rgba(255,255,255,0.18)"/>
+  <circle cx="210" cy="563.5" r="3.5" fill="rgba(255,255,255,0.18)"/>
+  <circle cx="224" cy="563.5" r="3.5" fill="rgba(255,255,255,0.18)"/>
+
+  <text x="26" y="622" font-size="30" font-weight="700" fill="#F5F5F7" letter-spacing="-0.6">Heard it on a reel?</text>
+  <text x="26" y="658" font-size="30" font-weight="700" fill="#F5F5F7" letter-spacing="-0.6">Keep it forever.</text>
+
+  <text x="26" y="694" font-size="15.5" fill="#9A9AA2">Slowed, sped up, bass boosted, reverb,</text>
+  <text x="26" y="716" font-size="15.5" fill="#9A9AA2">remixed. We find the real song and save</text>
+  <text x="26" y="738" font-size="15.5" fill="#9A9AA2">it straight to your playlist.</text>
+
+  <rect x="26" y="762" width="338" height="54" rx="16" fill="#6B5FE0"/>
+  <text x="195" y="795" font-size="17" font-weight="600" fill="#fff" text-anchor="middle">Continue</text>
+</svg>

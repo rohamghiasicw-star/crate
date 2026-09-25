@@ -20,10 +20,12 @@ That means:
 - No emoji anywhere. Every icon is a drawn line glyph at one consistent stroke weight,
   the way SF Symbols behave.
 
-Rendered previews live next to this file:
-- Home: `preview/preview-home.png` (source `preview/home.html`)
-- Onboarding: `preview/preview-onb.png` (source `preview/onb.html`)
-- Search: `preview/preview-search.png` (source `preview/search.html`)
+Preview mockups live next to this file. The `.svg` files are the viewable previews
+(open them in any browser or image viewer); the `.html` files are the interactive source
+they were drawn from:
+- Home: `preview/home.svg` (source `preview/home.html`)
+- Onboarding: `preview/onb.svg` (source `preview/onb.html`)
+- Search: `preview/search.svg` (source `preview/search.html`)
 
 The three preview screens carry the pattern that then repeats across every face.
 
@@ -47,7 +49,7 @@ Proposed changes:
 - Apple large title "Addify" top left, a quiet "5 scans" pill top right.
 - Playlist card gets a real 2x2 artwork mosaic and a purple play button, not mint.
 - Trending becomes divider rows on one surface instead of four floating cards.
-- See `preview/preview-home.png`.
+- See `preview/home.svg`.
 
 ### 2. Search
 What reads as vibe coded now:
@@ -68,7 +70,7 @@ Proposed changes:
 - Turn the three cards into clean divider rows, the Apple settings and Linemate list
   pattern.
 - Make the info block visually distinct so it does not look like a fourth button.
-- See `preview/preview-search.png`.
+- See `preview/search.svg`.
 
 ### 3. Finds
 What reads as vibe coded now:
@@ -116,7 +118,7 @@ Proposed changes:
 - Apple large headline, muted subtext, one filled capsule button, page dots.
 - Drop the stray "1" badge on the Addify tile in the pin step.
 - Keep the real brand icons (Instagram, Spotify, Apple, SoundCloud, Messages, Mail).
-- See `preview/preview-onb.png`.
+- See `preview/onb.svg`.
 
 ---
 

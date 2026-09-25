@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --bg:#0B0B0F; --surface:#16161C; --surface2:#1F1F27;
+  --hair:rgba(255,255,255,.07); --text:#F5F5F7; --muted:#9A9AA2; --faint:#636369; --accent:#6B5FE0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);
+  font:16px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display",sans-serif;
+  -webkit-font-smoothing:antialiased;padding:14px 20px 0}
+.lt{font-size:32px;font-weight:700;letter-spacing:-.6px;padding:8px 0 4px}
+.ls{color:var(--muted);font-size:15px;margin-bottom:22px}
+.field{display:flex;align-items:center;gap:11px;background:var(--surface);
+  border:1px solid var(--hair);border-radius:14px;padding:14px 16px;margin-bottom:9px}
+.field svg{color:var(--faint);flex:none}
+.field .ph{color:var(--faint);font-size:15px;flex:1}
+.hint{color:var(--faint);font-size:13px;margin:0 2px 26px}
+.sec{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.2px;
+  text-transform:uppercase;margin:0 2px 12px}
+.opt{display:flex;align-items:center;gap:14px;padding:15px 2px;border-bottom:1px solid var(--hair)}
+.opt:last-child{border-bottom:0}
+.oic{width:38px;height:38px;border-radius:11px;background:var(--surface2);
+  display:flex;align-items:center;justify-content:center;color:var(--accent);flex:none}
+.oinfo{flex:1;min-width:0}
+.oinfo b{font-size:16px;font-weight:600;letter-spacing:-.2px}
+.oinfo span{display:block;color:var(--muted);font-size:13.5px;margin-top:2px}
+.chev{color:var(--faint);flex:none}
+</style></head><body>
+
+<div class="lt">Search</div>
+<div class="ls">Lost the reel? Describe it instead.</div>
+
+<div class="field">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  <span class="ph">a lyric, a vibe, or that gym reel song</span>
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" opacity=".4"><rect x="9" y="3" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M6 11a6 6 0 0012 0M12 17v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+</div>
+<div class="hint">Hum to search is coming soon</div>
+
+<div class="sec">Three ways to search</div>
+
+<div class="opt">
+  <span class="oic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M7 8h10M7 12h10M7 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+  <div class="oinfo"><b>A line you remember</b><span>mmm whatcha say</span></div>
+  <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+</div>
+
+<div class="opt">
+  <span class="oic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 15c2 0 2-6 4-6s2 8 4 8 2-10 4-10 2 8 4 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  <div class="oinfo"><b>How it sounds or where it played</b><span>slowed, female vocal, gym reel</span></div>
+  <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+</div>
+
+<div class="opt">
+  <span class="oic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 19c1-3.5 3.8-4.5 6.5-4.5s5.5 1 6.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+  <div class="oinfo"><b>Who posts the edits</b><span>edits by @fastmusic954</span></div>
+  <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+</div>
+
+</body></html>
