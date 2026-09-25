@@ -1455,6 +1455,70 @@ a.clippill:hover{filter:brightness(1.12)}
 </div>
 
 
+<!-- Backend map - NOT an app feature and not reachable by any button or tab. It stays hidden
+     for every user (Roham: "I don't want the map of backend in the app"). It exists only so the
+     war room can post the picture into the chat: the screenshot step reveals it with
+     showBackendMap() and photographs it, and that phone-size PNG is the image sent to chat. -->
+<div id="bmap" hidden>
+  <style>
+    #bmap{position:fixed;inset:0;z-index:9000;background:#0a0b0f;color:#f4f5f8;overflow:hidden;
+      font-family:-apple-system,"SF Pro Display",Inter,Segoe UI,Roboto,sans-serif}
+    #bmap .bmwrap{width:390px;margin:0 auto;padding:14px 14px 0}
+    #bmap h1{font-size:17px;font-weight:800;letter-spacing:-.2px;line-height:1.15;margin:0}
+    #bmap .bmsub{color:#9aa0ad;font-size:10px;margin:3px 0 9px}
+    #bmap .bmband{background:#14161d;border:1px solid #2a2e3a;border-radius:11px;padding:8px 10px;margin-bottom:7px}
+    #bmap .bmtop{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+    #bmap .bmnum{width:19px;height:19px;border-radius:6px;background:#7c5cff;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex:0 0 auto}
+    #bmap .bmname{font-size:12.5px;font-weight:700}
+    #bmap .bmdot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:auto;flex:0 0 auto}
+    #bmap .bmg{background:#38d39f} #bmap .bma{background:#ffb454} #bmap .bmr{background:#ff6b6b}
+    #bmap .bmbody{font-size:10px;line-height:1.45;color:#9aa0ad}
+    #bmap .bmbody b{color:#f4f5f8;font-weight:600}
+    #bmap .bmmono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:9px;color:#5aa9ff}
+    #bmap .bmtag{display:inline-block;font-size:8px;font-weight:700;padding:1px 5px;border-radius:9px;margin-left:3px;vertical-align:middle}
+    #bmap .bmtg{background:rgba(56,211,159,.16);color:#38d39f}
+    #bmap .bmta{background:rgba(255,180,84,.16);color:#ffb454}
+    #bmap .bmtr{background:rgba(255,107,107,.16);color:#ff6b6b}
+    #bmap .bmconn{text-align:center;color:#9aa0ad;font-size:9px;margin:-4px 0 3px}
+    #bmap .bmlegend{display:flex;gap:10px;justify-content:center;font-size:9px;color:#9aa0ad;margin-top:5px}
+    #bmap .bmlegend span{display:flex;align-items:center;gap:4px}
+  </style>
+  <div class="bmwrap">
+    <h1>Addify backend, storage to phone</h1>
+    <div class="bmsub">One Mac, no cloud database, no accounts. Nothing hosted yet. Dot color = state.</div>
+    <div class="bmband">
+      <div class="bmtop"><div class="bmnum">1</div><div class="bmname">Storage, on Roham's Mac</div><span class="bmdot bmg"></span></div>
+      <div class="bmbody"><span class="bmmono">~/crate</span> live code + UI, <span class="bmmono">~/crate-repo</span> git history. <b>No cloud DB, no sign-up, no saved user data. Audio deleted after every scan.</b></div>
+    </div>
+    <div class="bmconn">&#9660; a scan arrives as a TikTok or Instagram link</div>
+    <div class="bmband">
+      <div class="bmtop"><div class="bmnum">2</div><div class="bmname">Ingest, pull the clip audio</div><span class="bmdot bma"></span></div>
+      <div class="bmbody">TikTok + Instagram via <span class="bmmono">curl_cffi</span> TLS trick<span class="bmtag bmta">unofficial</span>, no login. Or <b>listen mode</b>, mic 12s<span class="bmtag bmtg">works</span>. Browsers can't: no CORS on the audio.</div>
+    </div>
+    <div class="bmconn">&#9660;</div>
+    <div class="bmband">
+      <div class="bmtop"><div class="bmnum">3</div><div class="bmname">Engine <span class="bmmono">server.py :8788</span></div><span class="bmdot bma"></span></div>
+      <div class="bmbody">Serves the app AND the API on one origin. <b>Name the song</b> Shazam + counter-speed sweep<span class="bmtag bmta">unofficial</span>. <b>Find the exact edit</b> SoundCloud + YouTube, chromaprint verify<span class="bmtag bmtg">works</span>. Caption + comment fallback, mashups.</div>
+    </div>
+    <div class="bmconn">&#9660; it calls out to these while it works</div>
+    <div class="bmband">
+      <div class="bmtop"><div class="bmnum">4</div><div class="bmname">Outside services</div><span class="bmdot bmr"></span></div>
+      <div class="bmbody">Shazam<span class="bmtag bmtr">unofficial, Apple owns it</span> SoundCloud + YouTube search, <b>save blocked</b><span class="bmtag bmtr">API access</span> Apple Music + Deezer links<span class="bmtag bmtg">works</span> Spotify auto-playlist<span class="bmtag bmtr">5-user cap</span></div>
+    </div>
+    <div class="bmconn">&#9660; result goes back to the phone</div>
+    <div class="bmband">
+      <div class="bmtop"><div class="bmnum">5</div><div class="bmname">Delivery, Mac to phone</div><span class="bmdot bma"></span></div>
+      <div class="bmbody"><span class="bmmono">cloudflared</span> tunnel, one Mac<span class="bmtag bmta">sleeps = down</span> <b>crate.html</b> UI loads from the engine, live instantly. Native iOS app <span class="bmmono">ios/</span> <b>not compiled yet</b><span class="bmtag bmtr">TestFlight</span></div>
+    </div>
+    <div class="bmlegend">
+      <span><span class="bmdot bmg"></span>working now</span>
+      <span><span class="bmdot bma"></span>fragile or capped</span>
+      <span><span class="bmdot bmr"></span>launch blocker</span>
+    </div>
+  </div>
+</div>
+
+
 <!-- Playlist picker - also outside .app (same position:fixed containing-block trap as #sheet). -->
 <div class="picker" id="picker" hidden>
   <div class="pkcard" role="dialog" aria-modal="true" aria-label="Add to playlist">
@@ -4110,6 +4174,11 @@ document.addEventListener('keydown', function(e){
    the engine's pages instead of a 404 on its own host. */
 function legalURL(name){return ENGINE+'/'+name;}
 function openSheet(){document.getElementById('sheet').hidden=false; paintSheet();}
+// Reveal the hidden backend map for the war room screenshot only. No user path calls this;
+// it is here so the chat can be sent a picture of the map, per Roham, without the map being an
+// app feature.
+function showBackendMap(){var e=document.getElementById('bmap'); if(e){e.hidden=false;}}
+window.showBackendMap=showBackendMap;
 document.getElementById('playerx').innerHTML=IC.x;
 document.getElementById('playerx').onclick=closePlayer;
 document.getElementById('player').onclick=function(e){if(e.target.id==='player') closePlayer();};
