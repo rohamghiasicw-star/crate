@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Addify backend map (phone)</title>
+<style>
+  :root{
+    --bg:#0a0b0f; --band:#14161d; --line:#2a2e3a; --ink:#f4f5f8; --dim:#9aa0ad;
+    --accent:#7c5cff; --green:#38d39f; --amber:#ffb454; --red:#ff6b6b; --blue:#5aa9ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:390px;height:844px;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"SF Pro Display",Inter,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  .wrap{padding:14px 14px 0}
+  h1{font-size:17px;font-weight:800;letter-spacing:-.2px;line-height:1.15}
+  .sub{color:var(--dim);font-size:10px;margin:3px 0 9px}
+  .band{background:var(--band);border:1px solid var(--line);border-radius:11px;
+    padding:8px 10px;margin-bottom:7px;position:relative}
+  .top{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+  .num{width:19px;height:19px;border-radius:6px;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex:0 0 auto}
+  .name{font-size:12.5px;font-weight:700}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:auto;flex:0 0 auto}
+  .d-green{background:var(--green)} .d-amber{background:var(--amber)} .d-red{background:var(--red)}
+  .body{font-size:10px;line-height:1.45;color:var(--dim)}
+  .body b{color:var(--ink);font-weight:600}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:9px;color:var(--blue)}
+  .tag{display:inline-block;font-size:8px;font-weight:700;padding:1px 5px;border-radius:9px;
+    margin-left:3px;vertical-align:middle}
+  .t-green{background:rgba(56,211,159,.16);color:var(--green)}
+  .t-amber{background:rgba(255,180,84,.16);color:var(--amber)}
+  .t-red{background:rgba(255,107,107,.16);color:var(--red)}
+  .conn{text-align:center;color:var(--dim);font-size:9px;margin:-4px 0 3px}
+  .legend{display:flex;gap:10px;justify-content:center;font-size:9px;color:var(--dim);
+    margin-top:5px}
+  .legend span{display:flex;align-items:center;gap:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Addify backend, storage to phone</h1>
+  <div class="sub">One Mac, no cloud database, no accounts. Nothing hosted yet. Dot color = state.</div>
+
+  <div class="band">
+    <div class="top"><div class="num">1</div><div class="name">Storage, on Roham's Mac</div><span class="dot d-green"></span></div>
+    <div class="body"><span class="mono">~/crate</span> live code + UI, <span class="mono">~/crate-repo</span> git history. <b>No cloud DB, no sign-up, no saved user data. Audio deleted after every scan.</b></div>
+  </div>
+  <div class="conn">&#9660; a scan arrives as a TikTok or Instagram link</div>
+
+  <div class="band">
+    <div class="top"><div class="num">2</div><div class="name">Ingest, pull the clip audio</div><span class="dot d-amber"></span></div>
+    <div class="body">TikTok + Instagram via <span class="mono">curl_cffi</span> TLS trick<span class="tag t-amber">unofficial</span>, no login. Or <b>listen mode</b>, mic 12s<span class="tag t-green">works</span>. Browsers can't: no CORS on the audio.</div>
+  </div>
+  <div class="conn">&#9660;</div>
+
+  <div class="band">
+    <div class="top"><div class="num">3</div><div class="name">Engine <span class="mono">server.py :8788</span></div><span class="dot d-amber"></span></div>
+    <div class="body">Serves the app AND the API on one origin. <b>Name the song</b> Shazam + counter-speed sweep<span class="tag t-amber">unofficial</span>. <b>Find the exact edit</b> SoundCloud + YouTube, chromaprint verify<span class="tag t-green">works</span>. Caption + comment fallback, mashups.</div>
+  </div>
+  <div class="conn">&#9660; it calls out to these while it works</div>
+
+  <div class="band">
+    <div class="top"><div class="num">4</div><div class="name">Outside services</div><span class="dot d-red"></span></div>
+    <div class="body">Shazam<span class="tag t-red">unofficial, Apple owns it</span> SoundCloud + YouTube search, <b>save blocked</b><span class="tag t-red">API access</span> Apple Music + Deezer links<span class="tag t-green">works</span> Spotify auto-playlist<span class="tag t-red">5-user cap</span></div>
+  </div>
+  <div class="conn">&#9660; result goes back to the phone</div>
+
+  <div class="band">
+    <div class="top"><div class="num">5</div><div class="name">Delivery, Mac to phone</div><span class="dot d-amber"></span></div>
+    <div class="body"><span class="mono">cloudflared</span> tunnel, one Mac<span class="tag t-amber">sleeps = down</span> <b>crate.html</b> UI loads from the engine, live instantly. Native iOS app <span class="mono">ios/</span> <b>not compiled yet</b><span class="tag t-red">TestFlight</span></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot d-green"></span>working now</span>
+    <span><span class="dot d-amber"></span>fragile or capped</span>
+    <span><span class="dot d-red"></span>launch blocker</span>
+  </div>
+</div>
+</body>
+</html>

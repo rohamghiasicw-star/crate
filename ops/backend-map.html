@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Addify backend map</title>
+<style>
+  :root{
+    --bg:#0a0b0f; --panel:#14161d; --panel2:#1b1e27; --line:#2a2e3a;
+    --ink:#f4f5f8; --dim:#9aa0ad; --accent:#7c5cff; --green:#38d39f;
+    --amber:#ffb454; --red:#ff6b6b; --blue:#5aa9ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"SF Pro Display",Inter,Segoe UI,Roboto,sans-serif;
+    padding:56px 60px 64px;width:1480px}
+  h1{font-size:40px;font-weight:800;letter-spacing:-.5px}
+  .sub{color:var(--dim);font-size:19px;margin-top:8px;margin-bottom:36px}
+  .sub b{color:var(--ink);font-weight:600}
+  .flow{display:flex;flex-direction:column;gap:26px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:20px;
+    padding:24px 26px}
+  .stage-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+  .num{width:38px;height:38px;border-radius:11px;background:var(--accent);
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px}
+  .stage-title{font-size:24px;font-weight:700}
+  .stage-note{color:var(--dim);font-size:16px;margin-left:auto;text-align:right;max-width:520px}
+  .cards{display:flex;gap:16px;flex-wrap:wrap}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;flex:1;min-width:220px}
+  .card h3{font-size:17px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .card p{color:var(--dim);font-size:14.5px;line-height:1.5}
+  .card p b{color:var(--ink);font-weight:600}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:13px;color:var(--blue)}
+  .arrow{display:flex;justify-content:center;color:var(--dim);font-size:22px;margin:-8px 0}
+  .pill{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:20px;
+    vertical-align:middle}
+  .p-green{background:rgba(56,211,159,.15);color:var(--green)}
+  .p-amber{background:rgba(255,180,84,.15);color:var(--amber)}
+  .p-red{background:rgba(255,107,107,.15);color:var(--red)}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .d-green{background:var(--green)} .d-amber{background:var(--amber)} .d-red{background:var(--red)}
+  .legend{display:flex;gap:26px;margin-top:34px;padding-top:22px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:15px;flex-wrap:wrap}
+  .legend span{display:flex;align-items:center;gap:9px}
+  .foot{color:var(--dim);font-size:14px;margin-top:14px}
+</style>
+</head>
+<body>
+  <h1>Addify — where everything lives, from storage to the phone</h1>
+  <div class="sub">One Mac, no cloud database, no user accounts. Nothing is hosted yet. <b>Green = working now. Amber = works but fragile or capped. Red = blocker.</b></div>
+
+  <div class="flow">
+
+    <!-- 1 STORAGE -->
+    <div class="stage">
+      <div class="stage-head">
+        <div class="num">1</div>
+        <div class="stage-title">Storage — all on Roham's Mac</div>
+        <div class="stage-note">No cloud DB. No sign-up. No saved user data. Audio is deleted after every lookup.</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>Live code + UI <span class="pill p-green">running</span></h3>
+          <p><span class="mono">~/crate</span><br>server.py, crate_engine.py, find_song.py, verify.py, crate.html, pages/ (privacy, terms, support)</p>
+        </div>
+        <div class="card">
+          <h3>Repo of record <span class="pill p-green">git</span></h3>
+          <p><span class="mono">~/crate-repo</span><br>Version history. War room bot edits land here in worktrees, then ship to the live copy.</p>
+        </div>
+        <div class="card">
+          <h3>Working files <span class="pill p-green">local</span></h3>
+          <p>Test tables, regression clips, research notes. All on disk. <b>No audio is kept</b> — temp dirs die in a finally block per scan.</p>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">&#9660; a scan comes in as a TikTok / Instagram link</div>
+
+    <!-- 2 INGEST -->
+    <div class="stage">
+      <div class="stage-head">
+        <div class="num">2</div>
+        <div class="stage-title">Ingest — pull the clip's audio</div>
+        <div class="stage-note">Browsers can't do this: TikTok/IG send no CORS headers, so a page alone can't fetch the audio. The engine must.</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>TikTok <span class="pill p-amber">unofficial</span></h3>
+          <p>Embed page via <span class="mono">curl_cffi</span> (real-browser TLS) to get the play URL. Falls back to tikwm, item API, oEmbed.</p>
+        </div>
+        <div class="card">
+          <h3>Instagram <span class="pill p-amber">unofficial</span></h3>
+          <p>Reel embed via <span class="mono">curl_cffi</span>. No login — the TLS fingerprint is the whole trick. <b>Long <span class="mono">?igsh=</span> links resolve as private.</b></p>
+        </div>
+        <div class="card">
+          <h3>Listen mode <span class="pill p-green">works</span></h3>
+          <p>Phone mic, 12 seconds, straight into the engine. Same path from here on. No platform terms problem.</p>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">&#9660;</div>
+
+    <!-- 3 ENGINE -->
+    <div class="stage">
+      <div class="stage-head">
+        <div class="num">3</div>
+        <div class="stage-title">The engine — <span class="mono" style="font-size:16px">server.py on 127.0.0.1:8788</span>, serves the app AND the API on one origin</div>
+        <div class="stage-note">This is the whole product. It runs as a small local server on the Mac.</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>1. Name the song <span class="pill p-amber">Shazam</span></h3>
+          <p><b>find_song.py</b> — Shazam fingerprint (shazamio, keyless, <span class="mono">unofficial</span>). Phase 1 scans the whole clip for distinct songs. <b>Phase 2 counter-speed sweep</b> undoes slowed / sped edits Shazam won't match straight. This sweep is the moat.</p>
+        </div>
+        <div class="card">
+          <h3>2. Find the exact edit <span class="pill p-green">works</span></h3>
+          <p><b>crate_engine.py</b> — search SoundCloud + YouTube (<span class="mono">yt-dlp</span>), download each candidate, rank by chromaprint overlap (<b>verify.py</b>, <span class="mono">fpcalc</span>). Audio decides, not titles.</p>
+        </div>
+        <div class="card">
+          <h3>3. Fallbacks <span class="pill p-green">works</span></h3>
+          <p>Read the uploader's caption and comments on both platforms; mine the TikTok sound page. Splits mashups and names each part with timestamps.</p>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">&#9660; the engine calls out to these while it works</div>
+
+    <!-- 4 EXTERNAL -->
+    <div class="stage">
+      <div class="stage-head">
+        <div class="num">4</div>
+        <div class="stage-title">Outside services it talks to</div>
+        <div class="stage-note">All third-party. Each is a cost or a limit at scale.</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>Shazam <span class="pill p-red">unofficial</span></h3>
+          <p>shazamio, keyless, Apple owns Shazam. Rate-limits on concurrency. <b>Launch needs migration to ShazamKit</b> (bridge built, needs Apple Developer account).</p>
+        </div>
+        <div class="card">
+          <h3>SoundCloud + YouTube <span class="pill p-amber">search</span></h3>
+          <p>Used to hunt the edit. <b>SoundCloud save is blocked</b> — needs a client_id behind an Artist Pro subscription. Konnor's #1 differentiator.</p>
+        </div>
+        <div class="card">
+          <h3>Links out <span class="pill p-green">works</span></h3>
+          <p>Apple Music + Deezer for the base song, a link per edit. Link out only, no in-app playback.</p>
+        </div>
+        <div class="card">
+          <h3>Spotify <span class="pill p-red">5-user cap</span></h3>
+          <p>Auto-playlist "Found with Addify". <b>Dev mode caps at 5 users</b> until the company is incorporated.</p>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">&#9660; result goes back out to the phone</div>
+
+    <!-- 5 DELIVERY -->
+    <div class="stage">
+      <div class="stage-head">
+        <div class="num">5</div>
+        <div class="stage-title">Delivery — Mac to phone</div>
+        <div class="stage-note">This is the biggest launch gap: it's one Mac behind a tunnel, not a hosted backend.</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <h3>Tunnel <span class="pill p-amber">one Mac</span></h3>
+          <p><span class="mono">cloudflared</span> exposes the local engine as a public link, kept alive by a watchdog. <b>If the Mac sleeps, the app is down.</b></p>
+        </div>
+        <div class="card">
+          <h3>The app UI <span class="pill p-green">works</span></h3>
+          <p><b>crate.html</b> — the whole interface, loaded from the engine. A UI change is live instantly, no rebuild.</p>
+        </div>
+        <div class="card">
+          <h3>Native iOS app <span class="pill p-red">not built</span></h3>
+          <p><span class="mono">ios/</span> — app + share extension committed but <b>never compiled</b> (no Xcode on the Mac). Reaches phones only through a TestFlight build.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <span><span class="dot d-green"></span> Working now</span>
+    <span><span class="dot d-amber"></span> Works but fragile, unofficial or capped</span>
+    <span><span class="dot d-red"></span> Blocker before a real launch</span>
+  </div>
+  <div class="foot">Backend and usage limits, plainly: unofficial Shazam and scraping (fine for a personal tool, not a licensed foundation at scale) &middot; single Mac + tunnel, no hosted backend &middot; Spotify capped at 5 users &middot; SoundCloud save blocked on API access &middot; native iOS app not yet compiled &middot; 5-7% of clips are un-IDable without a paid recognition API. Roham's decisions: hosting, incorporation, Apple Developer account, SoundCloud subscription.</div>
+</body>
+</html>
