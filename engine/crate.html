@@ -748,6 +748,31 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .artplay svg{width:18px;height:18px}
 .artplay.out svg{width:19px;height:19px}
 .artplay:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
+/* INLINE PLAYER (Konnor's ask). Tapping the cover triangle turns it INTO a round pause
+   button wrapped in a purple progress ring - the shape from his screenshot, our colour
+   instead of the orange - and the YouTube video plays in the card right beside it. The
+   ring is the real playhead read off the YouTube IFrame API, so it fills as the song
+   plays; it is not a decorative sweep. */
+.ipl{position:relative;display:flex;align-items:center;gap:14px;margin:16px 0 2px;
+  background:var(--raise);border:1px solid var(--line);border-radius:18px;padding:12px}
+.ipl[hidden]{display:none}
+.ipbtn{position:relative;width:64px;height:64px;flex:none;border-radius:50%;
+  background:var(--raise2);color:#fff;display:grid;place-items:center;cursor:pointer;
+  transition:transform .12s,filter .15s}
+.ipbtn:hover{transform:scale(1.05)}
+.ipbtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.ipgl{position:relative;z-index:2;display:grid;place-items:center;line-height:0}
+.ipgl svg{width:22px;height:22px}
+.iprg{position:absolute;inset:0;width:64px;height:64px;transform:rotate(-90deg);z-index:1;pointer-events:none}
+.iprg circle{fill:none;stroke-width:3.5}
+.iprgbg{stroke:rgba(255,255,255,.14)}
+.iprgfg{stroke:var(--accent);stroke-linecap:round;
+  stroke-dasharray:182.2;stroke-dashoffset:182.2;transition:stroke-dashoffset .25s linear}
+.ipvid{flex:1;min-width:0;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}
+.ipvid iframe{width:100%;height:100%;border:0;display:block}
+.iplx{position:absolute;top:9px;right:9px;width:26px;height:26px;border-radius:50%;
+  background:rgba(8,6,14,.55);color:#fff;display:grid;place-items:center;z-index:4;cursor:pointer}
+.iplx svg{width:12px;height:12px}
 .rtitle{margin:22px 0 0;font-size:26px;line-height:1.15;font-weight:750;letter-spacing:-.02em;text-wrap:balance}
 .rartist{margin:2px 0 0;font-size:15px;color:var(--muted)}
 .badge{margin-top:13px;display:inline-block;background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);
@@ -1472,6 +1497,7 @@ var IC={
   link:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13.5a3.6 3.6 0 0 0 5.2.3l2.6-2.6a3.6 3.6 0 1 0-5.1-5.1l-1.3 1.3"/><path d="M14 10.5a3.6 3.6 0 0 0-5.2-.3l-2.6 2.6a3.6 3.6 0 1 0 5.1 5.1l1.3-1.3"/></svg>',
   scan:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13c2.4 0 2.4-7 4.8-7s2.4 12 4.8 12 2.4-9 4.8-9S19.8 13 21 13"/></svg>',
   play:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6l11-6.8z"/></svg>',
+  pause:'<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.3"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.3"/></svg>',
   open:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16 16 8M9.5 8H16v6.5"/></svg>',
   tick:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg>',
   spark:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.4l1.8 5.3a3 3 0 0 0 1.9 1.9l5.3 1.8-5.3 1.8a3 3 0 0 0-1.9 1.9L12 20.4l-1.8-5.3a3 3 0 0 0-1.9-1.9L3 11.4l5.3-1.8a3 3 0 0 0 1.9-1.9z"/><path d="M19.2 2.2l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>',
@@ -2602,10 +2628,31 @@ function renderResult(d,partial){
   var pvsrc=(ex&&(ex.source||'').toLowerCase())||'';
   var pvttl=(ex&&ex.title)||d.base_song||'';
   var pvlbl=ex?(exExact?'Play the exact version':'Play this version'):'Play this track';
-  var corner = (pv && embedFor(pv,pvsrc))
-    ? '<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
-      ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>'
-    : '';
+  // Konnor: for a YouTube version the triangle becomes the inline pause-with-ring player
+  // (ipOpen) instead of the full sheet, and the video sits beside it in the card. The
+  // 11-char id is pulled the same way embedFor/server.py recognise a YouTube link.
+  var _ytid = (pv && (pvsrc==='youtube'||/youtube\.com|youtu\.be/.test(pv)))
+    ? ((pv.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/)||[])[1]||null)
+    : null;
+  var inlinePlayer='';
+  var corner='';
+  if(_ytid){
+    // No data-play attribute on purpose: the global sheet handler keys off [data-play],
+    // and this control opens the inline player instead (wired below by id).
+    corner='<span class="artplay inline" id="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
+      ' data-ytid="'+esc(_ytid)+'" data-url="'+esc(pv)+'">'+IC.play+'</span>';
+    inlinePlayer='<div class="ipl" id="ipl" hidden>'+
+      '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
+        '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
+        '<span class="ipgl">'+IC.pause+'</span>'+
+      '</button>'+
+      '<div class="ipvid" id="ipvid"></div>'+
+      '<button class="iplx" id="iplx" type="button" aria-label="Close">'+IC.x+'</button>'+
+    '</div>';
+  } else if(pv && embedFor(pv,pvsrc)){
+    corner='<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
+      ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>';
+  }
   var hero='<div class="hero"><span class="artwrap">'+art+corner+'</span>'+
     '<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
     '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+'</div>';
@@ -2953,7 +3000,7 @@ function renderResult(d,partial){
      It just stops the header claiming the half we did not get. */
   if(!partial) document.getElementById('matchttl').textContent =
       noCrown ? 'Song identified' : 'Match found';
-  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
+  result.innerHTML='<div class="card">'+head+clip+hero+inlinePlayer+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   if(d.art) bloomFrom(d.art);
@@ -2975,6 +3022,16 @@ function renderResult(d,partial){
     setLiked(d.base_song,d.base_artist,on2);
     if(on2) saveOne(d);                           // a like is also a keep
     else { try{ renderLib(); }catch(e){} }};
+  // Konnor's inline player: the cover triangle opens it, the round button pauses/plays,
+  // the corner x collapses it back to the triangle.
+  var _cin=document.getElementById('artplay');
+  if(_cin && _cin.classList.contains('inline')){
+    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));};
+    _cin.onclick=_openIP;
+    _cin.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault(); _openIP();}};
+  }
+  var _ipb=document.getElementById('iplbtn'); if(_ipb) _ipb.onclick=ipToggle;
+  var _ipx=document.getElementById('iplx'); if(_ipx) _ipx.onclick=ipClose;
   var ab=document.getElementById('autobtn');
   if(ab) ab.onclick=function(){
     openSheet();};
@@ -3898,6 +3955,79 @@ function playHere(url, src, title){
     '<iframe title="Player" allow="autoplay" loading="lazy" src="'+esc(frame)+'"></iframe>';
   box.hidden=false;
 }
+/* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
+   purple progress ring and the YouTube video plays beside it, in the card, not a sheet.
+   The video is a plain autoplay iframe first (job 280's proven in-app embed, so it plays
+   even if the API script is blocked); the YouTube IFrame API is then attached only to
+   drive the ring off the REAL playhead and to pause/resume. */
+var _ytApiCbs=[];
+function withYT(cb){
+  if(window.YT&&YT.Player){cb();return;}
+  _ytApiCbs.push(cb);
+  if(window.__ytLoading) return; window.__ytLoading=true;
+  var prev=window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady=function(){if(prev){try{prev();}catch(e){}}
+    _ytApiCbs.splice(0).forEach(function(f){try{f();}catch(e){}});};
+  var s=document.createElement('script'); s.src='https://www.youtube.com/iframe_api';
+  (document.head||document.body).appendChild(s);
+}
+var _ipPlayer=null, _ipTimer=null;
+var IP_C=2*Math.PI*29;   // ring circumference, matches r=29 in the .iprg svg
+function ipRing(frac){
+  var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
+  frac=Math.max(0,Math.min(1,frac||0));
+  fg.style.strokeDashoffset=String(IP_C*(1-frac));
+}
+function ipGlyph(playing){
+  var g=document.querySelector('#ipl .ipgl'); if(g) g.innerHTML=playing?IC.pause:IC.play;
+  var b=document.getElementById('iplbtn'); if(b) b.setAttribute('aria-label',playing?'Pause':'Play');
+}
+function ipStop(){
+  if(_ipTimer){clearInterval(_ipTimer); _ipTimer=null;}
+  try{if(_ipPlayer&&_ipPlayer.destroy) _ipPlayer.destroy();}catch(e){}
+  _ipPlayer=null;
+  var v=document.getElementById('ipvid'); if(v) v.innerHTML='';   // kill the iframe so audio stops
+}
+function ipClose(){
+  ipStop();
+  var ipl=document.getElementById('ipl'); if(ipl) ipl.hidden=true;
+  var c=document.getElementById('artplay'); if(c) c.hidden=false;
+  ipRing(0);
+}
+function ipOpen(vid,url){
+  if(!/^[A-Za-z0-9_-]{11}$/.test(String(vid||''))) return;
+  var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
+  if(!ipl||!slot) return;
+  var corner=document.getElementById('artplay'); if(corner) corner.hidden=true;
+  ipl.hidden=false; ipGlyph(true); ipRing(0);
+  var origin=encodeURIComponent(location.origin);
+  slot.innerHTML='<iframe id="ipframe" title="Player" allow="autoplay; encrypted-media" '+
+    'allowfullscreen playsinline src="https://www.youtube-nocookie.com/embed/'+vid+
+    '?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin='+origin+'"></iframe>';
+  withYT(function(){
+    try{
+      _ipPlayer=new YT.Player('ipframe',{events:{
+        onReady:function(e){try{e.target.playVideo();}catch(_){}},
+        onStateChange:function(e){
+          if(!window.YT||!YT.PlayerState) return;
+          ipGlyph(e.data===YT.PlayerState.PLAYING);
+          if(e.data===YT.PlayerState.ENDED) ipRing(1);
+        }}});
+      _ipTimer=setInterval(function(){
+        try{var d=_ipPlayer.getDuration&&_ipPlayer.getDuration();
+          var t=_ipPlayer.getCurrentTime&&_ipPlayer.getCurrentTime();
+          if(d>0) ipRing(t/d);}catch(_){}
+      },250);
+    }catch(_){}
+  });
+}
+function ipToggle(){
+  if(!_ipPlayer||!_ipPlayer.getPlayerState||!window.YT||!YT.PlayerState) return;
+  try{
+    if(_ipPlayer.getPlayerState()===YT.PlayerState.PLAYING){_ipPlayer.pauseVideo(); ipGlyph(false);}
+    else{_ipPlayer.playVideo(); ipGlyph(true);}
+  }catch(_){}
+}
 function closePlayer(){
   var box=document.getElementById('player'); if(!box||box.hidden) return;
   // Blow the iframe away rather than hiding it, or the track keeps playing behind the app.
@@ -3939,7 +4069,7 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
+function goHome(){ipStop(); scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
 document.getElementById('back').onclick=goHome;
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
@@ -4211,6 +4341,7 @@ document.getElementById('onb').addEventListener('click',function(e){
     lsSet('addify-queue',[]); run(q[0]);});})();
 window.addEventListener('keydown',function(e){if(e.key==='Escape'){
   var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
+  var ipl=document.getElementById('ipl'); if(ipl&&!ipl.hidden){ipClose(); return;}
   var pw=document.getElementById('player'); if(pw&&!pw.hidden){closePlayer(); return;}
   var sh=document.getElementById('sheet'); if(!sh.hidden){sh.hidden=true; return;}}});
 </script>
