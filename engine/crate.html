@@ -2777,7 +2777,7 @@ function renderResult(d,partial){
     (_vid ? '<a class="clippill tap" href="'+esc(_vid)+'" target="_blank" rel="noopener" aria-label="Open this '+(_plat||'clip')+' video">'+_pillInner+'<span class="cgo">'+IC.open+'</span></a>'
           : '<span class="clippill">'+_pillInner+'</span>')+
     '</div>' : '';
-  document.getElementById('matchttl').textContent = partial?'Still digging…':'Match found';
+  document.getElementById('matchttl').textContent = 'Match found';   // one sequence: the hunt state reads as the answer (Roham 2026-09-26)
   var head='';
   // LINKS TO THE BASE TRACK. A name with nowhere to go is half an answer. Verified track
   // pages come back marked exact and get the solid treatment; the keyless-lookup gap
@@ -3175,10 +3175,11 @@ function renderResult(d,partial){
         _orest.slice(0,12).map(function(c,i){
           return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>':'');
     }}
-  else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
-    '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
-    '<span class="pct" id="progpct2">0%</span></div>'+
-    '<div class="prog"><i id="progbar2"></i></div></div>'+
+  // ONE SEQUENCE (Roham 2026-09-26: "the hunting the exact version and finding the exact version
+  // should be one sequence"). The hunt used to show its own 0-100% bar here, then a different
+  // spinner line after the budget: two hunts on screen. It is now the same single live line
+  // from the moment the song is named until the exact edit lands.
+  else if(partial){shelf='<div class="latehunt"><i></i><span>Finding the exact version</span></div>'+
     // verified candidates stack up in here while the hunt runs
     '<div class="list" id="livelist" style="margin-top:11px"></div>';}
   // NOTHING AT ALL WHEN THE CLIP IS JUST THE TRACK.
