@@ -4255,7 +4255,19 @@ function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='
    Addify home page; renderResult's no-match branch repoints it at the reel they scanned, so
    back takes them straight back to the TikTok (or Instagram) they were watching. */
 var backHandler=goHome;
-document.getElementById('back').onclick=function(){(backHandler||goHome)();};
+/* Fire the back arrow on the TAP, not only on the synthetic click. Inside the iOS WebView
+   a click on this small round button, sitting high against the status bar, was being
+   dropped - the whole "nothing happens when I press back" Konnor kept hitting, which never
+   showed up in a desktop browser where click is reliable. touchend fires directly off the
+   finger and preventDefault stops iOS then synthesising a second click; a short guard is a
+   belt-and-braces stop against a double fire on any device that sends both. */
+(function(){
+  var bk=document.getElementById('back'), last=0;
+  function goBack(e){ var n=Date.now(); if(n-last<450) return; last=n;
+    if(e&&e.cancelable) e.preventDefault(); (backHandler||goHome)(); }
+  bk.addEventListener('touchend', goBack, {passive:false});
+  bk.addEventListener('click', goBack);
+})();
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
