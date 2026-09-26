@@ -2150,6 +2150,12 @@ function vmatch(c){
 /* One comparable number per row for the shelf notes. Exact sorts as 100 here and is never
    printed as one; unconfirmed rows sort under every row that has a figure. */
 function vfig(m){return !m?-2:m.pct===null?-1:m.pct;}
+/* Konnor, job 567: a shelf listed a 50% match above a 90% one. Every list of versions now
+   reads highest match first, by the same figure the row prints. Ties keep engine order. */
+function byMatch(list){
+  return list.map(function(c,i){return {c:c,i:i,f:vfig(vmatch(c))};})
+    .sort(function(a,b){return (b.f-a.f)||(a.i-b.i);})
+    .map(function(x){return x.c;});}
 function vtxt(m){return !m?'':m.exact?'exact':m.pct===null?m.word.toLowerCase():m.pct+'%';}
 function vtier(m){return m.exact?3:m.pct===null?0:m.pct>=80?2:m.pct>=CORE_KEEP*100?1:0;}
 /* `full` spells the crown's chip out (layout spec item 5): "N% version match", or "Exact
@@ -2781,8 +2787,7 @@ function renderResult(d,partial){
 
      So: the crown keeps its heading and its treatment - it is still the answer - and
      every row under it now carries the same score on the same scale, in the same ranked
-     order the engine returned. Never re-sorted here: the order is the engine's verdict,
-     and re-ranking in the page would be inventing a second opinion. */
+     order. Konnor (job 567): the rows under the crown sort highest match first (byMatch). */
   var shelf='', plain=false;   // plain = the clip is the track itself, no edit to show
   var noCrown=false;           // a shelf rendered that explicitly declines to crown one
   /* SAME FIGURE AS THE ROWS. This note used to compare raw core and print it, so the
@@ -2860,7 +2865,7 @@ function renderResult(d,partial){
     // crown's certainty, so folding them away with the rows would leave the confident half
     // visible and hide the honest half. The heading string itself is unchanged.
     if(others.length){
-      var _shown=others.slice(0,12);
+      var _shown=byMatch(others).slice(0,12);
       // COUNT THE CAVEATS OUTSIDE THE FOLD. Collapsing the shelf sealed the per-row
       // honest notes in with it: "The official release, not an edit of it" and "Its EQ is
       // N dB off the clip" had no representative outside, so a user who never taps sees
@@ -2954,7 +2959,7 @@ function renderResult(d,partial){
     // measurements", "N more uploads were checked and did not match", "Open the top few and
     // listen") and said none of it needs to be here at any time. The list is now just the
     // ranked rows behind the fold; the heading and the match percent on each row carry it.
-    var _rows='<div class="list">'+cands.slice(0,12).map(function(c,i){
+    var _rows='<div class="list">'+byMatch(cands).slice(0,12).map(function(c,i){
         return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div>';
     shelf='<div class="sect">Closest versions</div>'+crowdCard+
       '<details class="othv"><summary><span>View closest ones</span>'+
