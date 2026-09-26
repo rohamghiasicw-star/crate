@@ -60,7 +60,7 @@ start_cloudflared(){
   CFPID=$!
   URL=""
   for i in $(seq 1 25); do
-    URL=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" "$CFLOG" 2>/dev/null | head -1)
+    URL=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" "$CFLOG" 2>/dev/null | grep -v "^https://api\.trycloudflare\.com$" | head -1)
     [ -n "$URL" ] && break
     sleep 1
   done
@@ -104,11 +104,16 @@ start_pinggy(){
   done
 }
 
+
+# THE ANSWER MUST BE OUR ENGINE (2026-09-26). A bare 200 is not proof: on a quick-tunnel rate
+# limit cloudflared logs api.trycloudflare.com, that host answers /health with 200, and the
+# watchdog adopted and published it for 26 minutes (and on 2026-08-28) while no tunnel ran.
+engine_at(){ curl -s -m "${2:-8}" "$1/health" 2>/dev/null | grep -qE '"service": *"(crate|addify) engine"'; }
 # Does the PUBLIC url actually answer? This is the only test that counts; a registered
 # tunnel that the edge never routes looks perfectly healthy from this side.
 serves(){
   for i in $(seq 1 18); do
-    [ "$(curl -s -o /dev/null -w "%{http_code}" -m 8 "$1/health" 2>/dev/null)" = "200" ] && return 0
+    engine_at "$1" 8 && return 0
     sleep 5
   done
   return 1
@@ -133,7 +138,8 @@ while true; do
   # alone, keep watching the engine, and only go down the ladder when it actually breaks.
   PROVIDER=""
   CURRENT="$(cat "$URLFILE" 2>/dev/null)"
-  if [ -n "$CURRENT" ] && [ "$(curl -s -o /dev/null -w "%{http_code}" -m 8 "$CURRENT/health" 2>/dev/null)" = "200" ]; then
+  case "$CURRENT" in https://api.trycloudflare.com*) CURRENT="";; esac
+  if [ -n "$CURRENT" ] && engine_at "$CURRENT" 8; then
     ensure_engine
     log "existing tunnel still serving, keeping it: $CURRENT"
     URL="$CURRENT"
@@ -197,7 +203,7 @@ while true; do
       log "DOWN - $PROVIDER process (pid $CFPID) died, restarting"
       break
     fi
-    code=$(curl -s -o /dev/null -w "%{http_code}" -m 12 "$URL/health" 2>/dev/null)
+    if engine_at "$URL" 12; then code=200; else code=$(curl -s -o /dev/null -w "%{http_code}" -m 12 "$URL/health" 2>/dev/null); [ "$code" = "200" ] && code="200-not-our-engine"; fi
     if [ "$code" = "200" ]; then
       fails=0
     else
