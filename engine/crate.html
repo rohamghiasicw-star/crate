@@ -3404,9 +3404,11 @@ function paintHome(){
   document.getElementById('plsub').textContent=sub;
   paintPill();
   /* trending teaser: fill the home space neatly without becoming the full tab.
-     Four rows off the REAL chart (see fetchTrending); "See all" opens the rest. */
+     Three rows off the REAL chart (see fetchTrending); "See all" opens the rest.
+     Three, not four, so the bottom tabs sit on screen the moment the app opens
+     (Konnor, 2026-09-26: the tabs must be visible without scrolling). */
   var tt=document.getElementById('trendteaser');
-  var top=(TREND.rows||[]).slice(0,4);
+  var top=(TREND.rows||[]).slice(0,3);
   if(top.length){
     tt.innerHTML='<div class="secthd"><div class="sect">Trending songs</div>'+
       '<button id="seeall">See all</button></div>'+
