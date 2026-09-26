@@ -2614,12 +2614,6 @@ function renderResult(d,partial){
   // the user pasted. Either one opens the reel again, so the pill becomes a real link when
   // we have one and stays a plain label when we don't.
   var _vid = d.url || curURL || '';
-  // The top-left back arrow must take them back to where they were, the same as it does
-  // after a miss (see the no-match branch above) - to the reel they scanned when we know
-  // it, not dead-end on Addify's home. On a match it used to go home, which for anyone who
-  // came in from a TikTok read as "back does nothing": they wanted their feed, not our
-  // home screen. With no source to return to (a listen-mode scan) it still goes home.
-  if(_vid && _plat) backHandler=function(){openExternal(_vid);};
   var _pillInner = (d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
     '<span class="h">@'+esc(_who)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'');
   var clip = _who ? '<div class="clip">'+
@@ -4261,7 +4255,19 @@ function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='
    Addify home page; renderResult's no-match branch repoints it at the reel they scanned, so
    back takes them straight back to the TikTok (or Instagram) they were watching. */
 var backHandler=goHome;
-document.getElementById('back').onclick=function(){(backHandler||goHome)();};
+/* Fire the back arrow on the TAP, not only on the synthetic click. Inside the iOS WebView
+   a click on this small round button, sitting high against the status bar, was being
+   dropped - the whole "nothing happens when I press back" Konnor kept hitting, which never
+   showed up in a desktop browser where click is reliable. touchend fires directly off the
+   finger and preventDefault stops iOS then synthesising a second click; a short guard is a
+   belt-and-braces stop against a double fire on any device that sends both. */
+(function(){
+  var bk=document.getElementById('back'), last=0;
+  function goBack(e){ var n=Date.now(); if(n-last<450) return; last=n;
+    if(e&&e.cancelable) e.preventDefault(); (backHandler||goHome)(); }
+  bk.addEventListener('touchend', goBack, {passive:false});
+  bk.addEventListener('click', goBack);
+})();
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
