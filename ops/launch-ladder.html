@@ -48,10 +48,10 @@
     align-items: center;
     gap: 16px;
     padding: 16px 18px;
-    border-radius: 14px;
+    border-radius: 12px;
     position: relative;
   }
-  .rung + .rung { margin-top: 8px; }
+  .rung + .rung { margin-top: 20px; }
   .num {
     flex: 0 0 auto;
     width: 34px; height: 34px;
@@ -72,19 +72,27 @@
   .tag.built { background: #123a24; color: #4ade80; }
   .tag.mint  { background: #14322a; color: #5DCAA5; }
 
-  /* the two rails, drawn behind the rungs */
-  .track { position: relative; }
+  /* the two ladder rails, visible on either side of the rungs */
+  .track { position: relative; padding: 16px 30px; }
   .track::before, .track::after {
     content: "";
     position: absolute;
-    top: 10px; bottom: 10px;
-    width: 3px;
-    background: #232833;
-    border-radius: 3px;
+    top: 0; bottom: 0;
+    width: 9px;
+    background: linear-gradient(#7d72e8, #5147b8);
+    border-radius: 9px;
+    box-shadow: 0 0 14px rgba(107,95,224,.4);
   }
   .track::before { left: 8px; }
   .track::after  { right: 8px; }
-  .track .rung { z-index: 1; background: #1a1e26; border: 1px solid #262c37; }
+  /* rungs sit between the rails and connect to both */
+  .track .rung {
+    z-index: 1;
+    background: #1a1e26;
+    border: 1px solid #2d3444;
+    border-left: 4px solid #6B5FE0;
+    border-right: 4px solid #6B5FE0;
+  }
 
   .note { margin-top: 26px; color: #6b7280; font-size: 13px; line-height: 1.5; }
 </style>
