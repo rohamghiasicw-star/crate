@@ -236,6 +236,11 @@ html.native .app[data-state="library"]{height:100vh;height:100dvh}
 /* Same for You: the settings list is taller than the phone, so the tabs sat below it. */
 html.native .app[data-state="profile"]{height:100vh;height:100dvh}
 .app[data-state="profile"] #s-prof{min-height:0}
+/* Same for Trending (See all from Home: 15 rows put the tabs at y 1261 of 852) and for
+   Search once results land (6 rows put them at y 881). Konnor asked for every tab to show
+   Home, Search, Finds and You right away (U22, U26, U27); these were the two left. */
+html.native .app[data-state="trending"],html.native .app[data-state="search"]{height:100vh;height:100dvh}
+.app[data-state="trending"] #s-trend,.app[data-state="search"] #s-search{min-height:0}
 
 /* ---------- the phone card ---------- */
 .app{
@@ -2775,6 +2780,31 @@ function renderResult(d,partial){
     var _have={}; lk.forEach(function(l){_have[l.kind]=true;});
     _fb.forEach(function(l){if(!_have[l.kind]){l.exact=false; lk.push(l);}});
   }
+  /* Roham 09-26 19:00: "When we click the SoundCloud link after this song is found it
+     doesn't work". The SoundCloud tile was a search page on 176 of 178 saved results.
+     soundcloud.com hands every path, /search included, to the SoundCloud app (its
+     apple-app-site-association ends in "*"), and SoundCloud's own pages declare an app
+     link (al:ios:url soundcloud://sounds:ID) on a track page but none on a search page.
+     So when this result already holds a SoundCloud upload of the song, the tile opens
+     that track: the crown when it lives on SoundCloud, otherwise the highest SoundCloud
+     row that measured 50% or better, by the same figure its row prints. With no such row
+     the search stays. A tile that is already a track page is left alone. */
+  (function(){
+    var i, at=-1;
+    for(i=0;i<lk.length;i++) if(lk[i].kind==='soundcloud') at=i;
+    if(at>=0 && lk[at].exact) return;
+    var isTrack=function(c){return !!c && /^https:\/\/(m\.)?soundcloud\.com\/[^\/?#\s]+\/[^\/?#\s]+/i.test(String(c.url||'')) &&
+      !/^https:\/\/(m\.)?soundcloud\.com\/[^\/]+\/(sets|tracks|albums|likes|reposts|popular-tracks|followers|following)(\/|$|\?)/i.test(String(c.url||''));};
+    var pick=(ex && isTrack(ex)) ? ex : null;
+    if(!pick){
+      var pool=byMatch(cands.filter(function(c){return isTrack(c) && (c.core||0)>=SHELF_FLOOR;}));
+      for(i=0;i<pool.length && !pick;i++){var m=vmatch(pool[i]);
+        if(m && (m.exact || (m.pct!==null && m.pct>=CORE_KEEP*100))) pick=pool[i];}
+    }
+    if(!pick) return;
+    var t={name:'SoundCloud',kind:'soundcloud',url:pick.url,exact:true};
+    if(at>=0) lk[at]=t; else lk.push(t);
+  })();
   var openin = lk.length ? '<div class="sect">Open in</div><div class="openin">'+lk.map(function(l){
       /* Konnor, item 5: "one row of four, logo on top, name below". He asked twice to strip
          the corner marker off these tiles - first the uppercase SEARCH word, now the little
@@ -2891,7 +2921,8 @@ function renderResult(d,partial){
       '<div class="list mix">'+parts.map(function(p,i){
         /* VOCALS FROM THE LYRICS (server `_lyric_vocals`): no timestamp and no bar, the
            words were heard but a vocal over another beat has no fingerprint to place. */
-        var when=p.voc?'vocals \u00B7 from the lyrics':mmss(p.at||0)+(p.to?' - '+mmss(p.to):'');
+        // "0:00 to 0:36", not "0:00 - 0:36": no spaced dash in app copy (Roham, Konnor 09-24, U2).
+        var when=p.voc?'vocals \u00B7 from the lyrics':mmss(p.at||0)+(p.to?' to '+mmss(p.to):'');
         var link=(p.ex&&p.ex.url)||p.sz||'';
         var art=(secs.length>1?secs[i]:alt[i])||{};
         var bar='';
@@ -3024,10 +3055,18 @@ function renderResult(d,partial){
   // audio match was 21%" under it, which reads as a failure attached to a correct answer.
   // A held-back crown is different and keeps its shelf: there the engine has a real
   // candidate and a real reason, and hiding that would be hiding evidence.
-  else if(d.unsure && cands.length && !d.crown_rejected && !d.crowd_version
-          && (!cands[0] || (cands[0].core||0) < CORE_KEEP)
+  // Konnor 09-26 17:15 (Save Me): "any video we ever scan it should look like the
+  // paparazzi one where you have our pick and then other versions, regardless if it's 50%
+  // matched, it needs options". Two gaps hid rows the audio had kept: this branch hid every
+  // row once row 1 was under 50%, and a final payload with rows but no `unsure` flag fell
+  // through to the plain branch at the bottom (Don't Like, corpus clip 11: six rows, cores
+  // 0.70 to 1.00, nothing shown). Now the list is hidden only when no row clears
+  // SHELF_FLOOR (Roham: "if its a 0% match, why even put it there?"), and any settled
+  // payload with rows reaches the list below. The /base screen mid-hunt is unchanged.
+  else if((d.unsure || !partial) && cands.length && !d.crown_rejected && !d.crowd_version
+          && !cands.some(function(c){return (c.core||0) >= SHELF_FLOOR;})
           && (!famSpeed(d) || famSpeed(d)==='as posted') && !(d.reupload && !famSpeed(d))){ shelf=''; plain=true; }
-  else if(d.unsure && cands.length){
+  else if((d.unsure || !partial) && cands.length){
     // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
     // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),
     // and a gate REFUSING a crown that scored fine - a tempo mismatch, a title that
@@ -3094,11 +3133,19 @@ function renderResult(d,partial){
     // measurements", "N more uploads were checked and did not match", "Open the top few and
     // listen") and said none of it needs to be here at any time. The list is now just the
     // ranked rows behind the fold; the heading and the match percent on each row carry it.
-    var _rows='<div class="list">'+byMatch(cands).slice(0,12).map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div>';
-    shelf='<div class="sect">Closest versions</div>'+crowdCard+
-      '<details class="othv"><summary><span>View closest ones</span>'+
-      '<span class="cv">'+IC.chev+'</span></summary>'+_rows+'</details>';
+    // Konnor 09-26 17:09-17:15: every result reads like the Paparazzi one (photo 1125),
+    // "Our pick" on its own card, then "Other versions we checked". Row 1 is the highest
+    // match (job 567 order), on the same card the crowned screen uses; the rest sit in the
+    // same neutral fold. No crown was called, so the heading never says "exact" and the
+    // header still reads "Song identified"; each row keeps its own figure.
+    var _ork=byMatch(cands), _opk=_ork[0], _orest=_ork.slice(1);
+    shelf='<div class="sect">Our pick</div>'+crowdCard+
+      '<div class="list">'+trackRow(_opk,true,'',false,{rank:1})+'</div>'+
+      (_orest.length?'<details class="othv"><summary>'+
+        '<span>Other versions we checked · '+_orest.length+'</span>'+
+        '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
+        _orest.slice(0,12).map(function(c,i){
+          return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>':'');
     }}
   else if(partial){shelf='<div class="sect">Finding the exact version</div>'+
     '<div class="progwrap dig"><div class="proghead"><span id="progtxt2">Searching edits and remixes</span>'+
