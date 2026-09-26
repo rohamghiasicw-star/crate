@@ -4062,9 +4062,25 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // partial=false deletes the progress element, so pgDone() was painting into
         // nothing and the bar simply vanished somewhere in the 60s-90s. The percentage
         // has to land before the thing displaying it is taken away.
-        var settledUI=false;
+        var settledUI=false, budgetHit=false, lateCap=null, scanURL=p.url;
         var settle=function(full){
-          if(settledUI) return; settledUI=true;
+          if(settledUI){
+            // THE EXACT EDIT CAN LAND AFTER THE BUDGET (2026-09-26, Roham: "the exact edit is
+            // not being found anymore, just the base song"). The budget only decides when the
+            // user gets a usable screen; the hunt keeps running. Hunts were taking 21-29 s
+            // after the song was named, so the old early return threw away every crown that
+            // arrived after 12 s and the card stayed on the base song. A late answer now
+            // upgrades the card in place, as long as the user is still on this scan.
+            if(budgetHit && full && full.result && full.result!=='engine_down' && !leftScan && curURL===scanURL){
+              clearTimeout(lateCap);
+              try{
+                if(full.wave)setWaveData(full.wave);
+                if(full.win)setWindow(full.win,full.clip_secs);
+                setSpeedFromLabel(full.speed); renderResult(full,false);
+              }catch(e){}
+            }
+            return;}
+          settledUI=true;
           clearTimeout(huntBudget);
           return pgDone().then(function(){
             if(full&&full.result&&full.result!=='engine_down'){
@@ -4076,9 +4092,14 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               // versions that verified so far (LIVE), so nothing found is thrown away.
               var dd=Object.assign({},d,{
                 candidates:(LIVE.length?LIVE.slice():(d.candidates||[])), edits_pending:false});
-              try{renderResult(dd,false);}catch(e){renderResult(d,false);}}
+              // Shown as still digging, not as the final answer: the late result upgrades it.
+              // If the hunt never answers, it settles as final after 90 s.
+              try{renderResult(dd,true);}catch(e){renderResult(d,false);}
+              lateCap=setTimeout(function(){
+                if(!leftScan && curURL===scanURL){ try{renderResult(dd,false);}catch(e){} }
+              }, 90000);}
             finish(full||d);});};
-        var huntBudget=setTimeout(function(){ say('Showing the closest match'); settle(null); }, HUNT_BUDGET_MS);
+        var huntBudget=setTimeout(function(){ budgetHit=true; say('Still finding the exact version'); settle(null); }, HUNT_BUDGET_MS);
         return huntEdits(p.url,function(c,n){
           liveAdd(c);
           // No setProg here any more. This fires only on candidates that VERIFY, and the
