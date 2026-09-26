@@ -2259,6 +2259,9 @@ def _apply_xcheck(out, vid_audio):
         out["is_original"] = True       # platform names nothing we can trust
 
 
+XCHECK_CEIL = float(os.environ.get("CRATE_XCHECK_CEIL", 6.0))
+
+
 def settle_source(out):
     """Join the credit cross-check that get_source(defer_crosscheck=True) left pending.
 
@@ -2276,7 +2279,10 @@ def settle_source(out):
         return False
     fut, started = h
     try:
-        vid_audio = fut.result(timeout=max(0.0, 12.0 - (time.time() - started)))
+        # 12 s -> 6 s (2026-09-26 speed): a successful cross-check lands in 2.7 s median, 5.7 s p90
+        # (SPEED-DESIGN-1.md), while 1 in 10 scans sat the full 12 s on a slow tikwm call. Past 6 s
+        # the credited sound (right ~98% of the time) is kept, exactly as on a failed check.
+        vid_audio = fut.result(timeout=max(0.0, XCHECK_CEIL - (time.time() - started)))
     except Exception:
         vid_audio = None
     tlog("tt_audio_xcheck", time.time() - started, vid_ok=bool(vid_audio))
