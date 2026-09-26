@@ -546,7 +546,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 /* Cancel plan save offer: only shown once the user taps Cancel plan. */
 .sheet.keep{place-items:center}
 .keepcard{align-items:center;text-align:center;gap:10px;padding:26px 20px 18px}
-.keepcard h2{margin:0;font-size:21px;font-weight:760;line-height:1.25}
+.keepcard h2{margin:0;text-wrap:balance;font-size:21px;font-weight:760;line-height:1.25}
 .keepcard p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.5;max-width:280px}
 .keepcard .kbtn{width:100%;background:var(--accent);color:var(--on-accent);font-size:15px;font-weight:700;
   padding:14px;border-radius:var(--r-pill);margin-top:6px}
@@ -1541,7 +1541,7 @@ a.clippill:hover{filter:brightness(1.12)}
 </div>
 <div class="sheet keep" id="keep" hidden>
   <div class="sheetcard keepcard" role="dialog" aria-modal="true" aria-label="Keep your plan">
-    <h2 id="keeph">Don't cancel. Get 1 month free.</h2>
+    <h2 id="keeph">Don't cancel and get 1 month for free</h2>
     <p id="keepp">Stay and your next month is on us.</p>
     <button class="kbtn" id="keepyes">Get 1 month free</button>
     <button class="klink" id="keepno">Continue cancelling</button>
@@ -3968,11 +3968,11 @@ function planCancelled(){try{localStorage.setItem('addify-plan','off');}catch(e)
   document.getElementById('keepyes').onclick=closeKeep;}
 function openKeep(){
   if(localStorage.getItem('addify-freemonth')){planCancelled(); return;}
-  keepShown("Don't cancel. Get 1 month free.",'Stay and your next month is on us.',
+  keepShown("Don't cancel and get 1 month for free",'Stay and your next month is on us.',
     'Get 1 month free','Continue cancelling');
   document.getElementById('keepyes').onclick=function(){
     try{localStorage.setItem('addify-freemonth',String(Date.now()));}catch(e){}
-    keepShown('Your free month is added','Thanks for staying. Your next month is on us.','Done');
+    keepShown('Your free month is added','Thanks for staying. Next month is on us.','Done');
     this.onclick=closeKeep;};
   document.getElementById('keepno').onclick=planCancelled;}
 function monthlyOn(){try{return localStorage.getItem('addify-monthly')==='on';}catch(e){return false;}}
