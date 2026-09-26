@@ -3981,7 +3981,7 @@ function renderProf(){
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>'+(planOn()?'Unlimited plan':'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
+      '<div><b>'+esc(name)+'</b><span>'+(planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
     '<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>'+
     '<div class="sect">Connected accounts</div><div class="setlist">'+
