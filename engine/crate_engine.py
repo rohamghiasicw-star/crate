@@ -3728,6 +3728,144 @@ def _tags_in(*strings):
 # related to kryd for all hoodtrap things".)
 HOODTRAP_CANON = ("kryd", "mylancore")
 
+# STYLE ROWS GET A SEAT IN THE DOWNLOAD HEAD when the evidence says the clip is an edit.
+# build_queries already spends "<song> hoodtrap", "<song> mylancore" and "<song> kryd" on
+# EVERY clip with a trusted Shazam base, and SoundCloud is searched 50 deep - but
+# _dl_priority only lifts the rows those queries return when the clip's genre is already
+# NAMED (credit_toks: the credit, the Shazam title or a hint). On a bare "original sound"
+# nothing names it, so the style rows sort below every million-play "(sped up)" /
+# "(slowed + reverb)" / "(bass boost)" spin of the original (edit_char) and the 14-slot
+# head never reaches them: the queries were paid for and their answers thrown away.
+# Measured 2026-09-26 on ZSbFCVxeB ("original sound - am.zona", Shazam "Talking Body" by
+# RayKor): the 197-row pool held 8 Talking Body style rows (Kryd's hoodtrap uploads at
+# pool positions 55-82, Konnor's SoundCloud link "Talking body (Hoodtrap / Mylancore)
+# SLOWED" at 69) and none of the 16 downloaded rows was one of them.
+#
+# OPENS ONLY ON EVIDENCE the clip is somebody's edit, read before any download
+# (_style_evidence): Shazam's counter-speed sweep matched it SPED UP (hoodtrap / mylancore
+# / jersey club are sped by definition, see _FAST_GENRE_UP), or Shazam credited an artist
+# the search pool does not credit for this title while another artist leads it (a
+# remixer / re-upload account: on this clip RayKor is named on 1 of the 179 rows that
+# carry the title, and "Tove Lo - ..." leads the rest with 35). Bass tilt
+# against the original is NOT used: it needs the original downloaded and scored first,
+# which would put a serial wave in front of the hunt.
+# APPENDED, never substituted (same terms as the creator lane and the rescue lane): the
+# head every clip is scored on is unchanged, the only reachable outcome is that an extra
+# audio-verified candidate exists. One seat per platform, YouTube first (Roham's rule)
+# and SoundCloud second because that is where niche edits live (Konnor's link is a
+# SoundCloud upload; its YouTube twin measured core 0.134 on its first 20s against the
+# clip, the SoundCloud file 0.288). Within a platform the most-played style row wins:
+# the clip's audio is overwhelmingly the upload people actually use.
+STYLE_DL = 2
+_STYLE_ROW = re.compile(r"\bhood ?trap\b|\bmylancore\b|\bjersey ?club\b|\bphonk\b", re.I)
+# A "type beat" is a producer's ORIGINAL instrumental named after a song, never an edit of
+# it: '[FREE] hoodtrap x ... type beat "blank space"' and 'jerk x hoodtrap type beat
+# "black and yellow"' both passed _style_title_ok (the song name ends the title) and took
+# a seat on the Blank Space / Black and Yellow clips in a search-only replay.
+_TYPE_BEAT = re.compile(r"\btype ?beats?\b", re.I)
+STYLE_CREDIT_SHARE = 0.25     # credited artist named on fewer than this share of title rows
+STYLE_CREDIT_MIN = 8          # ...out of at least this many rows carrying the whole title
+STYLE_LEAD_SHARE = 0.15       # ...while one other artist leads at least this share of them
+
+
+def _title_artist(title):
+    """The 'Artist' of an 'Artist - Title' upload name, folded, or None."""
+    m = re.split(u"\\s[-\u2013\u2014|]\\s", title or "", maxsplit=1)
+    if len(m) < 2:
+        return None
+    a = re.split(r"\s+(?:x|&|feat\.?|ft\.?)\s+|,", _ascii_fold(m[0]).lower())[0]
+    a = " ".join(re.sub(r"[^a-z0-9 ]", " ", a).split())
+    return a or None
+
+
+def _style_evidence(cands, artist_toks, edit_label):
+    """Why the style lane should open, as a list of short reasons ([] = stay shut).
+    'speed': Shazam's counter-speed sweep matched the clip sped up.
+    'credit': Shazam credited an artist the pool does not credit for this title, while
+    ANOTHER artist leads the "Artist - Title" rows (a remixer / re-upload credit). Both
+    halves are needed: niche songs are routinely uploaded with no artist in the title at
+    all (kelthraxx: Luhh Dyl on 0 of 21 rows, and no other name on more than 1).
+    Pure: reads edit_label, and title/uploader/song_cov of the pool rows."""
+    why = []
+    if "sped" in (edit_label or ""):
+        why.append("speed")
+    if artist_toks:
+        rows = [c for c in cands if (c.get("song_cov") or 0) >= 0.75]
+        if len(rows) >= STYLE_CREDIT_MIN:
+            named = sum(1 for c in rows if any(
+                w in ((c.get("title") or "") + " " + (c.get("uploader") or "")).lower()
+                for w in artist_toks))
+            lead = {}
+            for c in rows:
+                a = _title_artist(c.get("title"))
+                if a and not any(w in a for w in artist_toks):
+                    lead[a] = lead.get(a, 0) + 1
+            top = max(lead.items(), key=lambda kv: kv[1]) if lead else None
+            if (named < STYLE_CREDIT_SHARE * len(rows) and top
+                    and top[1] >= STYLE_LEAD_SHARE * len(rows)):
+                why.append("credit %d/%d, %s %d" % (named, len(rows), top[0], top[1]))
+    return why
+
+
+def _style_title_ok(title, core_title):
+    """Is this upload an edit OF this song, not a different song that shares a word?
+    The song's name must be followed by the end of the name, a bracket or separator, or
+    an edit/style word. Refuses "Three Days Grace - I Hate Everything About You (hoodtrap
+    remix)" and '(FREE) ... Hoodtrap Type Beat - "Three Down"' under the song "Three"
+    (both carry the one song word, so song_cov reads 1.0), keeps "Tove Lo - Talking Body
+    (Hoodtrap / Mylancore)" and "Talking body (Hoodtrap / Mylancore) SLOWED"."""
+    tok = lambda s: re.findall(r"[a-z0-9]+|[\(\)\[\]\|/-]", _ascii_fold(s or "").lower())
+    name = [w for w in tok(core_title) if w.isalnum()]
+    words = tok(title)
+    if not name:
+        return False
+    for i in range(len(words) - len(name) + 1):
+        if words[i:i + len(name)] != name:
+            continue
+        nxt = words[i + len(name)] if i + len(name) < len(words) else None
+        if (nxt is None or not nxt.isalnum() or EDIT_WORDS.search(nxt)
+                or _STYLE_ROW.search(nxt) or nxt in HOODTRAP_CANON):
+            return True
+    return False
+
+
+def _style_extra(cands, head, core_title, want=STYLE_DL):
+    """Up to `want` style-edit rows (hoodtrap / mylancore / jersey club / phonk, or an
+    upload by a HOODTRAP_CANON producer) that are edits of this song (_style_title_ok) and
+    not already in `head`: the most-played YouTube row, then the most-played SoundCloud
+    row, then (if a platform had none) the next most-played row of either. Pure: reads
+    title/uploader/source/plays/song_cov only."""
+    if want <= 0:
+        return []
+    have = {id(c) for c in head} | {c.get("url") for c in head}
+    pool = []
+    for c in cands:
+        if id(c) in have or c.get("url") in have or c.get("_done"):
+            continue
+        t = _ascii_fold(c.get("title") or "")
+        up = (c.get("uploader") or "").lower()
+        if not (_STYLE_ROW.search(t) or any(p in up for p in HOODTRAP_CANON)):
+            continue
+        if ((c.get("song_cov") or 0) < 0.75 or OTHER_RENDITION.search(t) or _TYPE_BEAT.search(t)
+                or _is_compilation(c)):
+            continue
+        if not _style_title_ok(c.get("title"), core_title):
+            continue
+        pool.append(c)
+    pool.sort(key=lambda c: -(c.get("plays") or 0))
+    out = []
+    for src in ("youtube", "soundcloud"):
+        for c in pool:
+            if c.get("source") == src:
+                out.append(c)
+                break
+    for c in pool:                                 # a platform with no style row: refill
+        if len(out) >= want:
+            break
+        if c not in out:
+            out.append(c)
+    return out[:want]
+
 # "(prod. X)" / "prod by X" / "Prod: X" - a producer credit baked into a title. The
 # exact edit is routinely uploaded to THAT person's own account, not the vocalist's or
 # a re-upload account ("wouldnt believe flipp (prod.kelthraxx)" lives on
@@ -5873,15 +6011,27 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     _hit = _stream_hit if on_cand is not None else None
 
     _wave1_done = []
+    _style_x = []
     if cands:
         # carried fast-path rows never take a head slot: they are appended below, the
         # same rule as the creator lane and the comment links, so the 14-row head is the
         # one every clip without hints is scored on.
         wave1 = _sc_quota(sorted([c for c in cands if not c.get("fast_carry")],
                                  key=_dl_priority), max_dl)[:max_dl]
+        # style rows ride wave 1 so they cost no extra wall time; they are re-listed in
+        # the WAVE 2 appended block so the parity strip keeps their scores. Only when the
+        # genre is unknown (when it is known, genre_hit already puts them in the head) and
+        # only on evidence the clip is an edit (_style_evidence).
+        if not credit_toks and base_title and shazam_reliable:
+            _style_pool = [c for c in cands if not c.get("fast_carry")]
+            _style_why = _style_evidence(_style_pool, artist_toks, edit_label)
+            if _style_why:
+                _style_x = _style_extra(_style_pool, wave1, core_title)
+            tlog("style_quota", 0.0, n=len(_style_x), why=_style_why,
+                 titles=[(c.get("title") or "")[:60] for c in _style_x])
         _tw1 = time.time()
-        n = _download_and_score(wave1, clip_audio, tmp, 0, max_dl, clip_ctx=clip_ctx,
-                                on_scored=_hit)
+        n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
+                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit)
         tlog("dl_wave1", time.time() - _tw1, n=n)
         _wave1_done = [c for c in wave1 if c.get("_done")]
     else:
@@ -6085,7 +6235,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # never switch the creator lane off.
     _rx_extra = [c for c in cands if c.get("rescue_q") and not c.get("_done")][:RESCUE_DL]
     for c in (_cre_extra + _cm_extra + [c for c in cands if c.get("fast_carry")]
-              + _rx_extra):
+              + _rx_extra + _style_x):
         if id(c) not in _seen_head:
             _seen_head.add(id(c)); _appended.append(c)
     head = head + _appended
