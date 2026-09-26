@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject private var bridge: EngineBridge
 
     var body: some View {
+        GeometryReader { geo in
         ZStack(alignment: .top) {
             Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea()
 
@@ -12,11 +13,26 @@ struct ContentView: View {
 
             /* A long press on the status-bar strip opens Settings. The page owns the
                whole screen and has its own header, so the native control has to sit
-               somewhere the page does not use for taps. Documented in README. */
+               somewhere the page does not use for taps. Documented in README.
+
+               IT MUST COVER THE STATUS BAR ONLY (2026-09-26). It used to be a 44 pt strip
+               laid out inside the safe area, which put it just BELOW the status bar, right
+               over the page's header row: the result screen's back chevron and share
+               button sat under an invisible hit-testable view, so a real tap never reached
+               them (Konnor: "the back button in the top left doesn't do anything", asked
+               5+ times; every web-side fix passed in a desktop browser, where this native
+               strip does not exist). Now it is exactly the status bar's height and pushed
+               up into it, where the page draws nothing tappable. */
+            /* Laid out at the top of the safe area, then moved up by exactly the status
+               bar height: .offset moves the hit area with it, so the strip covers
+               0..statusBar and nothing below. (.ignoresSafeArea on a fixed-height view
+               would GROW it upward instead of moving it, and it would still reach the
+               header.) */
             Color.clear
-                .frame(height: 44)
+                .frame(height: max(geo.safeAreaInsets.top, 20))
                 .contentShape(Rectangle())
                 .onLongPressGesture(minimumDuration: 1.2) { bridge.showSettings = true }
+                .offset(y: -max(geo.safeAreaInsets.top, 20))
 
             if bridge.unreachable {
                 UnreachableView()
@@ -32,6 +48,7 @@ struct ContentView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(2)
             }
+        }
         }
         .sheet(isPresented: $bridge.showSettings) {
             SettingsView()
