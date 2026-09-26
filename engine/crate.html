@@ -2644,14 +2644,14 @@ function renderResult(d,partial){
     _fb.forEach(function(l){if(!_have[l.kind]){l.exact=false; lk.push(l);}});
   }
   var openin = lk.length ? '<div class="sect">Open in</div><div class="openin">'+lk.map(function(l){
-      /* Konnor, item 5: "one row of four, logo on top, name below". The uppercase SEARCH
-         word under three of the four tiles is what made the row read as unfinished on his
-         Circles screenshot. The honesty it carried stays: a search fallback still says so,
-         as a small magnifier in the corner and in the accessible name, so a tap never lies
-         about where it lands - it just stops shouting it. */
+      /* Konnor, item 5: "one row of four, logo on top, name below". He asked twice to strip
+         the corner marker off these tiles - first the uppercase SEARCH word, now the little
+         magnifier - so the tiles are clean logos. The honesty it carried stays in the
+         accessible name: a search fallback still reads "Search <name>", so a tap never lies
+         about where it lands, it just stops showing a mark he found useless. */
       return '<a class="opl'+(l.exact?' ex':' srch')+'" href="'+esc(l.url)+'" target="_blank" rel="noopener"'+
         ' aria-label="'+(l.exact?'Open in ':'Search ')+esc(l.name)+'">'+
-        (IC[l.kind]||'')+'<b>'+esc(l.name)+'</b>'+(l.exact?'':'<span class="opsrch" aria-hidden="true">'+IC.search+'</span>')+'</a>';}).join('')+'</div>' : '';
+        (IC[l.kind]||'')+'<b>'+esc(l.name)+'</b></a>';}).join('')+'</div>' : '';
   // The badge is a VERDICT ("Original" / "Slowed ~0.71x + bass boosted"), and while the
   // hunt is still running there isn't one yet - /base's speed call is provisional and the
   // crowned edit can change it. Now that this card is on screen DURING the hunt (versions
@@ -4233,7 +4233,9 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){ipStop(); scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
+function goHome(){nav('idle');   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
+  try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
+  result.innerHTML=''; hideChip(); urlEl.value='';}
 /* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
    the native app hands it off to TikTok or Instagram instead of navigating the web view. */
 function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();}
