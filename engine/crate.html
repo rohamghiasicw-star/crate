@@ -2548,6 +2548,24 @@ function renderResult(d,partial){
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
+  /* Konnor, job 572: no crown, but a version measured 90% and the screen still led with
+     the plain song. When nothing was crowned and the best row is 80% or better, that
+     version becomes the main one: its title, cover and play button take the top, and the
+     other versions stay in the fold under it, and the Open in row opens that version. */
+  var promo=false;
+  if(!ex && !partial && d.unsure && cands.length){
+    var _top=byMatch(cands)[0], _tm=vmatch(_top);
+    if(_tm && (_tm.exact || (_tm.pct!==null && _tm.pct>=80))){ ex=_top; promo=true; }
+  }
+  var _htitle=d.base_song;
+  if(promo){
+    _htitle=String(ex.title||d.base_song);
+    // "Flo Rida - Gdfr (Slowed + Reverb)" over "Flo Rida": drop the repeated artist prefix
+    var _ba=String(d.base_artist||'').toLowerCase();
+    if(_ba && _htitle.toLowerCase().indexOf(_ba)===0){
+      var _rest=_htitle.slice(_ba.length).replace(/^\s*[-–—:|]\s*/,'');
+      if(_rest && _rest.length<_htitle.length-_ba.length) _htitle=_rest;}
+  }
   /* ONE MEANING OF "EXACT" ON THE WHOLE SCREEN. The heading said "The exact version
      playing" over every crown, so it sat over a "70% version match, clip 10% slower"
      (#30 on ShazamKit: the official upload, which server.py itself flags
@@ -2633,6 +2651,14 @@ function renderResult(d,partial){
   // (Spotify and YouTube need auth) falls back to search and is labelled as a search, so
   // a tap never lies about where it lands.
   var lk=(d.links||[]).slice();
+  // Job 572: a promoted version is the main song, so Open in goes to that version. Its own
+  // upload is the exact tile for its platform; the rest search for the version's title.
+  if(promo){
+    var _pk=/soundcloud/.test(String(ex.source||'').toLowerCase()+ex.url)?'soundcloud':
+            /youtube|youtu\.be/.test(String(ex.source||'').toLowerCase()+ex.url)?'youtube':'';
+    lk=[];
+    if(_pk) lk.push({name:_pk==='youtube'?'YouTube':'SoundCloud',kind:_pk,url:ex.url,exact:true});
+  }
   /* Konnor: "where did the Open in Spotify / Open in SoundCloud go". The engine builds
      these links behind a 6s cap and its own comment says a failure is silent, so when that
      lookup times out d.links comes back empty and the whole row vanished. The song and
@@ -2641,7 +2667,7 @@ function renderResult(d,partial){
      always there. Same search URLs the engine uses, marked as a search so a tap never lies
      about where it lands. */
   if(d.base_song){
-    var _fq=encodeURIComponent((d.base_artist?d.base_artist+' ':'')+d.base_song);
+    var _fq=encodeURIComponent((d.base_artist?d.base_artist+' ':'')+_htitle);
     var _fb=[{name:'Spotify',kind:'spotify',url:'https://open.spotify.com/search/'+_fq},
              {name:'SoundCloud',kind:'soundcloud',url:'https://soundcloud.com/search?q='+_fq},
              {name:'Apple Music',kind:'apple',url:'https://music.apple.com/search?term='+_fq},
@@ -2675,6 +2701,8 @@ function renderResult(d,partial){
      A measured verdict (not a caption claim or a held slot, which stay neutral) gets the
      tick, the same mark the save card uses for "this is settled". */
   if(!partial) badge=badge.replace(/^<span class="badge( orig)?">/, function(m){return m+IC.tick;});
+  // A promoted version (job 572) says why it is on top when no edit pill already does.
+  if(promo && !badge) badge='<span class="badge">'+IC.tick+(exExact?'Exact match':esc(vtxt(exM))+' match')+'</span>';
   var _mparts=(d.sections&&d.sections.length>1)?d.sections:((d.songs&&d.songs.length>1)?d.songs:null);
   if(!partial && _mparts) badge='<span class="badge mash">'+IC.layers+'Mashup · '+_mparts.length+' songs</span>';
   /* ---------- PREVIEW ON THE COVER (layout spec item 7) ----------
@@ -2734,8 +2762,12 @@ function renderResult(d,partial){
     corner='<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
       ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>';
   }
+  if(promo){
+    if(ex.art) art=imgTag({'class':'art', src:ex.art, alt:'', width:150, height:150,
+               'data-ph':'--phc:'+_phc+';--phc2:'+_phc2});
+  }
   var hero='<div class="hero"><span class="artwrap">'+art+corner+'</span>'+
-    '<h2 class="rtitle">'+esc(d.base_song)+'</h2>'+
+    '<h2 class="rtitle">'+esc(_htitle)+'</h2>'+
     '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
   // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of
@@ -2843,6 +2875,9 @@ function renderResult(d,partial){
     // the tempo gate but sits outside the 2% "exact" bucket. Clip 25 was a 3.9%-slower
     // upload presented as a 100% match; the pill now carries the number.
     var xoff=(!xsrc && d.crown_tempo_off)?d.crown_tempo_off:'';
+    // A promoted version is already the hero (job 572), so no second card repeats it here;
+    // the inline player still needs its slot for the cover's play button.
+    if(promo) shelf=inlinePlayer; else
     shelf='<div class="sect">'+(xsrc?'The recording this clip was cut from':
                                   exExact?'The exact version playing':
                                   exBeat?'Our pick':'The closest version we found')+'</div>'+
@@ -2881,7 +2916,7 @@ function renderResult(d,partial){
       '<span>Other versions we checked · '+others.length+'</span>'+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       _shown.map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>';}}
+        return trackRow(c,false,'',false,{rank:i+(promo?1:2)});}).join('')+'</div></details>';}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
