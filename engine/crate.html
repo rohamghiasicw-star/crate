@@ -2614,6 +2614,12 @@ function renderResult(d,partial){
   // the user pasted. Either one opens the reel again, so the pill becomes a real link when
   // we have one and stays a plain label when we don't.
   var _vid = d.url || curURL || '';
+  // The top-left back arrow must take them back to where they were, the same as it does
+  // after a miss (see the no-match branch above) - to the reel they scanned when we know
+  // it, not dead-end on Addify's home. On a match it used to go home, which for anyone who
+  // came in from a TikTok read as "back does nothing": they wanted their feed, not our
+  // home screen. With no source to return to (a listen-mode scan) it still goes home.
+  if(_vid && _plat) backHandler=function(){openExternal(_vid);};
   var _pillInner = (d.thumb?imgTag({src:d.thumb, alt:'', onerror:'this.remove()'}):'<i class="cdot"></i>')+
     '<span class="h">@'+esc(_who)+'</span>'+(_plat?'<span class="cp">· '+_plat+'</span>':'');
   var clip = _who ? '<div class="clip">'+
