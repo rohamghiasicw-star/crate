@@ -3782,6 +3782,12 @@ function renderProf(){
 
 /* ---------- run ---------- */
 var busy=false, urlEl=document.getElementById('url');
+/* Set the moment the user leaves the scan (the top-left back arrow, Cancel, Find another
+   song). The version hunt keeps running in the background after the song is named, so its
+   late finish() would otherwise setState('locked') and drag the user back onto the result
+   they just backed out of - which is exactly why "back does nothing": it worked, then the
+   finishing hunt yanked them back. run() and sendListen() clear it when a new scan begins. */
+var leftScan=false;
 document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); run(urlEl.value);});
 urlEl.addEventListener('focus',function(){document.getElementById('form').classList.add('focus');});
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
@@ -3842,7 +3848,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
   curURL=p.url;
-  busy=true; document.getElementById('gobtn').setAttribute('disabled','');
+  busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
   showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
   document.getElementById('tl1').textContent='--:--';
@@ -3947,6 +3953,7 @@ function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeou
   if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
       logUnmatched(curURL, d.handle);
+    if(leftScan) return;   // the user backed out; do not drag them onto a No match card
     setState('locked'); document.getElementById('matchttl').textContent='No match'; return;}
   if(!d.cached) useScan();
   logScan(d);
@@ -3971,6 +3978,10 @@ function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeou
   // over. When the live hunt already handed over (the user has been watching versions
   // land on the result card), there is no ring to land on and no reason to make them
   // wait a beat for the crown.
+  // The user pressed back while the version hunt was still running. The scan is done and
+  // saved, but they are on Home now, so the hunt's finish must not haul them back to the
+  // result. Clean up the scan visuals and leave them where they are.
+  if(leftScan){scanAnimOff(); hideChip(); paintRecCanvas(); return;}
   var handed=document.getElementById('app').getAttribute('data-state')==='locked';
   // Wait for the RING, not for a guessed 1000ms. The old fixed pause was set when the
   // run to 100 took a fixed 450ms; now that the sweep is timed by the distance it has
@@ -4234,6 +4245,7 @@ document.getElementById('spbtn').onclick=function(){
 
 /* ---------- nav ---------- */
 function goHome(){nav('idle');   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
+  leftScan=true;                 // a still-running hunt must not finish() us back onto the result
   try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
   result.innerHTML=''; hideChip(); urlEl.value='';}
 /* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
@@ -4320,7 +4332,7 @@ function cleanupListen(){
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
 function sendListen(blob){
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
-  busy=true; setState('scanning'); hideChip();
+  busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
   headline('Finding song'); say('Building the audio fingerprint');
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
