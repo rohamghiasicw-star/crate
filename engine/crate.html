@@ -1324,6 +1324,9 @@ a.clippill:hover{filter:brightness(1.12)}
   .saved:hover{transform:translateY(-1px)}
   .saved .rm:hover{background:var(--raise2);color:var(--text)}
 }
+.latehunt{display:flex;align-items:center;gap:10px;margin:16px 2px 6px;color:rgba(255,255,255,.62);font-size:13.5px;font-weight:600;letter-spacing:.1px}
+.latehunt i{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid rgba(107,95,224,.3);border-top-color:#6B5FE0;animation:lhspin .8s linear infinite}
+@keyframes lhspin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -4151,7 +4154,14 @@ function run(raw){if(busy) return; var p=parseLink(raw);
                 candidates:(LIVE.length?LIVE.slice():(d.candidates||[])), edits_pending:false});
               // Shown as still digging, not as the final answer: the late result upgrades it.
               // If the hunt never answers, it settles as final after 90 s.
-              try{renderResult(dd,true);}catch(e){renderResult(d,false);}
+              // SHOWN AS AN ANSWER, NOT A FROZEN PROGRESS BAR (Roham 2026-09-26: "after hunting it
+              // says still digging and searching edits and remixes"). The partial render's bar is
+              // no longer driven after the budget, so it sat at 0% under "Still digging". The card
+              // now renders as final, with one small live line that the late crown replaces.
+              try{renderResult(dd,false);}catch(e){renderResult(d,false);}
+              try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect'), _lh=document.createElement('div');
+                _lh.className='latehunt'; _lh.innerHTML='<i></i><span>Finding the exact version</span>';
+                if(_s) _s.parentNode.insertBefore(_lh,_s); else _r.appendChild(_lh);}catch(e){}
               lateCap=setTimeout(function(){
                 if(!leftScan && curURL===scanURL){ try{renderResult(dd,false);}catch(e){} }
               }, 90000);}
