@@ -2224,9 +2224,13 @@ function vmatch(c){
 function vfig(m){return !m?-2:m.pct===null?-1:m.pct;}
 /* Konnor, job 567: a shelf listed a 50% match above a 90% one. Every list of versions now
    reads highest match first, by the same figure the row prints. Ties keep engine order. */
+/* Rows that print no figure ("Unconfirmed") all tie at -1; among those the raw audio score
+   is the only measurement left, so the closer one goes first (Konnor's Talking Body hoodtrap,
+   core 0.301, sat under a plain slowed upload at 0.269 on engine order). Rows that print the
+   same figure keep engine order. */
 function byMatch(list){
-  return list.map(function(c,i){return {c:c,i:i,f:vfig(vmatch(c))};})
-    .sort(function(a,b){return (b.f-a.f)||(a.i-b.i);})
+  return list.map(function(c,i){return {c:c,i:i,f:vfig(vmatch(c)),k:(typeof c.core==='number'?c.core:-1)};})
+    .sort(function(a,b){return (b.f-a.f)||(a.f===-1&&b.f===-1?(b.k-a.k):0)||(a.i-b.i);})
     .map(function(x){return x.c;});}
 function vtxt(m){return !m?'':m.exact?'exact':m.pct===null?m.word.toLowerCase():m.pct+'%';}
 function vtier(m){return m.exact?3:m.pct===null?0:m.pct>=80?2:m.pct>=CORE_KEEP*100?1:0;}
