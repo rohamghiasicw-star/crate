@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch ladder</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "SF Pro Text", Segoe UI, Roboto, sans-serif;
+    background: #0d0f13;
+    color: #f2f3f5;
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 0;
+    box-sizing: border-box;
+  }
+  .card {
+    width: 620px;
+    padding: 40px 44px 44px;
+    background: #14171d;
+    border: 1px solid #232833;
+    border-radius: 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .2px; }
+  .sub { color: #9aa1ad; font-size: 15px; margin: 0 0 30px; }
+
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    margin-bottom: 6px;
+    background: #16241d;
+    border: 1px solid #21402f;
+    border-radius: 14px;
+  }
+  .top .flag { font-size: 20px; }
+  .top .goal { font-weight: 700; font-size: 17px; color: #4ade80; }
+
+  .ladder { display: flex; flex-direction: column; }
+  .rung {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 18px;
+    border-radius: 12px;
+    position: relative;
+  }
+  .rung + .rung { margin-top: 20px; }
+  .num {
+    flex: 0 0 auto;
+    width: 34px; height: 34px;
+    border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px;
+    background: #6B5FE0; color: #fff;
+  }
+  .body { flex: 1 1 auto; }
+  .body .name { display: block; font-weight: 600; font-size: 17px; }
+  .body .who { display: block; color: #9aa1ad; font-size: 14px; margin-top: 3px; }
+  .tag {
+    flex: 0 0 auto;
+    font-size: 12px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px;
+    background: #2a2f38; color: #9aa1ad;
+  }
+  .tag.built { background: #123a24; color: #4ade80; }
+  .tag.mint  { background: #14322a; color: #5DCAA5; }
+
+  /* the two ladder rails, visible on either side of the rungs */
+  .track { position: relative; padding: 16px 30px; }
+  .track::before, .track::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 9px;
+    background: linear-gradient(#7d72e8, #5147b8);
+    border-radius: 9px;
+    box-shadow: 0 0 14px rgba(107,95,224,.4);
+  }
+  .track::before { left: 8px; }
+  .track::after  { right: 8px; }
+  /* rungs sit between the rails and connect to both */
+  .track .rung {
+    z-index: 1;
+    background: #1a1e26;
+    border: 1px solid #2d3444;
+    border-left: 4px solid #6B5FE0;
+    border-right: 4px solid #6B5FE0;
+  }
+
+  .note { margin-top: 26px; color: #6b7280; font-size: 13px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Launch ladder</h1>
+    <p class="sub">Six steps to Addify on the App Store</p>
+
+    <div class="top">
+      <span class="flag">&#127937;</span>
+      <span class="goal">Live on the App Store</span>
+    </div>
+
+    <div class="ladder track">
+      <div class="rung">
+        <span class="num">6</span>
+        <span class="body"><span class="name">Marketing</span><span class="who">Konnor, after approval</span></span>
+        <span class="tag">next</span>
+      </div>
+      <div class="rung">
+        <span class="num">5</span>
+        <span class="body"><span class="name">Submit</span><span class="who">Review notes, demo video, expect a round back</span></span>
+        <span class="tag">next</span>
+      </div>
+      <div class="rung">
+        <span class="num">4</span>
+        <span class="body"><span class="name">The launch look</span><span class="who">Konnor's spec, most of it built</span></span>
+        <span class="tag built">mostly built</span>
+      </div>
+      <div class="rung">
+        <span class="num">3</span>
+        <span class="body"><span class="name">The accuracy gate</span><span class="who">100 reels, graded together</span></span>
+        <span class="tag">next</span>
+      </div>
+      <div class="rung">
+        <span class="num">2</span>
+        <span class="body"><span class="name">The compliance core</span><span class="who">ShazamKit, hosting, StoreKit, Apple Music save</span></span>
+        <span class="tag mint">in progress</span>
+      </div>
+      <div class="rung">
+        <span class="num">1</span>
+        <span class="body"><span class="name">Decisions and accounts</span><span class="who">Roham, this week</span></span>
+        <span class="tag">now</span>
+      </div>
+    </div>
+
+    <p class="note">Climb from Step 1 at the bottom to launch at the top. Steps stand alone unless a rung waits on the one below it. Drawn from the launch plan.</p>
+  </div>
+</body>
+</html>
