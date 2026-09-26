@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recognition switch</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "SF Pro Text", Segoe UI, Roboto, sans-serif;
+    background: #0d0f13;
+    color: #f2f3f5;
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+  }
+  .card {
+    width: 560px;
+    padding: 40px 44px;
+    background: #14171d;
+    border: 1px solid #232833;
+    border-radius: 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .2px; }
+  .sub { color: #9aa1ad; font-size: 15px; margin: 0 0 28px; }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 0;
+    border-top: 1px solid #232833;
+    font-size: 17px;
+  }
+  .row .k { color: #9aa1ad; }
+  .row .v { font-weight: 600; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .off { background: #2a2f38; color: #9aa1ad; }
+  .on  { background: #123a24; color: #4ade80; }
+  .arrow { color: #6b7280; margin: 0 10px; font-size: 18px; }
+  .flip { display: flex; align-items: center; padding: 22px 0 6px; }
+  .note { margin-top: 26px; color: #6b7280; font-size: 13px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Recognition switch</h1>
+    <p class="sub">Which Shazam the engine runs</p>
+
+    <div class="flip">
+      <span class="pill off">shazamio</span>
+      <span class="arrow">&rarr;</span>
+      <span class="pill on">shazamkit</span>
+    </div>
+
+    <div class="row"><span class="k">Backend now</span><span class="v">shazamkit</span></div>
+    <div class="row"><span class="k">Set from</span><span class="v">shazam_backend.txt</span></div>
+    <div class="row"><span class="k">Bridge signed</span><span class="v">com.addify.shazambridge</span></div>
+    <div class="row"><span class="k">Live at</span><span class="v">next engine restart</span></div>
+
+    <p class="note">Read straight from the engine's own /health. The setting is flipped in the worktree; the engine picks it up on its next restart.</p>
+  </div>
+</body>
+</html>
