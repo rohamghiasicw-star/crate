@@ -2469,6 +2469,7 @@ function artGlow(src, fallback){
 function urlHandle(u){var m=String(u||'').match(/tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[\/?#]|$)/); return m?m[1]:'';}
 function renderResult(d,partial){
   lastResult=d;
+  backHandler=goHome;  // default for the top-left chevron; the no-match branch may repoint it
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
   // label the /base payload did not (the consensus re-measure, see the stale-speed note
   // in the no-crown branch), and this runs again on that payload, so the shelf follows.
@@ -2500,6 +2501,16 @@ function renderResult(d,partial){
     /* Set the header here too, not only in finish(): renderResult can be called on its own,
        and a "No song here" card must never sit under a "Match found" title. */
     var _mt=document.getElementById('matchttl'); if(_mt) _mt.textContent='No match';
+    /* Konnor: after a miss, get them back to where they were. When we know the reel they
+       scanned, the back button reopens it in TikTok or Instagram; with no source (listen
+       mode) it drops them on the Addify home page. The top-left chevron always goes home. */
+    var _nmSrc=curURL||'';
+    var _nmPlat=/instagram\.com|instagr\.am/i.test(_nmSrc)?'Instagram':(/tiktok\.com|vt\.tiktok/i.test(_nmSrc)?'TikTok':'');
+    var _nmBack=_nmPlat
+      ? '<a class="navbtn" href="'+esc(_nmSrc)+'" target="_blank" rel="noopener" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to '+_nmPlat+'</span></a>'
+      : '<button class="navbtn" id="nm-home" type="button" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to home</span></button>';
+    // The top-left chevron backs out the same way: to the reel they scanned when we know it.
+    if(_nmPlat) backHandler=function(){openExternal(_nmSrc);};
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
@@ -2524,8 +2535,10 @@ function renderResult(d,partial){
         ? 'We listened all the way through and couldn’t match it. It may be sped up, edited, or just not in our database yet.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
       '<button class="cta" id="nm-search">Describe it instead</button>'+
+      _nmBack+
       '<div class="trainnote">Saved as pending. We’ll retry as the edit database grows</div>');
     var nms=document.getElementById('nm-search'); if(nms) nms.onclick=function(){goHome(); nav('search');};
+    var nmh=document.getElementById('nm-home'); if(nmh) nmh.onclick=goHome;
     return;}
   if(!d.base_song){result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
@@ -4221,7 +4234,14 @@ document.getElementById('spbtn').onclick=function(){
 
 /* ---------- nav ---------- */
 function goHome(){ipStop(); scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
-document.getElementById('back').onclick=goHome;
+/* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
+   the native app hands it off to TikTok or Instagram instead of navigating the web view. */
+function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();}
+/* The top-left chevron is THE back button Konnor pointed at. By default it goes to the
+   Addify home page; renderResult's no-match branch repoints it at the reel they scanned, so
+   back takes them straight back to the TikTok (or Instagram) they were watching. */
+var backHandler=goHome;
+document.getElementById('back').onclick=function(){(backHandler||goHome)();};
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
