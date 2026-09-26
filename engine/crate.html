@@ -1724,12 +1724,21 @@ function call(path,url){return checkEngine().then(function(up){if(!up) return {r
    to the plain blocking /edits, which is untouched. That fallback is cheap even mid-hunt:
    the server finishes the job and caches it even if the page stopped listening, so the
    retry usually answers out of cache instead of hunting twice. */
+/* ONE HUNT AT A TIME (2026-09-26). Starting a new scan while the previous hunt was still
+   streaming dropped the old stream; its onerror then fell back to a blocking /edits for the
+   OLD reel, so every new scan re-ran the one before it (live tlog: 18 of 32 reels scanned
+   twice, the pair always starting together) and both hunts fought for the same CPU. The
+   running hunt is kept here and ended cleanly (no fallback request) by a new scan or Back.
+   The engine still finishes and caches the old job on its own. */
+var HUNT=null;
+function endHunt(){ if(HUNT){ try{HUNT.abort();}catch(e){} HUNT=null; } }
 function huntEdits(url,onCand){
   if(!window.EventSource) return call('/edits',url);
   return new Promise(function(resolve){
-    var es=null, settled=false, watchdog=null;
+    var es=null, settled=false, watchdog=null, aborted=false;
     var stop=function(){if(watchdog) clearTimeout(watchdog); try{if(es) es.close();}catch(e){}};
-    var giveUp=function(){if(settled) return; settled=true; stop(); call('/edits',url).then(resolve);};
+    var giveUp=function(){if(settled||aborted) return; settled=true; stop(); call('/edits',url).then(resolve);};
+    HUNT={url:url, abort:function(){ if(settled) return; aborted=true; settled=true; stop(); resolve({result:'aborted'}); }};
     try{es=new EventSource(ENGINE+'/edits/stream?url='+encodeURIComponent(url));}
     catch(e){return call('/edits',url).then(resolve);}
     // last-resort guard against a half-open socket that never fires onerror: the whole
@@ -4043,6 +4052,7 @@ var curURL='';
 function run(raw){if(busy) return; var p=parseLink(raw);
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
+  endHunt();                       // never two hunts at once (see HUNT)
   curURL=p.url;
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
@@ -4154,7 +4164,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           // and covers the common case where nothing verifies at all. Two sources both
           // writing the bar is what made it jump. This one just narrates.
           say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
-        }).then(function(full){ return settle(full); });
+        }).then(function(full){ if(full&&full.result==='aborted') return; return settle(full); });
         });
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
@@ -4461,7 +4471,7 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){nav('idle');   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
+function goHome(){nav('idle'); endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
   leftScan=true;                 // a still-running hunt must not finish() us back onto the result
   try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
   result.innerHTML=''; hideChip(); urlEl.value='';}
