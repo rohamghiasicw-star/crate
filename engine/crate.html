@@ -543,6 +543,14 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .setrow .sv.ok{color:var(--good)}
 .setrow.danger{color:#FF7A7A}
 .setrow .go2{color:var(--faint)}
+/* Cancel plan save offer: only shown once the user taps Cancel plan. */
+.sheet.keep{place-items:center}
+.keepcard{align-items:center;text-align:center;gap:10px;padding:26px 20px 18px}
+.keepcard h2{margin:0;text-wrap:balance;font-size:21px;font-weight:760;line-height:1.25}
+.keepcard p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.5;max-width:280px}
+.keepcard .kbtn{width:100%;background:var(--accent);color:var(--on-accent);font-size:15px;font-weight:700;
+  padding:14px;border-radius:var(--r-pill);margin-top:6px}
+.keepcard .klink{width:100%;font-size:13.5px;font-weight:600;color:var(--muted);padding:10px}
 .setlist{display:flex;flex-direction:column}
 /* iOS-style switch, reused for every toggle */
 .sw{width:40px;height:24px;border-radius:99px;background:var(--raise2);position:relative;flex:none;
@@ -1530,6 +1538,14 @@ a.clippill:hover{filter:brightness(1.12)}
            this page has no /privacy of its own and has to point at the engine host. -->
       <div class="legal"><a id="lgpriv" target="_blank" rel="noopener">Privacy</a><span>&middot;</span><a id="lgsup" target="_blank" rel="noopener">Support</a><span>&middot;</span><a id="lgterms" target="_blank" rel="noopener">Terms</a></div>
     </div>
+</div>
+<div class="sheet keep" id="keep" hidden>
+  <div class="sheetcard keepcard" role="dialog" aria-modal="true" aria-label="Keep your plan">
+    <h2 id="keeph">Don't cancel and get 1 month for free</h2>
+    <p id="keepp">Stay and your next month is on us.</p>
+    <button class="kbtn" id="keepyes">Get 1 month free</button>
+    <button class="klink" id="keepno">Continue cancelling</button>
+  </div>
 </div>
 
 
@@ -3938,14 +3954,35 @@ function sRun(q,mode){
 })();
 
 /* ---------- profile ---------- */
+/* Paid plan + cancel save offer (Konnor). Hitting Cancel plan first offers a free month;
+   the offer is made once, after that Cancel plan cancels straight away. */
+function planOn(){try{return localStorage.getItem('addify-plan')==='on';}catch(e){return false;}}
+function keepShown(h,p,yes,no){document.getElementById('keeph').textContent=h;
+  document.getElementById('keepp').textContent=p;
+  var y=document.getElementById('keepyes'), n=document.getElementById('keepno');
+  y.textContent=yes; n.hidden=!no; if(no) n.textContent=no;
+  document.getElementById('keep').hidden=false;}
+function closeKeep(){document.getElementById('keep').hidden=true; renderProf();}
+function planCancelled(){try{localStorage.setItem('addify-plan','off');}catch(e){}
+  keepShown('Plan cancelled','You are back on the free plan.','Done');
+  document.getElementById('keepyes').onclick=closeKeep;}
+function openKeep(){
+  if(localStorage.getItem('addify-freemonth')){planCancelled(); return;}
+  keepShown("Don't cancel and get 1 month for free",'Stay and your next month is on us.',
+    'Get 1 month free','Continue cancelling');
+  document.getElementById('keepyes').onclick=function(){
+    try{localStorage.setItem('addify-freemonth',String(Date.now()));}catch(e){}
+    keepShown('Your free month is added','Thanks for staying. Next month is on us.','Done');
+    this.onclick=closeKeep;};
+  document.getElementById('keepno').onclick=planCancelled;}
 function monthlyOn(){try{return localStorage.getItem('addify-monthly')==='on';}catch(e){return false;}}
 function renderProf(){
   var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>Free · '+left+' scan'+(left===1?'':'s')+' left this month</span></div></div>'+
-    '<div class="upcard"><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
+      '<div><b>'+esc(name)+'</b><span>'+(planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
+    '<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>'+
     '<div class="sect">Connected accounts</div><div class="setlist">'+
       '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
@@ -3960,6 +3997,7 @@ function renderProf(){
       '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
+      (planOn()?'<button class="setrow" id="pfcancel"><span class="si">'+IC.x+'</span><span class="st">Cancel plan</span><span class="go2">'+IC.rchev+'</span></button>':'')+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
       '<a class="setrow" id="pfpriv" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Privacy policy</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<a class="setrow" id="pfsup" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Support</span><span class="go2">'+IC.rchev+'</span></a>'+
@@ -3980,6 +4018,8 @@ function renderProf(){
   // path, not buried behind Developer settings. Same engine-resolved URLs as the sheet.
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
+  var pc=document.getElementById('pfcancel');
+  if(pc) pc.onclick=openKeep;
   var so=document.getElementById('pfout');
   if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
   document.getElementById('pfdel').onclick=function(){
