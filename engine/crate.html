@@ -432,6 +432,8 @@ canvas#tlwave{width:100%;height:36px;display:block}
   font-variant-numeric:tabular-nums}
 .trow .rk.hot{color:#FF8A4C}
 .trow .sq{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;flex:none}
+.trow .sq.brand{position:relative;overflow:hidden;background:linear-gradient(150deg,var(--accent2),var(--accent))}
+.trow .sq.brand img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .trow .tt{flex:1;min-width:0}
 .trow .tt b{display:block;font-size:13px;font-weight:650;line-height:1.3;overflow:hidden;
   white-space:nowrap;text-overflow:ellipsis}
@@ -3492,12 +3494,18 @@ function trendTag(r){
   if(t.indexOf('sped')>=0||t.indexOf('night')>=0||full.indexOf('sped')>=0) return 'sped up';
   if(t.indexOf('remix')>=0||full.indexOf('remix')>=0||full.indexOf('edit')>=0||full.indexOf('flip')>=0) return 'remix';
   return '';}
+/* Konnor, 2026-09-26: the tiles each looked different (flat colours, raw TikTok video
+   frames). Every tile is the real cover art from the catalogue, or one branded gradient
+   tile when there is none. TikTok CDN images are video frames, never cover art. */
+function trowArt(r){
+  var a=r.art||'';
+  return a&&!/tiktokcdn/i.test(a)?a:'';}
 function trowHTML(r,rank){
-  var tag=trendTag(r);
+  var tag=trendTag(r), art=trowArt(r);
   return '<button class="trow" data-i="'+(rank-1)+'">'+
     '<span class="rk'+(rank===1?' hot':'')+'">'+rank+'</span>'+
-    '<span class="sq" style="background:'+SQ[rank%SQ.length]+'">'+
-      (r.art?'<img src="'+esc(r.art)+'" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:9px" onerror="this.remove()">':IC.note)+'</span>'+
+    '<span class="sq brand">'+IC.note+
+      (art?'<img src="'+esc(art)+'" alt="" onerror="this.remove()">':'')+'</span>'+
     '<span class="tt"><b>'+esc(r.title)+'</b>'+
     '<span>'+(tag?'<i class="up" style="font-style:normal">'+esc(tag)+'</i> · ':'')+
       esc(r.by||'')+(r.uses?' · '+plays(r.uses)+' videos':'')+'</span></span>'+
