@@ -1,4 +1,7 @@
 #!/bin/zsh
+# zsh runs background jobs at nice +5 by default (BG_NICE). The live engine was started that
+# way on every restart, so any other load starved it. Keep it at normal priority. 2026-09-26
+unsetopt BG_NICE
 # Keeps BOTH halves of "the link works" alive: the engine (server.py on :8788)
 # and the public tunnel to it. A live tunnel pointed at a dead engine is just as
 # broken to Konnor as a dead tunnel, so this checks the real thing a user
