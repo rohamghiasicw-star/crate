@@ -221,6 +221,11 @@ html.native .app{max-width:none;border-radius:0;border:0;box-shadow:none;min-hei
   min-height:100dvh;animation:none;
   padding:max(14px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right))
           max(10px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left))}
+/* Finds grows with every scan, and with min-height alone the whole page grew past the
+   phone and pushed the bottom tabs off screen. Lock the card to the screen height so the
+   list scrolls inside it and the tabs are there the moment Finds opens (Konnor, 2026-09-26). */
+html.native .app[data-state="library"]{height:100vh;height:100dvh}
+.app[data-state="library"] #s-lib{min-height:0}
 
 /* ---------- the phone card ---------- */
 .app{
