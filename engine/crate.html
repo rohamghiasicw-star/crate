@@ -2469,6 +2469,7 @@ function artGlow(src, fallback){
 function urlHandle(u){var m=String(u||'').match(/tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[\/?#]|$)/); return m?m[1]:'';}
 function renderResult(d,partial){
   lastResult=d;
+  backHandler=goHome;  // default for the top-left chevron; the no-match branch may repoint it
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
   // label the /base payload did not (the consensus re-measure, see the stale-speed note
   // in the no-crown branch), and this runs again on that payload, so the shelf follows.
@@ -2508,6 +2509,8 @@ function renderResult(d,partial){
     var _nmBack=_nmPlat
       ? '<a class="navbtn" href="'+esc(_nmSrc)+'" target="_blank" rel="noopener" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to '+_nmPlat+'</span></a>'
       : '<button class="navbtn" id="nm-home" type="button" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to home</span></button>';
+    // The top-left chevron backs out the same way: to the reel they scanned when we know it.
+    if(_nmPlat) backHandler=function(){openExternal(_nmSrc);};
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
@@ -4231,7 +4234,14 @@ document.getElementById('spbtn').onclick=function(){
 
 /* ---------- nav ---------- */
 function goHome(){ipStop(); scanReset(); stopListen(); nav('idle'); result.innerHTML=''; hideChip(); urlEl.value='';}
-document.getElementById('back').onclick=goHome;
+/* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
+   the native app hands it off to TikTok or Instagram instead of navigating the web view. */
+function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();}
+/* The top-left chevron is THE back button Konnor pointed at. By default it goes to the
+   Addify home page; renderResult's no-match branch repoints it at the reel they scanned, so
+   back takes them straight back to the TikTok (or Instagram) they were watching. */
+var backHandler=goHome;
+document.getElementById('back').onclick=function(){(backHandler||goHome)();};
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
