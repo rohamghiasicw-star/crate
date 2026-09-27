@@ -1,0 +1,36 @@
+[Unit]
+Description=Addify engine (server.py on 127.0.0.1:8788)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+Type=simple
+User=addify
+Group=addify
+WorkingDirectory=/opt/addify/app/engine
+EnvironmentFile=/etc/addify/engine.env
+EnvironmentFile=-/etc/addify/engine.local.env
+# scan audio lives only in /var/tmp/addify: emptied before start and after stop
+ExecStartPre=+/bin/sh -c 'install -d -m 750 -o addify -g addify /var/tmp/addify && find /var/tmp/addify -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+ExecStart=/opt/addify/venv/bin/python -u server.py
+ExecStopPost=+/bin/sh -c 'find /var/tmp/addify -mindepth 1 -maxdepth 1 -exec rm -rf {} + ; true'
+Restart=always
+RestartSec=3
+Nice=0
+# SIGTERM to server.py only: it stops taking scans and lets running ones finish (ADDIFY_DRAIN_S),
+# then exits; systemd then kills any child left (yt-dlp, ffmpeg) and ExecStopPost sweeps the audio.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=130
+LimitNOFILE=65536
+MemoryHigh=13G
+MemoryMax=14G
+NoNewPrivileges=true
+ProtectSystem=full
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

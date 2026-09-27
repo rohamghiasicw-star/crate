@@ -1,0 +1,9 @@
+{"test": "shazam_limit D1 (synthetic, 22 back to back then 1 per 4.2 s)", "pattern": "......................XXXXXXXXXXXXX.......", "first_429_at_call": 23, "resumed_at_s": 63.7}
+{"test": "shazam_limit D2 (synthetic, 30 back to back then 1 per 1.2 s from 54 s)", "pattern": "......................XXXXXXXXXX..............", "first_429_at_call": 23, "resumed_at_s": 56.67}
+{"test": "tools/shazam_limit.py on the chroot venv (synthetic)", "pattern": "........................XXXXXX.XX...............", "answered_before_first_429": 24, "resumed_at_s": 54.3}
+{"test": "drain 1 (cached second clip)", "base_s": 7.7, "term_at_s": 12.8, "hunt_done_s": 58.3, "hunt_crown": "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix) Prod. Kryd", "second_scan": "found (cache hit, costs no slot)", "exit_after_term_s": 45.8, "temp_files_before": 3, "temp_files_after": 0}
+{"test": "drain 2 (uncached second clip)", "base_s": 6.7, "term_at_s": 10.7, "hunt_done_s": 36.0, "hunt_crown": "this place about to blow (mylancore remix)", "second_scan": "rate_limited, busy=draining", "exit_after_term_s": 25.5, "temp_files_before": 3, "temp_files_after": 0}
+{"test": "install.sh in Ubuntu 24.04.5 chroot", "first_run": "exit 0 (<170 s)", "second_run": "exit 0 in 4 s, nothing rebuilt", "ffmpeg": "6.1.1-3ubuntu5", "fpcalc": "1.5.1", "python": "3.12.3", "gh": "2.101.0", "cloudflared": "2026.9.3", "lock_sha256": "2abee7bd6854edfb (regenerated on Linux, byte-identical)", "parity_fp_md5": "6b0484ed1fac (matches the Mac)"}
+{"test": "systemd-analyze verify (systemd 255)", "units": "4 of 4 clean"}
+{"test": "tunnel script", "cloudflared_up_s": 9, "public_health": "ok through trycloudflare", "publish_flag_without_gh_login": "not published, logged"}
+{"test": "orphans after all runs", "ffmpeg_yt_dlp_deno_with_parent_1": 0}

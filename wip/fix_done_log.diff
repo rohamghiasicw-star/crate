@@ -1,0 +1,32 @@
+--- /Users/rohamghiasi/crate/server.py	2026-09-27 11:57:41
++++ server.py	2026-09-27 12:06:27
+@@ -3834,7 +3834,11 @@
+     old = SESSIONS.pop(key, None)
+     if old:
+         _cleanup((old.get("src") or {}).get("tmp"))
+-    res, ctx = _phase1(url, key, time.time())
++    _t0 = time.time()
++    res, ctx = _phase1(url, key, _t0)
++    if not (ctx and ctx.get("worth")):   # the scan ends here: log its end (see identify)
++        E.tlog("request_done", time.time() - _t0, url=key,
++               early=("named_only" if ctx else (res or {}).get("result")))
+     if ctx and ctx.get("worth"):
+         SESSIONS[key] = ctx              # /edits will finish it and free the audio
+     elif ctx:
+@@ -3902,10 +3906,15 @@
+     _c = _cache_get(key)
+     if _c is not None:
+         return _c
+-    res, ctx = _phase1(url, key, time.time())
++    _t0 = time.time()
++    res, ctx = _phase1(url, key, _t0)
+     if not ctx:                          # rate-limited: no audio was ever fetched
++        # every scan logs its end, or live_busy and the bot's "recent scans" read it as
++        # still running for the next 5 minutes
++        E.tlog("request_done", time.time() - _t0, url=key, early=(res or {}).get("result"))
+         return res
+     if not ctx.get("worth"):             # named it, nothing left to hunt for
++        E.tlog("request_done", time.time() - _t0, url=key, early="named_only")
+         _cache_put(key, res)
+         _sound_cache_put(ctx.get("src") or {}, res)
+         _cleanup((ctx.get("src") or {}).get("tmp"))

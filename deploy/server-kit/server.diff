@@ -1,0 +1,923 @@
+diff --git a/crate.html b/crate.html
+index 11f66d8..fdd8725 100644
+--- a/crate.html
++++ b/crate.html
+@@ -2755,7 +2755,7 @@ function renderResult(d,partial){
+   // so the page reads the same one; an older payload falls back to the label.
+   CLIP_PITCHED=(typeof d.fig_pitched==='boolean')?d.fig_pitched:
+                /slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
+-  if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
++  if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=(d.busy?errCard('sat','Addify is busy','Lots of scans right now.<br>Try again in a minute.'):errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.')); return;}
+   if(d.result==='engine_down'){ setEndTitle(d);
+     result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
+       (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
+diff --git a/crate_engine.py b/crate_engine.py
+index 04c0309..08985d9 100644
+--- a/crate_engine.py
++++ b/crate_engine.py
+@@ -22,6 +22,7 @@ import numpy as np
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ from find_song import (resolve, scrape_music, fetch, cut, duration_of,
+                        windows_for, shazam, SWEEP)
++import find_song as _FSP     # server-kit Shazam pacing; inert unless CRATE_SHAZAM_PACE=1
+ import ig
+ import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
+ import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
+@@ -42,7 +43,10 @@ SR = 22050
+ # fails "Requested format is not available", so YouTube uploads silently never reached the
+ # comparison. Homebrew's yt-dlp (2026.07.04, own python) fetches them fine. Prefer it; fall
+ # back to the module when it is not installed.
+-_BREW_YTDLP = "/opt/homebrew/bin/yt-dlp"
++# CRATE_YTDLP_BIN (server-kit): Linux has no Homebrew, so the server points this at the
++# venv's own bin/yt-dlp. Its shebang is the venv python, so _brew_python() and the long-lived
++# YouTube search worker run unchanged (HOSTING-PORTABILITY.md N1). Unset = the Mac as before.
++_BREW_YTDLP = os.environ.get("CRATE_YTDLP_BIN") or "/opt/homebrew/bin/yt-dlp"
+ _MOD_YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
+ _HAVE_BREW_YTDLP = os.path.exists(_BREW_YTDLP)
+ # ...BUT ONLY FOR YOUTUBE. The switch above moved SoundCloud onto Homebrew too, and there it
+@@ -68,6 +72,45 @@ YTDLP = YTDLP_YT                  # legacy name: YouTube-capable runner
+ _YT_CLIENTS = "youtube:player_client=android"
+ 
+ 
++# KILL THE WHOLE PROCESS GROUP ON A TIMEOUT (server-kit, CRATE_KILL_PGROUP=1).
++# subprocess.run(timeout=) kills yt-dlp but not the ffmpeg (or deno) it started, so a timed-out
++# download left an ffmpeg re-parented to init, writing into a temp dir already deleted (1 at
++# 100% CPU after one scan, 7 alive after three, HOSTING-DATACENTER.md 7A). Each yt-dlp call
++# gets its own session and the whole group dies on a timeout. Same arguments, same result,
++# same exceptions; unset (the Mac) = plain subprocess.run.
++KILL_PGROUP = os.environ.get("CRATE_KILL_PGROUP", "0").strip() == "1"
++
++
++def _run_ytdlp(args, timeout=None, check=False, **kw):
++    if not KILL_PGROUP:
++        return subprocess.run(args, timeout=timeout, check=check, **kw)
++    import signal as _sig
++    if kw.pop("capture_output", False):
++        kw["stdout"] = subprocess.PIPE
++        kw["stderr"] = subprocess.PIPE
++    with subprocess.Popen(args, start_new_session=True, **kw) as p:
++        try:
++            out, err = p.communicate(timeout=timeout)
++        except subprocess.TimeoutExpired:
++            try:
++                os.killpg(p.pid, _sig.SIGKILL)
++            except OSError:
++                pass
++            p.communicate()
++            tlog("ytdlp_pgroup_killed", float(timeout or 0))
++            raise
++        except BaseException:
++            try:
++                os.killpg(p.pid, _sig.SIGKILL)
++            except OSError:
++                pass
++            raise
++    r = subprocess.CompletedProcess(args, p.returncode, out, err)
++    if check:
++        r.check_returncode()
++    return r
++
++
+ def ytdlp_for(target):
+     """The yt-dlp runner for a URL or a search spec ("scsearch30:..." / "ytsearch5:...")."""
+     t = (target or "").lower()
+@@ -1451,9 +1494,9 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
+         if j is None:
+             # YTDLP_SC, not a bare "yt-dlp": on this server's PATH that is Homebrew's build,
+             # 5-16x slower on SoundCloud search than the module (see YTDLP_SC).
+-            out = subprocess.run(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
+-                                             "-J", "--no-warnings"],
+-                                 capture_output=True, timeout=25).stdout
++            out = _run_ytdlp(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
++                                         "-J", "--no-warnings"],
++                             capture_output=True, timeout=25).stdout
+             j = json.loads(out or "{}")
+     except Exception:
+         return []
+@@ -1481,7 +1524,7 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
+             try:
+                 jj = _sc_json_inproc(u, flat=False, timeout=20) if SPEED_INPROC_SEARCH else None
+                 if jj is None:
+-                    jj = json.loads(subprocess.run(
++                    jj = json.loads(_run_ytdlp(
+                         YTDLP_SC + ["-J", "--no-warnings", u],
+                         capture_output=True, timeout=20).stdout or "{}")
+                 u = jj.get("webpage_url") or u
+@@ -2950,6 +2993,20 @@ _SLOT_DIR = os.environ.get("CRATE_SHAZAMKIT_SLOT_DIR", "/tmp/addify-shazamkit")
+ SPEED_PRECUT = _speed_flag("CRATE_PRECUT", True)
+ 
+ 
++async def _shazam_probe(wav, timeout):
++    """One Shazam probe. Unpaced (the Mac): the exact line every call site used to have.
++    Paced (the Linux server, CRATE_SHAZAM_PACE=1): find_song.shazam_call waits for a Shazam
++    slot OUTSIDE this timeout, never retries silently, and raises find_song.Throttled when
++    it cannot get through; the call sites catch that like any probe error."""
++    if _FSP.PACE:
++        return await _FSP.shazam_call(wav, timeout)
++    return await asyncio.wait_for(shazam(wav), timeout=timeout)
++
++
++def _pace_waited():
++    return _FSP.pace_waited() if _FSP.PACE else 0.0
++
++
+ def _probe_conc():
+     try:
+         import find_song as _fs
+@@ -3102,7 +3159,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
+             _to = timeout if timeout is not None else (
+                 SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+             _pc[0] = time.time()
+-            hit = await asyncio.wait_for(shazam(wav), timeout=_to)
++            hit = await _shazam_probe(wav, _to)
+             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
+                  off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
+                  slot_wait=round(_sw, 3))
+@@ -3159,7 +3216,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
+                 # answers later, and the thing the product exists to do
+                 _to = timeout if timeout is not None else (
+                     SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+-                hit = await asyncio.wait_for(shazam(wav), timeout=_to)
++                hit = await _shazam_probe(wav, _to)
+                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
+                      off=off, rate=rate, span=span, hit=bool(hit))
+             except asyncio.TimeoutError:
+@@ -3213,6 +3270,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
+         """
+         need = SWEEP_NEED if need is None else need
+         t_start = time.time()
++        _w0 = _pace_waited()      # server-kit: queueing for a Shazam slot is not a stall
+         out, agree = [], {}
+         rates = list(rates)
+         if _conc > 1:
+@@ -3243,7 +3301,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
+                                     tlog("sweep_early_exit", time.time() - t_start,
+                                          rates=len(out), title=k)
+                                     return out
+-                    if time.time() - t_start > budget:
++                    if time.time() - t_start - (_pace_waited() - _w0) > budget:
+                         tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
+                         return out
+                 i += len(chunk)
+@@ -3261,7 +3319,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
+                             tlog("sweep_early_exit", time.time() - t_start,
+                                  rates=len(out), title=k)
+                             return out
+-            if time.time() - t_start > budget:
++            if time.time() - t_start - (_pace_waited() - _w0) > budget:
+                 tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
+                 return out
+         tlog("sweep_full", time.time() - t_start, hits=len(out))
+@@ -3753,7 +3811,7 @@ async def annotate_mashup(audio, fp, scan, dur=None):
+             wav = os.path.join(tmp, "m%.2f_%d.wav" % (off, span))
+             try:
+                 cut(audio, wav, off, 1.0, span=span)
+-                hit = await asyncio.wait_for(shazam(wav), timeout=MASHUP_TIMEOUT)
++                hit = await _shazam_probe(wav, MASHUP_TIMEOUT)
+             except Exception:
+                 return None
+         if hit:
+@@ -3776,8 +3834,9 @@ async def annotate_mashup(audio, fp, scan, dur=None):
+     order_by_aim = sorted(grid, key=lambda s: abs(s + MASHUP_SPAN / 2.0 - centre))
+     starts = order_by_aim[:MASHUP_BUDGET]
+     t2, fired = [], 0
++    _w0 = _pace_waited()                   # server-kit: slot queueing is not probe time
+     for s in starts:                       # serialised on purpose, see sem above
+-        if fired and time.time() - t_start > MASHUP_MAX_S:
++        if fired and time.time() - t_start - (_pace_waited() - _w0) > MASHUP_MAX_S:
+             break                          # bounded cost, see MASHUP_MAX_S
+         fired += 1
+         h = await probe(s, MASHUP_SPAN)
+@@ -5329,9 +5388,9 @@ def _run_search_raw(spec):
+             out = None
+     if out is None:
+         try:
+-            out = subprocess.run(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+-                                                      "--print", _SEARCH_FMT],
+-                                 capture_output=True, text=True, timeout=25).stdout
++            out = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
++                                                  "--print", _SEARCH_FMT],
++                             capture_output=True, text=True, timeout=25).stdout
+         except Exception:
+             return []
+     rows = []
+@@ -5669,7 +5728,7 @@ def web_search_edits(queries, budget=None):
+ def _meta(url):
+     """plays + title for a single URL (web results don't carry play counts)."""
+     try:
+-        out = subprocess.run(ytdlp_for(url) + [url, "--skip-download", "--print",
++        out = _run_ytdlp(ytdlp_for(url) + [url, "--skip-download", "--print",
+                                       "%(view_count)s\t%(title)s\t%(uploader)s\t%(thumbnail)s"],
+                              capture_output=True, text=True, timeout=30).stdout.strip()
+         v, t, up, th = (out.split("\t") + ["", "", "", ""])[:4]
+@@ -5879,7 +5938,7 @@ def dl_clip(url, dst, seconds=20, timeout=15):
+     if is_yt:
+         args += ["--extractor-args", _YT_CLIENTS]      # see _YT_CLIENTS
+     try:
+-        subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
++        _run_ytdlp(args, capture_output=True, text=True, timeout=timeout, check=True)
+     except Exception:
+         return None
+     if not os.path.exists(dst):
+diff --git a/find_song.py b/find_song.py
+index 922e645..14b37fa 100644
+--- a/find_song.py
++++ b/find_song.py
+@@ -162,6 +162,11 @@ def cut(src, dst, offset, rate, span=20):
+ async def _shazam_shazamio(path):
+     from shazamio import Shazam
+     out = await Shazam().recognize(path)
++    return _shazamio_answer(out)
++
++
++def _shazamio_answer(out):
++    """shazamio's raw response -> the probe answer (None = not in the catalogue)."""
+     tr = (out or {}).get("track")
+     if not tr:
+         return None
+@@ -285,6 +290,241 @@ async def shazam(path):
+     return await _shazam_shazamio(path)
+ 
+ 
++# ------------------------------------------------ SHAZAM PACING, ONE SERVER (server-kit)
++# CRATE_SHAZAM_PACE=1, shazamio only. Unset (the Mac, ShazamKit) = none of this runs and
++# shazam_call() below is exactly the old probe: asyncio.wait_for(shazam(path), timeout).
++#
++# WHAT SHAZAM ALLOWS ONE IP, measured from a datacenter box 2026-09-27 (server-kit README):
++# amp.shazam.com answered 22 calls back to back, then HTTP 429 to every call until its minute
++# was up, then took calls again. It is a count per 60 s window, not a bucket that refills
++# while you wait: a burst of 22 bought nothing more for the rest of that minute, and the
++# 429s themselves cost nothing. A kyks-type sweep makes about 21-24 probes, so a pacer that
++# lets a burst through and then fails is exactly how kyks came back "No match" on an idle
++# box (HOSTING-VERIFY). One 429 still came back at 20 a rolling 60.5 s under load, so the
++# default is 18 a rolling 61 s. So:
++#   * at most PACE_N calls in any rolling PACE_WINDOW_S, which keeps every 60 s window of
++#     Shazam's under its 22 whatever its phase;
++#   * a probe with no free slot WAITS for one, outside its own timeout, capped per probe
++#     (PACE_MAX_WAIT_S) and per scan (PACE_SCAN_WAIT_S); the oldest scan goes first, so
++#     under load scans finish one after another instead of all running late together;
++#   * one shazamio client per call with retries OFF (its default quietly retries a 429 for
++#     up to 60 s, which turned a throttle into a stall and then a "No match");
++#   * a real 429 (or 5xx) holds every probe for PACE_429_BACKOFF_S (doubling while they
++#     repeat), then that probe tries once more;
++#   * what we could not get past raises Throttled and is counted on the scan
++#     (SCAN / scan_begin), and server.py answers that scan "busy, try again": never
++#     "No match", never a crown, never cached.
++import collections as _collections
++import contextvars as _contextvars
++import threading as _threading
++import time as _time
++
++PACE = (os.environ.get("CRATE_SHAZAM_PACE", "0").strip() == "1"
++        and SHAZAM_BACKEND == "shazamio")
++PACE_N = int(os.environ.get("CRATE_SHAZAM_PACE_N", 18))
++PACE_WINDOW_S = float(os.environ.get("CRATE_SHAZAM_PACE_WINDOW_S", 61))
++PACE_MAX_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_MAX_WAIT_S", 58))
++PACE_SCAN_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_SCAN_WAIT_S", 62))
++PACE_429_BACKOFF_S = float(os.environ.get("CRATE_SHAZAM_429_BACKOFF_S", 4))
++
++
++class Throttled(RuntimeError):
++    """Shazam would not take this probe (429/5xx twice, or no slot inside the wait cap).
++    NOT a "no match". A plain RuntimeError, so the engine's probe code logs it as a probe
++    error exactly like any other; the scan record is what tells server.py."""
++
++
++class _Refused(Exception):
++    def __init__(self, status):
++        Exception.__init__(self, "shazam http %s" % status)
++        self.status = status
++
++
++# The scan this probe belongs to. server.py sets a fresh dict at the start of a scan; asyncio
++# copies it into every task the fingerprint starts (FingerprintJob's thread included), and
++# the dict is shared, so every probe of that scan counts into it. None outside a scan.
++SCAN = _contextvars.ContextVar("addify_scan", default=None)
++
++
++def scan_begin():
++    d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
++         "why": None}
++    SCAN.set(d)
++    return d
++
++
++def pace_waited():
++    """Seconds this scan has spent waiting for Shazam slots (0.0 when pacing is off). The
++    engine's sweep and mashup clocks subtract it: queueing is not a stall."""
++    d = SCAN.get() if PACE else None
++    return d["waited"] if d else 0.0
++
++
++class _Pacer(object):
++    def __init__(self):
++        self.lock = _threading.Lock()
++        self.sent = _collections.deque()      # when each recent call went out
++        self.hold_until = 0.0                 # 429 back-off: nobody sends before this
++        self.bad_run = 0                      # 429/5xx in a row
++        self.waiters = {}                     # ticket -> (priority, ticket)
++        self.seq = 0
++        self.stats = {"sent": 0, "waited_probes": 0, "wait_s": 0.0, "throttled": 0,
++                      "http429": 0, "http5xx": 0, "last_wait": 0.0, "last_429": None}
++
++    def _slot_at(self, now, k):
++        """When the (k+1)-th next free slot opens (k=0: the next one)."""
++        while self.sent and self.sent[0] <= now - PACE_WINDOW_S:
++            self.sent.popleft()
++        base = max(now, self.hold_until)
++        i = len(self.sent) + k - PACE_N
++        if i < 0:
++            return base
++        if i >= len(self.sent):              # more waiters than a window holds: an estimate
++            last = self.sent[-1] if self.sent else now
++            return max(base, last + PACE_WINDOW_S * (1 + (i - len(self.sent)) // PACE_N))
++        return max(base, self.sent[i] + PACE_WINDOW_S)
++
++    async def acquire(self, scan):
++        prio = scan["t0"] if scan else _time.time()
++        with self.lock:
++            self.seq += 1
++            me = (prio, self.seq)
++            self.waiters[me] = me
++        t_in = _time.time()
++        try:
++            while True:
++                with self.lock:
++                    now = _time.time()
++                    ahead = sum(1 for w in self.waiters if w < me)
++                    at = self._slot_at(now, ahead)
++                    if ahead == 0 and at <= now:
++                        del self.waiters[me]
++                        self.sent.append(now)
++                        w = now - t_in
++                        self.stats["sent"] += 1
++                        self.stats["last_wait"] = round(w, 2)
++                        if w > 0.05:
++                            self.stats["waited_probes"] += 1
++                            self.stats["wait_s"] = round(self.stats["wait_s"] + w, 2)
++                        if scan is not None:
++                            scan["sent"] += 1
++                            scan["waited"] += w
++                        return w
++                    cap = PACE_MAX_WAIT_S
++                    if scan is not None:
++                        cap = min(cap, PACE_SCAN_WAIT_S - scan["waited"])
++                    if at - t_in > cap:
++                        del self.waiters[me]
++                        self.stats["throttled"] += 1
++                        raise Throttled("no Shazam slot for %.0fs (cap %.0fs)"
++                                        % (at - t_in, max(0.0, cap)))
++                    nap = min(0.25, max(0.02, at - now))
++                await asyncio.sleep(nap)
++        except BaseException:
++            with self.lock:
++                self.waiters.pop(me, None)
++            raise
++
++    def answered(self):
++        with self.lock:
++            self.bad_run = 0
++
++    def refused(self, status, scan):
++        with self.lock:
++            self.bad_run += 1
++            hold = min(30.0, PACE_429_BACKOFF_S * (2 ** (self.bad_run - 1)))
++            self.hold_until = max(self.hold_until, _time.time() + hold)
++            if status == 429:
++                self.stats["http429"] += 1
++                self.stats["last_429"] = int(_time.time())
++                if scan is not None:
++                    scan["http429"] += 1
++            else:
++                self.stats["http5xx"] += 1
++        return hold
++
++    def snapshot(self):
++        with self.lock:
++            now = _time.time()
++            self._slot_at(now, 0)
++            out = dict(self.stats)
++            out.update(in_window=len(self.sent), waiting=len(self.waiters),
++                       limit=PACE_N, window_s=PACE_WINDOW_S,
++                       hold_s=round(max(0.0, self.hold_until - now), 1))
++            return out
++
++
++_PACER = _Pacer()
++
++
++def pace_stats():
++    return _PACER.snapshot() if PACE else None
++
++
++def _oneshot_shazam():
++    """A Shazam client whose HTTP layer makes ONE request and reports a 429/5xx as _Refused
++    instead of retrying it behind our back (shazamio's default: 20 attempts, 60 s)."""
++    from shazamio import Shazam
++    from shazamio.interfaces.client import HTTPClientInterface
++    import aiohttp
++
++    class _OneShot(HTTPClientInterface):
++        async def request(self, method, url, *args, **kwargs):
++            async with aiohttp.ClientSession() as s:
++                async with s.request(method.upper(), url, **kwargs) as resp:
++                    if resp.status == 429 or resp.status >= 500:
++                        raise _Refused(resp.status)
++                    return await resp.json(content_type=None)
++    return Shazam(http_client=_OneShot())
++
++
++def _scan_throttled(scan, why):
++    if scan is not None:
++        scan["throttled"] += 1
++        scan["why"] = scan["why"] or why
++
++
++async def shazam_call(path, timeout):
++    """ONE Shazam probe as the engine makes it. Pacing off: the old line, unchanged."""
++    if not PACE:
++        return await asyncio.wait_for(shazam(path), timeout=timeout)
++    scan = SCAN.get()
++    shz = _oneshot_shazam()
++    loop = asyncio.get_event_loop()
++    t0 = loop.time()
++    # The signature is local work (no request), so it runs before the slot is taken and
++    # inside the probe's own timeout, as it always did. The wait for a slot sits between
++    # the two and is not charged to the timeout.
++    rec = getattr(shz, "core_recognizer", None)
++    send = getattr(shz, "send_recognize_request_v2", None)
++    sig = None
++    if rec is not None and send is not None:
++        sig = await asyncio.wait_for(rec.recognize_path(path), timeout=timeout)
++    sig_s = loop.time() - t0
++    for attempt in (1, 2):
++        try:
++            await _PACER.acquire(scan)
++        except Throttled:
++            _scan_throttled(scan, "slot")
++            raise
++        left = max(0.5, timeout - sig_s) if attempt == 1 else timeout
++        try:
++            if sig is not None:
++                out = await asyncio.wait_for(send(sig=sig), timeout=left)
++            else:
++                out = await asyncio.wait_for(shz.recognize(path), timeout=left)
++        except _Refused as e:
++            _PACER.refused(e.status, scan)
++            if attempt == 2:
++                with _PACER.lock:
++                    _PACER.stats["throttled"] += 1
++                _scan_throttled(scan, "http %s" % e.status)
++                raise Throttled("shazam http %s twice" % e.status)
++            continue                     # the retry waits out the hold in acquire()
++        _PACER.answered()
++        return _shazamio_answer(out)
++
++
+ async def identify(url):
+     print("\n" + "=" * 68)
+     print(url)
+diff --git a/server.py b/server.py
+index 37f9262..200864d 100644
+--- a/server.py
++++ b/server.py
+@@ -24,6 +24,30 @@ import crate_engine as E
+ import wrong_song
+ import speed_from_master
+ import links as L
++import find_song as _FS
++
++# ---------------------------------------------------------------- ONE-SERVER PROFILE (server-kit)
++# The Linux server (one box, one IP, a quick tunnel in front; ~/addify-harness/server-kit).
++# Each switch is read from the environment and every one is OFF when unset, which is the
++# Mac: no gate, no drain, no pacing, and every request path below runs exactly as before.
++# ADDIFY_SCAN_SLOTS  heavy scan halves at once (/base, /find, /edits, /edits/stream, /listen).
++#                    A /base that parks a hunt keeps its slot for that hunt's /edits/stream.
++#                    "auto" = one per 2.5 vCPU (8 vCPU -> 3, 1 vCPU -> 1): a starved hunt loses
++#                    its downloads to their timeouts and can crown a lesser upload, so the cap
++#                    follows the CPU (HOSTING-DATACENTER: about 110 vCPU-s per scan).
++_SLOTS_ENV = (os.environ.get("ADDIFY_SCAN_SLOTS", "0") or "0").strip().lower()
++SCAN_SLOTS = (max(1, int(round((os.cpu_count() or 1) / 2.5))) if _SLOTS_ENV == "auto"
++              else int(_SLOTS_ENV))
++SCAN_QUEUE_MAX = int(os.environ.get("ADDIFY_SCAN_QUEUE_MAX", "8") or 8)
++SCAN_QUEUE_WAIT_S = float(os.environ.get("ADDIFY_SCAN_QUEUE_WAIT_S", "20") or 20)
++EDITS_WAIT_S = float(os.environ.get("ADDIFY_EDITS_WAIT_S", "120") or 120)
++EDITS_RESERVE_S = float(os.environ.get("ADDIFY_EDITS_RESERVE_S", "45") or 45)
++BUSY_RETRY_S = int(os.environ.get("ADDIFY_BUSY_RETRY_S", "20") or 20)
++# ADDIFY_DRAIN_S  on SIGTERM: stop taking scans, let running ones (both halves) finish for up
++#                 to this long, delete their temp audio, exit. 0 = the old instant exit.
++DRAIN_S = float(os.environ.get("ADDIFY_DRAIN_S", "0") or 0)
++# ADDIFY_TMP_SWEEP=1  TMPDIR belongs to this engine alone: empty it after a drain.
++TMP_SWEEP = os.environ.get("ADDIFY_TMP_SWEEP", "0").strip() == "1"
+ 
+ # ---------------------------------------------------------------- creator evidence
+ # NEW 2026-08-13. The check Roham did by hand on ZS4qqMqXq, in code: whose sound is
+@@ -778,12 +802,23 @@ def _rendition_final_speed(res):
+     res["speed"] = sp
+ 
+ 
++def _busy_result(key, why, t0=None, detail=None):
++    """The page's existing retryable state ("Try again soon"), never "No match": result
++    rate_limited, plus `busy` so the page can say it is Addify, not TikTok. Never cached."""
++    E.tlog("busy", 0.0, url=key, why=why, detail=str(detail or "")[:80])
++    return {"result": "rate_limited", "busy": why, "retry_after": BUSY_RETRY_S, "url": key,
++            "error": "Addify is busy right now. Try again in a minute.",
++            "secs": round(time.time() - t0, 1) if t0 else 0.0}
++
++
+ def _phase1(url, key, t0):
+     """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
+     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
+     30-60s: the user shouldn't wait on the edit search to learn what the song is.
+     Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
+     E.tlog("request_start", 0.0, url=key)
++    # server-kit: every Shazam probe of this scan counts into this record (find_song.SCAN).
++    _scan = _FS.scan_begin() if _FS.PACE else None
+     _prog_set(key, 6, "Reading the clip")
+     (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
+     _p0 = time.time()
+@@ -1232,6 +1267,17 @@ def _phase1(url, key, t0):
+             pass
+         E.tlog("fingerprint", time.time() - _t,
+                probes=(fp or {}).get("probes"), rate=(fp or {}).get("rate"))
++        if _scan is not None:
++            E.tlog("scan_shazam", 0.0, url=key, sent=_scan["sent"],
++                   waited=round(_scan["waited"], 2), throttled=_scan["throttled"],
++                   http429=_scan["http429"], why=_scan["why"])
++            if _scan["throttled"]:
++                # A THROTTLED SCAN IS NOT AN ANSWER (server-kit). Some probe never reached
++                # Shazam, so whatever the sweep decided was decided on missing evidence:
++                # "No match" would be a lie and a crown could be the wrong song. Answer
++                # "busy, try again", park nothing, cache nothing, free the audio.
++                _cleanup(src.get("tmp"))
++                return _busy_result(key, "shazam", t0, _scan["why"]), None
+         base_title = base_artist = None
+         edit_label = ""
+         if fp:
+@@ -4391,11 +4437,16 @@ def identify_mic(blob, kind):
+     try:
+         with open(raw, "wb") as f:
+             f.write(blob)
++        _scan = _FS.scan_begin() if _FS.PACE else None      # server-kit, see _phase1
+         loop = asyncio.new_event_loop()
+         try:
+             fp = loop.run_until_complete(E.fingerprint(raw))
+         finally:
+             loop.close()
++        if _scan is not None and _scan["throttled"]:
++            out = _busy_result("listen", "shazam", t0, _scan["why"])
++            out["listen"] = True
++            return out
+         if not fp:
+             return {"result": "no_match", "listen": True,
+                     "secs": round(time.time() - t0, 1)}
+@@ -4456,7 +4507,10 @@ def trending_sounds():
+     return {"rows": rows or _TREND["rows"]}
+ 
+ 
+-FEEDBACK = os.path.join(HERE, "feedback.jsonl")
++# CRATE_DATA_DIR (server-kit): where feedback and review notes are written, so they live
++# outside the code checkout. Unset = next to server.py, as before.
++DATA_DIR = os.environ.get("CRATE_DATA_DIR") or HERE
++FEEDBACK = os.path.join(DATA_DIR, "feedback.jsonl")
+ 
+ FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict")
+ 
+@@ -4495,6 +4549,9 @@ def record_review_note(obj):
+                         ("n", "title", "url", "core", "source", "uploader")
+                         if pick.get(k) is not None}
+     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval", "inbox.jsonl")
++    if os.environ.get("CRATE_DATA_DIR"):
++        os.makedirs(os.path.join(DATA_DIR, "eval"), exist_ok=True)
++        path = os.path.join(DATA_DIR, "eval", "inbox.jsonl")
+     with open(path, "a", encoding="utf-8") as f:
+         f.write(json.dumps(note) + "\n")
+     return {"ok": True, "note": note}
+@@ -5933,9 +5990,9 @@ def _s_flat(prefix, src, q, timeout=8.0):
+     # E.ytdlp_for, not E.YTDLP: Homebrew's yt-dlp takes 5-23s on a SoundCloud flat search
+     # (module: ~1.2-1.8s, same rows), so under this 8s ceiling the Search tab's SoundCloud
+     # lane would time out and read as a dead source. See crate_engine.YTDLP_SC.
+-    out = subprocess.run(E.ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+-                                               "--print", E._SEARCH_FMT],
+-                         capture_output=True, text=True, timeout=timeout).stdout
++    out = E._run_ytdlp(E.ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
++                                              "--print", E._SEARCH_FMT],
++                       capture_output=True, text=True, timeout=timeout).stdout
+     rows = []
+     for line in out.splitlines():
+         parts = line.split("\t")
+@@ -6841,6 +6898,163 @@ def search_text(text, mode="auto"):
+                  "elapsed_ms": int((time.time() - t0) * 1000)}
+ 
+ 
++# ---------------------------------------------------------------- SCAN GATE + DRAIN (server-kit)
++# ThreadingHTTPServer starts a thread per request with no cap, so a burst of scans made every
++# scan slow at once. With ADDIFY_SCAN_SLOTS set, at most that many heavy halves run together.
++# /edits/stream is the heavy half the app actually spends its time in, so it counts: a /base
++# that parks a hunt hands its slot to that clip, and the clip's /edits/stream claims it
++# (ADDIFY_EDITS_RESERVE_S, then the slot goes back). New scans wait up to
++# ADDIFY_SCAN_QUEUE_WAIT_S in a queue of at most ADDIFY_SCAN_QUEUE_MAX; a hunt whose slot
++# lapsed waits up to ADDIFY_EDITS_WAIT_S, ahead of new scans. Past that: the busy answer
++# (_busy_result), never a thinner scan. A cache hit costs nothing. SIGTERM (systemd stop or
++# restart) stops new scans and waits for running ones, then deletes their temp audio.
++class _ScanGate(object):
++    def __init__(self, slots):
++        self.slots = slots
++        self.cv = threading.Condition()
++        self.busy = 0               # running halves + slots reserved for a parked hunt
++        self.reserved = {}          # clip key -> time the reservation lapses
++        self.q = []                 # waiting tickets, (class, seq): hunts (0) before scans (1)
++        self.seq = 0
++        self.draining = False
++        self.served = {"admitted": 0, "claimed": 0, "refused": 0, "lapsed": 0}
++
++    def _reap(self):
++        now = time.time()
++        for k, until in list(self.reserved.items()):
++            if until < now:
++                del self.reserved[k]
++                self.busy = max(0, self.busy - 1)
++                self.served["lapsed"] += 1
++                self.cv.notify_all()
++
++    def acquire(self, hunt=False):
++        """-> (True, None) with a slot held, or (False, why)."""
++        with self.cv:
++            self._reap()
++            if self.draining:
++                self.served["refused"] += 1
++                return False, "draining"
++            if self.busy < self.slots and not self.q:
++                self.busy += 1
++                self.served["admitted"] += 1
++                return True, None
++            if not hunt and sum(1 for c, _ in self.q if c == 1) >= SCAN_QUEUE_MAX:
++                self.served["refused"] += 1
++                return False, "queue_full"
++            self.seq += 1
++            me = (0 if hunt else 1, self.seq)
++            self.q.append(me)
++            self.q.sort()
++            deadline = time.time() + (EDITS_WAIT_S if hunt else SCAN_QUEUE_WAIT_S)
++            try:
++                while True:
++                    self._reap()
++                    if self.draining:
++                        self.served["refused"] += 1
++                        return False, "draining"
++                    if self.busy < self.slots and self.q[0] == me:
++                        self.q.pop(0)
++                        self.busy += 1
++                        self.served["admitted"] += 1
++                        self.cv.notify_all()
++                        return True, None
++                    left = deadline - time.time()
++                    if left <= 0:
++                        self.served["refused"] += 1
++                        return False, "queue_wait"
++                    self.cv.wait(min(left, 1.0))
++            finally:
++                if me in self.q:
++                    self.q.remove(me)
++                    self.cv.notify_all()
++
++    def release(self):
++        with self.cv:
++            self.busy = max(0, self.busy - 1)
++            self.cv.notify_all()
++
++    def reserve(self, key):
++        """The slot this thread holds now belongs to `key`'s coming /edits/stream."""
++        with self.cv:
++            if key in self.reserved:             # never two slots for one clip
++                self.busy = max(0, self.busy - 1)
++            self.reserved[key] = time.time() + EDITS_RESERVE_S
++            self.cv.notify_all()
++
++    def claim(self, key):
++        with self.cv:
++            if self.reserved.pop(key, None) is None:
++                return False
++            self.served["claimed"] += 1
++            return True
++
++    def drop(self, key):
++        with self.cv:
++            if self.reserved.pop(key, None) is not None:
++                self.busy = max(0, self.busy - 1)
++                self.cv.notify_all()
++
++    def snapshot(self):
++        with self.cv:
++            self._reap()
++            return {"slots": self.slots, "busy": self.busy, "reserved": len(self.reserved),
++                    "queue": len(self.q), "draining": self.draining,
++                    "served": dict(self.served)}
++
++
++GATE = (_ScanGate(SCAN_SLOTS if SCAN_SLOTS > 0 else 10 ** 6)
++        if (SCAN_SLOTS > 0 or DRAIN_S > 0) else None)
++
++
++def _sweep_tmp():
++    """After a drain: the parked hunts' audio, then (ADDIFY_TMP_SWEEP) everything left in
++    this engine's own TMPDIR. systemd's ExecStopPost sweeps again once the children are gone."""
++    for k, ctx in list(SESSIONS.items()):
++        SESSIONS.pop(k, None)
++        _cleanup((ctx.get("src") or {}).get("tmp"))
++    d = tempfile.gettempdir()
++    if TMP_SWEEP and d not in ("/tmp", "/var/tmp") and os.path.isdir(d):
++        for name in os.listdir(d):
++            pth = os.path.join(d, name)
++            if os.path.isdir(pth):
++                _cleanup(pth)
++            else:
++                try:
++                    os.remove(pth)
++                except OSError:
++                    pass
++
++
++def _on_sigterm(signum, frame):
++    if GATE is None or GATE.draining:
++        return
++    with GATE.cv:
++        GATE.draining = True
++        GATE.cv.notify_all()
++    E.tlog("drain_start", 0.0, busy=GATE.busy, reserved=len(GATE.reserved))
++
++    def _drain():
++        t0 = time.time()
++        while time.time() - t0 < DRAIN_S:
++            with GATE.cv:
++                GATE._reap()
++                if GATE.busy <= 0:
++                    break
++            time.sleep(0.5)
++        E.tlog("drain_end", time.time() - t0, busy=GATE.busy)
++        try:
++            _sweep_tmp()
++        finally:
++            try:
++                import sys as _sys
++                _sys.stdout.flush()
++            except Exception:
++                pass
++            os._exit(0)
++    threading.Thread(target=_drain, name="drain", daemon=True).start()
++
++
+ class H(BaseHTTPRequestHandler):
+     def _send(self, code, obj):
+         b = json.dumps(obj).encode()
+@@ -6868,7 +7082,7 @@ class H(BaseHTTPRequestHandler):
+     SSE_PING = 5.0        # a comment line often enough that nothing calls the socket dead
+     SSE_MAX = 300.0       # hard ceiling; the slowest measured hunt is well under a minute
+ 
+-    def _sse(self, link):
++    def _sse(self, link, release=None):
+         q = queue.Queue()
+ 
+         def worker():
+@@ -6876,6 +7090,11 @@ class H(BaseHTTPRequestHandler):
+                 q.put(("done", _edits_job(link, lambda row: q.put(("cand", row)))))
+             except Exception as e:
+                 q.put(("fail", {"result": "error", "error": str(e)[:200]}))
++            finally:
++                # server-kit: the hunt holds its gate slot until the WORK ends, even when
++                # the page stopped listening (the job still finishes and caches).
++                if release is not None:
++                    release()
+ 
+         try:
+             self.wfile.write(
+@@ -7102,11 +7321,18 @@ class H(BaseHTTPRequestHandler):
+                                              and os.path.exists(_FS.SHAZAMKIT_BRIDGE))}
+             except Exception:
+                 _shz = None
+-            return self._send(200, {"ok": True, "service": "crate engine",
+-                                    "name": "Addify engine",
+-                                    "build": _page_build(),
+-                                    "shazam": _shz,
+-                                    "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
++            _hb = {"ok": True, "service": "crate engine",
++                   "name": "Addify engine",
++                   "build": _page_build(),
++                   "shazam": _shz,
++                   "does": ["tiktok", "instagram", "soundcloud", "youtube"]}
++            if GATE is not None or _FS.PACE:
++                # server-kit: load facts for check.sh. Old keys above stay exactly as they
++                # are: installed builds decode {ok, service, build} (EngineConfig.swift).
++                _hb["server"] = {"gate": GATE.snapshot() if GATE is not None else None,
++                                 "pace": _FS.pace_stats(),
++                                 "sessions": len(SESSIONS)}
++            return self._send(200, _hb)
+         if u.path == "/trending":
+             try:
+                 return self._send(200, trending_sounds())
+@@ -7129,6 +7355,8 @@ class H(BaseHTTPRequestHandler):
+         link = (q.get("url") or [""])[0].strip()
+         if not link or not any(h in link for h in ("tiktok.com", "instagram.com")):
+             return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
++        if GATE is not None:
++            return self._scan_gated(u.path, link, q)       # server-kit, see _ScanGate
+         # /edits/stream is /edits with the answers pushed out as they verify. /edits
+         # itself is untouched and stays the fallback for any client that can't stream.
+         if u.path == "/edits/stream":
+@@ -7141,6 +7369,66 @@ class H(BaseHTTPRequestHandler):
+         except Exception as e:
+             self._send(200, {"result": "error", "error": str(e)[:200]})
+ 
++    def _send_busy(self, path, key, why):
++        body = _busy_result(key, why)
++        if path == "/edits/stream":
++            # the page resolves a stream on its `done` event and renders what it carries
++            try:
++                self.wfile.write(
++                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
++                    b"Cache-Control: no-store\r\nConnection: close\r\n"
++                    b"Access-Control-Allow-Origin: *\r\n\r\nretry: 3600000\n\n"
++                    + ("event: done\ndata: %s\n\n" % json.dumps(body)).encode())
++            except Exception:
++                pass
++            self.close_connection = True
++            return
++        b = json.dumps(body).encode()
++        self.send_response(200)
++        self.send_header("Content-Type", "application/json")
++        self.send_header("Access-Control-Allow-Origin", "*")
++        self.send_header("Retry-After", str(BUSY_RETRY_S))
++        self.send_header("Cache-Control", "no-store")
++        self.send_header("Content-Length", str(len(b)))
++        self.end_headers()
++        self.wfile.write(b)
++
++    def _scan_gated(self, path, link, q):
++        key = link.split("?")[0]
++        forced = (q.get("nocache") or [""])[0] in ("1", "true", "yes")
++        edits = path in ("/edits", "/edits/stream")
++        held = False
++        if not forced and _cache_get(key) is not None:
++            held = False                          # a cache hit costs no slot
++        elif edits and GATE.claim(key):
++            held = True                           # the slot its /base kept for it
++        else:
++            if path == "/base":
++                GATE.drop(key)                    # a rescan frees the old hunt's slot
++            ok, why = GATE.acquire(hunt=(edits and key in SESSIONS))
++            if not ok:
++                return self._send_busy(path, key, why)
++            held = True
++        if path == "/edits/stream":
++            return self._sse(link, release=(GATE.release if held else None))
++        if forced:
++            _NOCACHE[key] = True
++        fn = {"/base": identify_base, "/edits": identify_edits}.get(path, identify)
++        res = None
++        try:
++            try:
++                res = fn(link)
++            except Exception as e:
++                res = {"result": "error", "error": str(e)[:200]}
++        finally:
++            if held:
++                if (path == "/base" and key in SESSIONS
++                        and (res or {}).get("edits_pending")):
++                    GATE.reserve(key)
++                else:
++                    GATE.release()
++        self._send(200, res)
++
+     def do_POST(self):
+         u = urlparse(self.path)
+         n = int(self.headers.get("Content-Length") or 0)
+@@ -7151,7 +7439,15 @@ class H(BaseHTTPRequestHandler):
+             if u.path == "/listen":
+                 ct = (self.headers.get("Content-Type") or "").lower()
+                 kind = ("mp4" if "mp4" in ct else "ogg" if "ogg" in ct else "webm")
+-                return self._send(200, identify_mic(body, kind))
++                if GATE is None:
++                    return self._send(200, identify_mic(body, kind))
++                ok, why = GATE.acquire()                  # server-kit, see _ScanGate
++                if not ok:
++                    return self._send_busy("/listen", "listen", why)
++                try:
++                    return self._send(200, identify_mic(body, kind))
++                finally:
++                    GATE.release()
+             if u.path == "/review/note":
+                 return self._send(200, record_review_note(json.loads(body.decode())))
+             if u.path == "/feedback":
+@@ -7178,4 +7474,12 @@ if __name__ == "__main__":
+     _pu, _ps = _disk_load()
+     if _pu or _ps:
+         print("restored %d url + %d sound answers from the per-port store" % (_pu, _ps))
++    if DRAIN_S > 0 and GATE is not None:
++        import signal as _signal
++        _signal.signal(_signal.SIGTERM, _on_sigterm)      # server-kit: drain, then exit
++
++        class _Srv(ThreadingHTTPServer):
++            daemon_threads = True
++            request_queue_size = 64                      # the stdlib default is 5
++        _Srv((HOST, PORT), H).serve_forever()
+     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

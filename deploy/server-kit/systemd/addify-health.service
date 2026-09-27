@@ -1,0 +1,6 @@
+[Unit]
+Description=Addify engine health check (restarts a hung engine after 3 failed checks)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/addify/bin/addify-health.sh

@@ -1,0 +1,222 @@
+--- crate-posted-base/server.py	2026-09-27 11:57:41
++++ crate-posted/server.py	2026-09-27 13:18:13
+@@ -695,7 +695,87 @@
+         res["shazam"] = rd["url"]
+     if rd.get("art"):
+         res["art"] = rd["art"]
++    res["speed"] = sp
++    return True
++
++
++# THE CROWN IS THE SONG SHAZAM HEARD AS POSTED (crate_engine POSTED_LANE). DcQG-yFuQ6g
++# (Konnor 2026-09-27, "why didn't it find the rap part"): the sweep named the beat, "Sanya
++# (Sped Up)", by re-pitching the clip and overruled "ФРУКТОВЫЙ 1.0" at 1.0x in every window.
++# When the version hunt crowns an upload of the posted song and that upload is proven
++# (engine `posted_proven`: raw fp >= verify.FP_CONF and a lead >= FP_LEAD over every scored
++# row that does not name it), the header must name what the crown is, or it contradicts the
++# crown. The old base becomes the beat line (`beat`), with the notes that were about it.
++# Only when the two titles share no word (mason's "Teach Me How to Dougie" over "Dougie
++# Freestyle" is one family, not a rap over a beat) and the crown does not name the rival.
++# Inert without fp["posted"], so every other clip is byte-identical.
++def _name_posted(res, fp, top):
++    """End of phase 2, after res["exact"] is final. -> True when the posted reading now names
++    the result."""
++    po = (fp or {}).get("posted")
++    ex = res.get("exact")
++    if not (isinstance(po, dict) and po.get("title") and isinstance(top, dict)
++            and top.get("posted_proven") and isinstance(ex, dict)
++            and ex.get("url") == top.get("url") and res.get("base_song")
++            and not res.get("base_uncertain") and not res.get("rendition")):
++        return False
++    pw = E._posted_words(po.get("title"))
++    rw = E._posted_words(po.get("rival") or res.get("base_song"))
++    if not pw or (pw & rw):
++        return False
++    crown_w = set(E._uni_words("%s %s" % (top.get("title") or "", top.get("uploader") or "")))
++    if (rw & crown_w) or not (pw <= crown_w):
++        return False
++    beat = {"title": res.get("base_song"), "artist": res.get("base_artist"),
++            "shazam": res.get("shazam"), "speed": res.get("speed")}
++    for k in ("reupload", "speed_disputed", "speed_measured", "speed_refs", "speed_source"):
++        if k in res:
++            beat[k] = res.pop(k)
++    res["beat"] = beat
++    sk = po.get("freqskew")
++    # Shazam's own pitch reading of the posted windows, the 4% deadband _name_rendition uses
++    sp = ("as posted" if sk is None or abs(sk) < 0.04 else
++          "%s ~%.2fx" % ("slowed" if sk < 0 else "sped up", 1.0 + sk))
++    # ...but it is read against Shazam's catalogue copy, and the crown is a different upload.
++    # When the crown's own measured tempo points the OTHER way, the header would contradict
++    # the crown line, so no speed is claimed (what DcQG showed before: speed None). Measured
++    # on DcQG: Shazam +0.048 ("sped up ~1.05x") while the crowned upload reads vspeed 0.9636
++    # ("this upload runs about 4% faster than the clip"). verify's bare 1.0 is "unmeasured".
++    _v = top.get("vspeed_locked")
++    if _v is None:
++        _v = top.get("vspeed")
++    _dc = 0
++    if _v and float(_v) > 0 and float(_v) != 1.0 and abs(math.log2(float(_v))) > _TEMPO_EXACT:
++        _dc = 1 if float(_v) > 1.0 else -1
++    _ds = 0 if (sk is None or abs(sk) < 0.04) else (1 if sk > 0 else -1)
++    if _ds and _dc and _ds != _dc:
++        sp = None
++    if sp and res.get("bass_boosted"):
++        sp = "bass boosted" if sp == "as posted" else sp + " + bass boosted"
++    res["posted"] = {"title": po["title"], "artist": po.get("artist"),
++                     "windows": po.get("windows"), "fp": round(float(top.get("fp") or 0), 3),
++                     "lead": top.get("posted_lead")}
++    res["base_song"], res["base_artist"] = po["title"], po.get("artist")
+     res["speed"] = sp
++    for k, v in (("shazam", po.get("url")), ("art", po.get("art"))):
++        if v:
++            res[k] = v
++        else:
++            res.pop(k, None)
++    res.pop("preview_url", None)
++    try:                                 # the links follow the name on screen
++        _lk = L.official_links(po["title"], po.get("artist"))
++        if _lk.get("links"):
++            res["links"] = _lk["links"]
++        if _lk.get("preview"):
++            res["preview_url"] = _lk["preview"]
++        if _lk.get("art") and not res.get("art"):
++            res["art"] = _lk["art"]
++    except Exception:
++        pass
++    E.tlog("posted_named", 0.0, title=(po.get("title") or "")[:80],
++           beat=(beat.get("title") or "")[:80], crown=(top.get("title") or "")[:80],
++           fp=res["posted"]["fp"], lead=res["posted"]["lead"], skew=sk, crown_v=_v, speed=sp)
+     return True
+ 
+ 
+@@ -2030,7 +2110,7 @@
+         return False
+ 
+ 
+-def _time_reversed_null(clip_audio, cand_url, fwd_core):
++def _time_reversed_null(clip_audio, cand_url, fwd_core, locate=False):
+     """Manufacture a null control for the crown, out of the crown itself.
+ 
+     A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
+@@ -2069,6 +2149,19 @@
+     import shutil
+     import subprocess
+     import verify as _verify
++    if locate:
++        # measured -> "" (passed) or a refusal; unmeasured -> None, and then the plain control
++        # below runs as it always has, so a posted crown never skips the null control
++        _lt = tempfile.mkdtemp()
++        try:
++            _lr = _reversed_null_located(clip_audio, cand_url, _lt, _verify)
++        except Exception:
++            _lr = None
++        finally:
++            shutil.rmtree(_lt, ignore_errors=True)
++        if _lr is not None:
++            return _lr or None
++        E.tlog("reversed_null_located", 0.0, measured=False)
+     tmp = tempfile.mkdtemp()
+     try:
+         dst = os.path.join(tmp, "cand.m4a")
+@@ -2171,6 +2264,55 @@
+ _RENDITION_WORDS = re.compile(r"\b(remix|version|mashup|flip|edit)\b", re.I)
+ 
+ 
++def _reversed_null_located(clip_audio, cand_url, tmp, _verify):
++    """_time_reversed_null for a POSTED-LANE crown (crate_engine POSTED_LANE; the caller
++    passes locate=True only for a row the engine marked `posted_proven`). Two differences,
++    both measured on DcQG-yFuQ6g (a rap over a trap beat, 2026-09-27):
++    1. The control runs WHERE THE CLIP SITS in the upload (hard-rules: candidates are scored on
++       their first 20s only; locate the clip, never a blind re-decode). 25s windows every 5s
++       over the first 120s, the best raw fp wins.
++    2. Collapse is judged on raw fp as well as core. This clip's chroma is dominated by the
++       beat's held notes, which read the same backwards, so the reversed copy of the right
++       upload still fingerprints 0.73, above verify.FP_HI, and core pins at 1.000 both ways.
++       Raw fp is not saturated (findings/mason-exact-mix.md): located, "ФРУКТОВЫЙ 1.0" reads
++       0.945 forward and 0.728 reversed. Refused when reversed core >= forward core AND the
++       raw fp drops by less than FP_LEAD, i.e. when neither signal says direction matters.
++    -> a refusal, "" when the control passed, or None when it could not be measured (the
++    caller then runs the plain control). The file must be a .wav: dl_clip handed a .m4a
++    destination at 120s writes cand_long.wav and returns None (measured 2026-09-27)."""
++    import subprocess
++    dst = os.path.join(tmp, "cand_long.wav")
++    got = E.dl_clip(cand_url, dst, seconds=120, timeout=30)
++    if not got:
++        return None
++    src = got if isinstance(got, str) else dst
++    dur = E.duration_of(src) or 0
++    ctx = _verify.prepare_clip(clip_audio)
++    seg = os.path.join(tmp, "seg.wav")
++    best = None
++    for off in range(0, max(1, int(dur) - 20), 5):
++        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(off), "-i", src,
++                        "-t", "25", "-ac", "1", "-ar", "44100", seg], check=True, timeout=30)
++        v = _verify.verify(clip_audio, seg, 20, clip_ctx=ctx)
++        if best is None or (v.get("fp") or 0) > (best[1].get("fp") or 0):
++            best = (off, v)
++    if best is None:
++        return None
++    off, fv = best
++    rev = os.path.join(tmp, "rev.wav")
++    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(off), "-i", src, "-t", "25",
++                    "-af", "areverse", "-ac", "1", "-ar", "44100", rev], check=True, timeout=30)
++    rv = _verify.verify(clip_audio, rev, 20, clip_ctx=ctx)
++    fc, ff = (fv.get("core") or 0.0), (fv.get("fp") or 0.0)
++    rc, rf = (rv.get("core") or 0.0), (rv.get("fp") or 0.0)
++    E.tlog("reversed_null_located", 0.0, at=off, fwd_core=round(fc, 3), fwd_fp=round(ff, 3),
++           rev_core=round(rc, 3), rev_fp=round(rf, 3))
++    if rc >= fc and (ff - rf) < E.FP_LEAD:
++        return ("scores %.3f against a time-reversed copy of itself, so the match is "
++                "texture, not this recording" % rc)
++    return ""
++
++
+ def _title_less_base(title, base_title=None):
+     """The candidate title, ASCII-folded, with the base song's own RENDITION words removed.
+ 
+@@ -3020,6 +3162,7 @@
+     loop = asyncio.new_event_loop()
+     try:
+         exact = None
++        _po_top = None                   # the engine row behind the crown (_name_posted)
+         candidates = []
+         res["decisive"] = False
+         if True:
+@@ -3188,7 +3331,8 @@
+                 handle=src.get("handle"), hints=search_hints,
+                 shazam_reliable=shazam_reliable, creator=_creator,
+                 comment_urls=_cmlinks,
+-                pair=(mash or {}).get("pair"), on_cand=_emit))
++                pair=(mash or {}).get("pair"), on_cand=_emit,
++                posted=(fp or {}).get("posted")))
+             E.tlog("find_edit", time.time() - _t,
+                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
+             # The creator block phase 1 refused to wait on. The hunt has just taken ~19s,
+@@ -3522,7 +3666,8 @@
+                     _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
+                                                        _tempo_d(r[1]), r[0]))
+                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
+-                                           _pick[1].get("core"))
++                                           _pick[1].get("core"),
++                                           locate=bool(_pick[1].get("posted_proven")))
+                 if _why:
+                     _rejects[_pick[0]] = (_why, _pick[1])
+                     _clean.remove(_pick)
+@@ -3547,6 +3692,7 @@
+                 # rather than assuming index 0.
+                 exact = next((c for c in candidates
+                               if c.get("url") == top.get("url")), candidates[0])
++                _po_top = top
+                 res["decisive"] = bool(edit.get("decisive"))
+                 if _source_v is not None:
+                     # Say what this crown IS. Not "the exact edit" - the SOURCE, with the
+@@ -3785,6 +3931,10 @@
+             res["result"] = "uncertain"
+         else:
+             res["result"] = "no_match"
++        try:
++            _name_posted(res, fp, _po_top)
++        except Exception:
++            pass                         # a name change is never a reason to fail a lookup
+         _rendition_final_speed(res)
+         res["edits_pending"] = False
+         res["secs"] = round(time.time() - t0, 1)

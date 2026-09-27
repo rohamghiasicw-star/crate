@@ -1,0 +1,22 @@
+[Unit]
+Description=Addify public tunnel (quick Cloudflare tunnel to the engine; gist publishing only after cutover)
+After=network-online.target addify-engine.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=addify
+Group=addify
+EnvironmentFile=/etc/addify/tunnel.env
+EnvironmentFile=-/etc/addify/tunnel.local.env
+ExecStart=/opt/addify/bin/addify-tunnel.sh
+Restart=always
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=15
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

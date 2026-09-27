@@ -1,0 +1,28 @@
+# Addify engine on the one Linux server (Ubuntu 24.04, Python 3.12, x86_64). Top-level pins.
+# requirements.lock is compiled from this, holding every other package at the version the
+# AWS kit's verified lock had (hosting-kit/repo/engine/requirements.lock), minus redis/boto3:
+#   uv pip compile requirements.in -c <old lock, names==versions only> --python-version 3.12 \
+#     --python-platform x86_64-manylinux_2_28 --generate-hashes -o requirements.lock
+# The numerical pins are the Mac's (HOSTING-PORTABILITY.md B2): 3.12 is the one CPython where
+# numpy 1.26.4 still has a wheel for both arm64 and x86_64.
+numpy==1.26.4
+shazamio==0.6.0
+shazamio_core==1.1.2
+pydantic==1.10.26
+aiohttp==3.13.5
+aiohttp-retry==2.9.1
+aiofiles==23.2.1
+anyio==4.3.0
+dataclass-factory==2.16
+pydub==0.25.1
+curl_cffi==0.13.0
+cryptography==48.0.0
+# yt-dlp with the same extras Homebrew's build carries on the Mac (the one that does YouTube)
+yt-dlp[default]==2026.8.19
+yt-dlp-ejs==0.8.0
+brotli==1.2.0
+mutagen==1.48.1
+pycryptodomex==3.23.0
+websockets==17.1
+# the JS runtime yt-dlp finds on the Mac (deno 2.9.7, Homebrew); same version from PyPI
+deno==2.9.7

@@ -1,0 +1,303 @@
+--- crate-posted-base/crate_engine.py	2026-09-27 11:57:41
++++ crate-posted/crate_engine.py	2026-09-27 13:28:52
+@@ -432,6 +432,24 @@
+ # is scored on does not move.
+ HINT_MASH = os.environ.get("CRATE_HINT_MASH", "1").lower() not in ("0", "false", "no", "off")
+ HINT_MASH_DL = 4
++# THE AS-POSTED READING THE COUNTER-SPEED RIVAL OVERRULED (Konnor 2026-09-27, "why didn't it
++# find the rap part", instagram DcQG-yFuQ6g). Shazam named "ФРУКТОВЫЙ 1.0" (replica & soit pas
++# jaloux) at 1.0x in every window; 0.90x/1.10x named "Sanya (Slowed)"/"Sanya (Sped Up)", the
++# beat the rap sits on, and those two rates overruled the as-posted read, so ФРУКТОВЫЙ was
++# never searched. Measured (verify, clip vs upload): ФРУКТОВЫЙ uploads fp 0.915-0.963 at their
++# best offset and 0.79-0.87 on the first 20s; every Sanya upload 0.62-0.72. But the as-posted
++# read is soundalike or DJ spam as often as not ("Set My Heart On Fire" vs "Love Me Like You
++# Do", "Wild Hearts" vs "Blank Space", "Who's Bad Blood" vs "Bad Blood"...), so the window
++# count cannot decide: the reading held in >= POSTED_MIN_WINDOWS windows rides along as
++# fp["posted"] (attach-only), find_edit searches "<title> <artist>" and "<title>" on their own
++# lane and appends up to POSTED_DL of those rows to the download list. A row fetched ONLY by
++# this lane stays out of every pool, gate and speed reference unless its raw fp clears
++# verify.FP_CONF AND leads every scored row that does not name the posted song by FP_LEAD
++# (decisive or nothing); then it joins `keep` and rank_key + the FP_LEAD tiebreak decide as
++# for any row. server.py makes the name follow such a crown (_name_posted).
++POSTED_LANE = os.environ.get("CRATE_POSTED_LANE", "1").lower() not in ("0", "false", "no", "off")
++POSTED_MIN_WINDOWS = 3
++POSTED_DL = 3
+ # RAW FINGERPRINT LEAD among saturated cores. core pins to 1.000 on low-transient audio
+ # (findings/core-saturation.md), and on mason ten Dougie-family uploads all read 1.000,
+ # so plays picked the crown. The raw chromaprint `fp` is not saturated and is recording-
+@@ -3393,6 +3411,17 @@
+                 r = None          # attach-only: a note is never a reason to fail an ID
+             if r:
+                 primary["rendition"] = r
++            else:
++                # See POSTED_LANE: attach-only, the base and every search seed stay the rival's
++                try:
++                    po = _posted_overruled(_posted_raw, rival)
++                except Exception:
++                    po = None
++                if po:
++                    primary["posted"] = po
++                    tlog("posted_kept", 0.0, title=(po.get("title") or "")[:80],
++                         artist=(po.get("artist") or "")[:80], windows=po.get("windows"),
++                         rival=(rival.get("title") or "")[:80])
+             return primary
+ 
+         def _key(k):
+@@ -3682,8 +3711,57 @@
+     return {"title": p.get("title"), "artist": p.get("artist"), "url": p.get("url"),
+             "art": p.get("art"), "windows": len(sk),
+             "freqskew": round(statistics.median(sk), 4)}
++
++
++def _posted_overruled(posted_hits, rival):
++    """See POSTED_LANE. `posted_hits` are the raw 1.0x scan hits carrying the as-posted key,
++    `rival` the counter-speed hit that overruled them. -> the reading to keep, or None.
++    Pure: no probes, no network. Only called when _rendition_as_posted declined."""
++    if not (POSTED_LANE and posted_hits and rival):
++        return None
++    if len(posted_hits) < POSTED_MIN_WINDOWS:
++        return None
++    p = posted_hits[0]
++    pk, rk = _title_key(p.get("title")), _title_key(rival.get("title"))
++    if not pk or not (p.get("title") or "").strip() or pk == rk or _junk_id(p):
++        return None
++    sk = [float(h["freqskew"]) for h in posted_hits if h.get("freqskew") is not None]
++    return {"title": p.get("title"), "artist": p.get("artist"), "url": p.get("url"),
++            "art": p.get("art"), "windows": len(posted_hits),
++            "freqskew": round(statistics.median(sk), 4) if sk else None,
++            "rival": rival.get("title"), "rival_artist": rival.get("artist")}
++
++
++def _uni_words(t, strip_brackets=False):
++    """Title words in ANY script. _title_key keeps only a-z0-9 for Latin-bearing titles, so
++    "ФРУКТОВЫЙ 1.0" keys as "1 0"; this keeps the Cyrillic word. NFKC also maps the
++    mathematical-alphanumeric fonts uploaders use back to plain letters."""
++    t = t or ""
++    if strip_brackets:
++        t = re.sub(r"[\(\[].*?[\)\]]", " ", t)
++    return re.sub(r"[^\w]|_", " ", unicodedata.normalize("NFKC", t).lower()).split()
+ 
+ 
++def _posted_words(title):
++    """The distinctive words of a song title (3+ letters, not a number)."""
++    return {w for w in _uni_words(title, strip_brackets=True)
++            if len(w) >= 3 and not w.isdigit() and w not in ("the", "and", "feat")}
++
++
++def _posted_queries(posted):
++    """'<posted title> <posted artist>' and '<posted title>', raw: _clean ASCII-folds and
++    would erase a Cyrillic title entirely."""
++    if not (POSTED_LANE and isinstance(posted, dict) and _posted_words(posted.get("title"))):
++        return []
++    t = " ".join((posted.get("title") or "").split())
++    a = " ".join((posted.get("artist") or "").split())
++    out = []
++    for q in (("%s %s" % (t, a)) if a else "", t):
++        if q and q.lower() not in {o.lower() for o in out}:
++            out.append(q)
++    return out
++
++
+ def _mash_runs(seq, target):
+     """How many separate RUNS `target` forms in an ordered label sequence. A window that
+     matched nothing is neutral - it neither extends nor breaks a run.
+@@ -6133,7 +6211,7 @@
+ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
+                     edit_label, known_dir=None, handle=None, max_dl=14,
+                     hints=None, shazam_reliable=True, pair=None, on_cand=None,
+-                    creator=None, comment_urls=None):
++                    creator=None, comment_urls=None, posted=None):
+     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
+     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
+     sweep or frequencyskew). We no longer guess speed by comparing to a random
+@@ -6172,6 +6250,11 @@
+     # anything wants to read it, and a row that wins on a comment link then shows the
+     # upload's real name instead of its URL slug.
+     cm_cands = comment_candidates(comment_urls)
++    # THE POSTED LANE (POSTED_LANE) starts first: it needs nothing but the kept reading, and
++    # it is read after wave 1 with a zero wait, like the hint-mashup lanes.
++    _po_q = _posted_queries(posted)
++    _po_lanes = [_LaneSearch([q], 6) for q in _po_q]
++    _po_words = _posted_words((posted or {}).get("title")) if _po_q else set()
+     f_cm = None
+     if cm_cands:
+         _cm_ex = ThreadPoolExecutor(max_workers=1)
+@@ -6646,6 +6729,8 @@
+         core = c.get("core", 0) or 0
+         if core < CORE_KEEP:
+             return
++        if c.get("posted_only"):
++            return          # not in any pool until it proves itself (POSTED_LANE)
+         not_other = not OTHER_RENDITION.search(_ascii_fold(c.get("title") or ""))
+         if not _editmatch_calc(core, not_other, _artist_hit(c))[1]:
+             return
+@@ -6844,6 +6929,29 @@
+         tlog("hint_mash_lane", 0.0, nq=len(_hm_q), q=_hm_q, new=_new, rows=len(_hm_rows),
+              top=[(c.get("title") or "")[:60] for c in _hm_rows[:HINT_MASH_DL]],
+              ran=round(time.time() - _hm_lanes[0].t0, 3))
++    # posted lanes (POSTED_LANE): same zero-wait read and the same round-robin in each
++    # search's own order. A row the main search already holds is taken as the same object;
++    # a new one is NOT added to `cands` - it only rides the download list below.
++    _po_rows = []
++    if _po_lanes:
++        _by_url = {c["url"]: c for c in cands}
++        _streams, _po_pend = [], 0
++        for ln in _po_lanes:
++            _g, _pd = ln.collect(0.0)
++            _po_pend += _pd
++            _streams.append([c for c in _g if c.get("source") == "soundcloud"])
++            _streams.append([c for c in _g if c.get("source") != "soundcloud"])
++        _ids = set()
++        for i in range(max(len(g) for g in _streams) if _streams else 0):
++            for g in _streams:
++                if i >= len(g):
++                    continue
++                c = _by_url.get(g[i]["url"], g[i])
++                if id(c) not in _ids:
++                    _ids.add(id(c)); _po_rows.append(c)
++        tlog("posted_lane", 0.0, nq=len(_po_q), q=_po_q, rows=len(_po_rows), pending=_po_pend,
++             top=[(c.get("title") or "")[:60] for c in _po_rows[:POSTED_DL]],
++             ran=round(time.time() - _po_lanes[0].t0, 3))
+     _term_hits([c for c in cands if "title_hits" not in c])
+ 
+     # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial
+@@ -6909,6 +7017,19 @@
+               + _rx_extra + _hm_extra + _style_x):
+         if id(c) not in _seen_head:
+             _seen_head.add(id(c)); _appended.append(c)
++    # POSTED ROWS LAST, so a row another lane already appended keeps that lane's terms. Only
++    # a row nobody else would have downloaded is `posted_only`: held out of `cands` (and so
++    # out of the family wave, the speed references and the master) until it proves itself.
++    _po_held = []
++    for c in _po_rows:
++        if len(_po_held) >= POSTED_DL:
++            break
++        if c.get("_done") or id(c) in _seen_head:
++            continue
++        if any(c is x for x in cands):
++            c = dict(c)          # the pool's own row stays exactly as the old code left it
++        c["posted_only"] = True
++        _seen_head.add(id(c)); _appended.append(c); _po_held.append(c)
+     head = head + _appended
+     n2 = _download_and_score(head, clip_audio, tmp, n, max_dl + len(_appended),
+                              clip_ctx=clip_ctx, on_scored=_hit)
+@@ -7313,6 +7434,39 @@
+     bassy = bool(fam and (max(fam) - bassy_baseline) > BASS_STRIP_GAP)
+     target_tilt = max(fam) if bassy else clip_tilt
+ 
++    # THE POSTED LANE'S VERDICT (POSTED_LANE). Every scored row that NAMES the posted song
++    # (all its distinctive words, any script) is measured against the best raw fp of every
++    # scored row that does not: fp >= verify.FP_CONF and a lead >= FP_LEAD is proven. A row
++    # only this lane fetched joins `keep` here, and only when proven, after the family,
++    # official-tilt and bass readings above were taken without it; the rest are dropped as
++    # if never fetched. `posted_proven` also rides the pool's own rows for server.py.
++    if _po_words:
++        def _names_po(c):
++            return _po_words <= set(_uni_words(c.get("title")))
++        _po_scored = [c for c in list(cands) + _po_held
++                      if c.get("_done") and (c.get("fp") or 0) > 0]
++        _po_rival = max([(c.get("fp") or 0) for c in _po_scored if not _names_po(c)]
++                        or [0.0])
++        for c in _po_scored:
++            if _names_po(c):
++                c["posted_row"] = True
++                c["posted_lead"] = round((c.get("fp") or 0) - _po_rival, 3)
++                c["posted_proven"] = bool((c.get("fp") or 0) >= _verify.FP_CONF
++                                          and c["posted_lead"] >= FP_LEAD)
++        _po_in = [c for c in _po_held
++                  if c.get("posted_proven") and (c.get("core") or 0) >= CORE_KEEP]
++        for c in _po_in:
++            c["not_other"] = not OTHER_RENDITION.search(_ascii_fold(c.get("title") or ""))
++            c["strong_core"], c["editmatch"] = _editmatch_calc(
++                c.get("core", 0), c["not_other"], _artist_hit(c))
++            keep.append(c)
++        tlog("posted_verdict", 0.0, held=len(_po_held), joined=len(_po_in),
++             rival_fp=round(_po_rival, 3),
++             rows=[[(c.get("title") or "")[:50], round(c.get("fp") or 0, 3),
++                    round(c.get("core") or 0, 3), bool(c.get("posted_only")),
++                    c.get("posted_proven")]
++                   for c in _po_scored if c.get("posted_row")][:8])
++
+     # SPEED CORROBORATION ("Safe and Sound (hardtekk)" fix): verify()'s naive `vspeed`
+     # silently defaults to 1.0 whenever its own single-pass correlation confidence is
+     # too low to measure at all - a fabricated "exact speed" that both speed_fit below
+@@ -7627,22 +7781,49 @@
+                  else (0 if is_official_original(c) else 1)),
+                 -fq,                                  # recording x speed x bass
+                 -c.get("plays", 0))                   # niche edits win on match, not plays
+-    ranked = sorted(keep, key=rank_key)
+-    # RAW FINGERPRINT LEAD (FP_LEAD above). Before the dedup below, which keeps only the
+-    # first row of each same-speed/same-bass cluster: the leader has to be first to live.
+-    if FP_LEAD > 0 and len(ranked) > 1 and (ranked[0].get("core") or 0) >= CORE_SAME:
+-        _t0 = rank_key(ranked[0])[:-2]
+-        _grp = [c for c in ranked
+-                if (c.get("core") or 0) >= CORE_SAME and rank_key(c)[:-2] == _t0]
+-        # every same-tier row needs a measured fp: a lead over a row we never
+-        # fingerprinted (a carried or cached row) is not a lead
+-        if len(_grp) > 1 and all((c.get("fp") or 0.0) > 0 for c in _grp):
+-            _byfp = sorted(_grp, key=lambda c: -(c.get("fp") or 0.0))
+-            _lead = (_byfp[0].get("fp") or 0.0) - (_byfp[1].get("fp") or 0.0)
+-            if _lead >= FP_LEAD and _byfp[0] is not ranked[0]:
+-                tlog("fp_lead", 0.0, lead=round(_lead, 3), to=_byfp[0].get("title"),
+-                     was=ranked[0].get("title"), n=len(_grp))
+-                ranked.remove(_byfp[0]); ranked.insert(0, _byfp[0])
++    def _rank(pool):
++        ranked = sorted(pool, key=rank_key)
++        # RAW FINGERPRINT LEAD (FP_LEAD above). Before the dedup below, which keeps only the
++        # first row of each same-speed/same-bass cluster: the leader has to be first to live.
++        if FP_LEAD > 0 and len(ranked) > 1 and (ranked[0].get("core") or 0) >= CORE_SAME:
++            _t0 = rank_key(ranked[0])[:-2]
++            _grp = [c for c in ranked
++                    if (c.get("core") or 0) >= CORE_SAME and rank_key(c)[:-2] == _t0]
++            # every same-tier row needs a measured fp: a lead over a row we never
++            # fingerprinted (a carried or cached row) is not a lead
++            if len(_grp) > 1 and all((c.get("fp") or 0.0) > 0 for c in _grp):
++                _byfp = sorted(_grp, key=lambda c: -(c.get("fp") or 0.0))
++                _lead = (_byfp[0].get("fp") or 0.0) - (_byfp[1].get("fp") or 0.0)
++                if _lead >= FP_LEAD and _byfp[0] is not ranked[0]:
++                    tlog("fp_lead", 0.0, lead=round(_lead, 3), to=_byfp[0].get("title"),
++                         was=ranked[0].get("title"), n=len(_grp))
++                    ranked.remove(_byfp[0]); ranked.insert(0, _byfp[0])
++        return ranked
++    # THE POSTED LANE IS THE CROWN OR NOTHING (POSTED_LANE). A proven posted-only row either
++    # comes out of the ranking FIRST, or the pool is ranked exactly as it was without it and
++    # the row is gone: no new shelf row, no tier value (_best_real, _any_titled) moved. Clip
++    # 30 (2026-09-27): the Aven Krynn "Set My Heart On Fire" upload joined at core 1.000 and
++    # sat 4th under a 17% hero, a new 100% row on a clip whose crown did not change.
++    _po_keep = [c for c in keep if c.get("posted_only")]
++    if _po_keep:
++        _keep_old = [c for c in keep if not c.get("posted_only")]
++        _best_real = max([c.get("core") or 0 for c in _keep_old if c.get("not_other")]
++                         or [0.0])
++        _any_titled = any((c.get("song_cov") or 0) >= _COV for c in _keep_old)
++        _ranked_old = _rank(_keep_old)
++        _best_real = max([c.get("core") or 0 for c in keep if c.get("not_other")] or [0.0])
++        _any_titled = any((c.get("song_cov") or 0) >= _COV for c in keep)
++        ranked = _rank(keep)
++        _won = bool(ranked and ranked[0].get("posted_only"))
++        tlog("posted_rank", 0.0, won=_won, first=(ranked[0].get("title") or "")[:60]
++             if ranked else None)
++        if not _won:
++            keep, ranked = _keep_old, _ranked_old
++            _best_real = max([c.get("core") or 0 for c in keep if c.get("not_other")]
++                             or [0.0])
++            _any_titled = any((c.get("song_cov") or 0) >= _COV for c in keep)
++    else:
++        ranked = _rank(keep)
+     # DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
+     # different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
+     # Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
+@@ -7682,10 +7863,11 @@
+     # speed reference; if no clean original is confirmed, leave master None and the
+     # caller measures against freshly-fetched originals (or reports direction only).
+     masters = [c for c in keep if is_official_original(c) and c.get("core", 0) >= 0.55
+-               and c.get("path")]
++               and c.get("path") and not c.get("posted_only")]
+     if not masters:
+         masters = [c for c in keep if c.get("core", 0) >= 0.7 and c.get("path")
+-                   and not EDIT_WORDS.search(c.get("title") or "")]
++                   and not EDIT_WORDS.search(c.get("title") or "")
++                   and not c.get("posted_only")]
+     master = max(masters, key=lambda c: c.get("core", 0)) if masters else None
+     # PLAIN (non-edit) uploads we already downloaded = speed REFERENCES. Measuring the
+     # clip's speed vs SEVERAL of these and taking the agreeing median (dropping a bad

@@ -1,0 +1,97 @@
+--- /Users/rohamghiasi/addify-harness/backup-0927/pre-a2/server.py	2026-09-27 13:34:36
++++ crate-speed3b/server.py	2026-09-27 12:39:35
+@@ -1030,7 +1030,8 @@
+             _fp_t["fp_start"], _fp_t["early"] = time.time(), True
+             _early = E.FingerprintJob(
+                 src["audio"], hints_fn=(_join_hints_serial if _hints_fn is not None else None),
+-                stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts))))
++                stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts))),
++                hints_ready=(lambda: _hints_fut is None or _hints_fut.done()))
+         except Exception:
+             _early = None
+             _fp_t["early"] = False
+@@ -1155,7 +1156,8 @@
+                 fp = loop.run_until_complete(E.fingerprint(
+                     src["audio"],
+                     hints_fn=(_join_hints_serial if _hints_fn is not None else None),
+-                    stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts)))))
++                    stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts))),
++                hints_ready=(lambda: _hints_fut is None or _hints_fut.done())))
+                 _fp_end = time.time()
+         finally:
+             E.PROBE_HOOK = _prev_hook
+@@ -2030,7 +2032,7 @@
+         return False
+ 
+ 
+-def _time_reversed_null(clip_audio, cand_url, fwd_core):
++def _time_reversed_null(clip_audio, cand_url, fwd_core, cand_path=None):
+     """Manufacture a null control for the crown, out of the crown itself.
+ 
+     A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
+@@ -2071,13 +2073,22 @@
+     import verify as _verify
+     tmp = tempfile.mkdtemp()
+     try:
+-        dst = os.path.join(tmp, "cand.m4a")
+-        if not E.dl_clip(cand_url, dst, seconds=20, timeout=20):
+-            return None
++        # REUSE THE HUNT'S OWN DOWNLOAD (speed round 3). The candidate was fetched from its
++        # start to be scored, and that file is still on disk here; re-downloading it cost
++        # 1-1.5 s on nearly every crowned scan. The first 20 s of it are the same audio the
++        # old 20 s download held, so the control reads exactly the same thing.
++        _reuse = bool(cand_path and os.path.exists(cand_path) and os.path.getsize(cand_path) > 10000)
++        if _reuse:
++            dst = cand_path
++        else:
++            dst = os.path.join(tmp, "cand.m4a")
++            if not E.dl_clip(cand_url, dst, seconds=20, timeout=20):
++                return None
+         rev = os.path.join(tmp, "rev.wav")
+-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst,
++        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst, "-t", "20",
+                         "-af", "areverse", "-ac", "1", "-ar", "44100", rev],
+                        check=True, timeout=30)
++        E.tlog("revnull", 0.0, reuse=_reuse)
+         rc = _verify.verify(clip_audio, rev, 20).get("core") or 0.0
+         if rc >= fwd_core:
+             return ("scores %.3f against a time-reversed copy of itself, so the match is "
+@@ -3522,7 +3533,7 @@
+                     _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
+                                                        _tempo_d(r[1]), r[0]))
+                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
+-                                           _pick[1].get("core"))
++                                           _pick[1].get("core"), _pick[1].get("path"))
+                 if _why:
+                     _rejects[_pick[0]] = (_why, _pick[1])
+                     _clean.remove(_pick)
+@@ -3834,7 +3845,11 @@
+     old = SESSIONS.pop(key, None)
+     if old:
+         _cleanup((old.get("src") or {}).get("tmp"))
+-    res, ctx = _phase1(url, key, time.time())
++    _t0 = time.time()
++    res, ctx = _phase1(url, key, _t0)
++    if not (ctx and ctx.get("worth")):   # the scan ends here: log its end (see identify)
++        E.tlog("request_done", time.time() - _t0, url=key,
++               early=("named_only" if ctx else (res or {}).get("result")))
+     if ctx and ctx.get("worth"):
+         SESSIONS[key] = ctx              # /edits will finish it and free the audio
+     elif ctx:
+@@ -3902,10 +3917,15 @@
+     _c = _cache_get(key)
+     if _c is not None:
+         return _c
+-    res, ctx = _phase1(url, key, time.time())
++    _t0 = time.time()
++    res, ctx = _phase1(url, key, _t0)
+     if not ctx:                          # rate-limited: no audio was ever fetched
++        # every scan logs its end, or live_busy and the bot's "recent scans" read it as
++        # still running for the next 5 minutes
++        E.tlog("request_done", time.time() - _t0, url=key, early=(res or {}).get("result"))
+         return res
+     if not ctx.get("worth"):             # named it, nothing left to hunt for
++        E.tlog("request_done", time.time() - _t0, url=key, early="named_only")
+         _cache_put(key, res)
+         _sound_cache_put(ctx.get("src") or {}, res)
+         _cleanup((ctx.get("src") or {}).get("tmp"))

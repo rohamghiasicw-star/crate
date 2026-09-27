@@ -1,0 +1,314 @@
+--- crate/crate_engine.py
++++ crate-style2/crate_engine.py
+@@ -4243,6 +4243,195 @@
+         if c not in out:
+             out.append(c)
+     return out[:want]
++
++
++# THE STYLE WAVE (find_edit, after every other wave): runs ONLY when nothing scored is the
++# clip's own file - no row that is the same recording (core >= CORE_SAME or fp >= FP_CONF)
++# AT THE CLIP'S TEMPO (_style_same_row: inside the server's crown band). With chromaprint
++# working (fpcalc was broken until 2026-09-26 20:55, so every fp read 0 before that) a pool
++# with no such row provably never downloaded the upload in the clip, and every other
++# answer is a guess about a family.
++#
++# Measured 2026-09-26 on Konnor's ZSbYhvyNJ ("son original - GN7.production", Shazam
++# "Don't Like"): the exact upload, soundcloud.com/4990desy/chief-keef-i-dont-like-remix
++# ("Chief Keef - I Don't Like (remix)", 44.8s, 74K plays), verifies at fp 0.966, arr
++# 0.698, vspeed 1.000, bass -0.62 and every band 20 Hz-8 kHz within 0.3 dB of the clip.
++# It WAS in the main pool (row 66 of 338, from the hint query "i dont like chief keef")
++# and it WAS one of the 17 section rows the length lane saw, but that lane keeps the 2
++# rows nearest the clip's own length (23.6s, 24.6s, both core < 0.3) and the 44.8s file
++# never got a download. The crown went to a 0.558 "TikTok version" instead.
++#
++# So the wave spends, under a hard cap:
++#   * THE SECTION ROWS THE LENGTH LANE CUT, most-played first (the complementary order:
++#     the upload people actually use). Same row rule as evidence_rows plus
++#     _style_title_ok, so "never goodbye - i don't like me either" does not pass for
++#     "Don't Like".
++#   * AT MOST STYLE_WAVE_Q QUERIES, each a style the clip's MEASURED audio supports
++#     (_style_wave_words): a measured speed (known_dir, else the sweep's ratio) and a bass
++#     excess over the consensus of every scored row with audio merit, gated on BOTH tilt
++#     (>= STYLE_BASS_X dB, the verifier's own TILT_FREE_DB noise floor) and the
++#     pitch-invariant slope (>= STYLE_SLOPE_X, server.SLOPE_BOOST_GAP), because a slow
++#     alone forges tilt. Plus the credited sound author and a remixer credit with the
++#     song. Every query the hunt already asked (same word set) is dropped, so on most
++#     clips the wave is the section lane alone.
++# These are SEARCH words, never labels: the bass / speed labels the user sees are computed
++# where they always were. APPENDED rows only; verify() still has the only vote.
++STYLE_WAVE_Q, STYLE_WAVE_DL, STYLE_WAVE_SEC = 4, 6, 3
++STYLE_WAVE_CAP = 9.0          # seconds, search + downloads, hard (abandoned rows are dropped)
++STYLE_WAVE_SEARCH_S = 5.0     # the search leg's own ceiling inside the cap
++STYLE_BASS_X = 2.0            # dB, median clip-minus-candidate tilt over merit rows
++STYLE_SLOPE_X = 0.40          # dB/decade, the same rows' median slope_delta
++STYLE_BASS_MIN_ROWS = 3
++
++
++def _style_same_row(rows):
++    """The first scored row that already IS the clip's file, or None. Pure.
++    Same recording (core >= CORE_SAME, or raw fp >= FP_CONF) AND at the clip's own tempo:
++    |log2(vspeed)| <= FAST_EXIT_TEMPO, the band server.py's _crown_tempo_mismatch keeps a
++    crown in (the same number the fast exit uses, for the same reason). A same-recording
++    row at another speed is by definition a different edit, and core saturates on those.
++    Measured 2026-09-27 on the ship engine, Konnor's ZSbYhvyNJ: creator_align slid "Chief
++    Keef - I Don't Like [Remix] (Slowed to Perfection)" to core 1.000 / fp 0.672 at vspeed
++    1.059 (|log2| 0.083, which the server refuses as a crown). The old core-or-fp test read
++    that as "same master" and skipped the wave, so desy's upload (fp 0.958, vspeed 1.000)
++    was never downloaded. Regression crowns all sit inside the band: kelthraxx, mason and
++    bouch at 1.000, kyks at 1.0193 (|log2| 0.028)."""
++    for c in rows or []:
++        if not c.get("_done"):
++            continue
++        if (c.get("core") or 0) < CORE_SAME and (c.get("fp") or 0) < _verify.FP_CONF:
++            continue
++        v = max(0.25, min(4.0, float(c.get("vspeed") or 1.0)))
++        if abs(float(np.log2(v))) <= FAST_EXIT_TEMPO:
++            return c
++    return None
++
++
++def _style_wave_words(cands, known_dir, edit_label):
++    """(words, why): the style words the clip's MEASURED audio supports. Pure.
++    Speed from known_dir, else the sweep ratio in edit_label ("slowed ~0.89x"). Bass from
++    the median bass_delta AND median slope_delta over scored rows that carry the song and
++    cleared CORE_MERIT, at least STYLE_BASS_MIN_ROWS of them."""
++    words, why = [], []
++    kd = known_dir or ""
++    if not kd:
++        m = _LABEL_RATIO.search(edit_label or "")
++        if m:
++            r = float(m.group(1))
++            kd = "slowed" if r < 0.97 else ("sped up" if r > 1.03 else "")
++    if "slow" in kd:
++        words.append("slowed"); why.append("speed:slowed")
++    elif "sped" in kd:
++        words.append("sped up"); why.append("speed:sped")
++    rows = [c for c in cands or [] if c.get("_done") and (c.get("core") or 0) >= CORE_MERIT
++            and (c.get("song_cov") or 0) >= 1.0]
++    if len(rows) >= STYLE_BASS_MIN_ROWS:
++        bx = float(np.median([float(c.get("bass_delta") or 0.0) for c in rows]))
++        sx = float(np.median([float(c.get("slope_delta") or 0.0) for c in rows]))
++        if bx >= STYLE_BASS_X and sx >= STYLE_SLOPE_X:
++            words.append("bass boosted")
++        why.append("bass:%+.1fdB/%+.2f/%d" % (bx, sx, len(rows)))
++    else:
++        why.append("bass:rows<%d" % STYLE_BASS_MIN_ROWS)
++    return words, why
++
++
++def _hint_song_name(hints, song_terms, max_words=6):
++    """The first comment hint that names the song in a short form ("I don't like - Chief
++    keef (Ft Lil reese)" -> "I don t like Chief keef"): brackets stripped, every song word
++    present, at most max_words words. The crowd's name for the song is often not Shazam's
++    ("I Don't Like" vs "Don't Like"), and platform search is literal. Pure."""
++    for h in hints or []:
++        s = _clean(re.sub(r"[\(\[].*?[\)\]]", " ", h or ""))
++        low = s.lower()
++        if (s and len(s.split()) <= max_words and song_terms
++                and all(t in low for t in song_terms)):
++            return s
++    return None
++
++
++def _style_wave_queries(core_title, base_artist, hint_name, credit_author, words,
++                        credit_ev, asked, cap=STYLE_WAVE_Q):
++    """At most `cap` queries, none whose word set the hunt already searched. Pure."""
++    seen = {frozenset(_clean(q).lower().split()) for q in asked or [] if q}
++    out = []
++
++    def add(s):
++        s = _clean(s)
++        k = frozenset(s.lower().split())
++        if s and len(k) >= 2 and k not in seen and len(out) < cap:
++            seen.add(k); out.append(s)
++    core = _clean(core_title)
++    art = _first_artist(base_artist)
++    w = " ".join(words)
++    if w:
++        add("%s %s %s" % (art, core, w))
++        if hint_name:
++            add("%s %s" % (hint_name, w))
++        add("%s %s" % (core, w))
++    ca = _clean(credit_author or "")
++    if ca and ca.lower() not in (base_artist or "").lower() and ca.lower() not in ORIGINAL_WORDS:
++        add("%s %s" % (ca, core))
++    if credit_ev and art:
++        add("%s %s" % (core, art))
++    return out
++
++
++def _style_wave_ok(c, core_title):
++    """Is this row a fair style-wave download: not scored yet, an edit OF this song, not a
++    rendition / type beat / compilation / SoundCloud 30s preview. Pure."""
++    t = _ascii_fold(c.get("title") or "")
++    return (not c.get("_done") and (c.get("song_cov") or 0) >= 1.0
++            and _style_title_ok(c.get("title"), core_title)
++            and not OTHER_RENDITION.search(t) and not _TYPE_BEAT.search(t)
++            and not _is_compilation(c)
++            and not (c.get("source") == "soundcloud" and abs(_dur_s(c) - 30.0) < 0.01))
++
++
++def _style_wave_pick(pool, lanes, core_title, clip_len, want=STYLE_WAVE_DL,
++                     sec_want=STYLE_WAVE_SEC):
++    """Round-robin the download list. Lane 0 is the SECTION rows already in the pool
++    (0.5x-3x the clip, at least 90s allowed, a treatment or section word in the title),
++    most-played first, at most sec_want. Then one lane per style query, in the platform's
++    order, a section-length row first, then a row whose title carries the query's style
++    words, then YouTube first, then plays. Pure."""
++    L = float(clip_len or 0)
++    short_max = max(90.0, 3.0 * L)
++
++    def is_sec(c):
++        d = _dur_s(c)
++        return L > 0 and 0.5 * L <= d <= short_max
++    sec = []
++    for c in pool or []:
++        t = _ascii_fold(c.get("title") or "").lower()
++        if (_style_wave_ok(c, core_title) and is_sec(c)
++                and (EDIT_WORDS.search(t) or _SECTION_WORD.search(t))):
++            sec.append(c)
++    sec.sort(key=lambda c: -(c.get("plays") or 0))
++    ordered = [sec[:sec_want]]
++    for q, rows in lanes:
++        terms = [x for x in _clean(q).lower().split() if x in ("slowed", "sped", "bass", "boosted")]
++        lane = []
++        for rank, c in enumerate(rows):
++            if not _style_wave_ok(c, core_title):
++                continue
++            t = _ascii_fold(c.get("title") or "").lower()
++            lane.append((0 if is_sec(c) else 1, -sum(1 for x in terms if x in t),
++                         0 if c.get("source") == "youtube" else 1, -(c.get("plays") or 0),
++                         rank, c))
++        lane.sort(key=lambda x: x[:5])
++        ordered.append([x[-1] for x in lane])
++    out, ids = [], set()
++    while any(ordered) and len(out) < want:
++        for lane in ordered:
++            while lane:
++                c = lane.pop(0)
++                if id(c) not in ids and c.get("url") not in {x.get("url") for x in out}:
++                    ids.add(id(c)); out.append(c)
++                    break
++            if len(out) >= want:
++                break
++    return out
+ 
+ # "(prod. X)" / "prod by X" / "Prod: X" - a producer credit baked into a title. The
+ # exact edit is routinely uploaded to THAT person's own account, not the vocalist's or
+@@ -6967,6 +7156,7 @@
+     # does not deliver its crown (the 2026-09-24 merged run), nothing verifies at
+     # CORE_EDIT and its credit and hint name no family, so it still does not run.
+     _fw_t0 = time.time()
++    fq = []                                   # the family wave's queries, read by the style wave
+     _settled = any((c.get("core") or 0) >= CORE_SAME and abs(float(np.log2(
+         max(0.25, min(4.0, c.get("vspeed") or 1.0))))) <= FAMILY_SETTLED_TOL
+         for c in cands)
+@@ -7181,7 +7371,107 @@
+                          score=bv["score"], vscore=bv["score"])
+         tlog("creator_align", time.time() - _ta0, n=len(_align),
+              hit=sum(1 for c in _align if c.get("aligned_at") is not None))
++
++    # ---- THE STYLE WAVE: nothing scored is the clip's own file (see STYLE_WAVE_Q).
++    # Last of the waves, so it sees every row the others scored; skipped the moment any
++    # row is the same recording AT THE CLIP'S TEMPO (_style_same_row), which is every
++    # regression crown.
++    _sw_t0 = time.time()
++    _sw_same = _style_same_row(cands)
++    _sw_top = max([c for c in cands if c.get("_done")], default=None,
++                  key=lambda c: ((c.get("core") or 0), (c.get("fp") or 0)))
++    _sw_top = (((_sw_top.get("title") or "")[:50], _sw_top.get("core"), _sw_top.get("fp"),
++                _sw_top.get("vspeed")) if _sw_top is not None else None)
++    if _sw_same is None and base_title and shazam_reliable:
++        try:
++            _sw_len = duration_of(clip_audio) or 0
++        except Exception:
++            _sw_len = 0
++        _sw_words, _sw_why = _style_wave_words(cands, known_dir, edit_label)
++        _sw_cred = _style_evidence([c for c in cands if not c.get("fast_carry")],
++                                   artist_toks, edit_label)
++        _sw_cred = any(w.startswith("credit") for w in _sw_cred)
++        _sw_q = _style_wave_queries(core_title, base_artist,
++                                    _hint_song_name(hints, song_terms), credit_author,
++                                    _sw_words, _sw_cred,
++                                    list(queries) + list(rescue_q or []) + list(fq or []))
++        _sw_lanes, _sw_fresh, _sw_pick = [], [], []
++        _sw_fresh_ids = set()
++        _sw_state = {"done": 0}
++
++        def _sw_score(rows):
++            # Scored on COPIES under the wave's hard deadline: a row still downloading at
++            # the cap is abandoned and only finished rows are merged back, so a late worker
++            # can never write into a row the ranking below is reading.
++            cps = [dict(c) for c in rows]
++            rem = STYLE_WAVE_CAP - (time.time() - _sw_t0)
++            if cps and rem > 0.5:
++                dx = ThreadPoolExecutor(max_workers=1)
++                try:
++                    dx.submit(_download_and_score, cps, clip_audio, tmp,
++                              n + 90 + len(_sw_pick), len(cps), clip_ctx,
++                              _hit).result(timeout=rem)
++                except Exception:
++                    pass
++                finally:
++                    dx.shutdown(wait=False)
++            got = 0
++            for orig, cp in zip(rows, cps):
++                if "core" not in cp or not cp.get("_done"):
++                    continue
++                got += 1
++                orig.update(cp)
++                orig["style_wave"] = True
++                if id(orig) in _sw_fresh_ids:
++                    cands.append(orig)
++            _sw_state["done"] += got
++            return _style_same_row(rows) is not None
+ 
++        # The search (if any) runs UNDER the section downloads; its rows are only
++        # downloaded when the section lane did not already land the same master.
++        _sw_ex = ThreadPoolExecutor(max_workers=1)
++        _sw_fut = (_sw_ex.submit(search_edits, _sw_q, 8, None, None, True, False)
++                   if _sw_q else None)
++        _sw_pool = [c for c in cands if not c.get("fast_carry")]
++        _sw_sec = _style_wave_pick(_sw_pool, [], core_title, _sw_len)
++        _sw_pick += _sw_sec
++        _sw_hit = _sw_score(_sw_sec) if _sw_sec else False
++        if _sw_fut is not None and not _sw_hit:
++            try:
++                _sw_found = _sw_fut.result(
++                    timeout=max(0.1, STYLE_WAVE_SEARCH_S - (time.time() - _sw_t0)))
++            except Exception:
++                _sw_found = []
++            _by_url = {c["url"]: c for c in cands}
++            _byq = {}
++            for c in _sw_found:
++                hit = _by_url.get(c["url"])
++                if hit is None:
++                    _by_url[c["url"]] = c; _sw_fresh.append(c); hit = c
++                _byq.setdefault(c.get("query"), []).append(hit)
++            _sw_fresh_ids = {id(c) for c in _sw_fresh}
++            _term_hits(_sw_fresh)
++            _sw_lanes = [(q, _byq.get(q, [])) for q in _sw_q]
++            _sw_seen = {id(c) for c in _sw_pick}
++            _sw_more = [c for c in _style_wave_pick(
++                _sw_pool, [(q, [c for c in r if id(c) not in _sw_seen]) for q, r in _sw_lanes],
++                core_title, _sw_len, want=STYLE_WAVE_DL - len(_sw_pick), sec_want=0)]
++            _sw_pick += _sw_more
++            if _sw_more:
++                _sw_score(_sw_more)
++        _sw_ex.shutdown(wait=False)
++        _sw_done = _sw_state["done"]
++        tlog("style_wave", time.time() - _sw_t0, why=_sw_why, cred=_sw_cred, q=_sw_q,
++             nfound=sum(len(r) for _, r in _sw_lanes), nc=len(_sw_pick), done=_sw_done,
++             titles=[(c.get("title") or "")[:50] for c in _sw_pick],
++             hit=sum(1 for c in _sw_pick if (c.get("core") or 0) >= CORE_EDIT),
++             same=sum(1 for c in _sw_pick if _style_same_row([c]) is not None),
++             top=_sw_top)
++    else:
++        tlog("style_wave", 0.0, skipped="same-master" if _sw_same is not None else "no-base",
++             by=((_sw_same.get("title") or "")[:50], _sw_same.get("core"), _sw_same.get("fp"),
++                 _sw_same.get("vspeed")) if _sw_same is not None else None)
++
+     # ---- which upload IS the exact audio in the clip ----
+     # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
+     # + EQ-invariant arrangement match), NOT the bass-penalised score. Platforms

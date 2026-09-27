@@ -1,0 +1,138 @@
+--- /Users/rohamghiasi/crate/crate_engine.py	2026-09-27 11:57:41
++++ crate_engine.py	2026-09-27 12:39:17
+@@ -2997,7 +2997,7 @@
+ 
+ 
+ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, stats=None,
+-                            named_fn=None):
++                            named_fn=None, hints_ready=None):
+     """Owns the probe temp dir and REMOVES it, whichever way the scan ends (a return, an
+     exception, or a cancel from FingerprintJob). The body below used to mkdtemp() and never
+     clean up: 1,617 probe WAVs of clip audio sat in $TMPDIR (SPEED-DESIGN-1 "In passing"),
+@@ -3007,7 +3007,8 @@
+     try:
+         return await _fingerprint_core_body(audio, hints=hints, _scan_out=_scan_out,
+                                             hints_fn=hints_fn, tmp=tmp, _precut=precut,
+-                                            stats=stats, named_fn=named_fn)
++                                            stats=stats, named_fn=named_fn,
++                                            hints_ready=hints_ready)
+     finally:
+         # an ffmpeg cut still writing (a sweep chunk read ahead of an exit) must land
+         # before the dir goes, or it could recreate a WAV inside a half-removed dir
+@@ -3021,7 +3022,7 @@
+ 
+ 
+ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=None, tmp=None,
+-                                 _precut=None, stats=None, named_fn=None):
++                                 _precut=None, stats=None, named_fn=None, hints_ready=None):
+     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
+     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
+     is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
+@@ -3289,6 +3290,7 @@
+     span = 12 if len(scan) > 1 else 20
+     _scan_to = []
+     _early_extra = None                 # CORROB answers already paid for by the early name
++    _early_hints = None                 # the comment hints, joined early when already final
+     if SPEED_EARLY_NAME and named_fn is not None and scan:
+         res = [None] * len(scan)
+         _i = 0
+@@ -3314,6 +3316,45 @@
+                          artist=(_first.get("artist") or "")[:80], off=_off0)
+                 except Exception:
+                     pass
++            elif (hints_fn is not None and hints_ready is not None and _pk
++                  and not any(_junk_id(h) for h in _early_extra)):
++                # A RIVAL, BUT THE POSTED READ STILL WINS OUTRIGHT. The vote below reads only
++                # this window's hit, its CORROB answers and the comment hints. When the
++                # comment thread has already finished, hints_fn returns now exactly what it
++                # would return after the other windows, so it is joined here, kept, and
++                # REUSED below: the same inputs, so the same vote. A strict posted win lands
++                # on the posted-wins path, whose primary is the earliest non-junk hit - this
++                # one. A tie or a rival win waits for the full scan as before.
++                _ready = False
++                try:
++                    _ready = bool(hints_ready())
++                except Exception:
++                    _ready = False
++                if _ready:
++                    _early_hints = hints_fn() or []
++                    _hw = _hint_words(_early_hints)
++                    _g = {}
++                    for _h in [_first] + _early_extra:
++                        _k = _title_key(_h.get("title"))
++                        if _k:
++                            _g.setdefault(_k, []).append(_h)
++                    def _ek(k):
++                        rung, conf = _hint_support(k, _hw)
++                        return (rung, len({round(float(h.get("rate", 1.0)), 3) for h in _g.get(k, [])}),
++                                any(not _junk_id(h) for h in _g.get(k, [])), conf)
++                    _riv = [k for k in _g if k != _pk]
++                    if _riv and max(_ek(k) for k in _riv) < _ek(_pk):
++                        try:
++                            named_fn(dict(_first))
++                            tlog("early_named", 0.0, title=(_first.get("title") or "")[:80],
++                                 artist=(_first.get("artist") or "")[:80], off=_off0,
++                                 via="posted_wins")
++                        except Exception:
++                            pass
++                    else:
++                        tlog("early_name_rival", 0.0, n=len(_early_extra), hints=True)
++                else:
++                    tlog("early_name_rival", 0.0, n=len(_early_extra), hints=False)
+             else:
+                 tlog("early_name_rival", 0.0, n=len(_early_extra))
+             _early_extra = (_off0, _early_extra)
+@@ -3337,10 +3378,13 @@
+     # decisions - the serial version merely paid the two costs back to back.
+     if hints_fn is not None:
+         _th0 = time.time()
+-        try:
+-            hints = hints_fn() or []
+-        except Exception:
+-            hints = []
++        if _early_hints is not None:
++            hints = list(_early_hints)      # joined early (final then), reused: same vote
++        else:
++            try:
++                hints = hints_fn() or []
++            except Exception:
++                hints = []
+         tlog("hints_join_wait", time.time() - _th0, hints=len(hints))
+     hits, seen = [], set()
+     for off, h in zip(scan, res):
+@@ -3911,14 +3955,15 @@
+     return fp
+ 
+ 
+-async def fingerprint(audio, hints=None, hints_fn=None, stats=None, named_fn=None):
++async def fingerprint(audio, hints=None, hints_fn=None, stats=None, named_fn=None,
++                      hints_ready=None):
+     """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
+     mashup pass looks at the raw window evidence and decides whether this clip is one
+     song or two. The pass is free on single-song clips - it returns before probing
+     unless the scan already disagreed with itself."""
+     scan = []
+     fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn,
+-                                 stats=stats, named_fn=named_fn)
++                                 stats=stats, named_fn=named_fn, hints_ready=hints_ready)
+     if fp:
+         try:
+             await annotate_mashup(audio, fp, scan)
+@@ -3953,7 +3998,7 @@
+     cancel it. cancel() waits for the task to unwind: the bridge child is killed and the
+     probe temp dir is removed (_fingerprint_core's finally) before it returns."""
+ 
+-    def __init__(self, audio, hints_fn=None, stats=None, named_fn=None):
++    def __init__(self, audio, hints_fn=None, stats=None, named_fn=None, hints_ready=None):
+         self.t0 = time.time()
+         self.t_end = None
+         self._started = threading.Event()
+@@ -3967,7 +4012,7 @@
+             self._started.set()
+             try:
+                 return await fingerprint(audio, hints_fn=hints_fn, stats=stats,
+-                                         named_fn=named_fn)
++                                         named_fn=named_fn, hints_ready=hints_ready)
+             finally:
+                 self.t_end = time.time()
+                 self._done.set()
