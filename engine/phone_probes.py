@@ -53,7 +53,10 @@ def _flag(name, default):
 
 
 # THE FLAG. Off by default: with it off, nothing in this file runs for any request.
-ON = _flag("CRATE_PHONE_PROBES", False)
+# The switch can also be a file beside the engine (phone_probes.on), so every way the engine
+# gets started (restart script, launchd watchdog after a crash, a server's systemd unit)
+# keeps the same setting without each one having to carry the env var.
+ON = _flag("CRATE_PHONE_PROBES", os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "phone_probes.on")))
 # Page-side pollers = engine-side probes in flight while the phone is healthy. 2 is what the
 # Mac bridge measured safe for ShazamKit (30/30 at 2 in flight, crate_engine PROBE_CONC);
 # it has NOT been measured on an iPhone. CRATE_PHONE_CONC=1 is the serial engine.
