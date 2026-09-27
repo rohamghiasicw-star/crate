@@ -421,6 +421,25 @@ FAST_FILE_BASE = 500
 # head slot (RESCUE_DL), so the main pool and the 14-row head are exactly the old ones.
 QUERY_CAP = 16
 QUERY_RESCUE, RESCUE_DL = 4, 2
+# THE CROWD NAMES A DIFFERENT SONG THAN SHAZAM (mason, 2026-09-27). Shazam named "Dougie
+# Freestyle" (a freestyle over the Dougie beat), the comments said "Teach me how to
+# dougie", and the clip is a Dougie x Enya "Only Time" mashup. build_queries gives the
+# BASE its "mashup" / "x" forms but never the hint, so the exact upload (a SoundCloud
+# mashup, 50k plays) was reached only when the sound-page hint arrived LATE and a
+# base-only list happened to surface a different mix. Four runs, three crowns. These
+# searches run on their own lane, only when the hint's words are not the base's, and
+# their new rows take HINT_MASH_DL appended download slots, so the head every other clip
+# is scored on does not move.
+HINT_MASH = os.environ.get("CRATE_HINT_MASH", "1").lower() not in ("0", "false", "no", "off")
+HINT_MASH_DL = 4
+# RAW FINGERPRINT LEAD among saturated cores. core pins to 1.000 on low-transient audio
+# (findings/core-saturation.md), and on mason ten Dougie-family uploads all read 1.000,
+# so plays picked the crown. The raw chromaprint `fp` is not saturated and is recording-
+# specific: the exact mashup read fp 0.836 (0.851 at 40s), the best rival 0.747, the
+# documented "full bass" mix 0.652; reversed, the leader collapsed to 0.554. Only a lead
+# of at least FP_LEAD over every other same-tier saturated row reorders anything, so
+# byte-identical rips (Dark Horse, fp within noise of each other) still fall to plays.
+FP_LEAD = float(os.environ.get("CRATE_FP_LEAD", 0.08))
 # The creator lane's own deadline, counted from when THAT lane was submitted, which is
 # now before the comments fast path. It used to be submitted after the fast path (at
 # _t_main) and read with f_cre.result(WEB_DEADLINE - elapsed since _t_main), which is
@@ -2924,11 +2943,11 @@ def _cand_tick():
 # live past it), and a request drops back to 1 in flight after its first timeout or bridge
 # error. shazamio and the shazamio-first fallback stay at exactly 1. CRATE_PROBE_CONC=1
 # restores the serial engine.
-PROBE_CONC = int(os.environ.get("CRATE_PROBE_CONC", "1"))
+PROBE_CONC = int(os.environ.get("CRATE_PROBE_CONC", "2"))
 SHAZAMKIT_SLOTS = int(os.environ.get("CRATE_SHAZAMKIT_SLOTS", "3"))
 _SLOT_DIR = os.environ.get("CRATE_SHAZAMKIT_SLOT_DIR", "/tmp/addify-shazamkit")
 # Render each probe WAV outside the Shazam lock (and the next sweep chunk's ahead of time).
-SPEED_PRECUT = _speed_flag("CRATE_PRECUT", False)
+SPEED_PRECUT = _speed_flag("CRATE_PRECUT", True)
 
 
 def _probe_conc():
@@ -2977,7 +2996,8 @@ def _shazamkit_release(fd):
         pass
 
 
-async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, stats=None):
+async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, stats=None,
+                            named_fn=None):
     """Owns the probe temp dir and REMOVES it, whichever way the scan ends (a return, an
     exception, or a cancel from FingerprintJob). The body below used to mkdtemp() and never
     clean up: 1,617 probe WAVs of clip audio sat in $TMPDIR (SPEED-DESIGN-1 "In passing"),
@@ -2987,7 +3007,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, st
     try:
         return await _fingerprint_core_body(audio, hints=hints, _scan_out=_scan_out,
                                             hints_fn=hints_fn, tmp=tmp, _precut=precut,
-                                            stats=stats)
+                                            stats=stats, named_fn=named_fn)
     finally:
         # an ffmpeg cut still writing (a sweep chunk read ahead of an exit) must land
         # before the dir goes, or it could recreate a WAV inside a half-removed dir
@@ -3001,7 +3021,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, st
 
 
 async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=None, tmp=None,
-                                 _precut=None, stats=None):
+                                 _precut=None, stats=None, named_fn=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
     is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
@@ -3268,8 +3288,43 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     scan = _scan_windows(dur, cap=SCAN_CAP)   # PAID LEVER: see SCAN_CAP, default 6
     span = 12 if len(scan) > 1 else 20
     _scan_to = []
-    res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span, t_sink=_scan_to)
-                                 for o in scan])
+    _early_extra = None                 # CORROB answers already paid for by the early name
+    if SPEED_EARLY_NAME and named_fn is not None and scan:
+        res = [None] * len(scan)
+        _i = 0
+        while _i < len(scan):
+            _chunk = scan[_i:_i + max(1, _conc)]
+            _got = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span,
+                                                t_sink=_scan_to) for o in _chunk])
+            for _j, _h in enumerate(_got):
+                res[_i + _j] = _h
+            _i += len(_chunk)
+            if any(_got):
+                break
+        _first = next((h for h in res if h), None)
+        if _first is not None and not _junk_id(_first):
+            _off0 = scan[res.index(_first)]
+            _early_extra = [h for h in await asyncio.gather(
+                *[probe(_off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
+            _pk = _title_key(_first.get("title"))
+            if _pk and all(_title_key(h.get("title")) == _pk for h in _early_extra):
+                try:
+                    named_fn(dict(_first))
+                    tlog("early_named", 0.0, title=(_first.get("title") or "")[:80],
+                         artist=(_first.get("artist") or "")[:80], off=_off0)
+                except Exception:
+                    pass
+            else:
+                tlog("early_name_rival", 0.0, n=len(_early_extra))
+            _early_extra = (_off0, _early_extra)
+        if _i < len(scan):
+            _rest = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span,
+                                                 t_sink=_scan_to) for o in scan[_i:]])
+            for _j, _h in enumerate(_rest):
+                res[_i + _j] = _h
+    else:
+        res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span, t_sink=_scan_to)
+                                     for o in scan])
     if not any(res):
         _r2 = await retry_stalled(_scan_to, False, cap=6)
         if _r2:
@@ -3305,8 +3360,11 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     # real match from a plausible coincidence, so buy a little of it up front.
     if hits:
         off0 = hits[0]["at"]
-        extra = [h for h in await asyncio.gather(
-            *[probe(off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
+        if _early_extra is not None and _early_extra[0] == off0:
+            extra = list(_early_extra[1])
+        else:
+            extra = [h for h in await asyncio.gather(
+                *[probe(off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
         groups = {}
         for h in [x for x in hits if x.get("at") == off0] + extra:
             k = _title_key(h.get("title"))
@@ -3853,14 +3911,14 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     return fp
 
 
-async def fingerprint(audio, hints=None, hints_fn=None, stats=None):
+async def fingerprint(audio, hints=None, hints_fn=None, stats=None, named_fn=None):
     """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
     mashup pass looks at the raw window evidence and decides whether this clip is one
     song or two. The pass is free on single-song clips - it returns before probing
     unless the scan already disagreed with itself."""
     scan = []
     fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn,
-                                 stats=stats)
+                                 stats=stats, named_fn=named_fn)
     if fp:
         try:
             await annotate_mashup(audio, fp, scan)
@@ -3877,7 +3935,16 @@ async def fingerprint(audio, hints=None, hints_fn=None, stats=None):
 # now starts the fingerprint on the credited sound the moment it lands and joins the check
 # alongside it: no swap -> the running fingerprint is byte-for-byte the one it would have
 # started after settling; a swap or a sound-cache hit -> cancel() and do exactly today's path.
-SPEED_EARLY_PROBES = _speed_flag("CRATE_EARLY_PROBES", False)
+SPEED_EARLY_PROBES = _speed_flag("CRATE_EARLY_PROBES", True)
+# NAME THE SONG AS SOON AS IT IS DECIDED (SPEED-DESIGN-1 B, the safe half). The windows
+# are probed in scan order until the first one hits, that window's CORROB probes run
+# right then instead of after every other window, and when the first hit is not junk and
+# every CORROB answer agrees with it, `named_fn` is called with it. Nothing else can
+# change that title: with no rival key the decision falls through to the posted-wins path,
+# whose primary is the earliest non-junk hit, which is this one. Same probes, same
+# results, same decision; only the order moves, and the CORROB answers are reused below.
+# Anything with a rival, a junk first hit or no hit waits for the full scan as before.
+SPEED_EARLY_NAME = _speed_flag("CRATE_EARLY_NAME", True)
 
 
 class FingerprintJob(object):
@@ -3886,7 +3953,7 @@ class FingerprintJob(object):
     cancel it. cancel() waits for the task to unwind: the bridge child is killed and the
     probe temp dir is removed (_fingerprint_core's finally) before it returns."""
 
-    def __init__(self, audio, hints_fn=None, stats=None):
+    def __init__(self, audio, hints_fn=None, stats=None, named_fn=None):
         self.t0 = time.time()
         self.t_end = None
         self._started = threading.Event()
@@ -3899,7 +3966,8 @@ class FingerprintJob(object):
         async def _wrap():
             self._started.set()
             try:
-                return await fingerprint(audio, hints_fn=hints_fn, stats=stats)
+                return await fingerprint(audio, hints_fn=hints_fn, stats=stats,
+                                         named_fn=named_fn)
             finally:
                 self.t_end = time.time()
                 self._done.set()
@@ -4535,6 +4603,34 @@ def _comment_extra(comment_cands, cands, head, want=3):
     out.sort(key=lambda c: (0 if c.get("creator_link") else 1,
                             -(c.get("comment_likes") or 0)))
     return out[:want]
+
+
+def _hint_mash_queries(hints, base_title):
+    """'<hint> mashup' / '<hint> x' for a crowd hint that names a DIFFERENT song than the
+    Shazam base (see HINT_MASH). A hint whose words the base already carries adds nothing:
+    build_queries gives the base those forms itself."""
+    if not HINT_MASH:
+        return []
+    bk = set((_title_key(base_title or "") or "").split())
+    out = []
+    for h in (hints or [])[:2]:
+        if re.search(r"https?:|www\.|\.(com|ly|be|app)\b", h or "", re.I):
+            continue                     # a pasted link, not a song name
+        if _SPEED_TAG.search(h or "") or re.search(r"\b(bass|reverb|remix|edit|mashup)\b", h or "", re.I):
+            continue                     # names a treatment, which build_queries already covers
+        hk = [w for w in (_title_key(h) or "").split() if len(w) >= 3]
+        if not hk or len(hk) > 6 or set(hk) <= bk:
+            continue
+        # RELATED, not unrelated: the crowd names the song Shazam's pick is built on
+        # ("Teach me how to dougie" over "Dougie Freestyle"), so they share a real word. A
+        # hint with nothing in common is a stray comment ("Me and skaat" on My Hitta).
+        if not (set(hk) & {w for w in bk if len(w) >= 3}):
+            continue
+        for s in ("%s mashup" % h, "%s x" % h):
+            s = _clean(s)
+            if s and s.lower() not in {o.lower() for o in out}:
+                out.append(s)
+    return out[:4]
 
 
 def _pair_queries(pair):
@@ -5179,7 +5275,51 @@ def _search_text_inproc(prefix, q):
     return None
 
 
+# SPECULATIVE SEARCH. With SPEED_EARLY_NAME the song is known several seconds before the
+# fingerprint finishes; prefetch_search() starts the edit hunt's searches then, and
+# _run_search hands a prefetched answer to the FIRST ask for the same (prefix, source,
+# query) spec within PREFETCH_TTL. Same spec, same search, only earlier, so no pool changes
+# beyond ordinary search noise. A spec the hunt never asks is wasted work, nothing more.
+SPEED_PREFETCH = _speed_flag("CRATE_PREFETCH_SEARCH", True)
+PREFETCH_TTL = 60.0
+_PREFETCH = {}
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_EX = None
+
+
+def prefetch_search(queries, per):
+    """Start search_edits(queries, per)'s specs now. -> how many were started."""
+    global _PREFETCH_EX
+    if not SPEED_PREFETCH or not queries:
+        return 0
+    now, n = time.time(), 0
+    with _PREFETCH_LOCK:
+        if _PREFETCH_EX is None:
+            _PREFETCH_EX = ThreadPoolExecutor(max_workers=12, thread_name_prefix="prefetch")
+        for k in [k for k, (t, _f) in _PREFETCH.items() if now - t > PREFETCH_TTL]:
+            _PREFETCH.pop(k, None)
+        for sp in _edit_specs(queries, per):
+            if sp not in _PREFETCH:
+                _PREFETCH[sp] = (now, _PREFETCH_EX.submit(_run_search_raw, sp))
+                n += 1
+    return n
+
+
 def _run_search(spec):
+    if SPEED_PREFETCH:
+        with _PREFETCH_LOCK:
+            got = _PREFETCH.pop(spec, None)
+        if got is not None and time.time() - got[0] <= PREFETCH_TTL:
+            try:
+                rows = got[1].result(timeout=25)
+                tlog("prefetch_hit", time.time() - got[0], q=spec[2][:60], src=spec[1])
+                return [dict(r) for r in rows]
+            except Exception:
+                pass
+    return _run_search_raw(spec)
+
+
+def _run_search_raw(spec):
     prefix, src, q = spec
     out = None
     if SPEED_INPROC_SEARCH:
@@ -6300,6 +6440,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # hunt up; its rows are appended to the download list (RESCUE_DL), never put in the
     # head.
     _rx_lane = _LaneSearch(rescue_q, 8) if rescue_q else None
+    _hm_q = _hint_mash_queries(hints, base_title)
+    _hm_lanes = [_LaneSearch([q], 6) for q in _hm_q]
     # see the note at the producer chase: a `with` block would shutdown(wait=True) and
     # undo the web deadline entirely. ex is shut down (wait=False) after the web join.
     ex = ThreadPoolExecutor(max_workers=3)
@@ -6675,6 +6817,33 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
              pending=_rx_pend, ran=round(time.time() - _rx_lane.t0, 3))
 
     # title relevance for the candidates that arrived since wave 1 (web + producer + rescue)
+    # hint-mashup lanes: zero wait like the rescue lane. Rows are taken in each search's
+    # OWN result order, round-robin over (query, source), not by plays - the exact mashup
+    # had 50k plays against 156k for a different mix of the same pair. A row the main
+    # search already holds but did not put in the head is taken too (same object): on
+    # mason the exact upload was in the 320-row pool and simply never downloaded.
+    _hm_rows = []
+    if _hm_lanes:
+        _by_url = {c["url"]: c for c in cands}
+        _streams = []
+        for ln in _hm_lanes:
+            _g = ln.collect(0.0)[0]
+            _streams.append([c for c in _g if c.get("source") == "soundcloud"])
+            _streams.append([c for c in _g if c.get("source") != "soundcloud"])
+        _new, _ids = 0, set()
+        for i in range(max(len(g) for g in _streams) if _streams else 0):
+            for g in _streams:
+                if i >= len(g):
+                    continue
+                c = _by_url.get(g[i]["url"])
+                if c is None:
+                    c = g[i]; c["hint_mash"] = True
+                    cands.append(c); _by_url[c["url"]] = c; _new += 1
+                if id(c) not in _ids:
+                    _ids.add(id(c)); _hm_rows.append(c)
+        tlog("hint_mash_lane", 0.0, nq=len(_hm_q), q=_hm_q, new=_new, rows=len(_hm_rows),
+             top=[(c.get("title") or "")[:60] for c in _hm_rows[:HINT_MASH_DL]],
+             ran=round(time.time() - _hm_lanes[0].t0, 3))
     _term_hits([c for c in cands if "title_hits" not in c])
 
     # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial
@@ -6734,8 +6903,10 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     # best _dl_priority first - after `_cre_settled` above was read, so a rescue row can
     # never switch the creator lane off.
     _rx_extra = [c for c in cands if c.get("rescue_q") and not c.get("_done")][:RESCUE_DL]
+    _hm_extra = [c for c in _hm_rows
+                 if not c.get("_done") and id(c) not in _seen_head][:HINT_MASH_DL]
     for c in (_cre_extra + _cm_extra + [c for c in cands if c.get("fast_carry")]
-              + _rx_extra + _style_x):
+              + _rx_extra + _hm_extra + _style_x):
         if id(c) not in _seen_head:
             _seen_head.add(id(c)); _appended.append(c)
     head = head + _appended
@@ -7457,6 +7628,21 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 -fq,                                  # recording x speed x bass
                 -c.get("plays", 0))                   # niche edits win on match, not plays
     ranked = sorted(keep, key=rank_key)
+    # RAW FINGERPRINT LEAD (FP_LEAD above). Before the dedup below, which keeps only the
+    # first row of each same-speed/same-bass cluster: the leader has to be first to live.
+    if FP_LEAD > 0 and len(ranked) > 1 and (ranked[0].get("core") or 0) >= CORE_SAME:
+        _t0 = rank_key(ranked[0])[:-2]
+        _grp = [c for c in ranked
+                if (c.get("core") or 0) >= CORE_SAME and rank_key(c)[:-2] == _t0]
+        # every same-tier row needs a measured fp: a lead over a row we never
+        # fingerprinted (a carried or cached row) is not a lead
+        if len(_grp) > 1 and all((c.get("fp") or 0.0) > 0 for c in _grp):
+            _byfp = sorted(_grp, key=lambda c: -(c.get("fp") or 0.0))
+            _lead = (_byfp[0].get("fp") or 0.0) - (_byfp[1].get("fp") or 0.0)
+            if _lead >= FP_LEAD and _byfp[0] is not ranked[0]:
+                tlog("fp_lead", 0.0, lead=round(_lead, 3), to=_byfp[0].get("title"),
+                     was=ranked[0].get("title"), n=len(_grp))
+                ranked.remove(_byfp[0]); ranked.insert(0, _byfp[0])
     # DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
     # different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
     # Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are

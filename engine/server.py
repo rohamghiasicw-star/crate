@@ -405,6 +405,41 @@ def _prog_set(key, pct, label=None):
     p["t"] = time.time()
 
 
+def _prog_named(key, hit, t0):
+    """The engine decided the song before the fingerprint finished (E.SPEED_EARLY_NAME):
+    park it where /progress can hand it to the page. Per scan, keyed by the clip, so two
+    people scanning at once never see each other's song."""
+    p = _PROG.get(key)
+    if p is None:
+        _prog_set(key, 30)
+        p = _PROG.get(key)
+    p["named"] = {"title": hit.get("title") or "", "artist": hit.get("artist") or "",
+                  "art": hit.get("art") or "", "t": round(time.time() - t0, 3)}
+    p["t"] = time.time()
+    E.tlog("named_early", time.time() - t0, title=(hit.get("title") or "")[:80])
+
+
+def _prefetch_hunt(src, hit, hints):
+    """The song was named early: start the edit hunt's searches now (E.SPEED_PREFETCH),
+    built from what find_edit will build them from, as far as phase 1 knows it. A query
+    phase 2 builds differently (a later hint, a measured speed word) just runs then."""
+    if not E.SPEED_PREFETCH:
+        return
+
+    def _go():
+        try:
+            hs = [h for h in (hints or []) if h]
+            qs = E.build_queries(src.get("credit_title"), src.get("credit_author"),
+                                 hit.get("title") or "", hit.get("artist") or "", "",
+                                 handle=src.get("handle"), hints=hs, shazam_reliable=True)
+            hq = [q for q in (E._clean(h) for h in hs[:2]) if q and len(q) > 3]
+            n = E.prefetch_search(hq, 6) + E.prefetch_search(qs, 8)
+            E.tlog("prefetch_start", 0.0, n=n, nq=len(qs), nh=len(hq))
+        except Exception as ex:
+            E.tlog("prefetch_failed", 0.0, err=type(ex).__name__)
+    threading.Thread(target=_go, name="prefetch-hunt", daemon=True).start()
+
+
 def _prog_probe(key, ceiling):
     """One finished Shazam probe, converted to progress.
 
@@ -709,6 +744,7 @@ def _phase1(url, key, t0):
     Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
     E.tlog("request_start", 0.0, url=key)
     _prog_set(key, 6, "Reading the clip")
+    (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
     _p0 = time.time()
     try:
         src = E.get_source(url, defer_crosscheck=True)
@@ -994,7 +1030,7 @@ def _phase1(url, key, t0):
             _fp_t["fp_start"], _fp_t["early"] = time.time(), True
             _early = E.FingerprintJob(
                 src["audio"], hints_fn=(_join_hints_serial if _hints_fn is not None else None),
-                stats=_fpstats)
+                stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts))))
         except Exception:
             _early = None
             _fp_t["early"] = False
@@ -1119,7 +1155,7 @@ def _phase1(url, key, t0):
                 fp = loop.run_until_complete(E.fingerprint(
                     src["audio"],
                     hints_fn=(_join_hints_serial if _hints_fn is not None else None),
-                    stats=_fpstats))
+                    stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts)))))
                 _fp_end = time.time()
         finally:
             E.PROBE_HOOK = _prev_hook
@@ -1393,6 +1429,12 @@ def _phase1(url, key, t0):
         res["decisive"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("phase1_done", time.time() - t0)
+        _nm = (_PROG.get(key) or {}).get("named")
+        if _nm:
+            # The early name must equal what /base answers. Logged on every scan so the
+            # gate can fail on a single mismatch before this ships.
+            E.tlog("early_name_check", 0.0, same=(_nm["title"] == (base_title or "")),
+                   early=_nm["title"][:80], final=(base_title or "")[:80], t_early=_nm["t"])
         worth = bool((_edit_worthy(src, fp) or res.get("from_caption"))
                      and (base_title or E._is_named_credit(src.get("credit_title"))))
         res["edits_pending"] = worth
@@ -6597,8 +6639,10 @@ class H(BaseHTTPRequestHandler):
             # it waits on /base, which is one long awaited call with no events of its own.
             k = (parse_qs(u.query).get("url") or [""])[0].strip().split("?")[0]
             p = _PROG.get(k) or {}
-            return self._send(200, {"pct": round(float(p.get("pct") or 0), 1),
-                                    "label": p.get("label") or ""})
+            out = {"pct": round(float(p.get("pct") or 0), 1), "label": p.get("label") or ""}
+            if p.get("named"):
+                out["named"] = p["named"]
+            return self._send(200, out)
         if u.path == "/health":
             # "service" STAYS "crate engine" until every installed build is gone: the iOS
             # app's EngineConfig.healthCheck accepts ONLY that exact string, so renaming it
