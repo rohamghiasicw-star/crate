@@ -792,6 +792,8 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    can actually be embedded. When it cannot it is an open arrow, because leaving the app is
    a different promise and the glyph should not blur the two. */
 .artwrap{position:relative;display:inline-block;line-height:0}
+.artlink{display:inline-block;line-height:0;border-radius:20px;-webkit-tap-highlight-color:transparent}
+.artlink:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 /* THE COVER SITS ON THE PAGE, NOT IN IT (Konnor's design notes 2026-09-26, priority 2:
    "hero art looks flat"). Three layers lift it:
    1. an ambient glow BEHIND it in the cover's own colour. bloomFrom() averages the art on
@@ -1915,7 +1917,7 @@ function pgReset(){clearInterval(pgTimer); if(pgFin) clearInterval(pgFin);
    /progress reports milestones the engine actually passed - audio fetched, fingerprint
    started, one more Shazam probe done - so the bar moves only on work that happened,
    and STOPS moving if the engine genuinely stalls, which is the honest thing to show. */
-var progT=null;
+var progT=null, namedEarly=false;
 function progPollOn(u){
   progPollOff();
   progT=setInterval(function(){
@@ -1924,6 +1926,16 @@ function progPollOn(u){
       .then(function(r){return r.json();})
       .then(function(p){
         if(!busy||!p||!p.pct) return;
+        // THE SONG, THE MOMENT THE ENGINE DECIDES IT (engine CRATE_EARLY_NAME). The first
+        // Shazam window and its three speed checks agreed, and nothing later in the scan
+        // can change that title, so it goes on screen now instead of when the whole
+        // fingerprint finishes. /base then lands with the same title (the engine logs a
+        // check on every scan).
+        if(p.named && p.named.title && !namedEarly && curURL===u){
+          namedEarly=true; clearTimeout(phaseT);
+          headline(p.named.title);
+          say(p.named.artist?('by '+esc(p.named.artist)+' &middot; checking the speed'):'Checking the speed');
+        }
         // THE ENGINE'S NUMBER IS THE CEILING, NOT THE VALUE. Assigning it directly makes
         // the bar teleport: the hunt downloads candidates in a concurrent batch, so a
         // dozen can finish between two polls and the reading leaps - measured 71% to 92%
@@ -2837,9 +2849,12 @@ function renderResult(d,partial){
      apple-app-site-association ends in "*"), and SoundCloud's own pages declare an app
      link (al:ios:url soundcloud://sounds:ID) on a track page but none on a search page.
      So when this result already holds a SoundCloud upload of the song, the tile opens
-     that track: the crown when it lives on SoundCloud, otherwise the highest SoundCloud
-     row that measured 50% or better, by the same figure its row prints. With no such row
-     the search stays. A tile that is already a track page is left alone. */
+     that track: the crown when it lives on SoundCloud or, with no crown, the "Our pick"
+     row when that row is on SoundCloud and measured 50% or better. Never a different row
+     under a crown that lives elsewhere: on 50 of 209 saved results that sent the tile to
+     another edit (a "UK Bassline Remix" under a "sped up" crown, the plain Bad Blood 12%
+     slower under the slowed + reverb crown). With no such row the search stays. A tile
+     that is already a track page is left alone. */
   (function(){
     var i, at=-1;
     for(i=0;i<lk.length;i++) if(lk[i].kind==='soundcloud') at=i;
@@ -2847,10 +2862,9 @@ function renderResult(d,partial){
     var isTrack=function(c){return !!c && /^https:\/\/(m\.)?soundcloud\.com\/[^\/?#\s]+\/[^\/?#\s]+/i.test(String(c.url||'')) &&
       !/^https:\/\/(m\.)?soundcloud\.com\/[^\/]+\/(sets|tracks|albums|likes|reposts|popular-tracks|followers|following)(\/|$|\?)/i.test(String(c.url||''));};
     var pick=(ex && isTrack(ex)) ? ex : null;
-    if(!pick){
-      var pool=byMatch(cands.filter(function(c){return isTrack(c) && (c.core||0)>=SHELF_FLOOR;}));
-      for(i=0;i<pool.length && !pick;i++){var m=vmatch(pool[i]);
-        if(m && (m.exact || (m.pct!==null && m.pct>=CORE_KEEP*100))) pick=pool[i];}
+    if(!ex && !partial){
+      var op=byMatch(cands.filter(function(c){return (c.core||0)>=SHELF_FLOOR;}))[0], m=op?vmatch(op):null;
+      if(op && isTrack(op) && m && (m.exact || (m.pct!==null && m.pct>=CORE_KEEP*100))) pick=op;
     }
     if(!pick) return;
     var t={name:'SoundCloud',kind:'soundcloud',url:pick.url,exact:true};
@@ -2947,7 +2961,19 @@ function renderResult(d,partial){
     if(ex.art) art=imgTag({'class':'art', src:ex.art, alt:'', width:150, height:150,
                'data-ph':'--phc:'+_phc+';--phc2:'+_phc2});
   }
-  var hero='<div class="hero"><span class="artwrap">'+art+corner+'</span>'+
+  // TAP THE COVER (Roham 2026-09-26: "a link should be inside the cover when it finds a
+  // song"). It opens the version this card is about: the crown or promoted upload, else the
+  // first exact store link (an Apple Music album, a Spotify track), else the Spotify search
+  // for the song. Never Shazam (Roham: leading people to Shazam is "a very bad look"). Only
+  // the image is the link: the play corner stays outside it, so a tap on the triangle still
+  // plays here. target=_blank is what the native app hands to the platform's own app.
+  var _cov=pv||'', _ci;
+  for(_ci=0;_ci<lk.length&&!_cov;_ci++) if(lk[_ci].exact&&lk[_ci].url) _cov=lk[_ci].url;
+  for(_ci=0;_ci<lk.length&&!_cov;_ci++) if(lk[_ci].kind==='spotify'&&lk[_ci].url) _cov=lk[_ci].url;
+  if(_cov && !/^https:\/\//i.test(_cov)) _cov='';
+  var artHtml=_cov?'<a class="artlink" href="'+esc(_cov)+'" target="_blank" rel="noopener" aria-label="'+
+    esc(ex?'Open this version':'Open this song')+'">'+art+'</a>':art;
+  var hero='<div class="hero"><span class="artwrap">'+artHtml+corner+'</span>'+
     '<h2 class="rtitle">'+esc(_htitle)+'</h2>'+
     '<p class="rartist">'+esc(d.base_artist||'')+'</p>'+badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
@@ -4159,7 +4185,8 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   // Fetch and fingerprint happen inside ONE awaited call, so there is no server event at
   // the boundary between them. This timer only advances the WORDING; the bar itself still
   // moves on real milestones, and it backs off if the answer already landed.
-  phaseT=setTimeout(function(){if(busy&&pgNow<40){headline('Listening'); say('Building the audio fingerprint');}},2400);
+  namedEarly=false;
+  phaseT=setTimeout(function(){if(busy&&pgNow<40&&!namedEarly){headline('Listening'); say('Building the audio fingerprint');}},2400);
   progPollOn(p.url);
   // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
   // it reports its own milestones now (one per candidate checked), so stopping here would
