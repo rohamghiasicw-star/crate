@@ -24,6 +24,8 @@ import crate_engine as E
 import wrong_song
 import speed_from_master
 import links as L
+import find_song as FS
+import phone_probes as P     # on-device ShazamKit, off unless CRATE_PHONE_PROBES=1
 
 # ---------------------------------------------------------------- creator evidence
 # NEW 2026-08-13. The check Roham did by hand on ZS4qqMqXq, in code: whose sound is
@@ -7021,6 +7023,26 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _probes_next(self, u):
+        """GET /probes/next - the phone's long-poll for its next Shazam probe. The body is
+        raw 16 kHz mono s16le PCM (phone_probes.http_next); 204 = nothing yet, ask again;
+        410 = this scan is over; 404 = the feature is off."""
+        code, hdrs, body = P.http_next(parse_qs(u.query))
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "X-Probe-Id, X-Probe-Sr, X-Probe-Secs")
+            self.send_header("Cache-Control", "no-store")
+            for k, v in hdrs:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except Exception:
+            pass                        # the page went away; the probe falls back on its own
+
     def do_GET(self):
         u = urlparse(self.path)
         # serve the app itself, so page + engine share one origin (no CORS/PNA)
@@ -7106,7 +7128,12 @@ class H(BaseHTTPRequestHandler):
                                     "name": "Addify engine",
                                     "build": _page_build(),
                                     "shazam": _shz,
+                                    # the page reads this before it offers a scan to the
+                                    # phone's ShazamKit (docs/SHAZAMKIT-ON-DEVICE.md)
+                                    "phone_probes": P.health(),
                                     "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
+        if u.path == "/probes/next":
+            return self._probes_next(u)
         if u.path == "/trending":
             try:
                 return self._send(200, trending_sounds())
@@ -7136,10 +7163,24 @@ class H(BaseHTTPRequestHandler):
         if (q.get("nocache") or [""])[0] in ("1", "true", "yes"):
             _NOCACHE[link.split("?")[0]] = True
         fn = {"/base": identify_base, "/edits": identify_edits}.get(u.path, identify)
+        # ON-DEVICE SHAZAMKIT. ?kit= is the page's scan id when the phone offered to run the
+        # Shazam probes. Bound for exactly this call: every probe the fingerprint makes in
+        # it goes to the phone (find_song.PHONE, phone_probes.PhoneSession). None when the
+        # flag is off or the page did not ask, and then this is the old call, unchanged.
+        _ph = P.bind((q.get("kit") or [""])[0]) if u.path in ("/base", "/find") else None
+        _tok = FS.PHONE.set(_ph) if _ph is not None else None
         try:
-            self._send(200, fn(link))
+            res = fn(link)
+            if _ph is not None and isinstance(res, dict):
+                # a copy: `res` may be the cached answer, and these numbers are this scan's
+                res = dict(res, phone=_ph.report())
+            self._send(200, res)
         except Exception as e:
             self._send(200, {"result": "error", "error": str(e)[:200]})
+        finally:
+            if _ph is not None:
+                FS.PHONE.reset(_tok)
+                P.release(_ph)          # waiting polls get 410 and the page stops asking
 
     def do_POST(self):
         u = urlparse(self.path)
@@ -7154,6 +7195,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, identify_mic(body, kind))
             if u.path == "/review/note":
                 return self._send(200, record_review_note(json.loads(body.decode())))
+            if u.path == "/probes/result":
+                return self._send(*P.http_result(parse_qs(u.query), body))
             if u.path == "/feedback":
                 return self._send(200, record_feedback(json.loads(body.decode())))
             if u.path == "/feedback/erase":

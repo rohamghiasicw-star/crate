@@ -20,7 +20,8 @@ Read `engine/SHARE-SHEET.md` first for the share flow this implements.
 | `Addify/SharedInbox.swift` | The app-group contract. Compiled into BOTH targets. |
 | `Addify/ResultToast.swift` | Native "Match found" toast. |
 | `Addify/SettingsView.swift` | Engine URL field, Test, Reset. |
-| `Addify/Info.plist`, `Addify.entitlements` | URL scheme `addify`, mic usage string, ATS, app group. |
+| `Addify/ShazamProbe.swift` | On-device ShazamKit: answers the engine's Shazam probes (`addifyKit` handler, `SHSignatureGenerator` + `SHSession`). See `docs/SHAZAMKIT-ON-DEVICE.md`. |
+| `Addify/Info.plist`, `Addify.entitlements` | URL scheme `addify`, mic usage string, ATS, app group, `com.apple.developer.shazamkit` (needs the ShazamKit App Service on App ID `com.addify.app`). |
 | `Addify/Assets.xcassets` | App icon (white waveGlyph wave on brand purple `#6B5FE0`, 1024 RGB, no alpha) + launch colour. |
 | `AddifyShare/ShareViewController.swift` | The share sheet icon. Plain `UIViewController`, no compose sheet. |
 | `AddifyShare/Info.plist`, `AddifyShare.entitlements` | Activation rule (web URL or text), app group. |

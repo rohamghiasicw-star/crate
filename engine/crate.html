@@ -1709,10 +1709,11 @@ var ENGINE=(function(){try{var q=new URLSearchParams(location.search).get('engin
    to latch to engine_down forever and answer every later scan offline WITHOUT contacting
    the server at all. From the user's side the app is dead while the server is fine, and
    only a reload fixes it. So a failure leaves the flag null and the next attempt re-checks. */
-var engineUp=null;
+var engineUp=null, engineInfo=null;
 function checkEngine(){if(engineUp===true) return Promise.resolve(true);
   return fetch(ENGINE+'/health').then(function(r){return r.ok?r.json():null;})
     .then(function(j){
+      if(j) engineInfo=j;
       // STALE SHELL GUARD. An installed home-screen app keeps the page it was installed
       // with, so a fixed bug keeps running on the phone until something forces a reload.
       // If the engine reports a newer build than the one this page was stamped with, park
@@ -1735,8 +1736,57 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
         location.reload(); return false;}
       var o=!!j; engineUp=o?true:null; return o;})
     .catch(function(){engineUp=null; return false;});}
-function call(path,url){return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
-  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};});});}
+function call(path,url,opt){return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
+  var kit=(opt&&opt.kit)?kitStart():'';
+  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};})
+    .then(function(d){if(kit) kitStop(); return d;});});}
+/* ON-DEVICE SHAZAMKIT (docs/SHAZAMKIT-ON-DEVICE.md). Inside an iOS build that carries it
+   (window.ADDIFY_NATIVE.shazamkit and the 'addifyKit' handler) and only when the engine
+   says the path is on (/health phone_probes.on), the phone answers this scan's Shazam
+   probes with Apple's ShazamKit. The page is only the courier: N long-polls on
+   /probes/next hand each probe's PCM to the native side, and its answer (the same JSON
+   line the Mac bridge prints) goes back to /probes/result. Everything else is unchanged:
+   Safari, Chrome, every older app build and an engine with the flag off never send a kit,
+   and the engine answers any probe the phone does not pick up. Audio is passed through
+   in memory and dropped; nothing here stores it. */
+var KIT=null;
+function kitOK(){
+  var N=window.ADDIFY_NATIVE, H=window.webkit&&window.webkit.messageHandlers;
+  var pp=engineInfo&&engineInfo.phone_probes;
+  if(!(N&&N.shazamkit>=1&&H&&H.addifyKit&&pp&&pp.on)) return false;
+  // an app build whose ShazamKit refused twice in a scan (no entitlement yet) sits out a while
+  var off=0; try{off=+(localStorage.getItem('addify-kit-off-until')||0);}catch(e){}
+  return Date.now()>off;}
+function kitStart(){kitStop(); if(!kitOK()) return '';
+  var a=new Uint8Array(16); crypto.getRandomValues(a);
+  var id='k'+Array.prototype.map.call(a,function(b){return ('0'+b.toString(16)).slice(-2);}).join('');
+  var s=KIT={id:id,on:true,errs:0,good:false}, n=Math.max(1,Math.min(4,+(engineInfo.phone_probes.conc||2)));
+  for(var i=0;i<n;i++) kitWorker(s);
+  return id;}
+function kitStop(){if(KIT) KIT.on=false; KIT=null;}
+function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
+  fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
+  fr.onerror=function(){no(fr.error);}; fr.readAsDataURL(blob);});}
+function kitWorker(s){if(!s.on) return;
+  fetch(ENGINE+'/probes/next?kit='+s.id+'&wait=15',{cache:'no-store'}).then(function(r){
+    if(r.status===204){kitWorker(s); return;}          // nothing yet: ask again
+    if(r.status!==200){s.on=false; return;}            // 410 scan over, 404 path off
+    var pid=r.headers.get('X-Probe-Id'), sr=+(r.headers.get('X-Probe-Sr')||16000);
+    return r.blob().then(kitB64).then(function(pcm){
+      return window.webkit.messageHandlers.addifyKit.postMessage({type:'match',id:pid,sr:sr,pcm:pcm});
+    }).then(function(line){return typeof line==='string'?JSON.parse(line):line;})
+    .catch(function(e){return {matched:false,reason:'error',domain:'page',code:0,error:String(e&&e.message||e).slice(0,160)};})
+    .then(function(ans){
+      if(ans&&(ans.matched||ans.reason==='no_match')) s.good=true;
+      else if(ans&&ans.domain!=='page'&&++s.errs>=2&&!s.good){
+        // ShazamKit itself refused twice and never once answered: this build cannot match
+        // yet (the App ID lacks the ShazamKit service). Stop offering it for an hour.
+        try{localStorage.setItem('addify-kit-off-until',String(Date.now()+3600e3));}catch(e){}}
+      // not awaited: the next poll goes out while the answer is still on the wire
+      fetch(ENGINE+'/probes/result?kit='+s.id,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:pid,r:ans})}).catch(function(){});
+      kitWorker(s);});
+  }).catch(function(){if(s.on) setTimeout(function(){kitWorker(s);},400);});}
 /* THE EDIT HUNT, STREAMED. /edits/stream pushes one event per candidate the moment its
    audio verifies, then a final event carrying exactly what /edits returns. We resolve on
    that final event and nothing else, so the authoritative payload is always what gets
@@ -4300,7 +4350,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  call('/base',p.url).then(function(d){
+  call('/base',p.url,{kit:true}).then(function(d){
     clearTimeout(phaseT);
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
     setWindow(d&&d.win, d&&d.clip_secs);

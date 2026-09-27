@@ -23,6 +23,12 @@ or just double-click **`Crate.command`** — it starts the engine, opens the app
     GET /find?url=<tiktok or instagram link>
     GET /health
 
+On-device ShazamKit (off unless `CRATE_PHONE_PROBES=1`, see `docs/SHAZAMKIT-ON-DEVICE.md`):
+
+    GET  /base?url=<link>&kit=<scan id>      the phone answers this scan's Shazam probes
+    GET  /probes/next?kit=<scan id>&wait=15  long-poll: 16 kHz mono s16le PCM, or 204 / 410
+    POST /probes/result?kit=<scan id>        {"id": <probe id>, "r": <ShazamKit JSON line>}
+
 ## How it works
 
 1. **Get the audio.**

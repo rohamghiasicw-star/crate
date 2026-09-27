@@ -14,7 +14,7 @@ The bit that makes this work on TikTok specifically:
 
 Usage:  python3 find_song.py <tiktok url> [more urls...]
 """
-import asyncio, json, re, subprocess, sys, tempfile, os, urllib.parse, urllib.request
+import asyncio, contextvars, json, re, subprocess, sys, tempfile, os, urllib.parse, urllib.request
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
@@ -218,7 +218,14 @@ async def _shazam_shazamkit(path):
     if proc.returncode != 0 or not out.strip():
         raise RuntimeError("shazamkit bridge exit %s: %s" % (
             proc.returncode, (err or out or b"").decode("utf-8", "replace").strip()[:300]))
-    r = json.loads(out.decode("utf-8").splitlines()[-1])
+    return _kit_hit(json.loads(out.decode("utf-8").splitlines()[-1]))
+
+
+def _kit_hit(r, backend="shazamkit"):
+    """A ShazamKit answer (the bridge's JSON line) as the hit shape every consumer reads.
+
+    Shared by the Mac bridge and the phone (phone_probes.py), which POSTs the same JSON
+    line, so one ShazamKit answer maps to one engine hit whichever device produced it."""
     if not r.get("matched"):
         # no_match is a real "not in the catalog" answer -> None, same as shazamio.
         # error (today: ShazamCore 102 from an unentitled build) is NOT a no-match; raise
@@ -248,7 +255,7 @@ async def _shazam_shazamkit(path):
             # scale matters); None there silently drops it to the run-count vote.
             "timeskew": ts,
             "offset_in_master": r.get("offset_seconds"),
-            "backend": "shazamkit"}
+            "backend": backend}
 
 
 def _url_timeskew(u):
@@ -269,7 +276,40 @@ SHAZAMKIT_FALLBACK = os.environ.get("CRATE_SHAZAMKIT_FALLBACK", "1") != "0"
 SHAZAMIO_SOFT = float(os.environ.get("CRATE_SHAZAMIO_SOFT", 2.0))
 
 
+# ON-DEVICE SHAZAMKIT (2026-09-27, docs/SHAZAMKIT-ON-DEVICE.md). The iPhone that started the
+# scan answers its probes with Apple's ShazamKit; the engine keeps everything else. server.py
+# binds the scan's phone_probes.PhoneSession here for the length of one /base call, and
+# because asyncio tasks and FingerprintJob's loop copy the context they were started from,
+# every probe of that scan and no other sees it. Unset (the default, and always unless
+# CRATE_PHONE_PROBES=1 and the page asked) = the server path below, byte for byte.
+PHONE = contextvars.ContextVar("addify_phone_session", default=None)
+
+
+def probe_ceiling(default):
+    """The engine's per-probe wait_for. The phone's round trip needs more than shazamio's
+    3.0-3.5 s, so a healthy phone session raises it; a degraded one (every probe back on
+    the server backend) and every scan without a phone keep the engine's own number."""
+    ph = PHONE.get()
+    if ph is None or ph.degraded is not None:
+        return default
+    return max(default, ph.ceiling)
+
+
+def phone_degraded():
+    """True while a phone scan has fallen back to the server backend: the engine then runs
+    its probes one at a time, as it does for shazamio."""
+    ph = PHONE.get()
+    return ph is not None and ph.degraded is not None
+
+
 async def shazam(path):
+    ph = PHONE.get()
+    if ph is not None:
+        return await ph.shazam(path, _shazam_server)
+    return await _shazam_server(path)
+
+
+async def _shazam_server(path):
     # Dispatch only. Name, signature and return keys are what crate_engine imports and
     # what server.py reads (url, freqskew), so consumers never learn which backend ran.
     if SHAZAM_BACKEND == "shazamkit":

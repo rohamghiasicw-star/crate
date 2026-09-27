@@ -27,10 +27,13 @@ struct EngineWebView: UIViewRepresentable {
 
         let ucc = WKUserContentController()
         /* Lets the page know it is inside the app (feature-detect with window.ADDIFY_NATIVE).
-           Injected at document start so it exists before any page script runs. */
-        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true};"
+           Injected at document start so it exists before any page script runs.
+           shazamkit: this build can answer the engine's Shazam probes on the phone
+           (ShazamProbe.swift). The page uses it only when the engine also says so. */
+        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true,shazamkit:\(ShazamProbe.protocolVersion)};"
         ucc.addUserScript(WKUserScript(source: flag, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.add(context.coordinator, name: "addify")
+        ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
         cfg.userContentController = ucc
 
         let wv = WKWebView(frame: .zero, configuration: cfg)

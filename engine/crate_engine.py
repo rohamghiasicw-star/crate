@@ -22,6 +22,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from find_song import (resolve, scrape_music, fetch, cut, duration_of,
                        windows_for, shazam, SWEEP)
+import find_song as _find_song   # PHONE / probe_ceiling: on-device ShazamKit (phone_probes.py)
 import ig
 import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
 import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
@@ -2953,6 +2954,13 @@ SPEED_PRECUT = _speed_flag("CRATE_PRECUT", True)
 def _probe_conc():
     try:
         import find_song as _fs
+        # ON-DEVICE SHAZAMKIT: the scan's phone runs its own ShazamKit, so its probes take
+        # neither the shazamio rule nor this Mac's bridge slots; the page runs one poller
+        # per probe in flight (phone_probes.CONC). A degraded phone session is back on the
+        # server backend and gets that backend's rule below.
+        _ph = _fs.PHONE.get()
+        if _ph is not None and _ph.degraded is None:
+            return max(1, _ph.conc)
         if _fs.SHAZAM_BACKEND != "shazamkit":
             return 1
     except Exception:
@@ -3048,6 +3056,13 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     sem = asyncio.Semaphore(_conc)
     _serial = asyncio.Lock()
     _degraded = {"on": False}
+    # ON-DEVICE SHAZAMKIT (docs/SHAZAMKIT-ON-DEVICE.md): the phone bound to this scan, if
+    # any. None on every scan the page did not ask for, which is every scan by default.
+    _phone = _find_song.PHONE.get()
+
+    def _one_at_a_time():
+        # a timeout / bridge error this request, or a phone scan fallen back to shazamio
+        return _degraded["on"] or (_phone is not None and _phone.degraded is not None)
     _precut = {} if _precut is None else _precut
     # SERIAL-EQUIVALENT TIME. With probes overlapped (2 in flight, cuts off the lock) the
     # fingerprint ends earlier than the serial engine's would have, and the caller holds
@@ -3080,7 +3095,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             return await _probe_serial(off, rate, label, span, t_sink, timeout)
         _ct = _cut_task(off, rate, span)
         async with sem:
-            if _degraded["on"] and _conc > 1:
+            if _one_at_a_time() and _conc > 1:
                 async with _serial:
                     return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
             return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
@@ -3097,10 +3112,10 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         try:
             wav, _cdur = await ct
             _pt1 = time.time()
-            if _conc > 1:
+            if _conc > 1 and _phone is None:
                 _slot, _sw = await _shazamkit_slot()
-            _to = timeout if timeout is not None else (
-                SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+            _to = _find_song.probe_ceiling(timeout if timeout is not None else (
+                SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
             _pc[0] = time.time()
             hit = await asyncio.wait_for(shazam(wav), timeout=_to)
             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
@@ -3157,8 +3172,8 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 # one is expendable.
                 # a rate other than 1.0 IS a counter-speed probe: harder question,
                 # answers later, and the thing the product exists to do
-                _to = timeout if timeout is not None else (
-                    SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+                _to = _find_song.probe_ceiling(timeout if timeout is not None else (
+                    SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
                 hit = await asyncio.wait_for(shazam(wav), timeout=_to)
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                      off=off, rate=rate, span=span, hit=bool(hit))
@@ -3222,7 +3237,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             # unread. Same probes, same order of evidence, same decision.
             i = 0
             while i < len(rates):
-                k_n = 1 if _degraded["on"] else _conc
+                k_n = 1 if _one_at_a_time() else _conc
                 chunk = rates[i:i + k_n]
                 if SPEED_PRECUT:
                     for r2, _l2 in rates[i + k_n:i + 2 * k_n]:
