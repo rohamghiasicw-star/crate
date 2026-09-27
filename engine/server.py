@@ -94,9 +94,24 @@ def _sound_cache_get(src):
     return out
 
 
+def _phone_unconfirmed(res):
+    """A result whose song was named by a PHONE (on-device ShazamKit) is client input. It
+    goes into the shared caches, which every user reads, only when the server's own audio
+    check confirmed a version of it (a crown at core >= 0.95); a scripted client naming a
+    fake song produces no audio-confirmed upload, so its answer stays with that one scan."""
+    _ph = FS.PHONE.get(None) if hasattr(FS, "PHONE") else None
+    named = bool((res or {}).get("_phone_named")) or bool(
+        _ph is not None and (getattr(_ph, "n", {}).get("matched") or 0) > 0)
+    if not named:
+        return False
+    return ((res.get("exact") or {}).get("core") or 0) < 0.95
+
+
 def _sound_cache_put(src, res):
     sid = (src or {}).get("sound_id")
     if not sid or not res or res.get("result") != "found":
+        return
+    if _phone_unconfirmed(res):
         return
     if (src.get("sound_match_core") is not None
             and src["sound_match_core"] < E.CORE_KEEP) or src.get("sound_mismatch"):
@@ -127,6 +142,8 @@ def _cache_get(key):
 
 
 def _cache_put(key, res):
+    if _phone_unconfirmed(res):
+        return
     CACHE[key] = res
     if res.get("result") in ("no_match", "error", "rate_limited", "uncertain"):
         _FAIL_AT[key] = time.time()
@@ -7171,6 +7188,13 @@ class H(BaseHTTPRequestHandler):
         _tok = FS.PHONE.set(_ph) if _ph is not None else None
         try:
             res = fn(link)
+            if _ph is not None and isinstance(res, dict) and (_ph.n.get("matched") or 0) > 0:
+                # the phone named the song: mark the parked session and the answer so the
+                # shared caches wait for the server's audio check (_phone_unconfirmed)
+                res["_phone_named"] = True
+                _sess = SESSIONS.get(link.split("?")[0])
+                if _sess and isinstance(_sess.get("res"), dict):
+                    _sess["res"]["_phone_named"] = True
             if _ph is not None and isinstance(res, dict):
                 # a copy: `res` may be the cached answer, and these numbers are this scan's
                 res = dict(res, phone=_ph.report())
