@@ -106,6 +106,7 @@ def _sound_cache_put(src, res):
     keep = {k: v for k, v in res.items()
             if k not in ("peaks", "wave", "thumb", "handle", "desc", "secs", "cached")}
     SOUND_CACHE[sid] = keep
+    _disk_put("sound", sid, keep)
 
 
 def _cache_get(key):
@@ -129,6 +130,107 @@ def _cache_put(key, res):
         _FAIL_AT[key] = time.time()
     else:
         _FAIL_AT.pop(key, None)
+    # only a real answer survives a restart; anything else replaces (deletes) the old row
+    if res.get("result") == "found":
+        _disk_put("url", key, res)
+    else:
+        _disk_put("url", key, None)
+
+
+# ------------------------------------------------ RESULTS THAT SURVIVE A RESTART (speed3)
+# CACHE and SOUND_CACHE lived in RAM only. Measured on live 2026-09-26: 14 of 31 daytime
+# scans (45%) were answered by the sound cache at a 6.2 s median; after the 19:14 restart
+# it was 2 of 17, and the watchdog has restarted the engine 27 times since Sep 4
+# (SPEED-RESEARCH-ARCH.md P). This is a write-through copy of exactly what those two dicts
+# already hold - finished-answer JSON, no audio - reloaded at start.
+#   * one SQLite file PER PORT (a lab can never write live's answers),
+#   * stamped with the md5 of the engine code, so any code change starts it empty,
+#   * `nocache` is untouched: it bypasses the dicts, and the dicts are the only reader,
+#   * bounded by age (PERSIST_TTL) and by the dicts' own size caps.
+# CRATE_PERSIST_CACHE=0 turns it off.
+PERSIST_CACHE = E._speed_flag("CRATE_PERSIST_CACHE", True)
+PERSIST_TTL = float(os.environ.get("CRATE_PERSIST_TTL_DAYS", 14)) * 86400.0
+_DISK = {"db": None, "epoch": None}
+_DISK_LOCK = threading.Lock()
+
+
+def _disk_epoch():
+    import hashlib
+    h = hashlib.md5()
+    for f in ("server.py", "crate_engine.py", "verify.py", "find_song.py",
+              "speed_from_master.py", "wrong_song.py"):
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f), "rb") as fh:
+                h.update(fh.read())
+        except OSError:
+            h.update(f.encode())
+    return h.hexdigest()
+
+
+def _disk_open():
+    if not PERSIST_CACHE or _DISK["db"] is not None:
+        return _DISK["db"]
+    import sqlite3
+    d = os.environ.get("CRATE_PERSIST_DIR") or os.path.join(
+        os.path.expanduser("~"), ".addify-cache", "port%d" % PORT)
+    os.makedirs(d, exist_ok=True)
+    db = sqlite3.connect(os.path.join(d, "results.sqlite"), check_same_thread=False,
+                         timeout=5)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("CREATE TABLE IF NOT EXISTS kv (kind TEXT, k TEXT, epoch TEXT, t REAL, "
+               "v TEXT, PRIMARY KEY (kind, k))")
+    _DISK["epoch"] = _disk_epoch()
+    db.execute("DELETE FROM kv WHERE epoch != ? OR t < ?",
+               (_DISK["epoch"], time.time() - PERSIST_TTL))
+    db.commit()
+    _DISK["db"] = db
+    return db
+
+
+def _disk_put(kind, key, val):
+    if not PERSIST_CACHE or not key:
+        return
+    try:
+        with _DISK_LOCK:
+            db = _disk_open()
+            if db is None:
+                return
+            if val is None:
+                db.execute("DELETE FROM kv WHERE kind=? AND k=?", (kind, key))
+            else:
+                db.execute("INSERT OR REPLACE INTO kv VALUES (?,?,?,?,?)",
+                           (kind, key, _DISK["epoch"], time.time(),
+                            json.dumps({k: v for k, v in val.items() if k != "cached"})))
+            db.commit()
+    except Exception:
+        pass                    # a cache write must never cost a user their answer
+
+
+def _disk_load():
+    """Refill CACHE / SOUND_CACHE from this port's store at start. -> (urls, sounds)."""
+    if not PERSIST_CACHE:
+        return 0, 0
+    nu = ns = 0
+    try:
+        with _DISK_LOCK:
+            db = _disk_open()
+            rows = db.execute("SELECT kind, k, v FROM kv WHERE epoch=? ORDER BY t DESC LIMIT ?",
+                              (_DISK["epoch"], SOUND_CACHE_MAX)).fetchall()
+        for kind, k, v in rows:
+            try:
+                val = json.loads(v)
+            except Exception:
+                continue
+            if kind == "sound" and k not in SOUND_CACHE:
+                SOUND_CACHE[k] = val
+                ns += 1
+            elif kind == "url" and k not in CACHE and val.get("result") == "found":
+                CACHE[k] = val
+                nu += 1
+    except Exception:
+        pass
+    E.tlog("persist_cache_load", 0.0, urls=nu, sounds=ns)
+    return nu, ns
 
 
 def _cache_drop(key):
@@ -770,93 +872,6 @@ def _phase1(url, key, t0):
         _hints_fut = _hints_ex.submit(_fetch_hints)
         _page_fut = _hints_ex.submit(_fetch_page)
 
-
-    _t = time.time()
-    res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
-    res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
-    E.tlog("peaks_wave", time.time() - _t)
-    _prog_set(key, 24, "Building the fingerprint")
-    # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
-    # not the length of the source video. The scanning timeline is scaled to this, so it
-    # has to describe the same thing the window offsets below are measured against.
-    try:
-        res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
-    except Exception:
-        res["clip_secs"] = None
-
-    # ANOTHER CLIP MAY HAVE ALREADY ANSWERED THIS SOUND. Checked here, after the audio
-    # exists so sound_match_core can be trusted, and before a single Shazam probe fires.
-    # This is the one change that makes the app faster AND broader at once: a hit skips
-    # identification and the entire edit hunt, and it works on audio nobody has a name
-    # for. The clip-specific fields (waveform, thumbnail, handle) come from THIS scan and
-    # are layered over the shared answer.
-    # ---------------- THE CREDIT CROSS-CHECK, JOINED HERE ----------------
-    # get_source handed the audio back with this still running (crate_engine.settle_source
-    # holds the whole decision, unchanged, and the same 12s ceiling measured from the same
-    # instant). What changed is what the process does during the wait: measured vid_wait
-    # is 0.75-6.23s, median 3.01s, and in that window exactly one thread used to be doing
-    # anything. It now covers the creator thread, the clip's comment fetch, the sound-page
-    # chase and the waveform, all of which were sitting behind it.
-    #
-    # EVERYTHING BELOW THIS LINE READS A SETTLED SOURCE. The sound cache keys on
-    # sound_match_core, the fingerprint reads src["audio"], and the credit feeds
-    # build_queries - so the join goes here, above all three, not later. On the rare
-    # mismatch the audio swaps, so the ~0.2s of waveform work above is simply redone
-    # against the audio that won.
-    try:
-        _swapped = E.settle_source(src)
-    except Exception:
-        _swapped = False
-    # settle_source can fill the sound owner late (fill_sound_creator); show it too.
-    for _k in ("sound_creator", "sound_is_posters"):
-        if src.get(_k) is not None and res.get(_k) is None:
-            res[_k] = src[_k]
-    if _swapped:
-        _t = time.time()
-        res["peaks"] = _peaks(src["audio"])
-        res["wave"] = _wave(src["audio"])
-        try:
-            res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
-        except Exception:
-            res["clip_secs"] = None
-        res["credit"] = ("%s - %s" % (src.get("credit_title"), src.get("credit_author"))
-                         if src.get("credit_title") or src.get("credit_author")
-                         else "original sound")
-        res["is_original"] = src["is_original"]
-        E.tlog("peaks_wave_redo", time.time() - _t)
-
-    # how well TikTok's credited sound matches the audio actually in the video. Always
-    # carried, not just on a mismatch, so the healthy 1.000 case is visible too.
-    if src.get("sound_match_core") is not None:
-        res["sound_match_core"] = src.get("sound_match_core")
-    if src.get("sound_mismatch"):
-        # the answer came from the video's own audio, not the sound TikTok credits -
-        # worth carrying so a surprising result is explainable rather than mysterious.
-        res["sound_mismatch"] = True
-        res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
-                                             src.get("credited_author"))
-
-    _forced = key in _NO_SOUND_CACHE
-    _NO_SOUND_CACHE.discard(key)
-    _sc = None if _forced else _sound_cache_get(src)
-    if _sc:
-        for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
-            if res.get(k) is not None:
-                _sc[k] = res[k]
-        _sc["secs"] = round(time.time() - t0, 1)
-        _prog_set(key, 44, "Known sound")
-        E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
-        # The cached answer belongs to the SOUND; who posted THIS clip does not, so the
-        # creator block is re-attached per clip rather than served from the cache.
-        _creator_attach(_sc, _cr, budget=2.0)
-        # the hint threads now start ABOVE this return, so this path shuts them down
-        # itself - the try/finally that used to own that begins further down.
-        if _hints_ex is not None:
-            _hints_ex.shutdown(wait=False)
-        _cleanup(src.get("tmp"))
-        return _sc, None
-
-
     _hints_got = {}
 
     def _join_hints(wall=8.0):
@@ -921,6 +936,169 @@ def _phase1(url, key, t0):
                 comment_links = list(comment_links or []) + add
                 res["comment_links"] = comment_links
 
+    # ---- EARLY PROBES (E.SPEED_EARLY_PROBES). The fingerprint starts HERE, on the
+    # credited sound that is already on disk, instead of after the cross-check join below.
+    # Nothing it reads comes from that join: the audio path is the same file unless the
+    # check swaps it (then it is cancelled and redone on the video audio, exactly today's
+    # path), and the hints come from the threads started just above. Skipped when the
+    # sound cache already holds this sound, because that path answers without probing.
+    #
+    # SAME EVIDENCE, SAME DEADLINES. Three background threads feed later decisions and are
+    # joined on walls counted from moments that now come EARLIER: the comment hints (the
+    # base-song vote, 8 s wall inside the fingerprint; 3 s after it), the sound page (4 s
+    # after the fingerprint; its hints seed the hunt and the reliability check) and the
+    # creator lookup (phase 2's creator lane). Measured on mason (lab 2026-09-26): with
+    # the walls left relative, the sound page missed its join, the "Teach me how to dougie"
+    # hint never reached the hunt and the crown moved. So every wall is held to the
+    # instant the serial engine would have used: shifted by how long the cross-check made
+    # the fingerprint wait, plus what 2-in-flight probing saved (`_serial_shift`). Naming
+    # gets faster; no thread gets less time.
+    _hints_fn = _join_hints if (_hints_fut is not None or caption_hints) else None
+    _early = None
+    _early_prev_hook = None
+    _fp_t = {"fp_start": None, "settle_end": None, "early": False}
+    _fpstats = {}                   # psum/busy from the probes (crate_engine SERIAL-EQUIVALENT)
+    _early_settled = threading.Event()
+
+    def _overlap():
+        return max(0.0, _fpstats.get("psum", 0.0) - _fpstats.get("busy", 0.0))
+
+    def _anchor():
+        # where the serial engine's fingerprint started: after settling
+        return _fp_t["settle_end"] if _fp_t["early"] else _fp_t["fp_start"]
+
+    def _serial_shift():
+        """How much later the serial engine would be at this same point of the fingerprint:
+        the cross-check wait it did not overlap, plus the probe time 2-in-flight saved."""
+        a, fs = _anchor(), _fp_t["fp_start"]
+        return (max(0.0, a - fs) if (a is not None and fs is not None) else 0.0) + _overlap()
+
+    def _join_hints_serial():
+        # the base-song vote's hint join, at the serial engine's instant: T_w after ITS
+        # fingerprint start (plus what the overlap saved so far), then its 8 s wall
+        t_w = time.time() - _fp_t["fp_start"]
+        if _hints_fut is not None and not _hints_fut.done():
+            while not _early_settled.wait(0.05):
+                if _hints_fut.done():
+                    break
+            if not _hints_fut.done():
+                return _join_hints(wall=max(0.0, _anchor() + t_w + _overlap() + 8.0
+                                            - time.time()))
+        return _join_hints()
+
+    if (E.SPEED_EARLY_PROBES and not (src.get("sound_id") in SOUND_CACHE
+                                       and key not in _NO_SOUND_CACHE)):
+        _early_prev_hook = E.PROBE_HOOK
+        E.PROBE_HOOK = lambda: _prog_probe(key, 42)
+        try:
+            _fp_t["fp_start"], _fp_t["early"] = time.time(), True
+            _early = E.FingerprintJob(
+                src["audio"], hints_fn=(_join_hints_serial if _hints_fn is not None else None),
+                stats=_fpstats)
+        except Exception:
+            _early = None
+            _fp_t["early"] = False
+            E.PROBE_HOOK = _early_prev_hook
+
+
+    _t = time.time()
+    res["peaks"] = _peaks(src["audio"])      # real waveform for the UI, not an animation
+    res["wave"] = _wave(src["audio"])        # frequency-resolved waveform (amp + lo/mid/hi bands)
+    E.tlog("peaks_wave", time.time() - _t)
+    _prog_set(key, 24, "Building the fingerprint")
+    # Length of the audio we actually pulled and are analysing (dl_clip caps the grab),
+    # not the length of the source video. The scanning timeline is scaled to this, so it
+    # has to describe the same thing the window offsets below are measured against.
+    try:
+        res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
+    except Exception:
+        res["clip_secs"] = None
+
+    # ANOTHER CLIP MAY HAVE ALREADY ANSWERED THIS SOUND. Checked here, after the audio
+    # exists so sound_match_core can be trusted, and before a single Shazam probe fires.
+    # This is the one change that makes the app faster AND broader at once: a hit skips
+    # identification and the entire edit hunt, and it works on audio nobody has a name
+    # for. The clip-specific fields (waveform, thumbnail, handle) come from THIS scan and
+    # are layered over the shared answer.
+    # ---------------- THE CREDIT CROSS-CHECK, JOINED HERE ----------------
+    # get_source handed the audio back with this still running (crate_engine.settle_source
+    # holds the whole decision, unchanged, and the same 12s ceiling measured from the same
+    # instant). What changed is what the process does during the wait: measured vid_wait
+    # is 0.75-6.23s, median 3.01s, and in that window exactly one thread used to be doing
+    # anything. It now covers the creator thread, the clip's comment fetch, the sound-page
+    # chase and the waveform, all of which were sitting behind it.
+    #
+    # EVERYTHING BELOW THIS LINE READS A SETTLED SOURCE. The sound cache keys on
+    # sound_match_core, the fingerprint reads src["audio"], and the credit feeds
+    # build_queries - so the join goes here, above all three, not later. On the rare
+    # mismatch the audio swaps, so the ~0.2s of waveform work above is simply redone
+    # against the audio that won.
+    try:
+        _swapped = E.settle_source(src)
+    except Exception:
+        _swapped = False
+    _fp_t["settle_end"] = time.time()
+    _early_settled.set()
+    # settle_source can fill the sound owner late (fill_sound_creator); show it too.
+    for _k in ("sound_creator", "sound_is_posters"):
+        if src.get(_k) is not None and res.get(_k) is None:
+            res[_k] = src[_k]
+    if _swapped and _early is not None:
+        _early.cancel("swap")
+        _early = None
+        _fp_t["early"] = False
+        _fpstats.clear()
+        E.PROBE_HOOK = _early_prev_hook
+    if _swapped:
+        _t = time.time()
+        res["peaks"] = _peaks(src["audio"])
+        res["wave"] = _wave(src["audio"])
+        try:
+            res["clip_secs"] = round(float(E.duration_of(src["audio"]) or 0), 1)
+        except Exception:
+            res["clip_secs"] = None
+        res["credit"] = ("%s - %s" % (src.get("credit_title"), src.get("credit_author"))
+                         if src.get("credit_title") or src.get("credit_author")
+                         else "original sound")
+        res["is_original"] = src["is_original"]
+        E.tlog("peaks_wave_redo", time.time() - _t)
+
+    # how well TikTok's credited sound matches the audio actually in the video. Always
+    # carried, not just on a mismatch, so the healthy 1.000 case is visible too.
+    if src.get("sound_match_core") is not None:
+        res["sound_match_core"] = src.get("sound_match_core")
+    if src.get("sound_mismatch"):
+        # the answer came from the video's own audio, not the sound TikTok credits -
+        # worth carrying so a surprising result is explainable rather than mysterious.
+        res["sound_mismatch"] = True
+        res["credited_sound"] = "%s - %s" % (src.get("credited_title"),
+                                             src.get("credited_author"))
+
+    _forced = key in _NO_SOUND_CACHE
+    _NO_SOUND_CACHE.discard(key)
+    _sc = None if _forced else _sound_cache_get(src)
+    if _sc and _early is not None:
+        _early.cancel("sound_cache")
+        _early = None
+        E.PROBE_HOOK = _early_prev_hook
+    if _sc:
+        for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
+            if res.get(k) is not None:
+                _sc[k] = res[k]
+        _sc["secs"] = round(time.time() - t0, 1)
+        _prog_set(key, 44, "Known sound")
+        E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
+        # The cached answer belongs to the SOUND; who posted THIS clip does not, so the
+        # creator block is re-attached per clip rather than served from the cache.
+        _creator_attach(_sc, _cr, budget=2.0)
+        # the hint threads now start ABOVE this return, so this path shuts them down
+        # itself - the try/finally that used to own that begins further down.
+        if _hints_ex is not None:
+            _hints_ex.shutdown(wait=False)
+        _cleanup(src.get("tmp"))
+        return _sc, None
+
+
     loop = asyncio.new_event_loop()
     try:
         _t = time.time()
@@ -928,21 +1106,36 @@ def _phase1(url, key, t0):
         # app used to spend frozen at 30%; each finished probe now ticks the bar toward
         # 42, the number "song identified" is worth. Restored in a finally so a second
         # lookup can never inherit this clip's hook.
-        _prev_hook = E.PROBE_HOOK
+        _prev_hook = E.PROBE_HOOK if _early is None else _early_prev_hook
         E.PROBE_HOOK = lambda: _prog_probe(key, 42)
         # Always hand the fingerprint a hint source now - caption hints exist on both
         # platforms, so Instagram was previously running the whole sweep blind.
         try:
-            fp = loop.run_until_complete(E.fingerprint(
-                src["audio"],
-                hints_fn=(_join_hints if (_hints_fut is not None or caption_hints) else None)))
+            if _early is not None:
+                fp = _early.result()        # started before the cross-check join
+                _fp_end = _early.t_end or time.time()
+            else:
+                _fp_t["fp_start"] = time.time()
+                fp = loop.run_until_complete(E.fingerprint(
+                    src["audio"],
+                    hints_fn=(_join_hints_serial if _hints_fn is not None else None),
+                    stats=_fpstats))
+                _fp_end = time.time()
         finally:
             E.PROBE_HOOK = _prev_hook
         # Second pass at both comment threads, now that the sweep has run and given them
         # its whole duration to finish in. Anything that missed the consensus vote still
         # gets to seed the edit search, which is where a crowd hint does most of its work.
-        _join_hints(3.0)
-        _join_page(4.0)
+        _shift = _serial_shift()
+        if _shift > 0.0:
+            # the serial engine got here _shift later: same walls, same instants
+            _pd = _fp_end + _shift
+            _join_hints(max(0.0, _pd + 3.0 - time.time()))
+            _join_page(max(0.0, max(time.time(), _pd) + 4.0 - time.time()))
+            E.tlog("serial_shift", _shift, overlap=round(_overlap(), 3))
+        else:
+            _join_hints(3.0)
+            _join_page(4.0)
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
         # WHAT THE CONFIRM STEP FOUND, if it ran. Memo read only, no network: the engine
@@ -1224,6 +1417,10 @@ def _phase1(url, key, t0):
         _creator_attach(res, _cr, budget=(0.2 if worth else 5.0))
         if worth and not res.get("creator"):
             ctx["creator_h"] = _cr       # phase 2 collects it, for free, 19s from now
+        if _shift > 0.0:
+            # phase 2 reads the creator lookup and tikwm's late sound credit with ZERO
+            # wait at its start; the serial engine reached that start this much later
+            ctx["early_until"] = time.time() + _shift
         return res, ctx
     finally:
         loop.close()
@@ -1239,6 +1436,8 @@ SECTION_MAX_DL = 8
 # is a ranking change that needs the five-clip gate before it ships. With it off the
 # later window is evidence on the screen and nothing else.
 LATER_WINDOW_SEED = os.environ.get("CRATE_LATER_WINDOW_SEED", "0").strip() == "1"
+# speed3: HEAD-check candidate links as they verify, not after the hunt (see _phase2).
+SPEED_DEADLINK_EARLY = E._speed_flag("CRATE_DEADLINK_EARLY", False)
 SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
 
 
@@ -2824,6 +3023,25 @@ def _phase2(ctx, on_cand=None):
             # both are still empty find_edit may take a vouched guess (allow_guess below).
             # Wrapped: an exception here would propagate out of _phase2 and cost the user
             # the whole hunt, and both reads are optional evidence.
+            # EARLY PROBES: hold this zero-wait read to the instant the serial engine made
+            # it (see _phase1's early_until), but only while something it reads is still
+            # pending - the creator lookup, or tikwm's sound credit.
+            _eu = ctx.pop("early_until", None)
+            if _eu:
+                _ew0 = time.time()
+                while time.time() < _eu:
+                    _ch0 = ctx.get("creator_h")
+                    _need_cr = (_ch0 is not None and not res.get("creator")
+                                and not _ch0[1].done())
+                    # fill_sound_creator reads the first credit tikwm has stored; once one
+                    # has landed its answer no longer depends on when it is read
+                    _need_sc = (not src.get("sound_creator") and src.get("_cred_keys")
+                                and not any(E._TT_SOUND_CREDIT.get(k)
+                                            for k in src["_cred_keys"]))
+                    if not (_need_cr or _need_sc):
+                        break
+                    time.sleep(0.05)
+                E.tlog("early_hold", time.time() - _ew0)
             try:
                 if E.fill_sound_creator(src, "hunt"):
                     for _k in ("sound_creator", "sound_is_posters"):
@@ -2855,6 +3073,36 @@ def _phase2(ctx, on_cand=None):
                         on_cand(_cand_row(c))
                     except Exception:
                         pass
+            # DEAD-LINK HEADS FIRED AS CANDIDATES VERIFY (SPEED_DEADLINK_EARLY). The check
+            # after find_edit (below) HEADs the rows it is about to show; each of those
+            # has already streamed through this hook the moment it verified, so its HEAD
+            # can be in flight - or done - by the time the hunt returns. Same function,
+            # same URLs, same fail-open 404/410 rule; the check just reads the answer.
+            _dead_pre, _dead_lock, _dead_ex = {}, threading.Lock(), None
+            if SPEED_DEADLINK_EARLY:
+                _dead_ex = ThreadPoolExecutor(max_workers=4)
+                _emit_user = _emit
+
+                def _emit(c):
+                    u = c.get("url")
+                    if u:
+                        with _dead_lock:
+                            if u not in _dead_pre:
+                                try:
+                                    _dead_pre[u] = _dead_ex.submit(_url_is_dead, u)
+                                except RuntimeError:
+                                    pass
+                    if _emit_user is not None:
+                        _emit_user(c)
+
+            def _is_dead(u):
+                f = _dead_pre.get(u)
+                if f is not None:
+                    try:
+                        return f.result()
+                    except Exception:
+                        return False
+                return _url_is_dead(u)
             # ---- COMMENT LINKS. Phase 1 already read these off the comment pools it
             # fetched for the hints; this is where they stop being a note on the payload
             # and become candidates. They travel on their own parameter for the same
@@ -2869,9 +3117,21 @@ def _phase2(ctx, on_cand=None):
             # remix)" verifies at core 0.888). Resolve at most two handles here in the
             # hunt phase - never in phase 1, this is ~5s of yt-dlp - and let the tracks
             # ride the comment lane, where verify() still has the only vote that counts.
-            for _h in (res.get("comment_handles") or [])[:2]:
+            # Both handles resolve AT ONCE (E.SPEED_HANDLES_PARALLEL) and are merged in
+            # handle order below, so the rows, their order and the dedup are exactly the
+            # serial loop's; only the waiting overlaps. Serial it cost 1.12 s with one
+            # handle and 2.18 s with two, before find_edit had even started.
+            _hl = (res.get("comment_handles") or [])[:2]
+            _hfut = {}
+            if E.SPEED_HANDLES_PARALLEL and len(_hl) > 1:
+                _hx = ThreadPoolExecutor(max_workers=len(_hl))
+                _hfut = {i: _hx.submit(E.producer_handle_tracks, _h, base_title)
+                         for i, _h in enumerate(_hl)}
+                _hx.shutdown(wait=False)
+            for _hi, _h in enumerate(_hl):
                 try:
-                    _ht = E.producer_handle_tracks(_h, base_title)
+                    _ht = (_hfut[_hi].result() if _hi in _hfut
+                           else E.producer_handle_tracks(_h, base_title))
                 except Exception:
                     _ht = []
                 if _ht:
@@ -2922,9 +3182,9 @@ def _phase2(ctx, on_cand=None):
                 _chunk = verified[_i:_i + (6 - len(_live))]
                 if len(_chunk) > 1:
                     with ThreadPoolExecutor(max_workers=len(_chunk)) as _hx:
-                        _flags = list(_hx.map(lambda c: _url_is_dead(c.get("url")), _chunk))
+                        _flags = list(_hx.map(lambda c: _is_dead(c.get("url")), _chunk))
                 else:
-                    _flags = [_url_is_dead(_chunk[0].get("url"))]
+                    _flags = [_is_dead(_chunk[0].get("url"))]
                 for c, _bad in zip(_chunk, _flags):
                     if _bad:
                         _dead += 1
@@ -2932,6 +3192,8 @@ def _phase2(ctx, on_cand=None):
                         _live.append(c)
                 _i += len(_chunk)
             _live.extend(verified[_i:])          # past the display window, no request spent
+            if _dead_ex is not None:
+                _dead_ex.shutdown(wait=False)
             if _dead:
                 res["dead_links_dropped"] = _dead
                 verified = _live
@@ -6426,4 +6688,7 @@ if __name__ == "__main__":
     # network you trust: there is no auth on this server.
     HOST = os.environ.get("BIND", "127.0.0.1")
     E.prewarm()          # warm shazamio / yt-dlp / SC client_id / the Google worker
+    _pu, _ps = _disk_load()
+    if _pu or _ps:
+        print("restored %d url + %d sound answers from the per-port store" % (_pu, _ps))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

@@ -1413,6 +1413,10 @@ def comment_producer_handles(comments, cap=2, ignore=None):
     return [h for _, h in ranked[:cap]]
 
 
+# Resolve comment @handles (and each handle's permalinks) concurrently. speed3, 2026-09-26.
+SPEED_HANDLES_PARALLEL = _speed_flag("CRATE_HANDLES_PARALLEL", False)
+
+
 def producer_handle_tracks(handle, base_title=None, cap=3):
     """SoundCloud tracks BY @handle, shaped like comment_audio_urls meta rows so
     comment_candidates() takes them unchanged.
@@ -1424,12 +1428,14 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
     permalink because the flat search returns api.soundcloud.com ids, which slug-derived
     titles and dedup keys both choke on."""
     try:
-        # YTDLP_SC, not a bare "yt-dlp": on this server's PATH that is Homebrew's build,
-        # 5-16x slower on SoundCloud search than the module (see YTDLP_SC).
-        out = subprocess.run(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
-                                         "-J", "--no-warnings"],
-                             capture_output=True, timeout=25).stdout
-        j = json.loads(out or "{}")
+        j = _sc_json_inproc("scsearch10:%s" % handle, flat=True) if SPEED_INPROC_SEARCH else None
+        if j is None:
+            # YTDLP_SC, not a bare "yt-dlp": on this server's PATH that is Homebrew's build,
+            # 5-16x slower on SoundCloud search than the module (see YTDLP_SC).
+            out = subprocess.run(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
+                                             "-J", "--no-warnings"],
+                                 capture_output=True, timeout=25).stdout
+            j = json.loads(out or "{}")
     except Exception:
         return []
     slug = lambda s: re.sub(r'[^a-z0-9]', '', (s or '').lower())
@@ -1451,17 +1457,30 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
         good = [r for r in rows if hit(r) > 0]
         if good:
             rows = good + [r for r in rows if not hit(r)][:1]   # one flyer, rest cut
-    out_rows = []
-    for r in rows[:cap]:
-        u = r["url"]
+    def _permalink(u):
         if "api.soundcloud.com" in u:
             try:
-                jj = json.loads(subprocess.run(
-                    YTDLP_SC + ["-J", "--no-warnings", u],
-                    capture_output=True, timeout=20).stdout or "{}")
+                jj = _sc_json_inproc(u, flat=False, timeout=20) if SPEED_INPROC_SEARCH else None
+                if jj is None:
+                    jj = json.loads(subprocess.run(
+                        YTDLP_SC + ["-J", "--no-warnings", u],
+                        capture_output=True, timeout=20).stdout or "{}")
                 u = jj.get("webpage_url") or u
             except Exception:
                 pass
+        return u
+    picked = rows[:cap]
+    # the up-to-3 permalink resolves are independent: run them at once, keep row order
+    if SPEED_HANDLES_PARALLEL and sum(1 for r in picked if "api.soundcloud.com" in r["url"]) > 1:
+        _px = ThreadPoolExecutor(max_workers=len(picked))
+        try:
+            resolved = list(_px.map(_permalink, [r["url"] for r in picked]))
+        finally:
+            _px.shutdown(wait=False)
+    else:
+        resolved = [_permalink(r["url"]) for r in picked]
+    out_rows = []
+    for r, u in zip(picked, resolved):
         if u:
             out_rows.append({"url": u, "likes": 0, "from_creator": False,
                              "reply": True, "handle": handle, "thumb": r.get("thumb")})
@@ -2894,7 +2913,95 @@ def _cand_tick():
         pass
 
 
-async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
+# ------------------------------------------- SHAZAMKIT CONCURRENCY (speed3, 2026-09-26)
+# The Semaphore(1) rule was measured on shazamio (hard-rules: a burst got the first call
+# answered and every other one stalled). It was never measured on ShazamKit until
+# SPEED-RESEARCH-SEARCH.md: 30 probes at 1/2/3 in flight on one clip, 30/30 the same song,
+# 0 timeouts, 31/31 HTTP 200 in shazamd's log, 0.630 s/probe serial -> 0.451 at 2 -> 0.327
+# at 3; and 7.3 h of natural live+lab overlap showed no wall at 2 in flight (the one HTTP
+# 500 came at 3+, n=10, SPEED-DESIGN-1 fact 2). So on ShazamKit ONLY: 2 per request, 3
+# across the whole Mac (lock files shared by live and every lab, so labs can never push
+# live past it), and a request drops back to 1 in flight after its first timeout or bridge
+# error. shazamio and the shazamio-first fallback stay at exactly 1. CRATE_PROBE_CONC=1
+# restores the serial engine.
+PROBE_CONC = int(os.environ.get("CRATE_PROBE_CONC", "1"))
+SHAZAMKIT_SLOTS = int(os.environ.get("CRATE_SHAZAMKIT_SLOTS", "3"))
+_SLOT_DIR = os.environ.get("CRATE_SHAZAMKIT_SLOT_DIR", "/tmp/addify-shazamkit")
+# Render each probe WAV outside the Shazam lock (and the next sweep chunk's ahead of time).
+SPEED_PRECUT = _speed_flag("CRATE_PRECUT", False)
+
+
+def _probe_conc():
+    try:
+        import find_song as _fs
+        if _fs.SHAZAM_BACKEND != "shazamkit":
+            return 1
+    except Exception:
+        return 1
+    return max(1, min(PROBE_CONC, SHAZAMKIT_SLOTS))
+
+
+async def _shazamkit_slot():
+    """One of SHAZAMKIT_SLOTS machine-wide flock slots. -> (fd, seconds waited)."""
+    import fcntl
+    t0 = time.time()
+    try:
+        os.makedirs(_SLOT_DIR, exist_ok=True)
+    except OSError:
+        return None, 0.0
+    while True:
+        for i in range(SHAZAMKIT_SLOTS):
+            try:
+                fd = os.open(os.path.join(_SLOT_DIR, "slot%d" % i), os.O_CREAT | os.O_RDWR, 0o600)
+            except OSError:
+                return None, time.time() - t0
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd, time.time() - t0
+            except OSError:
+                os.close(fd)
+        if time.time() - t0 > 20.0:        # never deadlock a scan on a stuck slot
+            return None, time.time() - t0
+        await asyncio.sleep(0.02)
+
+
+def _shazamkit_release(fd):
+    try:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        os.close(fd)
+    except Exception:
+        pass
+
+
+async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, stats=None):
+    """Owns the probe temp dir and REMOVES it, whichever way the scan ends (a return, an
+    exception, or a cancel from FingerprintJob). The body below used to mkdtemp() and never
+    clean up: 1,617 probe WAVs of clip audio sat in $TMPDIR (SPEED-DESIGN-1 "In passing"),
+    which breaks the never-persist-audio rule in hard-rules.md."""
+    tmp = tempfile.mkdtemp()
+    precut = {}
+    try:
+        return await _fingerprint_core_body(audio, hints=hints, _scan_out=_scan_out,
+                                            hints_fn=hints_fn, tmp=tmp, _precut=precut,
+                                            stats=stats)
+    finally:
+        # an ffmpeg cut still writing (a sweep chunk read ahead of an exit) must land
+        # before the dir goes, or it could recreate a WAV inside a half-removed dir
+        _open = [t for t in precut.values() if not t.done()]
+        if _open:
+            try:
+                await asyncio.wait(_open, timeout=5)
+            except BaseException:
+                pass
+        _cleanup_dir(tmp)
+
+
+async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=None, tmp=None,
+                                 _precut=None, stats=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
     is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
@@ -2905,7 +3012,6 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     mashup pass needs to see the untouched per-window evidence to tell "two rival
     readings of the same audio" from "two songs in different parts of the clip"."""
     dur = duration_of(audio)
-    tmp = tempfile.mkdtemp()
     n = {"i": 0}
     # SERIALISE SHAZAM. This was Semaphore(8) and that was the single biggest source of
     # both slowness and false "no_match". Shazam rate-limits on CONCURRENCY, not volume:
@@ -2915,9 +3021,108 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
     # SHAZAM_TIMEOUT) that hung the ENTIRE lookup forever - /base sat past 120s and
     # answered nothing on clips as ordinary as "Turn Me On". Serialised, the same sweep
     # is both faster and actually returns answers.
-    sem = asyncio.Semaphore(1)
+    # SPEED3: on ShazamKit, PROBE_CONC (2) probes in flight per request, fewer across the
+    # machine (SHAZAMKIT_SLOTS lock files shared by every engine on this Mac), and back to
+    # ONE for the rest of the request after any timeout or bridge error. See PROBE_CONC.
+    _conc = _probe_conc()
+    sem = asyncio.Semaphore(_conc)
+    _serial = asyncio.Lock()
+    _degraded = {"on": False}
+    _precut = {} if _precut is None else _precut
+    # SERIAL-EQUIVALENT TIME. With probes overlapped (2 in flight, cuts off the lock) the
+    # fingerprint ends earlier than the serial engine's would have, and the caller holds
+    # its evidence joins to the serial instant (server._phase1). `psum` is what the serial
+    # engine would have spent holding the lock (cut + call per probe), `busy` the wall time
+    # this run actually had a probe holding it; psum - busy is the time the overlap saved.
+    _st = stats if stats is not None else {}
+    _st.setdefault("psum", 0.0); _st.setdefault("busy", 0.0)
+    _st.setdefault("_in", 0); _st.setdefault("_b0", 0.0)
+
+    def _cut_task(off, rate, span):
+        """The probe's WAV, rendered OFF the Shazam lock (SPEED-DESIGN-1 C0): same ffmpeg
+        call, same bytes, it just no longer holds up the probe in flight. One task per
+        (off, rate, span), so a re-fired probe reuses its cut exactly like re-cutting it."""
+        k = (off, rate, span)
+        t = _precut.get(k)
+        if t is None:
+            wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
+
+            def _do():
+                _c0 = time.time()
+                cut(audio, wav, off, rate, span=span)
+                return wav, time.time() - _c0
+            t = asyncio.ensure_future(asyncio.get_event_loop().run_in_executor(None, _do))
+            _precut[k] = t
+        return t
 
     async def probe(off, rate, label, span=20, t_sink=None, timeout=None):
+        if _conc <= 1 and not SPEED_PRECUT:
+            return await _probe_serial(off, rate, label, span, t_sink, timeout)
+        _ct = _cut_task(off, rate, span)
+        async with sem:
+            if _degraded["on"] and _conc > 1:
+                async with _serial:
+                    return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
+            return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
+
+    async def _probe_one(off, rate, label, span, t_sink, timeout, ct):
+        _pt0 = time.time()
+        _slot = None
+        _sw = 0.0
+        _cdur = 0.0
+        _pc = [0.0]                      # when the Shazam call itself started
+        if _st["_in"] == 0:
+            _st["_b0"] = _pt0
+        _st["_in"] += 1
+        try:
+            wav, _cdur = await ct
+            _pt1 = time.time()
+            if _conc > 1:
+                _slot, _sw = await _shazamkit_slot()
+            _to = timeout if timeout is not None else (
+                SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT)
+            _pc[0] = time.time()
+            hit = await asyncio.wait_for(shazam(wav), timeout=_to)
+            tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
+                 off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
+                 slot_wait=round(_sw, 3))
+        except asyncio.TimeoutError:
+            tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
+                 span=span, hit=False, timeout=True, conc=_conc)
+            if _conc > 1 and not _degraded["on"]:
+                _degraded["on"] = True
+                tlog("probe_conc_degraded", 0.0, why="timeout")
+            if t_sink is not None:
+                t_sink.append((off, rate, label, span))
+            _probe_tick()
+            return None
+        except Exception as _pe:
+            # A bridge error (a 429/500 from Apple, a crash) used to vanish without a row.
+            tlog("shazam_probe_error", time.time() - _pt0, off=off, rate=rate, span=span,
+                 err=str(_pe)[:160], conc=_conc)
+            if _conc > 1 and not _degraded["on"]:
+                _degraded["on"] = True
+                tlog("probe_conc_degraded", 0.0, why="error")
+            _probe_tick()
+            return None
+        finally:
+            if _slot is not None:
+                _shazamkit_release(_slot)
+            _pe_t = time.time()
+            # the serial engine held the lock for the cut AND the call; the slot wait is
+            # an artefact of running concurrently, so it is not counted as serial time
+            _st["psum"] += _cdur + ((_pe_t - _pc[0]) if _pc[0] else 0.0)
+            _st["_in"] -= 1
+            if _st["_in"] == 0:
+                _st["busy"] += _pe_t - _st["_b0"]
+        n["i"] += 1
+        _probe_tick()
+        if hit:
+            hit.update(edit_label=label, rate=rate, offset=off, span=span,
+                       probes=n["i"])
+        return hit
+
+    async def _probe_serial(off, rate, label, span=20, t_sink=None, timeout=None):
         async with sem:
             _pt0 = time.time()
             wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
@@ -2989,6 +3194,41 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None):
         need = SWEEP_NEED if need is None else need
         t_start = time.time()
         out, agree = [], {}
+        rates = list(rates)
+        if _conc > 1:
+            # IN ORDER, IN CHUNKS. Up to _conc rates are asked at once, but every result is
+            # read in FINE_SWEEP order and the early exit / budget are evaluated exactly
+            # where the serial loop evaluated them; anything past an exit is thrown away
+            # unread. Same probes, same order of evidence, same decision.
+            i = 0
+            while i < len(rates):
+                k_n = 1 if _degraded["on"] else _conc
+                chunk = rates[i:i + k_n]
+                if SPEED_PRECUT:
+                    for r2, _l2 in rates[i + k_n:i + 2 * k_n]:
+                        _cut_task(off, r2, 20)       # next chunk's WAVs, off the lock
+                sinks = [[] for _ in chunk]
+                got = await asyncio.gather(*[probe(off, r, l, t_sink=sinks[j])
+                                             for j, (r, l) in enumerate(chunk)])
+                for j, h in enumerate(got):
+                    if t_sink is not None:
+                        t_sink.extend(sinks[j])
+                    if h:
+                        out.append(h)
+                        if not _junk_id(h):
+                            k = _title_key(h.get("title"))
+                            if k:
+                                agree[k] = agree.get(k, 0) + 1
+                                if agree[k] >= need:
+                                    tlog("sweep_early_exit", time.time() - t_start,
+                                         rates=len(out), title=k)
+                                    return out
+                    if time.time() - t_start > budget:
+                        tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
+                        return out
+                i += len(chunk)
+            tlog("sweep_full", time.time() - t_start, hits=len(out))
+            return out
         for rate, label in rates:
             h = await probe(off, rate, label, t_sink=t_sink)
             if h:
@@ -3613,19 +3853,83 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     return fp
 
 
-async def fingerprint(audio, hints=None, hints_fn=None):
+async def fingerprint(audio, hints=None, hints_fn=None, stats=None):
     """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
     mashup pass looks at the raw window evidence and decides whether this clip is one
     song or two. The pass is free on single-song clips - it returns before probing
     unless the scan already disagreed with itself."""
     scan = []
-    fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn)
+    fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn,
+                                 stats=stats)
     if fp:
         try:
             await annotate_mashup(audio, fp, scan)
         except Exception:
             pass          # a mashup annotation is a bonus, never a reason to fail an ID
     return fp
+
+
+# ----------------------------------------------- EARLY PROBES (speed3, 2026-09-26)
+# Phase 1 used to wait for the TikTok credit cross-check (tikwm + the video mp4 + a decode +
+# verify, 2.9 s median, a 12 s -> 6 s ceiling when the mp4 fetch stalls) BEFORE the first
+# Shazam probe, although the fingerprint reads nothing that check produces unless it swaps
+# the audio - and it swapped the audio on 0 of 199 scans (SPEED-DESIGN-1 fact 3). The caller
+# now starts the fingerprint on the credited sound the moment it lands and joins the check
+# alongside it: no swap -> the running fingerprint is byte-for-byte the one it would have
+# started after settling; a swap or a sound-cache hit -> cancel() and do exactly today's path.
+SPEED_EARLY_PROBES = _speed_flag("CRATE_EARLY_PROBES", False)
+
+
+class FingerprintJob(object):
+    """fingerprint(audio, hints_fn) running on its own event loop thread, so the caller can
+    keep working (the cross-check join, the sound cache) and then either take the result or
+    cancel it. cancel() waits for the task to unwind: the bridge child is killed and the
+    probe temp dir is removed (_fingerprint_core's finally) before it returns."""
+
+    def __init__(self, audio, hints_fn=None, stats=None):
+        self.t0 = time.time()
+        self.t_end = None
+        self._started = threading.Event()
+        self._done = threading.Event()
+        self.loop = asyncio.new_event_loop()
+        self._th = threading.Thread(target=self.loop.run_forever, name="fp-early",
+                                    daemon=True)
+        self._th.start()
+
+        async def _wrap():
+            self._started.set()
+            try:
+                return await fingerprint(audio, hints_fn=hints_fn, stats=stats)
+            finally:
+                self.t_end = time.time()
+                self._done.set()
+        self._cf = asyncio.run_coroutine_threadsafe(_wrap(), self.loop)
+        tlog("fp_early_start", 0.0)
+
+    def _stop(self):
+        try:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        except RuntimeError:
+            pass
+        self._th.join(timeout=5)
+        if not self._th.is_alive():
+            try:
+                self.loop.close()
+            except Exception:
+                pass
+
+    def result(self):
+        try:
+            return self._cf.result()
+        finally:
+            self._stop()
+
+    def cancel(self, why=""):
+        self._cf.cancel()
+        if self._started.wait(timeout=0.5):
+            self._done.wait(timeout=10)
+        self._stop()
+        tlog("fp_early_cancelled", time.time() - self.t0, why=why)
 
 
 # ---------------------------------------------------------------- edit search
@@ -4702,14 +5006,194 @@ def _thumb(v):
     return v if v.startswith("http") else None
 
 
+# ------------------------------------------------ IN-PROCESS SEARCH (speed3, 2026-09-26)
+# Every search spec used to be a fresh interpreter (`python -m yt_dlp` for SoundCloud,
+# Homebrew's yt-dlp for YouTube): ~60 process starts per full lookup, ~1 s each before any
+# network, all at once on 10 cores (SPEED-DESIGN-2 B). Measured in the lab
+# (SPEED-RESEARCH-SEARCH.md): per spec SoundCloud 1.36 -> 0.60 s, YouTube 1.27 -> 0.81 s;
+# fast search under find_edit's real contention 3.60 -> 1.70 s; broad search 4.90 -> 2.00 s.
+# SAME BUILDS, SAME ROWS: SoundCloud runs the very py3.9 yt-dlp module the subprocess ran,
+# in a thread; YouTube goes to ONE long-lived worker under Homebrew's python, the build
+# `/opt/homebrew/bin/yt-dlp` runs (yt_search_worker.py). Both render each entry through
+# yt-dlp's own evaluate_outtmpl(_SEARCH_FMT), which is what --print does, and the text is
+# parsed by the same loop below. The 25 s kill becomes a 25 s wait: past it the spec
+# returns [] exactly like a killed subprocess. Any failure to start the worker falls back
+# to today's subprocess, per spec. CRATE_INPROC_SEARCH=0 restores subprocesses everywhere.
+SPEED_INPROC_SEARCH = _speed_flag("CRATE_INPROC_SEARCH", True)
+SEARCH_TIMEOUT = 25.0
+_SC_POOL = ThreadPoolExecutor(max_workers=32, thread_name_prefix="sc-search")
+
+
+def _sc_ydl():
+    # fresh per search, like the CLI process it replaces (see yt_search_worker._ydl)
+    import yt_dlp
+    return yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
+                             "extract_flat": "in_playlist"})
+
+
+def _sc_search_text(spec_str):
+    y = _sc_ydl()
+    info = y.extract_info(spec_str, download=False)
+    lines = []
+    for e in (info or {}).get("entries") or []:
+        if not e.get("webpage_url"):
+            e = dict(e, webpage_url=e.get("url"))     # what the CLI prints (see worker)
+        lines.append(y.evaluate_outtmpl(_SEARCH_FMT, e))
+    return "\n".join(lines)
+
+
+def _sc_json_inproc(target, flat=True, timeout=SEARCH_TIMEOUT):
+    """What `python -m yt_dlp <target> [--flat-playlist] -J` prints, parsed, from the same
+    module in a pool thread (sanitize_info is what -J dumps). A yt-dlp error gives {} (the
+    CLI prints nothing); running past `timeout` raises like the subprocess timeout did.
+    Lab parity 2026-09-26: 3 handle searches identical on every field producer_handle_tracks
+    reads."""
+    def _go():
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True}
+        if flat:
+            opts["extract_flat"] = "in_playlist"
+        y = yt_dlp.YoutubeDL(opts)
+        try:
+            return y.sanitize_info(y.extract_info(target, download=False)) or {}
+        except Exception:
+            return {}
+    return _SC_POOL.submit(_go).result(timeout=timeout)
+
+
+def _brew_python():
+    """The interpreter Homebrew's yt-dlp script runs under (its shebang)."""
+    try:
+        with open(os.path.realpath(_BREW_YTDLP)) as f:
+            first = f.readline().strip()
+        if first.startswith("#!"):
+            py = first[2:].strip().split()[0]
+            if os.path.exists(py):
+                return py
+    except Exception:
+        pass
+    return None
+
+
+class _YTSearchWorker(object):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.p = None
+        self.waiters = {}
+        self.n = 0
+        self.dead_until = 0.0
+
+    def _start(self):
+        py = _brew_python()
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "yt_search_worker.py")
+        if not py or not os.path.exists(script):
+            return False
+        p = subprocess.Popen([py, script], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        first = p.stdout.readline()
+        try:
+            ok = json.loads(first).get("id") == "ready"
+        except Exception:
+            ok = False
+        if not ok:
+            try:
+                p.kill()
+            except Exception:
+                pass
+            return False
+        self.p = p
+        threading.Thread(target=self._reader, args=(p,), name="yt-search-reader",
+                         daemon=True).start()
+        tlog("yt_worker_start", 0.0, pid=p.pid)
+        return True
+
+    def _reader(self, p):
+        for line in p.stdout:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            w = self.waiters.pop(d.get("id"), None)
+            if w is not None:
+                w[1] = d
+                w[0].set()
+        # EOF: the worker died - wake everyone still waiting, they fall back
+        with self.lock:
+            if self.p is p:
+                self.p = None
+            for w in list(self.waiters.values()):
+                w[0].set()
+
+    def search(self, spec_str, timeout=SEARCH_TIMEOUT):
+        """-> the CLI's stdout text, or None when the worker is unavailable."""
+        with self.lock:
+            if self.p is None or self.p.poll() is not None:
+                self.p = None
+                if time.time() < self.dead_until:
+                    return None
+                try:
+                    if not self._start():
+                        self.dead_until = time.time() + 60.0
+                        return None
+                except Exception:
+                    self.dead_until = time.time() + 60.0
+                    return None
+            self.n += 1
+            rid = "r%d" % self.n
+            w = [threading.Event(), None]
+            self.waiters[rid] = w
+            try:
+                self.p.stdin.write(json.dumps({"id": rid, "spec": spec_str,
+                                               "fmt": _SEARCH_FMT}) + "\n")
+                self.p.stdin.flush()
+            except Exception:
+                self.waiters.pop(rid, None)
+                return None
+        if not w[0].wait(timeout):
+            self.waiters.pop(rid, None)
+            return ""                          # timed out: [] like the killed subprocess
+        d = w[1]
+        if d is None:
+            return None                        # worker died under us: caller falls back
+        return d.get("text") or ""
+
+
+_YT_WORKER = _YTSearchWorker()
+
+
+def _search_text_inproc(prefix, q):
+    """-> stdout text of the equivalent CLI search, or None to use the subprocess."""
+    if prefix.startswith("ytsearch"):
+        if not _HAVE_BREW_YTDLP:
+            return None
+        return _YT_WORKER.search(prefix + q)
+    if prefix.startswith("scsearch"):
+        f = _SC_POOL.submit(_sc_search_text, prefix + q)
+        try:
+            return f.result(timeout=SEARCH_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            return ""
+        except Exception:
+            return ""                          # the CLI prints nothing on an error too
+    return None
+
+
 def _run_search(spec):
     prefix, src, q = spec
-    try:
-        out = subprocess.run(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
-                                                  "--print", _SEARCH_FMT],
-                             capture_output=True, text=True, timeout=25).stdout
-    except Exception:
-        return []
+    out = None
+    if SPEED_INPROC_SEARCH:
+        try:
+            out = _search_text_inproc(prefix, q)
+        except Exception:
+            out = None
+    if out is None:
+        try:
+            out = subprocess.run(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                                      "--print", _SEARCH_FMT],
+                                 capture_output=True, text=True, timeout=25).stdout
+        except Exception:
+            return []
     rows = []
     for line in out.splitlines():
         parts = line.split("\t")
@@ -4738,8 +5222,18 @@ def search_edits(queries, per=5, sc_per=None, yt_per=None, yt_first=False, dedup
     at #32. Uploaders misspell and mislabel constantly - depth on the plain title is the
     only thing that survives that."""
     specs = _edit_specs(queries, per, sc_per, yt_per, yt_first)
-    with ThreadPoolExecutor(max_workers=min(16, len(specs) or 1)) as ex:
+    with ThreadPoolExecutor(max_workers=min(_search_width(), len(specs) or 1)) as ex:
         return _merge_rows(ex.map(_run_search, specs), dedup)
+
+
+def _search_width():
+    """16 subprocesses at once was the ceiling (32/48 were measured slower: process starts
+    swamp the CPU). In-process specs are threads waiting on the network, so the whole
+    broad search (16 queries = 32 specs) goes out in ONE wave instead of two. Results are
+    merged in spec order either way (map), so the rows are identical."""
+    if SPEED_INPROC_SEARCH and _YT_WORKER.p is not None:
+        return 32
+    return 16
 
 
 def _edit_specs(queries, per=5, sc_per=None, yt_per=None, yt_first=False):
@@ -4803,7 +5297,7 @@ class _LaneSearch(object):
         self.specs = _edit_specs(queries or [], per, sc_per)
         self.futs = []
         if self.specs:
-            ex = ThreadPoolExecutor(max_workers=min(16, len(self.specs)))
+            ex = ThreadPoolExecutor(max_workers=min(_search_width(), len(self.specs)))
             self.futs = [ex.submit(_run_search, sp) for sp in self.specs]
             ex.shutdown(wait=False)
 
@@ -7071,6 +7565,14 @@ def prewarm():
             _sc_client_id()
         except Exception:
             pass
+        # the long-lived YouTube search worker (IN-PROCESS SEARCH): start it off the clock
+        if SPEED_INPROC_SEARCH and _HAVE_BREW_YTDLP:
+            try:
+                with _YT_WORKER.lock:
+                    if _YT_WORKER.p is None:
+                        _YT_WORKER._start()
+            except Exception:
+                pass
         # GOOGLE: launch it AND find out whether it is walled, here, off the clock.
         # Chromium launching is not the same as Google answering - it is currently
         # CAPTCHA-walled from this machine, and the worker reports _ok=True anyway, so

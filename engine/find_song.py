@@ -207,6 +207,14 @@ async def _shazam_shazamkit(path):
         # same TimeoutError it gets from a stalled shazamio call and re-fires the probe.
         proc.kill()
         raise
+    except asyncio.CancelledError:
+        # The caller's wait_for (SHAZAM_TIMEOUT 3.5 < this 6.0) and FingerprintJob.cancel()
+        # arrive here as a cancel, not a timeout: kill the child too, or it outlives us.
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        raise
     if proc.returncode != 0 or not out.strip():
         raise RuntimeError("shazamkit bridge exit %s: %s" % (
             proc.returncode, (err or out or b"").decode("utf-8", "replace").strip()[:300]))
