@@ -137,16 +137,25 @@ jobs:
       # but codesign itself does not: sign the finished bundles ad hoc WITH their entitlements,
       # inner bundle first, and the export re-signs them with the distribution profile. The run
       # fails here if ShazamKit is not in the app.
-      - name: Carry the entitlements into the archive
+      - name: Carry the ShazamKit entitlement into the archive
+        # ONLY ShazamKit. The App ID has App Groups on with 0 groups assigned, so a profile that
+        # also asks for group.com.addify.app cannot be made ("No profiles for 'com.addify.app'
+        # were found", run 36318776055). Every TestFlight build so far shipped without the app
+        # group (the unsigned archive dropped it) and sharing works, so this is exactly the
+        # shipped build plus ShazamKit. The share extension is signed ad hoc with nothing.
         run: |
           set -e
           A=build/Addify.xcarchive/Products/Applications/Addify.app
           X="$A/PlugIns/AddifyShare.appex"
-          [ -d "$X" ] && codesign --force --sign - --entitlements ios/AddifyShare/AddifyShare.entitlements "$X"
-          codesign --force --sign - --entitlements ios/Addify/Addify.entitlements "$A"
+          cat > /tmp/kit.entitlements <<'ENT'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.developer.shazamkit</key><true/></dict></plist>
+          ENT
+          [ -d "$X" ] && codesign --force --sign - "$X"
+          codesign --force --sign - --entitlements /tmp/kit.entitlements "$A"
           codesign -d --entitlements :- "$A" 2>/dev/null | tee entitlements.plist
           grep -q "com.apple.developer.shazamkit" entitlements.plist || { echo "::error::ShazamKit entitlement missing from the archive"; exit 1; }
-          grep -q "group.com.addify.app" entitlements.plist || { echo "::error::app group entitlement missing from the archive"; exit 1; }
 
       - name: Export the ipa
         run: |
