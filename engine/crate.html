@@ -2606,22 +2606,29 @@ function artGlow(src, fallback){
    is tiktok.com/@tommybeckert/video/..., because one fetch leg hands back the sound's
    nickname and it passes the handle-shape check. */
 function urlHandle(u){var m=String(u||'').match(/tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[\/?#]|$)/); return m?m[1]:'';}
+/* THE HEADER NAMES THE CARD UNDER IT (FLOW-AUDIT 5). finish() wrote "No match" over every
+   result without a song, so a "TikTok is busy" card (own1, a TikTok rate limit, not a miss)
+   sat under a header saying the song was not found. Only a real miss says "No match". */
+function endTitle(d){var r=d&&d.result;
+  return r==='rate_limited'?'Try again soon':r==='engine_down'?'Offline':
+         r==='error'?'Link not readable':'No match';}
+function setEndTitle(d){var t=document.getElementById('matchttl'); if(t) t.textContent=endTitle(d);}
 function renderResult(d,partial){
   lastResult=d;
-  backHandler=goHome;  // default for the top-left chevron; the no-match branch may repoint it
+  backHandler=goHome;  // the top-left chevron always goes to Addify home (COMMIT-AUDIT F5)
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
   // label the /base payload did not (the consensus re-measure, see the stale-speed note
   // in the no-crown branch), and this runs again on that payload, so the shelf follows.
   CLIP_PITCHED=/slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
-  if(d.result==='rate_limited'){result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
-  if(d.result==='engine_down'){
+  if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
+  if(d.result==='engine_down'){ setEndTitle(d);
     result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
       (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
         '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
     var rb=document.getElementById('retrybtn');
     if(rb) rb.onclick=function(){engineUp=null; var u=curURL; lsSet('addify-queue',[]); goHome(); if(u) run(u);};
     return;}
-  if(d.result==='error'){
+  if(d.result==='error'){ setEndTitle(d);
     /* most often a private or unreadable link - a dead end converted into the listen-mode teach */
     var agegate=/age restricted/.test(d.error||''), gone=/video is unavailable/.test(d.error||'');
     result.innerHTML=errCard('lock',"Couldn't read that link",
@@ -2639,17 +2646,21 @@ function renderResult(d,partial){
        has a base guess, one tap turns a failure into training data via /feedback. */
     /* Set the header here too, not only in finish(): renderResult can be called on its own,
        and a "No song here" card must never sit under a "Match found" title. */
-    var _mt=document.getElementById('matchttl'); if(_mt) _mt.textContent='No match';
+    setEndTitle(d);
     /* Konnor: after a miss, get them back to where they were. When we know the reel they
-       scanned, the back button reopens it in TikTok or Instagram; with no source (listen
-       mode) it drops them on the Addify home page. The top-left chevron always goes home. */
+       scanned, the card's own button reopens it in TikTok or Instagram; with no source
+       (listen mode) it drops them on the Addify home page. The top-left chevron always
+       goes home. */
     var _nmSrc=curURL||'';
     var _nmPlat=/instagram\.com|instagr\.am/i.test(_nmSrc)?'Instagram':(/tiktok\.com|vt\.tiktok/i.test(_nmSrc)?'TikTok':'');
     var _nmBack=_nmPlat
       ? '<a class="navbtn" href="'+esc(_nmSrc)+'" target="_blank" rel="noopener" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to '+_nmPlat+'</span></a>'
       : '<button class="navbtn" id="nm-home" type="button" style="width:100%;margin-top:10px">'+IC.lchev+'<span>Back to home</span></button>';
-    // The top-left chevron backs out the same way: to the reel they scanned when we know it.
-    if(_nmPlat) backHandler=function(){openExternal(_nmSrc);};
+    // COMMIT-AUDIT F5 (Konnor 12:02: "when I click back in the top left ... it should take me
+    // back to Home Screen of addify"). The chevron stays on goHome (set at the top of
+    // renderResult). Repointing it at the reel (ba8afdf) left no way back into the app: the
+    // tab bar is hidden in the locked state and both exits opened TikTok. Only the card's
+    // own "Back to TikTok/Instagram" button reopens the reel now.
     var guess=d.base_song_guess||null;
     if(guess){
       result.innerHTML=errCard('?','Couldn’t nail this one',
@@ -2784,13 +2795,22 @@ function renderResult(d,partial){
   // (Spotify and YouTube need auth) falls back to search and is labelled as a search, so
   // a tap never lies about where it lands.
   var lk=(d.links||[]).slice();
-  // Job 572: a promoted version is the main song, so Open in goes to that version. Its own
-  // upload is the exact tile for its platform; the rest search for the version's title.
+  // Job 572: a promoted version is the main song, so its own upload is the exact tile for
+  // its platform, in the slot that platform's tile had.
+  // COMMIT-AUDIT F4: every other tile keeps the engine's real links (d.links). The promo
+  // emptied the list and rebuilt Spotify / Apple as searches for the upload's title ("Riley B
+  // Fearless Lofi (slowed+reverb) || Ringtone II 2024 SVM #trending..."), which dropped the
+  // exact Apple Music album link on #5 and every official destination server.py builds for
+  // the base track. Searches below use the song + artist.
   if(promo){
-    var _pk=/soundcloud/.test(String(ex.source||'').toLowerCase()+ex.url)?'soundcloud':
-            /youtube|youtu\.be/.test(String(ex.source||'').toLowerCase()+ex.url)?'youtube':'';
-    lk=[];
-    if(_pk) lk.push({name:_pk==='youtube'?'YouTube':'SoundCloud',kind:_pk,url:ex.url,exact:true});
+    var _vs=String(ex.source||'').toLowerCase()+' '+String(ex.url||'');
+    var _pk=/soundcloud/.test(_vs)?'soundcloud':/youtube|youtu\.be/.test(_vs)?'youtube':'';
+    if(_pk && ex.url){
+      var _vt={name:_pk==='youtube'?'YouTube':'SoundCloud',kind:_pk,url:ex.url,exact:true}, _at=-1;
+      lk.forEach(function(l,i){if(_at<0&&l.kind===_pk) _at=i;});
+      lk=lk.filter(function(l){return l.kind!==_pk;});
+      if(_at<0||_at>lk.length) lk.unshift(_vt); else lk.splice(_at,0,_vt);
+    }
   }
   /* Konnor: "where did the Open in Spotify / Open in SoundCloud go". The engine builds
      these links behind a 6s cap and its own comment says a failure is silent, so when that
@@ -2800,7 +2820,10 @@ function renderResult(d,partial){
      always there. Same search URLs the engine uses, marked as a search so a tap never lies
      about where it lands. */
   if(d.base_song){
-    var _fq=encodeURIComponent((d.base_artist?d.base_artist+' ':'')+_htitle);
+    // F4: the song + artist (the catalog name Shazam gave, the same query the engine's own
+    // search links use), never the hero title. With a promoted version on top the hero is an
+    // upload title, and a store has no entry under "... || Ringtone II 2024 SVM #trending".
+    var _fq=encodeURIComponent((d.base_artist?d.base_artist+' ':'')+d.base_song);
     var _fb=[{name:'Spotify',kind:'spotify',url:'https://open.spotify.com/search/'+_fq},
              {name:'SoundCloud',kind:'soundcloud',url:'https://soundcloud.com/search?q='+_fq},
              {name:'Apple Music',kind:'apple',url:'https://music.apple.com/search?term='+_fq},
@@ -3287,7 +3310,7 @@ function renderResult(d,partial){
   if(_heroImg) bloomFrom(_heroImg.getAttribute('src'));
   paintRecCanvas();
   artGlow(d.art, _phc);
-  autoSave(d);                                   // scan = saved, no tap required
+  autoSave(d,!partial);                          // scan = saved, no tap required; a final result updates the /base entry (FLOW-AUDIT 3)
   var ob=document.getElementById('otherbtn');
   if(ob) ob.onclick=function(){
     // Connected: the real picker - their own playlists, add anywhere, create new.
@@ -3499,19 +3522,42 @@ var SP = (function(){
    visible opt-out: people are protective of their library, so the toggle is real. */
 /* The local write, on its own so the manual Save button can reuse it.
    Returns true when this match was actually new. */
-function saveOne(d){
+function saveOne(d,final){
   if(!d || !d.base_song) return false;
   var a=loadCrate();
   var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
             url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||'',
-            handle:urlHandle(d.url)||d.poster||d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||''};
-  if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})) return false;
+            handle:urlHandle(d.url)||d.poster||d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||'',
+            clip:d.url||''};
+  if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})){
+    if(final) updateSaved(d);          // the same song: the final result updates it (FLOW-AUDIT 3)
+    return false;}
   a.unshift(item); storeCrate(a); return true;
 }
-function autoSave(d){
+/* FLOW-AUDIT 3: FINDS KEEPS THE CROWN. The /base card saves first (url = the Shazam page,
+   speed = the /base reading), and the song + artist dedupe above then threw the final result
+   away, so on all 10 fresh crowned scans the Finds row opened the base song's Shazam page
+   with the /base speed (clip26 0.89x against a final 0.80x). A final result now updates the
+   entry it matches: a crown brings its upload and its speed; the same clip with no crown
+   brings only the final speed. Update only: this never creates an entry, so the autosave
+   opt-out still decides whether a scan is saved at all. Returns true when it changed one. */
+function updateSaved(d){
+  if(!d || !d.base_song) return false;
+  var a=loadCrate(), i=-1;
+  for(var k=0;k<a.length;k++) if(a[k].song===d.base_song&&a[k].artist===d.base_artist){i=k;break;}
+  if(i<0) return false;
+  var x=a[i], crown=(d.exact&&d.exact.url)||'', sameClip=!!(d.url&&x.clip===d.url), ch=false;
+  if(!crown && !sameClip) return false;
+  if(crown && x.url!==crown){x.url=crown; ch=true;}
+  if(d.speed && x.speed!==d.speed){x.speed=d.speed; ch=true;}
+  if(ch){ if(d.url) x.clip=d.url; storeCrate(a); }
+  return ch;}
+function autoSave(d,final){
   if(!d || !d.base_song) return;
-  if(!autoOn()) return;
-  var isNew=saveOne(d), a=loadCrate();
+  // Autosave off: nothing new is saved, but an entry the user saved by hand still takes
+  // the final crown (FLOW-AUDIT 3).
+  if(!autoOn()){ if(final) updateSaved(d); return; }
+  var isNew=saveOne(d,final), a=loadCrate();
   var sub=document.getElementById('savesub');
   if(sub) sub.textContent=sub.textContent.replace(/\d+ songs?/, songs(a.length));
   if(!SP.connected() || !isNew) return;
@@ -3553,10 +3599,14 @@ function setLiked(song,artist,on){var k=likeKey(song,artist), a=likedList().filt
 function storeCrate(a){lsSet('crate-saved',a); paintHome(); renderLib(); renderTrend();}
 /* every SCAN (including repeats of the same song) - this is what trending measures */
 function scanLog(){return lsGet('addify-scanlog','[]');}
-function logScan(d){var a=scanLog();
-  a.unshift({song:d.base_song,artist:d.base_artist,speed:d.speed||'',ts:Date.now(),
-             handle:urlHandle(d.url)||d.poster||d.handle||'',listen:!!d.listen});
-  lsSet('addify-scanlog',a.slice(0,500));}
+/* One entry per scan, written with the final answer (F3). `ts` replaces the entry this scan
+   already wrote instead of adding a second one, so a crown that lands after the 90 s cap
+   corrects the log without counting the scan twice for trending. Returns the entry's ts. */
+function logScan(d,ts){var a=scanLog(), e={song:d.base_song,artist:d.base_artist,speed:d.speed||'',ts:ts||Date.now(),
+             handle:urlHandle(d.url)||d.poster||d.handle||'',listen:!!d.listen}, i=-1;
+  if(ts) for(var k=0;k<a.length;k++) if(a[k].ts===ts){i=k;break;}
+  if(i>=0) a[i]=e; else a.unshift(e);
+  lsSet('addify-scanlog',a.slice(0,500)); return e.ts;}
 /* failed scans wait here - the Library shows them as pending, not lost */
 function unmatched(){return lsGet('addify-unmatched','[]');}
 function logUnmatched(url,handle){var a=unmatched();
@@ -4163,7 +4213,38 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // partial=false deletes the progress element, so pgDone() was painting into
         // nothing and the bar simply vanished somewhere in the 60s-90s. The percentage
         // has to land before the thing displaying it is taken away.
-        var settledUI=false, budgetHit=false, lateCap=null, scanURL=p.url;
+        var settledUI=false, budgetHit=false, lateCap=null, scanURL=p.url,
+            baseShown=false, lateFull=null, scanFinal=false, logTs=0;
+        var onScan=function(){return !leftScan && curURL===scanURL;};
+        /* ONE BRIDGE POST AND ONE SCAN-LOG ENTRY PER SCAN, WITH THE FINAL ANSWER (COMMIT-AUDIT
+           F3, FLOW-AUDIT 2; owners' decision 2). finish() ran at the budget with the /base
+           payload, so the iOS toast and the share-sheet notification said "Match found / <base
+           song>" with exact:null on all 12 fresh scans, and the crown that followed was never
+           posted. Now finish() holds both at the budget, and this runs exactly once: when the
+           hunt answers (the crown when there is one), when it fails or is cancelled (a new
+           scan or Back ends it, so the song we named is all this scan will ever have), or at
+           the 90 s cap. It runs even after the user moved on, since it is this scan's record. */
+        var finalize=function(fd){
+          if(scanFinal) return; scanFinal=true;
+          clearTimeout(lateCap);
+          if(!(fd&&fd.base_song)) fd=d;
+          try{ logTs=logScan(fd); }catch(e){}
+          postBridge(fd);};
+        /* THE LATE CROWN, EVERYWHERE THE SCAN SHOWS. The card (while the user is on this
+           scan), Finds (updated even after the user moved on), the scan log and the bridge.
+           After the 90 s cap the post already went out, so a crown that lands later corrects
+           the card, Finds and the log entry in place and is never posted a second time. */
+        var lateUpgrade=function(full){
+          clearTimeout(lateCap);
+          if(onScan()){
+            try{
+              if(full.wave)setWaveData(full.wave);
+              if(full.win)setWindow(full.win,full.clip_secs);
+              setSpeedFromLabel(full.speed); renderResult(full,false);
+            }catch(e){}
+          } else { try{ updateSaved(full); }catch(e){} }
+          if(!scanFinal) finalize(full);
+          else if(full.base_song){ try{ logTs=logScan(full,logTs); }catch(e){} }};
         var settle=function(full){
           if(settledUI){
             // THE EXACT EDIT CAN LAND AFTER THE BUDGET (2026-09-26, Roham: "the exact edit is
@@ -4172,18 +4253,20 @@ function run(raw){if(busy) return; var p=parseLink(raw);
             // after the song was named, so the old early return threw away every crown that
             // arrived after 12 s and the card stayed on the base song. A late answer now
             // upgrades the card in place, as long as the user is still on this scan.
-            if(budgetHit && full && full.result && full.result!=='engine_down' && !leftScan && curURL===scanURL){
-              clearTimeout(lateCap);
-              try{
-                if(full.wave)setWaveData(full.wave);
-                if(full.win)setWindow(full.win,full.clip_secs);
-                setSpeedFromLabel(full.speed); renderResult(full,false);
-              }catch(e){}
-            }
+            if(budgetHit && full && full.result && full.result!=='engine_down'){
+              // COMMIT-AUDIT F2: the budget branch below is still inside pgDone() (380-1000
+              // ms) and has not drawn the base card yet. Rendering the crown now let the base
+              // card land over it a few ms later and stay there (mason, done at 12.45 s). Hand
+              // the result to that branch instead; it renders this in place of the base card.
+              if(!baseShown){ lateFull=full; return; }
+              lateUpgrade(full);
+            } else if(budgetHit && full) finalize(null);   // the hunt failed: the named song is final
             return;}
           settledUI=true;
           clearTimeout(huntBudget);
           return pgDone().then(function(){
+            baseShown=true;
+            if(!full && lateFull) full=lateFull;   // F2: the hunt finished during pgDone()
             if(full&&full.result&&full.result!=='engine_down'){
               if(full.wave)setWaveData(full.wave);
               if(full.win)setWindow(full.win,full.clip_secs);
@@ -4204,9 +4287,12 @@ function run(raw){if(busy) return; var p=parseLink(raw);
                 _lh.className='latehunt'; _lh.innerHTML='<i></i><span>Finding the exact version</span>';
                 if(_s) _s.parentNode.insertBefore(_lh,_s); else _r.appendChild(_lh);}catch(e){}
               lateCap=setTimeout(function(){
-                if(!leftScan && curURL===scanURL){ try{renderResult(dd,false);}catch(e){} }
+                if(onScan()){ try{renderResult(dd,false);}catch(e){} }
+                finalize(null);                  // the 90 s cap: the named song is final
               }, 90000);}
-            finish(full||d);});};
+            // held: the log entry and the bridge post wait for the final answer (finalize)
+            finish(full||d, true);
+            if(full) finalize((full.result&&full.result!=='engine_down')?full:null);});};
         var huntBudget=setTimeout(function(){ budgetHit=true; say('Still finding the exact version'); settle(null); }, HUNT_BUDGET_MS);
         return huntEdits(p.url,function(c,n){
           liveAdd(c);
@@ -4215,13 +4301,28 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           // and covers the common case where nothing verifies at all. Two sources both
           // writing the bar is what made it jump. This one just narrates.
           say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
-        }).then(function(full){ if(full&&full.result==='aborted') return; return settle(full); });
+        }).then(function(full){
+          // A new scan or Back ended this hunt (see HUNT): nothing more will come for it.
+          if(full&&full.result==='aborted'){ finalize(null); return; }
+          return settle(full); });
         });
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
   });
 }
-function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeout(phaseT);
+/* NATIVE BRIDGE. Inside the iOS app (ios/) the page runs in a WKWebView that registers a
+   message handler named 'addify'; the app turns this into a haptic + toast, and a local
+   notification when the scan was started from TikTok's share sheet and the app is not in
+   front. Feature-detected and swallowed so plain Safari / Chrome never sees it. Posted once
+   per scan with the final answer (finish() for a scan with no hunt, finalize() in run()
+   for one with a hunt). */
+function postBridge(d){
+  try{var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
+    if(_wk) _wk.postMessage({type:'result',song:d.base_song||'',artist:d.base_artist||'',speed:d.speed||'',
+      exact:d.exact?{url:d.exact.url||'',uploader:d.exact.uploader||''}:null});}catch(e){}}
+/* held: run() calls this at the hunt budget, before the answer is final. The scan-log entry
+   and the bridge post are then left to run()'s finalize(), so each happens once. */
+function finish(d,held){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeout(phaseT);
   document.getElementById('gobtn').removeAttribute('disabled');
   if(typeof syncFormAction==='function') syncFormAction();
   if(d&&d.result==='engine_down'&&curURL){
@@ -4232,16 +4333,9 @@ function finish(d){stopClock(); busy=false; progPollOff(); pgDone(); clearTimeou
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
       logUnmatched(curURL, d.handle);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
-    setState('locked'); document.getElementById('matchttl').textContent='No match'; return;}
+    setState('locked'); setEndTitle(d); return;}
   if(!d.cached) useScan();
-  logScan(d);
-  // NATIVE BRIDGE. Inside the iOS app (ios/) the page runs in a WKWebView that registers a
-  // message handler named 'addify'; the app turns this into a haptic + toast, and a local
-  // notification when the scan was started from TikTok's share sheet and the app is not in
-  // front. Feature-detected and swallowed so plain Safari / Chrome never sees it.
-  try{var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
-    if(_wk) _wk.postMessage({type:'result',song:d.base_song||'',artist:d.base_artist||'',speed:d.speed||'',
-      exact:d.exact?{url:d.exact.url||'',uploader:d.exact.uploader||''}:null});}catch(e){}
+  if(!held){ logScan(d); postBridge(d); }
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
   document.getElementById('dial').classList.add('done');
@@ -4529,9 +4623,9 @@ function goHome(){nav('idle'); endHunt();   // navigate FIRST: a throw in any te
 /* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
    the native app hands it off to TikTok or Instagram instead of navigating the web view. */
 function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();}
-/* The top-left chevron is THE back button Konnor pointed at. By default it goes to the
-   Addify home page; renderResult's no-match branch repoints it at the reel they scanned, so
-   back takes them straight back to the TikTok (or Instagram) they were watching. */
+/* The top-left chevron is THE back button Konnor pointed at. It always goes to the Addify
+   home page (renderResult resets it to goHome on every card). After a no-match, the card's
+   own "Back to TikTok/Instagram" button is what reopens the reel (COMMIT-AUDIT F5). */
 var backHandler=goHome;
 /* Fire the back arrow on the TAP, not only on the synthetic click. Inside the iOS WebView
    a click on this small round button, sitting high against the status bar, was being
