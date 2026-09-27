@@ -95,16 +95,16 @@ def _sound_cache_get(src):
 
 
 def _phone_unconfirmed(res):
-    """A result whose song was named by a PHONE (on-device ShazamKit) is client input. It
-    goes into the shared caches, which every user reads, only when the server's own audio
-    check confirmed a version of it (a crown at core >= 0.95); a scripted client naming a
-    fake song produces no audio-confirmed upload, so its answer stays with that one scan."""
+    """A result whose song was named by a PHONE (on-device ShazamKit) is client input: the
+    title, artist, Shazam link and artwork all come from the phone. The audio check proves
+    the crowned upload matches the CLIP, not that it is the song the phone named, so a
+    scripted client could put any title and image into caches every user reads. Phone-named
+    answers therefore never enter the shared caches; they stay with that one scan.
+    (code review 2026-09-27: a core >= 0.95 crown was not enough.)"""
     _ph = FS.PHONE.get(None) if hasattr(FS, "PHONE") else None
     named = bool((res or {}).get("_phone_named")) or bool(
         _ph is not None and (getattr(_ph, "n", {}).get("matched") or 0) > 0)
-    if not named:
-        return False
-    return ((res.get("exact") or {}).get("core") or 0) < 0.95
+    return named
 
 
 def _sound_cache_put(src, res):
