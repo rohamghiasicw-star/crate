@@ -130,33 +130,6 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             archive 2>&1 | tee archive.log
 
-      # CARRY THE ENTITLEMENTS INTO THE ARCHIVE (2026-09-27). An unsigned archive has none, and
-      # the export keeps only what the archive's signature already carries, so the app group and
-      # the ShazamKit capability never reached TestFlight. Xcode refuses an ad hoc signature at
-      # archive time on this SDK ("Ad Hoc code signing is not allowed with SDK 'iOS 26.5'"),
-      # but codesign itself does not: sign the finished bundles ad hoc WITH their entitlements,
-      # inner bundle first, and the export re-signs them with the distribution profile. The run
-      # fails here if ShazamKit is not in the app.
-      - name: Carry the ShazamKit entitlement into the archive
-        # ONLY ShazamKit. The App ID has App Groups on with 0 groups assigned, so a profile that
-        # also asks for group.com.addify.app cannot be made ("No profiles for 'com.addify.app'
-        # were found", run 36318776055). Every TestFlight build so far shipped without the app
-        # group (the unsigned archive dropped it) and sharing works, so this is exactly the
-        # shipped build plus ShazamKit. The share extension is signed ad hoc with nothing.
-        run: |
-          set -e
-          A=build/Addify.xcarchive/Products/Applications/Addify.app
-          X="$A/PlugIns/AddifyShare.appex"
-          cat > /tmp/kit.entitlements <<'ENT'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>com.apple.developer.shazamkit</key><true/></dict></plist>
-          ENT
-          [ -d "$X" ] && codesign --force --sign - "$X"
-          codesign --force --sign - --entitlements /tmp/kit.entitlements "$A"
-          codesign -d --entitlements :- "$A" 2>/dev/null | tee entitlements.plist
-          grep -q "com.apple.developer.shazamkit" entitlements.plist || { echo "::error::ShazamKit entitlement missing from the archive"; exit 1; }
-
       - name: Export the ipa
         run: |
           cat > /tmp/export.plist <<PLIST

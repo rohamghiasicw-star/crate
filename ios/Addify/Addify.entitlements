@@ -6,13 +6,5 @@
 	<array>
 		<string>group.com.addify.app</string>
 	</array>
-	<!-- On-device ShazamKit (ShazamProbe.swift, docs/SHAZAMKIT-ON-DEVICE.md). Apple grants
-	     this only through a provisioning profile for an App ID with the ShazamKit App
-	     Service ticked (developer.apple.com > Identifiers > com.addify.app > App Services >
-	     ShazamKit; enabled 2026-09-27). A binary without it gets an error from every
-	     SHSession match. ios-release.yml archives with CODE_SIGN_ENTITLEMENTS="", so check
-	     the uploaded build's entitlements (see the doc) before trusting this file. -->
-	<key>com.apple.developer.shazamkit</key>
-	<true/>
 </dict>
 </plist>

@@ -32,10 +32,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.addify.app
         INFOPLIST_FILE: Addify/Info.plist
-        # Addify.entitlements carries com.apple.developer.shazamkit (on-device ShazamKit,
-        # docs/SHAZAMKIT-ON-DEVICE.md). It must be enabled on the App ID com.addify.app in
-        # the Apple developer account (Identifiers > App Services > ShazamKit) before a
-        # signed build can be provisioned with it.
+        # On-device ShazamKit needs NO entitlement key: Apple enables it per App ID
+        # (Identifiers > com.addify.app > App Services > ShazamKit, on since 2026-09-27).
         CODE_SIGN_ENTITLEMENTS: Addify/Addify.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
