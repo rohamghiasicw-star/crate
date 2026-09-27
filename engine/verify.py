@@ -461,6 +461,10 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
 
     # A. speed (tilt-robust), then B. speed-match the candidate to the clip.
     speed, sconf = _speed_xcorr(clip_s, cand_s)
+    # Carried so a bare 1.0 can be told apart: a confident peak at lag 0 is ALSO exactly
+    # 1.0 (crate_engine, 2026-09-24), and only this number separates the two (task A2).
+    # A refinement pass that moves the speed below is a reading too, so it raises it.
+    out["speed_conf"] = round(float(sconf), 3)
     if sconf < 0.10:                       # unreliable -> don't invent a speed edit
         speed = 1.0
     speed = float(min(2.0, max(0.5, speed)))
@@ -469,6 +473,7 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
     cand_sm_s = _avg_logspec(xk_sm)
     r2, c2 = _speed_xcorr(clip_s, cand_sm_s)
     if c2 >= 0.10 and abs(np.log10(r2)) > _PER_BIN * 2:
+        out["speed_conf"] = round(float(max(sconf, c2)), 3)
         speed = float(min(2.0, max(0.5, speed * r2)))
         xk_sm = _resample_by(xk, speed)
         cand_sm_s = _avg_logspec(xk_sm)

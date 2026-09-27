@@ -6107,6 +6107,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
                  vscore=v["score"], score=v["score"], same=v["same"],
                  vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
+                 speed_conf=v.get("speed_conf"),
                  slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
                  cand_slope=v.get("cand_slope"),
                  clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
@@ -7175,6 +7176,7 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                 c["path"] = path
                 c.update(core=bv["core"], spectral=bv["spectral"], fp=bv["fp"],
                          arr=bv["arr"], same=bv["same"], vspeed=bv["speed"],
+                         speed_conf=bv.get("speed_conf"),
                          bass_delta=bv["bass_delta"], cand_tilt=bv["cand_tilt"],
                          slope_delta=bv.get("slope_delta"),
                          clip_slope=bv.get("clip_slope"), cand_slope=bv.get("cand_slope"),

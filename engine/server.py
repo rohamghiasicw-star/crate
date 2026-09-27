@@ -699,6 +699,28 @@ def _name_rendition(res, fp):
     return True
 
 
+def _rendition_original_why(c, rd):
+    """The rendition credit test as a per-row gate (task A). The clip plays a rendition
+    credited to several artists (Shazam named it as posted), and this upload names at most
+    one of them, and neither "remix" nor the rendition's own title: it is the plain
+    original, not the version playing. Same test `_rendition_final_speed` has applied to the
+    crown since #11; running it inside the walk lets the walk step past the original to the
+    rendition instead of withholding the crown and leaving the rendition in the list.
+    Returns the refusal sentence or None."""
+    if not isinstance(rd, dict) or not rd.get("of_song"):
+        return None
+    credit = {a.strip().lower() for a in re.split(r",|&|\band\b|\bx\b|\bfeat\.?|\bft\.?",
+                                                 rd.get("artist") or "")
+              if len(a.strip()) >= 3}
+    hay = ("%s %s" % (c.get("title") or "", c.get("uploader") or "")).lower()
+    named = [a for a in credit if a in hay]
+    if (len(credit) >= 2 and len(named) <= 1 and "remix" not in hay
+            and (rd.get("title") or "").lower() not in hay):
+        return ("this upload is the original %s, not the %s the clip plays"
+                % (rd.get("of_song") or "song", rd.get("title")))
+    return None
+
+
 def _rendition_final_speed(res):
     """End of phase 2: the source-relative label becomes `speed_vs_source`, the rendition
     names the result again and the user reads the speed against it, keeping a measured
@@ -717,19 +739,38 @@ def _rendition_final_speed(res):
     # names at most one of them, and neither "remix" nor the rendition's own title, it is shown
     # as a close upload, not the answer.
     ex = res.get("exact")
-    if isinstance(ex, dict):
-        def _names(s):
-            return {a.strip().lower() for a in re.split(r",|&|\band\b|\bx\b|\bfeat\.?|\bft\.?", s or "")
-                    if len(a.strip()) >= 3}
-        credit = _names(rd.get("artist"))
-        hay = ("%s %s" % (ex.get("title") or "", ex.get("uploader") or "")).lower()
+
+    def _names(s):
+        return {a.strip().lower() for a in re.split(r",|&|\band\b|\bx\b|\bfeat\.?|\bft\.?", s or "")
+                if len(a.strip()) >= 3}
+    credit = _names(rd.get("artist"))
+
+    def _is_plain_original(c):
+        hay = ("%s %s" % (c.get("title") or "", c.get("uploader") or "")).lower()
         named = [a for a in credit if a in hay]
-        if (len(credit) >= 2 and len(named) <= 1 and "remix" not in hay
-                and (rd.get("title") or "").lower() not in hay):
-            res["crown_rejected"] = ("this upload is the original %s, not the %s the clip plays"
-                                     % (rd.get("of_song") or "song", rd.get("title")))
+        return (len(credit) >= 2 and len(named) <= 1 and "remix" not in hay
+                and (rd.get("title") or "").lower() not in hay)
+    _why_orig = ("this upload is the original %s, not the %s the clip plays"
+                 % (rd.get("of_song") or "song", rd.get("title")))
+    if isinstance(ex, dict):
+        if _is_plain_original(ex):
+            res["crown_rejected"] = _why_orig
             res["exact"] = None
+            # RANK-PLAN S2: a withheld crown is a held list, not an empty screen. The page
+            # renders the held list only on `unsure`, and #11 came back with neither flag,
+            # so the Pusha T remix Roham named had nowhere to show.
+            res["unsure"] = True
+            res["weak_exact"] = round(ex.get("core") or 0, 3)
             E.tlog("rendition_crown_withheld", 0.0, crown=(ex.get("title") or "")[:80])
+    # RANK-DESIGN-2: the same test on every row, as a label. On #11 the withheld crown was
+    # the only row that carried it, so "Chief Keef - I Don't Like Feat. Lil Reese" (the same
+    # original) still printed 82% while the Pusha T remix Roham named printed 70%.
+    if res.get("gates_on_rows"):
+        for row in (res.get("candidates") or []):
+            if (not row.get("gate") and (row.get("core") or 0) >= E.CORE_KEEP
+                    and _is_plain_original(row)):
+                row["gate"] = {"kind": "rendition", "why": _why_orig}
+                row.pop("cut_from", None)
     res["base_song"], res["base_artist"] = rd["title"], rd.get("artist")
     sp = rd.get("speed") or "as posted"
     if res.get("bass_boosted"):
@@ -1894,6 +1935,15 @@ def _cand_row(c):
             # re-downloading candidates. (`vspeed` is carried above for the same reason.)
             "slope": (round(c["slope_delta"], 3)
                       if c.get("slope_delta") is not None else None),
+            # TASK A2: verify() read NO tempo for this row (xcorr confidence under 0.10, no
+            # lock), so its bare 1.0 is a default, not a reading (a confident lag-0 peak is
+            # ALSO exactly 1.0, which is why this needs verify's own confidence). A leg we
+            # did not measure is not a leg that agreed: the figure caps it like an EQ miss
+            # and never calls it Exact (crate.html vmatch, server _fig_parts). Absent when
+            # unknown, so old rows are unchanged.
+            "tempo_unmeasured": (True if (c.get("vspeed_locked") is None
+                                          and c.get("speed_conf") is not None
+                                          and float(c["speed_conf"]) < 0.10) else None),
             "claim": _claim or None,
             "claimkind": _kinds or None,
             # COVER ART. Display only - see _cand_art. Built here, in the one row builder,
@@ -2030,7 +2080,7 @@ def _url_is_dead(u):
         return False
 
 
-def _time_reversed_null(clip_audio, cand_url, fwd_core):
+def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
     """Manufacture a null control for the crown, out of the crown itself.
 
     A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
@@ -2064,7 +2114,12 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core):
     # destroyed a correct crown: Chief Keef "I Dont Like Bass Boosted" at core 0.961,
     # vspeed 0.9997 and 0.2 dB off the clip's tilt cleared every other gate and this one
     # refused it, leaving a shelf whose top rows are a different song entirely.
-    if not clip_audio or not cand_url or fwd_core is None or fwd_core < 0.999:
+    # TASK A2: `floor` is lowered to 0 for one caller only, _crown_by_figure, which asks
+    # whether a row may TAKE the crown from the engine's pick. There the question is not
+    # "refuse this crown" but "does this row show any evidence of the recording at all",
+    # and a reversed copy that scores as high as the forward one says it does not. The
+    # engine's own walk keeps 0.999.
+    if not clip_audio or not cand_url or fwd_core is None or fwd_core < floor:
         return None
     import shutil
     import subprocess
@@ -2541,6 +2596,336 @@ def _crown_contradicts(top, speed_label, mdir, measured=None, tilt_readable=True
             # slowed ~0.85x. State the number that was actually measured and nothing else.
             return "candidate tilt is %.1f dB off the clip's own EQ" % tilt
     return None
+
+
+def _gate_kind(why):
+    """Which of the engine's own rules wrote this refusal. Keyed on the fixed sentences the
+    gate functions above return, so the page can pick a short word without parsing English."""
+    w = why or ""
+    if w.startswith("clip plays "):
+        return "tempo"
+    if w.startswith("candidate is the official release"):
+        return "official"
+    if w.endswith("candidate titles itself a speed edit"):
+        return "speedclaim"
+    if w.startswith("candidate tilt is "):
+        return "tilt"
+    if "time-reversed copy" in w:
+        return "null"
+    if w.startswith("this upload is the original "):
+        return "rendition"
+    return "othersong"
+
+
+def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
+               gate_label, mdir, reup, res):
+    """EVERY ROW CARRIES THE ENGINE'S OWN VERDICT (RANK-DESIGN-2, 2026-09-26).
+
+    The pure gates already run on the whole pool and the null runs on every row the walk
+    tries, but only the crown's verdict ever reached the page. So a row the tempo gate calls
+    "a different edit of the same recording" still printed 87% under a 43% crown (clip 16),
+    and a row that scored 1.000 against its own time-reversed copy printed 90% (clips 44/45):
+    58 refused rows printed 50-90% across 26 of 39 shelves. The page now shows a reason chip
+    on these rows instead of a figure, and never ranks one against the answer.
+
+    Display only: it reads the walk's own verdicts and changes no crown. When the walk ran,
+    every row at or above CORE_KEEP lands in `rejects` or `clean_all`. When it did not (row
+    1 under the bar, so nothing is crowned and the list is held), the unpooled branch runs
+    the three pure gates for the label only. The null is NOT run here (it downloads), so a
+    row carries a "null" verdict only when the walk, or _crown_by_figure, tried it.
+
+    candidates[i] is _cand_row(verified[i]) (built from verified[:6] after the dead-link
+    pass), so rows and pool objects line up by index."""
+    try:
+        ann, src = {}, {}
+        for _why, _c in (rejects or {}).values():
+            ann[_c.get("url")] = {"kind": _gate_kind(_why), "why": _why}
+        for _i, _c, _sv in (clean_all or []):
+            if _sv is not None:
+                src[_c.get("url")] = float(_sv)
+        pooled = bool(rejects) or bool(clean_all)
+        for row, vc in zip(candidates, verified or []):
+            url = row.get("url")
+            if not pooled and (vc.get("core") or 0) >= E.CORE_KEEP and url not in ann:
+                _why, _sv = _crown_tempo_mismatch(vc, measured, base_title)
+                if not _why:
+                    _why = _crown_contradicts(vc, gate_label, mdir, measured=measured,
+                                              tilt_readable=(_sv is None))
+                if not _why:
+                    _why = _crown_other_song(vc, base_title, reup, res)
+                if _why:
+                    ann[url] = {"kind": _gate_kind(_why), "why": _why}
+                elif _sv is not None:
+                    src[url] = float(_sv)
+            if url in ann:
+                row["gate"] = ann[url]
+            elif url in src:
+                row["cut_from"] = round(src[url], 4)
+        res["gates_on_rows"] = True
+    except Exception:
+        # A label that cannot be computed must never cost the user the result. Without the
+        # flag the page falls back to its own tempo test for every row.
+        res.pop("gates_on_rows", None)
+
+
+# ------------- THE HIGHEST MATCH IS THE MAIN RESULT (task A, rebased as A2 2026-09-27) -------------
+# Konnor, 12:54: "ALWAYS put the highest % of match at the top then the second best highest
+# %, etc."; 13:13: "The shit I circled is the highest % match (90%) so that one should be the
+# actual audio that it scans and finds". Roham: "if a song matches 90%, then we need it to
+# rank higher". So the crown is the row with the HIGHEST figure the page prints, and the
+# figure has to be honest for that to be safe: a row the engine's own gates refuse prints
+# at most 45 (crate.html vmatch), so it can never out-rank a row that passed them (floor
+# 50), and only a gate-clean row is ever offered the crown here.
+#
+# Measured on the GDFR clip Konnor circled (vt.tiktok.com/ZSbFUUDMj, 15:42): the walk crowned
+# "Flo Rida - GDFR (slowed + reverd)", whose bass-robust lock reads 1.0326 (3.3% off the
+# clip), over "Flo Rida - Gdfr (ft.Sage the Gemini & Lookas) (Slowed + Reverb)", which
+# verify's own speed xcorr reads at lag 0 with confidence 0.864 and the lock at 0.9999, i.e.
+# dead on the clip's tempo. The walk skipped it only because its vspeed is the bare 1.0 that
+# `_tempo_known` reads as "never measured"; crate_engine documents that a confident lag-0
+# peak is ALSO exactly 1.0. Speed beats bass (hard rules), so the 90% row is the closer one.
+# (That GDFR scan also needed the fast path's speed references to be plain originals, the
+# part of task A held back in A2: with the clip measured "as posted" against slowed uploads,
+# the speed-claim gate refuses every slowed + reverb row and the list is held.)
+_FIG_PITCH = re.compile(r"slow|sped|speed|nightcore|daycore", re.I)
+_FIG_EQ_CAP = 0.90          # one leg missed or not measured: never above 90
+_FIG_OFF_DROP = 4.0 / 9.0   # across the tempo zone the 90 cap falls to 50 (0.90 x 5/9)
+_FIG_FLOOR, _FIG_REF_CAP = 50, 45
+
+
+def _js_round(x):
+    """Math.round, which rounds .5 up. Python's round() is banker's rounding."""
+    return int(math.floor(x + 0.5))
+
+
+def _fig_parts(row, pitched):
+    """(f, exact) for one row, exactly as crate.html vmatch() computes them before the
+    floor and the refusal halving; (None, False) under CORE_KEEP, where the page prints a
+    word instead of a number. `pitched` is the page's CLIP_PITCHED (res["fig_pitched"])."""
+    core = row.get("core")
+    if core is None or core < E.CORE_KEEP:
+        return None, False
+    v, sl, tilt = row.get("vspeed"), row.get("slope"), abs(row.get("bass") or 0.0)
+    s = abs(math.log2(v)) if (isinstance(v, (int, float)) and v > 0) else None
+    if row.get("tempo_unmeasured"):
+        s = None
+    sl_ok = isinstance(sl, (int, float))
+    f, eq_off = min(1.0, core), False
+    if s is None:
+        f = min(f, _FIG_EQ_CAP)
+    elif s > _TEMPO_EXACT:
+        t = min(1.0, (s - _TEMPO_EXACT) / (_TEMPO_TOL - _TEMPO_EXACT))
+        f = min(f, _FIG_EQ_CAP) * (1.0 - _FIG_OFF_DROP * t)
+    elif tilt >= E.BASS_STRIP_GAP or (sl_ok and abs(sl) >= SLOPE_BOOST_GAP):
+        eq_off = True
+        if pitched:
+            f = min(f, _FIG_EQ_CAP)
+        else:
+            f = min(f, max(0.70, _FIG_EQ_CAP - 0.01 * (tilt - E.BASS_STRIP_GAP))
+                    if tilt >= E.BASS_STRIP_GAP else _FIG_EQ_CAP)
+    exact = (core >= E.CORE_SAME and s is not None and s <= _TEMPO_EXACT and sl_ok
+             and not eq_off)
+    if not exact:
+        f = min(f, 0.94)
+    return f, exact
+
+
+def _version_figure(row, pitched):
+    """The number crate.html's vmatch() prints for a row that PASSED every gate, from the
+    same _cand_row fields the page reads (rounded exactly as the page receives them).
+    Returns (pct, exact); pct None under CORE_KEEP (the page prints a word there).
+    Keep in step with vmatch: a2work/replay.py runs both on every corpus row.
+
+    TASK A2 (2026-09-27), the tempo leg. Inside the 2% band (|log2 v| <= _TEMPO_EXACT) the
+    speed agrees. Between the band and the tempo gate's edge (_TEMPO_TOL, about 4.2%) the
+    row is the right recording at a slightly different speed, and the figure falls in a
+    straight line from the 90 cap at the band edge to 50 at the gate edge, where the gate
+    starts calling it a different edit (a refused row counts half, at most 45). So there is
+    no cliff at either edge (kyks' crown reads 1.0193, 0.2% inside the band, and a reading
+    of 1.021 now moves it less than a point, not six), and speed beats bass: a row inside
+    the band with an EQ miss never prints under 70, a row 4% off the clip prints about 55. The old
+    3%-per-1% slope let a 3.75%-off row with a higher first-20s core (clip 21's UK Bassline
+    Remix, core 0.877, a weak tempo reading) out-print the at-tempo crown (core 0.711).
+    `tempo_unmeasured` (verify's speed confidence under 0.10, no lock) is a leg we did not
+    measure, which is not a leg that agreed: capped like an EQ miss, never Exact."""
+    f, exact = _fig_parts(row, pitched)
+    if f is None:
+        return None, False
+    return (100 if exact else max(_FIG_FLOOR, _js_round(f * 100))), exact
+
+
+def _legs_figure(row, pitched):
+    """The figure the speed and EQ legs alone allow this row: _version_figure with the
+    same-recording leg taken as proven (core 1.0)."""
+    return _version_figure(dict(row, core=1.0), pitched)[0]
+
+
+def _level_with(row, crown, pitched):
+    """LEVEL WITH THE ANSWER (task A2). `core` under CORE_SAME is read on the first 20s of
+    each upload (hard-rules: "Candidates are scored on their FIRST 20s only"), and two
+    uploads of one recording land anywhere from 0.6 to 1.0 depending on where their
+    matching section sits: clip 21's crown and its UK Bassline row both reach 1.000 in a
+    later window (A-verify-round1). So a row under CORE_SAME whose only lead over the answer
+    is that score, with speed and EQ legs no better than the answer's, is not measurably
+    closer: it takes the crown from nobody and prints level with it. Measured on clip 08:
+    "YG - My Hitta ft. Young Jeezy..." sits at the clip's tempo with its EQ inside both gaps
+    (core 0.674), "Mally-My Hitta Remix" at the same tempo is 6.6 off on slope (core 0.736);
+    the figure alone would have crowned Mally on 0.06 of first-window score.
+    True when `row` prints level with `crown` instead of its own higher figure."""
+    if crown is None or row is crown or row.get("url") == crown.get("url"):
+        return False
+    core = row.get("core")
+    if core is None or core >= E.CORE_SAME:
+        return False
+    rl, cl = _legs_figure(row, pitched), _legs_figure(crown, pitched)
+    return rl is not None and cl is not None and rl <= cl
+
+
+def _row_figure(row, pitched, crown_src=None, crown=None):
+    """The figure the page prints for ANY row of a gated payload (crate.html vmatch with
+    GATED on): a refused row (row["gate"], any kind) counts half and never above 45; the
+    upload the clip was re-pitched from keeps its own figure but is never Exact; a row that
+    is only ahead of the crown on a first-window score prints level with it (_level_with).
+    Written onto every row as `fig`, so the phone and the engine can be compared number
+    for number. None when the page prints a word instead."""
+    f, exact = _fig_parts(row, pitched)
+    if f is None:
+        return None
+    if (row.get("gate") or {}).get("kind"):
+        return min(_FIG_REF_CAP, _js_round((1.0 if exact else f) * 50))
+    if row.get("cut_from") or (crown_src and row.get("url") == crown_src):
+        pct = 94 if exact else max(_FIG_FLOOR, _js_round(f * 100))
+    else:
+        pct = 100 if exact else max(_FIG_FLOOR, _js_round(f * 100))
+    if crown is not None and _level_with(row, crown, pitched):
+        cf = _row_figure(crown, pitched, crown_src=crown_src)
+        if cf is not None and pct > cf:
+            pct = cf
+    return pct
+
+
+def _fig_label(res, measured, reup, crown, source_v):
+    """The clip's speed label the page will read (famSpeed) if `crown` is crowned: the
+    label-writing branches that run after the walk, replayed. The page's EQ leg depends on
+    it (on a pitched clip the dB scale is not admissible), so the crown is chosen on the
+    same label the page will use. `res["fig_pitched"]` carries the choice to the page."""
+    lbl = res.get("speed") or "as posted"
+    if reup is not None and measured and measured.get("confident") \
+            and measured.get("label") == "as posted":
+        lbl = "as posted"
+    if crown is not None:
+        if measured and measured.get("label") != "as posted":
+            lbl = measured["label"]
+        elif measured and measured.get("confident"):
+            pass
+        elif source_v is not None:
+            lbl = "%s ~%.2fx" % ("slowed" if source_v < 1.0 else "sped up", source_v)
+        else:
+            et = (crown.get("title") or "").lower()
+            t_slow = bool(re.search(r"\b(slowed|slow|daycore)\b", et))
+            t_fast = bool(re.search(r"\b(sped|speed ?up|nightcore)\b", et))
+            if (t_slow and "slow" not in lbl) or (t_fast and "sped" not in lbl):
+                lbl = "slowed" if t_slow else "sped up"
+    elif measured and measured.get("label") != "as posted":
+        lbl = measured["label"]
+    return lbl
+
+
+def _crown_by_figure(clean_all, top, source_v, shown_urls, pitched_of, null_of):
+    """Move the crown to the gate-clean row with the highest figure.
+
+    clean_all  [(pool_index, cand, source_v)] - every row that passed the pure gates and
+               the walk's own null
+    top        the walk's pick (None when it crowned nothing)
+    pitched_of f(cand, source_v) -> bool, the page's CLIP_PITCHED if that row is crowned
+    null_of    f(cand) -> refusal sentence or None: the time-reversed copy of that row
+               scores at least as high as the row itself (run at every core here, see
+               _time_reversed_null's floor)
+    Returns (top, source_v, info). A crown moves only to a STRICTLY higher figure, so every
+    tie keeps the engine's pick (rank_key, the fp lead, the tempo-band pick, bass_off,
+    plays). Only rows on screen compete: a hidden row cannot sit above the answer. A
+    candidate is taken only when it is still the highest under the label its own crowning
+    would write, and only when its time-reversed copy scores below it: a row whose match
+    survives being played backwards shows no evidence of the recording, so it never
+    overrides the engine. It is refused instead (info["null"]), and prints as a refused
+    row, so it cannot sit above the answer either."""
+    info = {"moved": False, "tried": [], "null": []}
+    rows = [(i, c, sv, _cand_row(c)) for i, c, sv in (clean_all or [])
+            if c.get("url") in shown_urls]
+    if not rows:
+        return top, source_v, info
+
+    refused = set()      # rows that failed the time-reversed check in this loop
+
+    def figs(p):
+        return {r[1].get("url"): (_version_figure(r[3], p)[0] or -1) for r in rows
+                if r[1].get("url") not in refused}
+
+    p0 = pitched_of(top, source_v)
+    f0 = figs(p0)
+    cur = ((_version_figure(_cand_row(top), p0)[0] or -1) if top is not None else -1)
+    info["from"] = {"title": (top or {}).get("title"), "fig": cur, "pitched": p0}
+    order = sorted(rows, key=lambda r: (-f0[r[1].get("url")], r[0]))
+    for i, c, sv, _row in order:
+        if f0[c.get("url")] <= cur:
+            break
+        if top is not None and c.get("url") == top.get("url"):
+            continue
+        if top is not None and _level_with(_row, _cand_row(top), p0):
+            # ahead only on the first-window score: it prints level with the pick instead
+            info.setdefault("level", []).append(c.get("title"))
+            continue
+        p1 = pitched_of(c, sv)
+        f1 = figs(p1)
+        mine = f1[c.get("url")]
+        # still the highest once crowned: under its own label, and with every other row
+        # printed as it would be under this crown (level rows included)
+        if any(f > mine for u, f in f1.items()
+               if u != c.get("url") and not _level_with(
+                   next(r[3] for r in rows if r[1].get("url") == u), _row, p1)):
+            info["tried"].append({"title": c.get("title"), "why": "not highest under its own label"})
+            continue
+        _t = time.time()
+        why = null_of(c)
+        info.setdefault("null_secs", []).append(round(time.time() - _t, 2))
+        if why:
+            info["null"].append({"i": i, "title": c.get("title"), "why": why})
+            refused.add(c.get("url"))
+            continue
+        info.update(moved=True, to={"title": c.get("title"), "fig": mine, "pitched": p1})
+        return c, sv, info
+    return top, source_v, info
+
+
+def _write_figs(res):
+    """TRUTH ON SCREEN (task A2): every row carries the figure the engine ranked it on,
+    `fig`, computed by _row_figure from the same fields and the same `fig_pitched` the page
+    reads. crate.html computes its own (vmatch) and never reads this, so a sweep can
+    compare the two number for number. Display only; any failure leaves the rows as they
+    were."""
+    try:
+        if not res.get("gates_on_rows"):
+            return
+        ex = res.get("exact") or {}
+        src_url = ex.get("url") if res.get("crown_is_source") else None
+        _rd = res.get("rendition") or {}
+        _fam = (_rd.get("speed_vs_source") if _rd.get("of_song") else res.get("speed")) or ""
+        _lbl_pitched = bool(_FIG_PITCH.search(_fam))
+        if isinstance(res.get("fig_pitched"), bool):
+            pitched = res["fig_pitched"]
+            if pitched != _lbl_pitched:
+                # the crown was chosen on _fig_label's replay of the label code; say so if
+                # the label that was actually written disagrees with it
+                E.tlog("fig_pitched_mismatch", 0.0, fig=pitched, label=_fam[:40])
+        else:
+            pitched = _lbl_pitched      # what the page falls back to without the flag
+        rows = list(res.get("candidates") or [])
+        if ex and all(r is not ex for r in rows):
+            rows.append(ex)
+        for r in rows:
+            r["fig"] = _row_figure(r, pitched, crown_src=src_url, crown=(ex or None))
+    except Exception as _ex:
+        E.tlog("write_figs", 0.0, error=type(_ex).__name__)
 
 
 def _official_refs(src, base_title, base_artist, prefix="om"):
@@ -3488,10 +3873,15 @@ def _phase2(ctx, on_cand=None):
                                               tilt_readable=(_sv is None))
                 if not _why:
                     _why = _crown_other_song(_cand, base_title, _reup, res)
+                if not _why:
+                    # TASK A: the rendition test is a gate on every row now, so the walk
+                    # (and the highest-figure pick below) steps past the plain original.
+                    _why = _rendition_original_why(_cand, res.get("rendition"))
                 if _why:
                     _rejects[_i] = (_why, _cand)
                     continue
                 _clean.append((_i, _cand, _sv))
+            _clean_all = list(_clean)      # the walk below consumes _clean; rows read this
 
             def _tempo_d(c):
                 _v = c.get("vspeed_locked")
@@ -3529,6 +3919,48 @@ def _phase2(ctx, on_cand=None):
                     continue
                 top, _source_v = _pick[1], _pick[2]
                 break
+            # TASK A: THE HIGHEST FIGURE IS THE CROWN. The walk above still decides every
+            # tie (see _crown_by_figure); a gate-clean row on screen that prints a strictly
+            # higher figure than its pick takes the crown, after the same null the walk
+            # runs. Any failure keeps the walk's pick: this can never cost the answer.
+            try:
+                _shown = {c.get("url") for c in candidates}
+                _okrows = [r for r in _clean_all if r[0] not in _rejects]
+
+                def _p_of(c, sv):
+                    return bool(_FIG_PITCH.search(
+                        _fig_label(res, measured, _reup, c, sv) or ""))
+
+                def _n_of(c):
+                    return _time_reversed_null(src.get("audio"), c.get("url"),
+                                               c.get("core"), floor=0.0)
+                _walk_top = top
+                top, _source_v, _fig_info = _crown_by_figure(
+                    _okrows, top, _source_v, _shown, _p_of, _n_of)
+                for _nr in _fig_info.get("null") or []:
+                    _rejects[_nr["i"]] = (_nr["why"], next(r[1] for r in _okrows
+                                                           if r[0] == _nr["i"]))
+                res["fig_pitched"] = _p_of(top, _source_v)
+                if _fig_info.get("moved"):
+                    res["crown_by_figure"] = {
+                        "from": (_walk_top or {}).get("title"),
+                        "from_fig": (_fig_info.get("from") or {}).get("fig"),
+                        "to_fig": (_fig_info.get("to") or {}).get("fig")}
+                    res.pop("crown_rejected", None)
+                    if _walk_top is None:
+                        res.pop("unsure", None)
+                        res.pop("weak_exact", None)
+                E.tlog("crown_by_figure", 0.0, moved=bool(_fig_info.get("moved")),
+                       frm=((_walk_top or {}).get("title") or "")[:60],
+                       to=((top or {}).get("title") or "")[:60],
+                       from_fig=(_fig_info.get("from") or {}).get("fig"),
+                       to_fig=(_fig_info.get("to") or {}).get("fig"),
+                       nulls=len(_fig_info.get("null") or []),
+                       level=len(_fig_info.get("level") or []),
+                       null_secs=_fig_info.get("null_secs"),
+                       tried=len(_fig_info.get("tried") or []))
+            except Exception as _fex:
+                E.tlog("crown_by_figure", 0.0, error=type(_fex).__name__)
             if top is None:
                 # every row above the bar was refused - report the FIRST refusal, which is
                 # the one about the strongest candidate and the one worth showing.
@@ -3537,6 +3969,8 @@ def _phase2(ctx, on_cand=None):
                     res["crown_rejected"] = _first_reject[0]
                     res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
+            _gate_rows(candidates, verified, _rejects, _clean_all, measured, base_title,
+                       _gate_label, mdir, _reup, res)
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.
@@ -3546,7 +3980,15 @@ def _phase2(ctx, on_cand=None):
                 # display list built from the same `verified` order, so match by url
                 # rather than assuming index 0.
                 exact = next((c for c in candidates
-                              if c.get("url") == top.get("url")), candidates[0])
+                              if c.get("url") == top.get("url")), None)
+                if exact is None:
+                    # The walk's pick sat past the 6 display rows. Showing candidates[0]
+                    # in its place (the old fallback) put a row the engine did not pick,
+                    # often one its gates refused, under "the exact version playing". The
+                    # pick joins the list instead, so the phone shows what the engine
+                    # found (task A2).
+                    exact = _cand_row(top)
+                    candidates.append(exact)
                 res["decisive"] = bool(edit.get("decisive"))
                 if _source_v is not None:
                     # Say what this crown IS. Not "the exact edit" - the SOURCE, with the
@@ -3786,6 +4228,7 @@ def _phase2(ctx, on_cand=None):
         else:
             res["result"] = "no_match"
         _rendition_final_speed(res)
+        _write_figs(res)
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key)
