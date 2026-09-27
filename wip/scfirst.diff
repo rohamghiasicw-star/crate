@@ -1,0 +1,93 @@
+--- /Users/rohamghiasi/crate/crate_engine.py	2026-09-27 13:34:36
++++ crate_engine.py	2026-09-27 19:44:17
+@@ -284,6 +284,16 @@
+ # is the broad hunt's creator lane that finds its crown), a hit outside it is carried
+ # into the broad pool.
+ FAST_EXIT_TEMPO = 0.06
++# SOUNDCLOUD FIRST (Roham 2026-09-27: "search the name in the SoundCloud search bar ... the first
++# one that shows up is probably going to be the TikTok mix"). Measured on the 10 live crowns that
++# are SoundCloud uploads: the exact upload is the FIRST result of "<song> tiktok" or "<song>
++# <slowed|sped up>" on 4 of 10 and in the top 3 on 5 of 10 (the bare title: 1 and 3). So the fast
++# path also downloads the top FAST_SC_TOP rows of those two SoundCloud searches. A row that came
++# ONLY from them may end the scan early only with recording-specific evidence: raw fp >= FAST_SC_FP
++# (core saturates on low-transient audio; fp does not), on top of every existing fast-exit gate.
++FAST_SC_FIRST = _speed_flag("CRATE_FAST_SC_FIRST", True)
++FAST_SC_TOP = 3
++FAST_SC_FP = 0.66
+ # ON A PITCHED CLIP, "IN THE BAND" IS NOT ENOUGH: THE ROW HAS TO CLAIM THE EDIT.
+ # The band above only asks "is this upload at the clip's tempo". On a clip phase 1
+ # measured as slowed or sped up that also admits the plain original whenever the clip is
+@@ -6274,7 +6284,15 @@
+     # FAST_EXIT_TEMPO). Carried into the broad pool with their scores and files, so the
+     # evidence is not paid for twice and the family wave can read the family off them.
+     _fast_carry, _fast_tmp = [], None
+-    if hints or pair or cm_cands:
++    _sc_first_q = []
++    if FAST_SC_FIRST and base_title:
++        _sct = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
++        _scw = ("slowed" if "slow" in (edit_label or "") else
++                "sped up" if "sped" in (edit_label or "") else "")
++        for _q in (_clean("%s tiktok" % _sct), _clean("%s %s" % (_sct, _scw)) if _scw else ""):
++            if _q and len(_q) > 3 and _q.lower() not in {x.lower() for x in _sc_first_q}:
++                _sc_first_q.append(_q)
++    if hints or pair or cm_cands or _sc_first_q:
+         hq, seen_hq = [], set()
+         for q in _pair_queries(pair):
+             if q.lower() not in seen_hq:
+@@ -6283,9 +6301,28 @@
+             for q in (_clean(h), _clean("%s %s" % (h, edit_label or ""))):
+                 if q and len(q) > 3 and q.lower() not in seen_hq:
+                     seen_hq.add(q.lower()); hq.append(q)
+-        if hq or cm_cands:
++        if hq or cm_cands or _sc_first_q:
+             _ft0 = time.time()
++            _scx = None
++            if _sc_first_q:
++                _scx = ThreadPoolExecutor(max_workers=len(_sc_first_q))
++                _scf = [_scx.submit(_run_search, ("scsearch%d:" % (FAST_SC_TOP + 2), "soundcloud", _q))
++                        for _q in _sc_first_q]
+             hc = (search_edits(hq, 6)[:FAST_POOL] if hq else [])
++            if _scx is not None:
++                _have = {c["url"] for c in hc}
++                _scrows = []
++                for _f in _scf:
++                    try:
++                        _rows = _f.result(timeout=12)[:FAST_SC_TOP]
++                    except Exception:
++                        _rows = []
++                    for _r in _rows:
++                        if _r["url"] not in _have:
++                            _have.add(_r["url"]); _r["sc_first"] = True; _scrows.append(_r)
++                _scx.shutdown(wait=False)
++                hc = hc + _scrows
++                tlog("fast_sc_first", time.time() - _ft0, q=_sc_first_q, new=len(_scrows))
+             # Tag, don't drop. When the hint search happens to surface the very URL the
+             # creator linked - measured on this clip, where "obsessed mariah carey" finds
+             # it in 2.8s - the row must still carry the provenance, or the one fact that
+@@ -6321,7 +6358,8 @@
+                                     FAST_POOL + len(cm_cands),
+                                     clip_ctx=fctx, on_scored=_fast_hit)
+                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
+-                good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
++                good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE
++                        and (not c.get("sc_first") or (c.get("fp") or 0) >= FAST_SC_FP)]
+                 # THE SHORTCUT NEEDS A ROW THE SERVER WILL KEEP. core alone says "same
+                 # recording"; the gate also wants the clip's tempo. #21 exited here on a
+                 # 1.176x row and got "unsure" for it. Naive vspeed defaults to 1.0 when
+@@ -6357,6 +6395,16 @@
+                     good.sort(key=lambda c: (-(c.get("core") or 0),
+                                              0 if c.get("creator_link") else 1,
+                                              -(c.get("plays") or 0)))
++                    # the same raw-fingerprint lead the main ranking applies (FP_LEAD): among
++                    # saturated rows a clear fp leader goes first instead of the most played
++                    if (FP_LEAD > 0 and len(good) > 1
++                            and all((c.get("fp") or 0) > 0 for c in good)):
++                        _bf = sorted(good, key=lambda c: -(c.get("fp") or 0))
++                        if ((_bf[0].get("fp") or 0) - (_bf[1].get("fp") or 0) >= FP_LEAD
++                                and _bf[0] is not good[0]):
++                            good.remove(_bf[0]); good.insert(0, _bf[0])
++                    tlog("fast_exit", 0.0, top=(good[0].get("title") or "")[:60],
++                         sc_first=bool(good[0].get("sc_first")), fp=good[0].get("fp"))
+                     # speed references keep the order they always had
+                     _refs = [c["path"] for c in good if c.get("path")][:3]
+                     if _demote:                 # FAST_EXIT_CLAIM: plain in-band rows last
