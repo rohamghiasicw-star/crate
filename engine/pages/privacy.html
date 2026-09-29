@@ -105,120 +105,139 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
     <a class="back" href="/">Open the app</a>
   </div>
   <h1>Privacy policy</h1>
-  <p class="lede">Addify names the exact version of the song playing in a clip. Here's what that takes, what it doesn't, and what happens to it. Written from what the code actually does.</p>
-  <p class="eff">Effective <span class="ph">[[EFFECTIVE_DATE]]</span></p>
+  <p class="lede">Addify names the exact version of the song playing in a clip. Here's what that takes, what it doesn't, and what happens to it. Written from what the app and its server actually do.</p>
+  <p class="eff">Effective 29 September 2026</p>
 
   <div class="card">
     <h2>The short version</h2>
     <ul>
-      <li><b>No accounts.</b> Your "account" is this browser's storage on your own device. No email, no password, no sign-up.</li>
-      <li><b>Audio is never kept.</b> A clip's audio lives in a temporary folder for one lookup, then it's deleted. Only fingerprints and text results exist after that.</li>
-      <li><b>The server keeps one thing about you:</b> feedback rows you chose to send. You can erase them from inside the app.</li>
-      <li><b>No analytics, no ad SDKs, no trackers.</b> Nothing on the page reports to a third party.</li>
+      <li><b>No accounts.</b> No sign-up, no email, no password. What you save lives on your phone.</li>
+      <li><b>Audio is never kept.</b> Clip audio and your 12-second recordings are used for one lookup, then deleted.</li>
+      <li><b>No analytics, no ads, no tracking.</b> No third-party SDKs, and nothing follows you across apps or websites.</li>
+      <li><b>You can erase what you sent.</b> <span class="path">Profile &rsaquo; Delete account</span> removes your votes from our server and clears the app.</li>
     </ul>
-    <div class="callout"><b>Data we do not collect:</b> your name, email, phone number, contacts, location, photos, payment details, device identifiers, advertising ID, or your microphone outside the 12 seconds you tap to listen.</div>
+    <div class="callout"><b>We don't collect:</b> your name, email, phone number, contacts, location, photos, payment details, advertising ID or device identifiers. The microphone is used only for the 12 seconds after you tap to listen.</div>
   </div>
 
-  <div class="sect">What we process</div>
+  <div class="sect">Who runs Addify</div>
   <div class="card">
-    <h2>When you share a link</h2>
+    <p><b>Addify</b> is responsible for your data under this policy. Questions or requests: <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off-->.</p>
+  </div>
+
+  <div class="sect">What happens when you use it</div>
+  <div class="card">
+    <h2>You share or paste a link</h2>
     <ul>
-      <li>The TikTok or Instagram link you share goes to our server.</li>
-      <li>The server fetches the clip's audio into a temporary folder, cuts it into short windows of about 12 seconds, and fingerprints those windows at several playback speeds. The folder is deleted when the lookup ends, whether it found the song or not.</li>
-      <li>The clip's public caption and comments may be read to help name the song. They're used for that lookup and not stored.</li>
-      <li>The result (song, artist, speed, links) comes back as text. The server holds it in memory so the same clip doesn't have to be scanned twice. That memory is wiped when the server restarts, and it never contains audio.</li>
+      <li>The TikTok or Instagram link goes to our server.</li>
+      <li>The server downloads the clip's audio to a temporary folder, cuts short windows from it and fingerprints them. The folder is deleted when the lookup ends, found or not.</li>
+      <li>The clip's public caption and comments may be read to help name the song.</li>
+      <li>If the clip has vocals over another beat, the server may turn a few seconds of the words into text on the server itself (no outside service), then look those lines up on Genius. The words you see under a result come from that.</li>
+      <li>To find the exact upload, the server searches SoundCloud and YouTube and fetches short pieces of candidate uploads to compare against the clip. Those pieces are deleted after the comparison. They're never stored and never offered to you as a download.</li>
+      <li>The finished answer (song, artist, speed, links and the clip link) is saved on our server for up to 14 days so the same clip is instant next time. It holds no audio and nothing about who asked.</li>
     </ul>
   </div>
   <div class="card">
-    <h2>When you tap to listen</h2>
-    <p>Your browser records 12 seconds of room audio after you tap the microphone, and only then. The recording goes to our server, is written to a temporary folder, fingerprinted, and deleted before the answer is sent back. It's never stored.</p>
+    <h2>Shazam on your iPhone</h2>
+    <p>In the iOS app, the server can send your phone short pieces (up to 12 seconds) of the clip you shared. Apple's ShazamKit on your phone turns each piece into a signature and matches it with Apple's Shazam service. This is the clip's audio, not your microphone. The pieces stay in memory and are never saved.</p>
   </div>
   <div class="card">
-    <h2>When you send feedback</h2>
-    <p>On a no-match screen you can tap to confirm or reject a guess. That sends the clip link, the guessed song and artist, and your yes or no. The server stores that row with a random id and a timestamp. Nothing in it identifies you. Your device remembers the id so the row can be erased later.</p>
+    <h2>You tap to listen</h2>
+    <p>The app asks for microphone access the first time. After you tap, it records 12 seconds of the music around you, and only then. The recording goes to our server, is fingerprinted in a temporary folder and deleted before the answer comes back. Shazam receives a signature made from it, never the recording.</p>
+  </div>
+  <div class="card">
+    <h2>You search</h2>
+    <p>The words you type (a lyric, a vibe or a creator's handle) go to our server, which searches Genius, SoundCloud and YouTube with them. Results are held in server memory for about 15 minutes so a repeat search is fast. Search words aren't logged. Your last 8 searches are kept on your phone.</p>
+  </div>
+  <div class="card">
+    <h2>You play a preview</h2>
+    <p>When you tap play, the app opens YouTube's or SoundCloud's own player inside the app and loads their player scripts. From then on your phone talks to YouTube or SoundCloud directly: they receive your IP address and device details and may use their own cookies or storage, under their privacy policies. Cover art and thumbnails load from YouTube, SoundCloud and Apple image servers the same way. Other buttons (Spotify, Apple Music, TikTok) open those apps or sites.</p>
+  </div>
+  <div class="card">
+    <h2>You rate a result</h2>
+    <p>The check or X under a result sends the clip link, the song and artist we named, the upload we picked (its title and link) and your answer. After an X, "Which one was it?" sends the title and link of the version you pick, or that it wasn't in the list. The yes or no on a no-match screen sends the clip link, the guessed song and artist and your answer. Each row is stored with a random id and a time. Nothing in it identifies you. Your phone keeps the ids so Delete account can erase the rows.</p>
+    <p>An X also goes on our fix list with the same id, and the developer gets a Telegram message with the clip link, the answer the app gave and your pick. When the right upload is found, the clip link and that upload go into our corrections list, so everyone who scans that clip gets the right answer. While a clip you marked wrong is waiting, the app sends its link to our server when you open it, to ask if the fix is ready, and tells you when it is.</p>
   </div>
 
-  <div class="sect">What stays on your device</div>
+  <div class="sect">What stays on your phone</div>
   <div class="card">
-    <p>Stored in your browser only. Never uploaded to us.</p>
+    <p>Kept in the app's storage on your phone. Not uploaded to us.</p>
     <ul>
-      <li>Your library of saved finds</li>
-      <li>Your scan history (the last 500 scans) and clips that didn't match</li>
-      <li>The free-scan counter for the month</li>
-      <li>Spotify, only after you connect: your access token, refresh token, expiry, the playlist id and your Spotify display name. We use PKCE, so there's no client secret anywhere.</li>
-      <li>The ids of feedback rows you sent</li>
-      <li>Settings: auto-save, monthly playlists, onboarding done, and your theme</li>
+      <li>Your Finds, liked songs and scan history (the last 500 scans), plus clips that didn't match yet</li>
+      <li>Links waiting to be scanned, including a link you shared into Addify from another app</li>
+      <li>Your last 8 searches, your check or X votes and your picks after an X</li>
+      <li>Clips you marked wrong that are still waiting for a fix</li>
+      <li>The ids of rows you sent, so they can be erased</li>
+      <li>Settings: auto-save, monthly playlists, onboarding done, theme</li>
+      <li>Spotify, only if you connected it: your Spotify tokens, playlist id and display name. Calls to Spotify go straight from your phone to Spotify. Our server never sees them.</li>
     </ul>
-    <p>Our server never sees your Spotify tokens. Calls to Spotify go straight from your device to Spotify.</p>
   </div>
 
-  <div class="sect">Where data goes</div>
+  <div class="sect">Who receives something</div>
   <div class="card">
-    <h2>Third parties that receive something during a lookup</h2>
-    <p>None of them receive anything about you. They receive a link you chose to share, or a song title.</p>
+    <p>None of these receive your name or contact details. They receive a link, a song title or search words, or an audio signature.</p>
     <div class="rows">
-      <div class="row"><div class="who">Shazam</div><div class="what">Receives an audio signature computed on our server from a window of the clip, not the recording itself. This is how the base song gets named.</div></div>
-      <div class="row"><div class="who">TikTok, Instagram</div><div class="what">Receive the link you shared, so the clip's public page, caption and comments can be read.</div></div>
-      <div class="row"><div class="who">tikwm.com</div><div class="what">A third-party TikTok mirror our server may use as a fallback to fetch a clip or its comments. It receives the link you shared.</div></div>
-      <!-- OWNER: the review audit (review/appstore-review-audit.md, 5.1.2(i)) says this host must be
-           disclosed or removed, and that removing it is better. This line is the disclosure. Delete
-           the line if the tikwm path is removed from crate_engine.py. -->
-      <div class="row"><div class="who">SoundCloud, YouTube</div><div class="what">Receive search queries built from the song title, the artist and the uploader's handle. Candidate uploads are downloaded to the temporary folder for comparison, then deleted.</div></div>
-      <div class="row"><div class="who">Google, Brave, DuckDuckGo</div><div class="what">May receive the same title-based queries when the engine looks for an edit's name.</div></div>
-      <div class="row"><div class="who">Apple Music, Deezer</div><div class="what">Receive the song title and artist to build the official links shown under a result.</div></div>
-      <div class="row"><div class="who">Spotify</div><div class="what">Called from your own device with your own token, only after you connect, to create and fill the "Found with Addify" playlist.</div></div>
+      <div class="row"><div class="who">Apple (Shazam)</div><div class="what">An audio signature made from a piece of the clip or of your 12-second recording, from your phone's ShazamKit or from our server. Never the recording itself.</div></div>
+      <div class="row"><div class="who">TikTok, Instagram</div><div class="what">The link you shared, so the clip's public page, caption and comments can be read. To read some public reels our server signs in with the developer's own Instagram account, never yours.</div></div>
+      <div class="row"><div class="who">tikwm.com</div><div class="what">A TikTok mirror our server may use as a backup to fetch a clip or its comments. It receives the link you shared.</div></div>
+      <div class="row"><div class="who">SoundCloud, YouTube</div><div class="what">Search words built from the song, the artist and the uploader's handle, or the words you typed. When you play a preview, their player talks to your phone directly.</div></div>
+      <div class="row"><div class="who">Genius</div><div class="what">Lyric lines heard in the clip, or the words you typed in search.</div></div>
+      <div class="row"><div class="who">Google, Brave, DuckDuckGo</div><div class="what">Title-based searches when the server looks for an edit's name.</div></div>
+      <div class="row"><div class="who">Apple Music, Deezer</div><div class="what">The song and artist, to build the links under a result.</div></div>
+      <div class="row"><div class="who">tokchart.com</div><div class="what">Asked by our server for the trending chart. Nothing about you is sent.</div></div>
+      <div class="row"><div class="who">Telegram</div><div class="what">When you tap X: a message to the developer with the clip link, the answer the app gave and your pick.</div></div>
+      <div class="row"><div class="who">Cloudflare</div><div class="what">Carries traffic between the app and our server, like any network provider.</div></div>
     </div>
-    <p style="margin-top:10px">The trending screen is built by our server from public TikTok data and tokchart.com. Nothing about you is sent to either.</p>
-    <p>When the developer runs the engine on their own machine, it can use the developer's own Instagram login to read a public reel. That is the developer's account, never yours, and it's off by default.</p>
   </div>
 
-  <div class="sect">Retention</div>
+  <div class="sect">How long we keep things</div>
   <div class="card">
     <ul>
       <li><b>Audio:</b> deleted at the end of each lookup. Never written anywhere else.</li>
-      <li><b>Results:</b> server memory only. Gone when the server restarts.</li>
-      <li><b>Feedback rows:</b> kept until you erase them.</li>
-      <li><b>Server logs:</b> the server doesn't write an access log, so it doesn't record IP addresses or request history. Traffic reaches it through a Cloudflare tunnel, which handles the connection the way any network carrier does. We don't receive or keep IP addresses from it.</li>
-      <li><b>Tuning log:</b> the developer can switch on a timing log while tuning the engine. It holds stage timings and the clip link, not audio and nothing about you. It's off by default.</li>
+      <li><b>Answers for a link:</b> up to 14 days on our server.</li>
+      <li><b>Search results:</b> about 15 minutes, in server memory.</li>
+      <li><b>Your check or X, your picks and no-match answers</b> (and the fix-list copy of an X): until you erase them.</li>
+      <li><b>Corrections list:</b> a clip link and the right upload for it, kept so that clip keeps getting the right answer. Nothing about who reported it.</li>
+      <li><b>Your IP address:</b> it reaches our server with each request, as with any website. We don't log it or store it. If abuse limits are on, the server counts requests against a salted hash of it, kept in memory only and gone when the server restarts.</li>
+      <li><b>Timing log:</b> the server keeps a log of how long each step took, with the clip link and the song searches it made. No audio, no IP address, nothing that identifies you.</li>
     </ul>
   </div>
 
   <div class="sect">Deleting your data</div>
   <div class="card">
     <ul>
-      <li><span class="path">Profile &rsaquo; Delete account</span> erases your feedback rows on the server, clears everything stored on your device, and reloads the app. No email, no call.</li>
-      <li><span class="path">Profile &rsaquo; Sign out of Spotify</span> (or Settings &rsaquo; Disconnect) drops the Spotify tokens from your device. To revoke Addify on Spotify's side as well, remove it under the apps section of your Spotify account settings.</li>
-      <li>Cleared your browser first, so the app no longer has your feedback ids? Email <span class="ph">[[CONTACT_EMAIL]]</span> with the link you scanned and roughly when. We'll erase the matching rows.</li>
+      <li><span class="path">Profile &rsaquo; Delete account</span> erases your votes, picks and fix-list rows on our server, clears everything the app stored on your phone and reloads the app. No email, no waiting.</li>
+      <li>It can't reach a Telegram message already sent to the developer or a fix already in the corrections list. Neither says who you are. Email <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--> with the clip link and we'll remove them.</li>
+      <li><span class="path">Profile &rsaquo; Sign out of Spotify</span> removes the Spotify tokens from your phone. To revoke Addify on Spotify's side too, remove it in your Spotify account's apps settings.</li>
+      <li>Deleted the app before you erased your votes? Email <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--> with the link you rated and roughly when, and we'll erase the rows.</li>
     </ul>
   </div>
 
   <div class="sect">Things we don't do</div>
   <div class="card">
     <ul>
-      <li>No third-party SDKs: no analytics, no ads, no crash reporting, no data brokers.</li>
-      <li>No tracking across apps or websites.</li>
+      <li>No analytics, advertising or crash-reporting SDKs. No data brokers.</li>
+      <li>No tracking across other companies' apps or websites.</li>
       <li>No selling or sharing of data for advertising.</li>
-      <li>No in-app playback or download of the clips or the songs. Results link out to the platforms.</li>
+      <li>No downloads of songs or clips for you. Previews play in YouTube's and SoundCloud's own players, and everything else links out.</li>
     </ul>
   </div>
 
   <div class="sect">Children</div>
   <div class="card">
-    <p>Addify isn't directed at children under <span class="ph">[[MINIMUM_AGE]]</span>, and we don't knowingly process their data. If you think a child has used it, email <span class="ph">[[CONTACT_EMAIL]]</span>.</p>
+    <p>Addify isn't directed at children under 13, and we don't knowingly collect their data. If you think a child has sent us something, email <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--> and we'll erase it.</p>
   </div>
 
   <div class="sect">Changes</div>
   <div class="card">
-    <p>If this policy changes, the new version is posted here with a new effective date.</p>
+    <p>If this policy changes, the new version goes up here with a new effective date.</p>
   </div>
 
   <div class="sect">Contact</div>
   <div class="card">
-    <p><b><span class="ph">[[COMPANY_LEGAL_NAME]]</span></b><br><span class="ph">[[POSTAL_ADDRESS]]</span><br><span class="ph">[[CONTACT_EMAIL]]</span></p>
-    <p>This policy is governed by the laws of <span class="ph">[[JURISDICTION]]</span>.</p>
+    <p><b>Addify</b><br><!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--></p>
   </div>
 
-  <div class="foot"><a href="/privacy">Privacy</a><span class="dot">&middot;</span><a href="/support">Support</a><span class="dot">&middot;</span><a href="/terms">Terms</a><span class="dot">&middot;</span><span>Effective <span class="ph">[[EFFECTIVE_DATE]]</span></span></div>
+  <div class="foot"><a href="privacy.html">Privacy</a><span class="dot">&middot;</span><a href="support.html">Support</a><span class="dot">&middot;</span><a href="terms.html">Terms</a><span class="dot">&middot;</span><span>Effective 29 September 2026</span></div>
 </div>
 </body>
 </html>
