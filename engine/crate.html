@@ -391,7 +391,7 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
    DIALV3 2026-09-29: KONNOR'S SPOKE DIAL, BUILT TO HIS TABLE (addify-harness/dialv3/KONNOR-SPEC.md,
    "Addify Scanning Dial Redesign"; Roham: "a clean dial ... make the lines skinnier and thinner and
    going inside the circle right to the center"). Sizes are his 920-wide mock units: --u is one
-   unit, 0.437 px on a 402-wide phone and proportional on every other width.
+   unit, 0.437 px on a 402-wide phone and proportional on every other phone width.
      face     circle r254, gradient #1A1626 -> #13101B, 2 u border white 6%
      spokes   90 straight lines every 4 deg, 3.4 u thick with round ends, r140 -> r242, fading
               30% at the centre to 100% at the rim (one radial mask on the layer)
@@ -404,16 +404,23 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
               needle stop at its edge, and it carries the number (88 u, % 40 u, stage 22 u)
    A spoke counts as scanned when its angle is at or behind the needle. Every change eases over
    300 ms linear (--rl-t); .fin shortens that for the finishing run's 16 ms frames, .rs turns it
-   off for the reset. The box is 560 u but lays out as the 508 u face, so the dial sits centred
-   where the old one sat. ONE component, rlHTML() / rlPaint(), drawn twice: #dial on the scan
+   off for the reset. The box is 560 u but lays out in the old dial's box (--dfp), so the dial
+   sits centred where the old one sat. ONE component, rlHTML() / rlPaint(), drawn twice: #dial on the scan
    screen (the naming dial) and .rl.sm, 45 spokes, as step 2 of the hunt tracker (the edit hunt's
    own 0-100). At 100 it turns mint once, with one bloom. rgba() of channel tokens only, no
    color-mix() and no @property: iOS 16.0. */
-:root{--u:calc(min(100vw,402px)/920)}
-@media (max-height:690px){:root{--u:.36px}}   /* short phones: the old 184 px rule's size */
+/* FIX 2026-09-29: proportional on every phone width, 375 to 430 (u = width / 920; it was capped
+   at 402, so a 430 phone got the 402 size). Wider than any phone (desktop, iPad) keeps the 402
+   size. --dfp is the old dial's layout box (224 / 208 at 380 or less / 184 on short phones): the
+   dial lays out in exactly that, so its centre and every other element on the scan screen sit
+   where they did before at every width. */
+:root{--u:calc(min(100vw,430px)/920);--dfp:224px}
+@media (max-width:380px){:root{--dfp:208px}}
+@media (min-width:431px){:root{--u:calc(402px/920)}}
+@media (max-height:690px){:root{--u:.36px;--dfp:184px}}   /* short phones: the old 184 px rule's size */
 .rl{--rl-t:300ms;--box:560;--u2:calc(2*var(--u));
   position:relative;width:calc(var(--box)*var(--u));height:calc(var(--box)*var(--u));
-  margin:calc(-26*var(--u)) auto;isolation:isolate;flex:none}
+  margin:calc((var(--dfp) - var(--box)*var(--u))/2) auto;isolation:isolate;flex:none}
 .rl>*{position:absolute;pointer-events:none}
 .rl-face,.rl-cap,.rl-trail{left:50%;top:50%;border-radius:50%}
 .rl-face{width:calc(508*var(--u));height:calc(508*var(--u));margin:calc(-254*var(--u)) 0 0 calc(-254*var(--u));
@@ -455,7 +462,7 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
   color:var(--muted);transition:color .32s ease}
 .rl-num.e1 i{margin-left:calc(-14*var(--u))}  /* tabular numerals give a trailing 1 the width of a 0 */
 .rl-stage{font-size:calc(22*var(--u));font-weight:700;letter-spacing:calc(6*var(--u));margin-right:calc(-6*var(--u));
-  text-transform:uppercase;line-height:1;color:var(--muted);transition:color .32s ease}
+  text-transform:uppercase;line-height:1;color:var(--text);transition:color .32s ease}   /* white, as in the mock */
 .rl.done .rl-num i,.rl.done .rl-stage{color:var(--good)}
 /* 100: one bloom off the face */
 .rl::after{content:"";position:absolute;inset:calc(26*var(--u));border-radius:50%;border:2px solid var(--good);opacity:0;pointer-events:none}
@@ -2191,38 +2198,45 @@ function headline(t){document.getElementById('listening').textContent=t;}
    equal ... balanced ... it shouldn't shoot up halfway and then bang. Smooth.").
    pgNow is the scan screen's dial: naming the song, tap to /base. hgNow is the tracker's small dial
    on the result card: the edit hunt, from the moment the card takes the screen to the exact edit.
-   Each dial turns at ONE constant speed, calibrated on real scans so it reaches 90 at about the
-   p77 of that phase's real duration (dialv3/BUILD.md: 451 page-clock timelines rebuilt from the
-   engine logs of the gate_fn45, speedmax prove and realdial runs). Past 90 it eases into a slow
-   steady creep toward 97 and keeps creeping, so a long scan never stops and never parks low.
+   Each dial turns at ONE constant speed, calibrated on real scans so it reaches 90 at the p77.5 of
+   that phase's real duration (dialv3/BUILD.md: 567 page-clock timelines rebuilt from the engine
+   logs of the gate_fn45, speedmax prove + prove_ab and realdial runs). Past 90 it eases into a
+   slow creep at one steady speed, sized so every real scan (the longest named at 36.9 s, the
+   longest hunt 43 s) is still moving at that speed inside 90 to 97 when its answer lands. Only a
+   scan longer than any real one goes past 97: there the creep slows to a crawl toward 99.8, so
+   the needle never parks (FIX 2026-09-29: the creep used to fade out after ~14 s and sat still
+   just under 97, 85 s on the slowest recorded scan).
    When the answer lands early, the dial runs smoothly to 100 in 400-800 ms, starting from its own
    speed (a Hermite ease, never a snap, never backwards). The engine's own signals only ever speed
    the sweep up, gently: when /progress says the scan is further along than the dial shows, the
-   dial's clock runs up to 1.15x, ramped over 300 ms, until it catches up. They never move it
+   dial's clock runs up to 1.10x, ramped over 300 ms, until it catches up. They never move it
    directly, so nothing jumps. The pure part sits between the DIALV3-PACE-CORE markers so
    dialv3/sim.js replays this exact code against the recordings. */
 var pgNow=0, pgCap=0, pgTimer=null;
 /* DIALV3-PACE-CORE-BEGIN */
 var DVP={
-  // v: points a second; 90 at v/90 s (naming 11.4 s, the p77.5 of 451 real /base times; hunt:
-  // BUILD.md), then the ease (tau) into the creep c toward `top`, which fades out over tau2
-  scan:{v:7.9, e:90, c:.2, tau:.45, tau2:5},
-  hunt:{v:4.35, e:90, c:.2, tau:.8, tau2:5},
-  top:97, kmax:1.15, kramp:.3, fmin:.4, fmax:.65, fper:.005, dtmax:.25,
+  // v: points a second, so 90 lands at 90/v s: naming 11.48 s, the p77.5 of 567 real /base times;
+  // hunt 21.04 s after the card takes the screen, the p77.5 of 558 real hunts (BUILD.md). Past 90:
+  // the ease (tau) into the creep c, which keeps its speed until the dial reaches `top`; past `top`
+  // (longer than any recorded scan) it slows over tau2 to the crawl cf, and stops only at `lim`
+  scan:{v:7.84, e:90, c:.13, tau:.45, tau2:6, cf:.02},
+  hunt:{v:4.28, e:90, c:.13, tau:.8, tau2:6, cf:.02},
+  top:97, lim:99.8, kmax:1.10, kramp:.3, fmin:.46, fmax:.65, fper:.0038, dtmax:.25,
   // where a milestone typically lands on the naming dial: 90 x its median share of the naming
   // time (audio in 0.22, early name 0.75)
   ahead:{audio:20, named:67},
   // the hunt's counts on the hunt dial: 90 x the median share of the hunt at which each step
   // happens (hold over 0.30, first versions queued 0.35, find_edit 0.89, speed 0.95, crown 1.0)
   hE:{he:27, q:31, k:[80,85,90], R:6}};
-function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau-P.c*P.tau2)/P.c); }
+/* seconds past 90 at which the steady creep reaches `top` */
+function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau)/P.c); }
 /* the steady curve at virtual second x: [value, speed] */
 function dvCurve(P,x){
   var t90=P.e/P.v; if(x<=t90) return [P.v*x,P.v];
-  var d=x-t90, D1=dvD1(P), a=P.v-P.c, ea=Math.exp(-d/P.tau), val=P.e+a*P.tau*(1-ea), sp=a*ea, eb;
+  var d=x-t90, D1=dvD1(P), a=P.v-P.c, ea=Math.exp(-d/P.tau), val=P.e+a*P.tau*(1-ea), sp=a*ea, s, eb;
   if(d<=D1){ val+=P.c*d; sp+=P.c; }
-  else { eb=Math.exp(-(d-D1)/P.tau2); val+=P.c*D1+P.c*P.tau2*(1-eb); sp+=P.c*eb; }
-  return [Math.min(val,DVP.top),sp]; }
+  else { s=d-D1; eb=Math.exp(-s/P.tau2); val+=P.c*D1+P.cf*s+(P.c-P.cf)*P.tau2*(1-eb); sp+=P.cf+(P.c-P.cf)*eb; }
+  return val>=DVP.lim?[DVP.lim,0]:[val,sp]; }
 function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null}; }
 /* the engine says this dial should be at least at E: speed up (never jump) until it is */
 function dvAhead(s,E){ if(s&&!s.fin&&E>s.E) s.E=Math.min(DVP.top,E); }
@@ -2237,7 +2251,8 @@ function dvStep(s,now){
   s.k=kt>s.k?Math.min(kt,s.k+dk):Math.max(kt,s.k-dk);
   s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k; if(c[0]>s.val) s.val=c[0];
   return s.val; }
-/* the answer: a run to 100 over 400 ms + 5 ms a point (at most 650 ms, so the eased needle lands inside 800 ms of the answer arriving) that leaves at the dial's
+/* the answer: a run to 100 over 460 ms + 3.8 ms a point (at most 650 ms, so the eased needle lands inside 800 ms of the answer arriving;
+   at least 460 ms so a run of under a point, a very long scan's, still lands inside 400-800 ms, FIX 2026-09-29) that leaves at the dial's
    own speed and lands softly (cubic Hermite, monotone: the start slope is capped at 3x the gap) */
 function dvFinish(s,now){
   if(s.fin) return s.fin;
@@ -2380,6 +2395,21 @@ function pgPaint(){
    times mid-hunt, so the tracker is drawn with the dial already painted (huntTracker) and
    repainted here. */
 function hgPaint(){ huntPctPaint(rlText(hgNow),hgNow); }
+/* right after a card rebuilt mid-hunt: move the new tracker's needle to where the old one has got
+   to while the card was being built (rlShown's reading + its speed x the build time), with no
+   easing, resolve that, then ease on to the value at once instead of leaving it parked until the
+   next tick (measured without this: a 0.1 s stop at the 4 s budget re-render, then a 1.3x catch-up) */
+var hgRb=null;
+function hgRebuilt(){
+  var el=document.querySelector('#result .htrack .rl'), r=el&&el.querySelector('.rl-rnd'), a, tr;
+  if(!r||!hgS||!hgRb) return;
+  a=Math.min(hgNow,hgRb.vn+Math.max(0,hgS.sp)*Math.max(0,pgClock()-hgRb.t)); hgRb=null;
+  tr='rotate('+(a*3.6).toFixed(2)+'deg)';
+  el.classList.add('rs');
+  [el.querySelector('.rl-rtr'),r].forEach(function(x){ if(x){ x.style.transform=tr; x._rltransform=tr; } });
+  void getComputedStyle(r).transform;
+  el.classList.remove('rs'); void getComputedStyle(r).transform;
+  hgPaint(); }
 function huntPctText(){ return rlText(Math.max(0,Math.min(100,hgNow))); }
 function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   if(h&&h.st==='hold') x+=', getting the clip details';
@@ -2497,7 +2527,7 @@ function progPollOn(u){
 }
 function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; progBusy=false;}
 /* RUN IT UP TO 100, do not snap to it (Roham: "it keeps going up until 100, not stop then jump").
-   DIALV3 2026-09-29: the finishing run is dvFinish (pace core): 400 ms + 5 ms a point, at most 650
+   DIALV3 2026-09-29: the finishing run is dvFinish (pace core): 460 ms + 3.8 ms a point, at most 650
    ms, leaving at the dial's own speed and landing softly, so there is no kink where the
    steady sweep ends. It paints at 16 ms frames on ITS OWN timer, which nothing else can clear,
    under a lock that makes every other writer a no-op, with a backstop so the caller is never
@@ -2512,7 +2542,9 @@ function pgDone(){
   if(pgS) dvStep(pgS,now);
   else { pgS=dvNew(DVP.scan,now); pgS.val=pgNow; }   // listen mode: finish from its creep
   if(pgS.val>pgNow) pgNow=pgS.val;
-  if(100-pgNow<0.5){ pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP; }
+  // only a dial already at 100 skips the run (FIX 2026-09-29: was < 0.5, and the long-scan crawl can
+  // now sit above 99.5, which would have snapped)
+  if(100-pgNow<0.05){ pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP; }
   f=dvFinish(pgS,now);
   pgFinP=new Promise(function(done){
     var end=function(){
@@ -2538,7 +2570,7 @@ function hgDone(){
   Array.prototype.forEach.call(document.querySelectorAll('#result .htrack .rl'),function(e){e.classList.add('fin');});
   var tok=++hgFinTok, now=pgClock(), guard=null, f;
   dvStep(hgS,now); if(hgS.val>hgNow) hgNow=hgS.val;
-  if(100-hgNow<0.5){ hgNow=100; hgPaint(); hgFinP=Promise.resolve(); return hgFinP; }
+  if(100-hgNow<0.05){ hgNow=100; hgPaint(); hgFinP=Promise.resolve(); return hgFinP; }
   f=dvFinish(hgS,now);
   hgFinP=new Promise(function(done){
     var end=function(){
@@ -3253,6 +3285,7 @@ function huntTracker(){
   // DIALV3: the edit hunt's own 0-100; a card rebuilt mid-hunt draws the needle where it is
   // on screen (rlShown), so it carries on instead of leaping ahead
   var v=Math.max(0,Math.min(100,hgNow)), vn=rlShown(document.querySelector('#result .htrack .rl'),v), t=rlText(v);
+  if(vn<v){ hgRb={vn:vn,t:pgClock()}; setTimeout(hgRebuilt,0); }
   return '<div class="htrack hdial" role="status" aria-live="polite" aria-label="Song identified. Matching the edit.">'+
     '<div class="hs done"><span class="hc">'+ok+'</span><span class="hl">Song ID’d</span></div>'+
     '<span class="hbar done"></span>'+
@@ -5170,7 +5203,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       headline(d.base_song);
       // TRACKER 2026-09-29: the scan screen calls the hunt what the card's tracker calls it (Konnor)
       say(d.edits_pending?'Matching the edit':'Song found');
-      pgMark('base');                  // APPLYALL (DIAL): song named = 40.5 on the whole-scan dial, not 100
+      pgMark('base');                  // DIALV3: the naming dial's last milestone; its run to 100 starts below
       renderResult(d, d.edits_pending);
       // HAND THE SCREEN OVER THE MOMENT THE SONG IS KNOWN.
       //
@@ -5199,20 +5232,24 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       // the whole scan now, so the song lands at ~40 and the card (with its own hunt
       // indicator) takes the screen at once; the card and the hunt request come up to 1 s
       // sooner because nothing waits on a finishing run.
+      // DIALV3 2026-09-29: THE RUN IS BACK, BUT SHORT AND FROM A STEADY SWEEP. The naming dial is
+      // now its own 0-100 (Konnor's spec), turning at one speed that reaches 90 at the p77 naming
+      // time, so a median scan is at ~70 when the song lands and the run covers the rest in
+      // 400-650 ms from the needle's own speed. The card follows 300 ms after 100 (about 0.9 s
+      // after /base, measured), and the hunt request still goes out at once.
       if(d.edits_pending){
         return Promise.resolve().then(function(){
         // DIALV3 2026-09-29: THE NAMING DIAL LANDS ON 100 BEFORE THE CARD TAKES THE SCREEN (Konnor:
         // "If the song is found early, speed the needle up smoothly to 100%. Never snap"). The run
-        // is 400-800 ms from wherever the steady sweep had reached, then 100 holds for 300 ms, then
+        // is 460-650 ms from wherever the steady sweep had reached, then 100 holds for 300 ms, then
         // the card, whose tracker starts the edit hunt's own dial from 0. The hunt itself is asked
         // for right now, below, so the engine loses no time to the landing.
         hgHandP=pgLand().then(function(){
           if(tok!==scanTok||leftScan) return;
           setState('locked'); say('Locking in the exact version'); hgStart(); });
-        // PROGRESS 2026-09-29: NO RESET HERE. This used to zero the number and hand the hunt
-        // a cap-and-creep to 94, so the card never showed the hunt's progress and the only
-        // run to 100 happened off screen. The number the dial reached carries on, the poll
-        // keeps reading the hunt's counts, and the tracker on the card shows it.
+        // PROGRESS 2026-09-29: the poll keeps reading the hunt's counts after /base.
+        // DIALV3 2026-09-29: they feed the tracker dial's catch-up (pgHunt); the tracker's
+        // number is the hunt's own steady 0-100 from the handover (hgStart), not this one.
         huntPollU=p.url;
         // Settle the screen exactly once, whether the hunt finished or the budget fired.
         // FILL THE BAR THE USER IS WATCHING, THEN swap in the finished card. Doing it
@@ -5248,8 +5285,8 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           if(huntPollU===scanURL) huntEnd();             // PROGRESS 2026-09-29
           if(onScan()){
             // PROGRESS 2026-09-29: the answer is the only thing allowed to say 100. The tracker
-            // is still on the card, so the number runs up to 100 there (380 ms plus 7 ms a
-            // point, at most 1 s), holds for 300 ms, then the crown card replaces it.
+            // is still on the card, so its dial runs up to 100 there (DIALV3: 400 ms plus 5 ms
+            // a point, at most 650 ms), holds for 300 ms, then the crown card replaces it.
             var _tok=tok;
             hgLand().then(function(){   // DIALV3: the tracker's dial runs to 100
               HUNT_ON=false;                             // TRACKER 2026-09-29: the answer is in
