@@ -35,7 +35,7 @@
   /* --warn is for a caveat, never for an error: a held-back crown and an upload whose
      title outruns its measurement are both "read this before you trust it", not failures. */
   --warn:#F5B94D;
-  --scan:#141119; --dialtrack:rgba(255,255,255,.07);
+  --scan:#121017; --dialtrack:rgba(255,255,255,.07);   /* DIALV3 2026-09-29: Konnor's table, was #141119 */
   --r-card:26px; --r-mid:18px; --r-pill:999px;
   /* Exponential ease-out. This used to be a token named --spring whose curve ended
      past its end point, so every animated element overshot and settled back, on thirteen
@@ -53,9 +53,13 @@
      triplets instead of color-mix(), which iOS 16.0-16.1 drops (the app targets 16.0).
      --glowa / --corea are the two lights' strength, lower on the light theme. */
   --a1rgb:107,95,224; --a2rgb:140,130,240; --goodrgb:93,202,165; --glowa:.42; --corea:.6;
-  /* DIALSHIP 2026-09-29: the ring-of-lights dial - lamps and lines off / lit, and the cap's shading */
-  --lampoff:rgba(255,255,255,.075); --tickoff:rgba(255,255,255,.1); --lamp:var(--accent2);
-  --rlseat:rgba(0,0,0,.55); --rlinset:rgba(0,0,0,.3); --rldrop:rgba(0,0,0,.72); --rldrop2:rgba(0,0,0,.4);
+  /* DIALV3 2026-09-29: Konnor's spoke dial (KONNOR-SPEC.md) - face and centre-circle gradients with
+     their hairline borders, unscanned spokes, the needle, and the scanned / hot / trail purples as
+     channel triplets (rgba() of them, never color-mix(): iOS 16.0) */
+  --dvface1:#1A1626; --dvface2:#13101B; --dvfaceb:rgba(255,255,255,.06);
+  --dvcap1:#231E33; --dvcap2:#171320; --dvcapb:rgba(255,255,255,.09);
+  --dvoff:rgba(255,255,255,.13); --dvneedle:#FFFFFF; --dvlita:.62;
+  --dvlit:125,112,242; --dvhot:195,192,255; --dvtrail:132,120,242; --dvgoodhot:189,242,223;
 }
 :root[data-theme="light"]{
   --bg:#ECEAF1; --bg2:#F5F4F8;
@@ -70,8 +74,10 @@
   --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
   --art-hl:rgba(255,255,255,.55); --rk-glow:color-mix(in oklab,var(--accent) 32%,transparent);
   --a2rgb:90,78,203; --goodrgb:14,159,110; --glowa:.19; --corea:.27;   /* APPLYALL 2026-09-29 */
-  --lampoff:rgba(23,20,31,.09); --tickoff:rgba(23,20,31,.15); --lamp:var(--accent);   /* DIALSHIP 2026-09-29 */
-  --rlseat:rgba(23,20,31,.16); --rlinset:rgba(23,20,31,.08); --rldrop:rgba(23,20,31,.2); --rldrop2:rgba(23,20,31,.1);
+  --dvface1:#FFFFFF; --dvface2:#F1EFF6; --dvfaceb:rgba(23,20,31,.08);   /* DIALV3 2026-09-29 */
+  --dvcap1:#FFFFFF; --dvcap2:#F4F2F8; --dvcapb:rgba(23,20,31,.1);
+  --dvoff:rgba(23,20,31,.13); --dvneedle:#17141F; --dvlita:.5;
+  --dvlit:107,95,224; --dvhot:90,78,203; --dvtrail:107,95,224; --dvgoodhot:14,159,110;
 }
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
@@ -86,8 +92,10 @@
     --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
     --art-hl:rgba(255,255,255,.55); --rk-glow:color-mix(in oklab,var(--accent) 32%,transparent);
     --a2rgb:90,78,203; --goodrgb:14,159,110; --glowa:.19; --corea:.27;   /* APPLYALL 2026-09-29 */
-    --lampoff:rgba(23,20,31,.09); --tickoff:rgba(23,20,31,.15); --lamp:var(--accent);   /* DIALSHIP 2026-09-29 */
-    --rlseat:rgba(23,20,31,.16); --rlinset:rgba(23,20,31,.08); --rldrop:rgba(23,20,31,.2); --rldrop2:rgba(23,20,31,.1);
+    --dvface1:#FFFFFF; --dvface2:#F1EFF6; --dvfaceb:rgba(23,20,31,.08);   /* DIALV3 2026-09-29 */
+    --dvcap1:#FFFFFF; --dvcap2:#F4F2F8; --dvcapb:rgba(23,20,31,.1);
+    --dvoff:rgba(23,20,31,.13); --dvneedle:#17141F; --dvlita:.5;
+    --dvlit:107,95,224; --dvhot:90,78,203; --dvtrail:107,95,224; --dvgoodhot:14,159,110;
   }
 }
 /* APPLYALL 2026-09-29 (build 3, Vercel): native controls, scrollbars and autofill follow the theme */
@@ -380,119 +388,101 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
 .abadge svg{width:11px;height:11px}
 
 /* ---------- the dial ----------
-   DIALSHIP 2026-09-29: THE RING OF LIGHTS, WITH THE LINES INSIDE IT (Roham picked design 3,
-   realdial/ring-lights: "I like the 3rd one ... if you can somehow incorporate those lines
-   inside the circle so that they light up inside the circle while it moves around like that
-   clock hand"). A ring of 24 lamps on the outside, a cap in the middle, and on the cap's edge
-   one short line per percent: 100 of them on the scan screen, 50 on the small copy in the
-   result card's tracker. A hand sweeps clockwise over the lines, and every line it passes
-   lights: the newest brightest, fading back to a steady glow behind it, unlit ones faint.
-   Lamps, lines and hand all travel the same 288 degrees, 7 o'clock to 5 o'clock, with the
-   stop gap at the bottom. At 100 everything turns mint once, with one bloom.
-   ONE component, rlHTML() / rlPaint(), drawn twice: #dial here, and .rl.sm as step 2 of the
-   hunt tracker, where it carries on from where this one stopped. Both read the same pgNow.
-   Only opacity and transform move: each lamp's and each line's light is an opacity, the hand
-   is one rotate(). pgPaint writes values on its 100 ms tick (only what changed) and CSS
-   eases between them over --rl-t. rgba() of the channel tokens, never color-mix(), and no
-   @property: iOS 16.0. .fin turns the easing off for pgDone's 16 ms frames and the reset. */
-:root{--dial:224px}
-@media (max-width:380px){:root{--dial:208px}}
-@media (max-height:690px){:root{--dial:184px}}
-.rl{--rl-t:320ms;
-  --tw:calc(var(--dial)*.0078); --tl:calc(var(--dial)*.046);              /* a line: width, length */
-  --tw2:calc(var(--dial)*.0105); --tl2:calc(var(--dial)*.064);            /* every tenth: longer */
-  --tro:calc(var(--dial)*.303);                                            /* outer end of the lines */
-  position:relative;width:var(--dial);height:var(--dial);margin:0 auto;isolation:isolate;flex:none}
-.rl>*{pointer-events:none}
-/* spill from the lamps onto the ground, grows with progress */
-.rl-glow{position:absolute;inset:-14%;z-index:-1;border-radius:50%;opacity:.08;
-  background:radial-gradient(closest-side,rgba(var(--a2rgb),var(--glowa)),rgba(var(--a2rgb),0) 80%);
+   DIALV3 2026-09-29: KONNOR'S SPOKE DIAL, BUILT TO HIS TABLE (addify-harness/dialv3/KONNOR-SPEC.md,
+   "Addify Scanning Dial Redesign"; Roham: "a clean dial ... make the lines skinnier and thinner and
+   going inside the circle right to the center"). Sizes are his 920-wide mock units: --u is one
+   unit, 0.437 px on a 402-wide phone and proportional on every other width.
+     face     circle r254, gradient #1A1626 -> #13101B, 2 u border white 6%
+     spokes   90 straight lines every 4 deg, 3.4 u thick with round ends, r140 -> r242, fading
+              30% at the centre to 100% at the rim (one radial mask on the layer)
+     colour   unscanned white 13%; scanned #7D70F2 at 62%, brightening to #C3C0FF at 100% over
+              the last 35% of the circle behind the needle (a hot layer inside each spoke)
+     needle   white, 4 u, from the centre circle's edge to r240, a dot on the tip, soft glow;
+              angle = progress x 360, clockwise from 12 o'clock
+     trail    #8478F2 wedge behind the needle, 85 deg, 20% at the needle fading to 0
+     centre   circle r132, gradient #231E33 -> #171320, 2 u border white 9%; the spokes and the
+              needle stop at its edge, and it carries the number (88 u, % 40 u, stage 22 u)
+   A spoke counts as scanned when its angle is at or behind the needle. Every change eases over
+   300 ms linear (--rl-t); .fin shortens that for the finishing run's 16 ms frames, .rs turns it
+   off for the reset. The box is 560 u but lays out as the 508 u face, so the dial sits centred
+   where the old one sat. ONE component, rlHTML() / rlPaint(), drawn twice: #dial on the scan
+   screen (the naming dial) and .rl.sm, 45 spokes, as step 2 of the hunt tracker (the edit hunt's
+   own 0-100). At 100 it turns mint once, with one bloom. rgba() of channel tokens only, no
+   color-mix() and no @property: iOS 16.0. */
+:root{--u:calc(min(100vw,402px)/920)}
+@media (max-height:690px){:root{--u:.36px}}   /* short phones: the old 184 px rule's size */
+.rl{--rl-t:300ms;--box:560;--u2:calc(2*var(--u));
+  position:relative;width:calc(var(--box)*var(--u));height:calc(var(--box)*var(--u));
+  margin:calc(-26*var(--u)) auto;isolation:isolate;flex:none}
+.rl>*{position:absolute;pointer-events:none}
+.rl-face,.rl-cap,.rl-trail{left:50%;top:50%;border-radius:50%}
+.rl-face{width:calc(508*var(--u));height:calc(508*var(--u));margin:calc(-254*var(--u)) 0 0 calc(-254*var(--u));
+  background:linear-gradient(180deg,var(--dvface1),var(--dvface2));
+  box-shadow:inset 0 0 0 max(1px,var(--u2)) var(--dvfaceb)}
+.rl-rot{inset:0;transform:rotate(0deg);will-change:transform;transition:transform var(--rl-t) linear}
+.rl-trail{position:absolute;width:calc(484*var(--u));height:calc(484*var(--u));margin:calc(-242*var(--u)) 0 0 calc(-242*var(--u));
+  background:conic-gradient(rgba(var(--dvtrail),0) 275deg,rgba(var(--dvtrail),.2) 360deg);
   transition:opacity var(--rl-t) linear}
-.rl.done .rl-glow{background:radial-gradient(closest-side,rgba(var(--goodrgb),var(--glowa)),rgba(var(--goodrgb),0) 80%)}
-.rl-ring,.rl-lines{position:absolute;inset:0}
-/* lamps: rounded pills standing on the ring, radius .43 of the dial */
-.rl-pill{position:absolute;left:50%;top:50%;width:calc(var(--dial)*.04);height:calc(var(--dial)*.092);
-  margin:calc(var(--dial)*-.046) 0 0 calc(var(--dial)*-.02);border-radius:99px;background:var(--lampoff);
-  transform:rotate(var(--a)) translateY(calc(var(--dial)*-.43))}
-.rl-pill b{position:absolute;inset:0;border-radius:inherit;opacity:0;background:var(--lamp);
-  box-shadow:0 0 calc(var(--dial)*.045) rgba(var(--a2rgb),.62),0 0 calc(var(--dial)*.012) rgba(var(--a2rgb),.9);
-  transition:opacity var(--rl-t) linear,background-color .32s ease,box-shadow .32s ease}
-/* the lamp that is lighting breathes: a halo on its own layer, so the fill value stays exact */
-.rl-pill.cur::after{content:"";position:absolute;inset:-1px;border-radius:inherit;
-  background:rgba(var(--a2rgb),.34);box-shadow:0 0 calc(var(--dial)*.05) rgba(var(--a2rgb),.55);
-  animation:rlbreath 1.1s ease-in-out infinite alternate}
-@keyframes rlbreath{from{opacity:1}to{opacity:.22}}
-.rl.done .rl-pill b{background:var(--good);
-  box-shadow:0 0 calc(var(--dial)*.045) rgba(var(--goodrgb),.6),0 0 calc(var(--dial)*.012) rgba(var(--goodrgb),.9)}
-/* the cap: a seat cut into the plate, then the cap standing proud of it */
-.rl-seat{position:absolute;left:50%;top:50%;width:calc(var(--dial)*.72);height:calc(var(--dial)*.72);
-  margin:calc(var(--dial)*-.36) 0 0 calc(var(--dial)*-.36);border-radius:50%;background:var(--scan);
-  box-shadow:inset 0 2px 5px var(--rlseat),0 1px 0 var(--line)}
-.rl-knob{position:absolute;left:50%;top:50%;width:calc(var(--dial)*.655);height:calc(var(--dial)*.655);
-  margin:calc(var(--dial)*-.3275) 0 0 calc(var(--dial)*-.3275);border-radius:50%;
-  background:radial-gradient(circle at 50% 16%,var(--raise2),var(--raise) 52%,var(--card));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -3px 6px var(--rlinset),
-    0 12px 22px -6px var(--rldrop),0 3px 6px var(--rldrop2)}
-/* the lines on the cap's edge: one per percent, every tenth a little longer */
-.rl-tk{position:absolute;left:50%;top:50%;width:var(--tw);height:var(--tl);
-  margin:calc(var(--tl)/-2) 0 0 calc(var(--tw)/-2);border-radius:99px;background:var(--tickoff);
-  transform:rotate(var(--a)) translateY(calc(var(--tl)/2 - var(--tro)))}
-.rl-tk.mj{--tw:var(--tw2);--tl:var(--tl2)}
-.rl-tk b{position:absolute;inset:0;border-radius:inherit;opacity:0;background:var(--lamp);
-  box-shadow:0 0 calc(var(--dial)*.028) rgba(var(--a2rgb),.85);
-  transition:opacity var(--rl-t) linear,background-color .32s ease,box-shadow .32s ease}
-.rl.done .rl-tk b{background:var(--good);box-shadow:0 0 calc(var(--dial)*.028) rgba(var(--goodrgb),.85)}
-/* the hand: a bright needle across the lines, the only part that turns */
-.rl-rot{position:absolute;inset:0;transform:rotate(-144deg);will-change:transform;
-  transition:transform var(--rl-t) linear}
-.rl-hand{position:absolute;left:50%;top:calc(50% - var(--dial)*.318);width:calc(var(--dial)*.015);
-  height:calc(var(--dial)*.092);margin-left:calc(var(--dial)*-.0075);border-radius:99px;background:var(--text);
-  box-shadow:0 0 calc(var(--dial)*.03) rgba(var(--a2rgb),.95),0 0 0 calc(var(--dial)*.005) rgba(var(--a1rgb),.45);
+.rl.done .rl-trail{background:conic-gradient(rgba(var(--goodrgb),0) 275deg,rgba(var(--goodrgb),.2) 360deg)}
+.rl-spokes{inset:0;
+  -webkit-mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 50%,#000 86.43%);
+          mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 50%,#000 86.43%)}
+.rl-sp{position:absolute;left:50%;top:50%;width:calc(3.4*var(--u));height:calc(102*var(--u));
+  margin:calc(-51*var(--u)) 0 0 calc(-1.7*var(--u));border-radius:99px;background:var(--dvoff);overflow:hidden;
+  transform:rotate(var(--a)) translateY(calc(-191*var(--u)));transition:background-color var(--rl-t) linear}
+.rl-sp.on{background:rgba(var(--dvlit),var(--dvlita))}
+.rl-sp b{position:absolute;inset:0;border-radius:inherit;opacity:0;background:rgb(var(--dvhot));
+  transition:opacity var(--rl-t) linear}
+.rl.done .rl-sp.on{background:rgba(var(--goodrgb),var(--dvlita))}
+.rl.done .rl-sp b{background:rgb(var(--dvgoodhot))}
+.rl-cap{width:calc(264*var(--u));height:calc(264*var(--u));margin:calc(-132*var(--u)) 0 0 calc(-132*var(--u));
+  background:linear-gradient(180deg,var(--dvcap1),var(--dvcap2));
+  box-shadow:inset 0 0 0 max(1px,var(--u2)) var(--dvcapb)}
+.rl-nd{position:absolute;left:50%;top:calc(50% - 240*var(--u));width:calc(4*var(--u));height:calc(108*var(--u));
+  margin-left:calc(-2*var(--u));border-radius:99px;background:var(--dvneedle);
+  box-shadow:0 0 calc(7*var(--u)) rgba(var(--dvhot),.85),0 0 calc(18*var(--u)) rgba(var(--dvtrail),.55);
   transition:box-shadow .32s ease}
-.rl.done .rl-hand{box-shadow:0 0 calc(var(--dial)*.03) rgba(var(--goodrgb),.95),0 0 0 calc(var(--dial)*.005) rgba(var(--goodrgb),.4)}
-/* the readout sits on the cap and does not turn */
-.rl-read{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:calc(var(--dial)*.02);padding-bottom:calc(var(--dial)*.012)}
-.rl-num{display:flex;align-items:baseline;font-size:calc(var(--dial)*.178);font-weight:750;letter-spacing:-.04em;
+.rl-nd::after{content:"";position:absolute;left:50%;top:0;width:calc(11*var(--u));height:calc(11*var(--u));
+  margin:calc(-5.5*var(--u)) 0 0 calc(-5.5*var(--u));border-radius:50%;background:var(--dvneedle);
+  box-shadow:0 0 calc(9*var(--u)) rgba(var(--dvhot),.9)}
+.rl.done .rl-nd{box-shadow:0 0 calc(7*var(--u)) rgba(var(--goodrgb),.85),0 0 calc(18*var(--u)) rgba(var(--goodrgb),.5)}
+.rl.done .rl-nd::after{box-shadow:0 0 calc(9*var(--u)) rgba(var(--goodrgb),.9)}
+/* the readout sits on the centre circle and does not turn */
+.rl-read{inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(12*var(--u))}
+.rl-num{display:flex;align-items:baseline;font-size:calc(88*var(--u));font-weight:750;letter-spacing:-.03em;
   line-height:1;font-variant-numeric:tabular-nums;color:var(--text)}
-.rl-num i{font-style:normal;font-size:.46em;font-weight:700;letter-spacing:-.01em;margin-left:.04em;color:var(--muted);
-  transition:color .32s ease}
-.rl-num.e1 i{margin-left:-.26em}  /* tabular numerals give a trailing 1 the width of a 0 */
-.rl-stage{font-size:max(10px,calc(var(--dial)*.045));font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-  line-height:1;color:var(--muted);transition:color .32s ease}
+.rl-num i{font-style:normal;font-size:calc(40*var(--u));font-weight:700;letter-spacing:0;margin-left:calc(9*var(--u));
+  color:var(--muted);transition:color .32s ease}
+.rl-num.e1 i{margin-left:calc(-14*var(--u))}  /* tabular numerals give a trailing 1 the width of a 0 */
+.rl-stage{font-size:calc(22*var(--u));font-weight:700;letter-spacing:calc(6*var(--u));margin-right:calc(-6*var(--u));
+  text-transform:uppercase;line-height:1;color:var(--muted);transition:color .32s ease}
 .rl.done .rl-num i,.rl.done .rl-stage{color:var(--good)}
-/* 100: one bloom off the ring */
-.rl::after{content:"";position:absolute;inset:3%;border-radius:50%;border:2px solid var(--good);opacity:0;pointer-events:none}
+/* 100: one bloom off the face */
+.rl::after{content:"";position:absolute;inset:calc(26*var(--u));border-radius:50%;border:2px solid var(--good);opacity:0;pointer-events:none}
 .rl.done.land::after{animation:rlbloom 620ms var(--ease) 1 both}
-@keyframes rlbloom{from{opacity:.5;transform:scale(.94)}to{opacity:0;transform:scale(1.14)}}
-.rl.fin .rl-pill b,.rl.fin .rl-tk b,.rl.fin .rl-rot,.rl.fin .rl-glow,.rl.fin .rl-hand{transition:none}
-/* the small copy (64 px, the tracker's step 2): the same parts, proportions that still read at
-   that size - 50 lines, one per 2%, at least a pixel wide, a bigger number and no stage word
-   (the step's own label says it). It never breathes: the card is rebuilt mid-hunt, and a
-   restarted breath would blink. */
-.rl.sm{--dial:64px;--rl-t:260ms;margin:0;
-  --tw:1.1px; --tl:calc(var(--dial)*.08); --tw2:1.5px; --tl2:calc(var(--dial)*.105); --tro:calc(var(--dial)*.312)}
-.rl.sm .rl-pill{width:calc(var(--dial)*.05);height:calc(var(--dial)*.1);margin:calc(var(--dial)*-.05) 0 0 calc(var(--dial)*-.025);
-  transform:rotate(var(--a)) translateY(calc(var(--dial)*-.425))}
-.rl.sm .rl-pill b{box-shadow:0 0 3px rgba(var(--a2rgb),.7)}
-.rl.done.sm .rl-pill b{box-shadow:0 0 3px rgba(var(--goodrgb),.7)}
-.rl.sm .rl-tk b{box-shadow:0 0 2px rgba(var(--a2rgb),.8)}
-.rl.done.sm .rl-tk b{box-shadow:0 0 2px rgba(var(--goodrgb),.8)}
-.rl.sm .rl-pill.cur::after{animation:none;opacity:.5}
-.rl.sm .rl-seat{box-shadow:inset 0 1px 3px var(--rlseat)}
-.rl.sm .rl-knob{box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 4px 8px -2px var(--rldrop)}
-.rl.sm .rl-hand{top:calc(50% - var(--dial)*.335);width:1.8px;height:calc(var(--dial)*.15);margin-left:-.9px;
-  box-shadow:0 0 3px rgba(var(--a2rgb),.95)}
-.rl.done.sm .rl-hand{box-shadow:0 0 3px rgba(var(--goodrgb),.95)}
-.rl.sm .rl-read{padding:0}
-.rl.sm .rl-num{font-size:calc(var(--dial)*.215);letter-spacing:-.03em}
-.rl.sm .rl-num i{font-size:.56em;margin-left:.02em}
-.rl.sm .rl-num.e1 i{margin-left:-.22em}
-.rl.sm .rl-num.c3{font-size:calc(var(--dial)*.175)}   /* "100" clears the lines */
-.rl.sm::after{border-width:1.5px}
+@keyframes rlbloom{from{opacity:.5;transform:scale(.96)}to{opacity:0;transform:scale(1.12)}}
+.rl.fin{--rl-t:60ms}
+.rl.rs .rl-rot,.rl.rs .rl-sp,.rl.rs .rl-sp b,.rl.rs .rl-trail{transition:none}
+/* the small copy (the tracker's step 2, 64 px): the face fills the box, 45 spokes (every 8 deg)
+   at least a pixel wide, a 1.5 px needle, and the number only (the step's label says the rest) */
+.rl.sm{--box:508;--u:calc(64px/508);margin:0}
+.rl.sm .rl-spokes{-webkit-mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 55.12%,#000 95.28%);
+                          mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 55.12%,#000 95.28%)}
+.rl.sm .rl-sp{width:1px;margin-left:-.5px}
+.rl.sm .rl-nd{width:1.5px;margin-left:-.75px;box-shadow:0 0 2px rgba(var(--dvhot),.9),0 0 4px rgba(var(--dvtrail),.5)}
+.rl.sm .rl-nd::after{width:3.5px;height:3.5px;margin:-1.75px 0 0 -1.75px;box-shadow:0 0 2px rgba(var(--dvhot),.9)}
+.rl.done.sm .rl-nd{box-shadow:0 0 2px rgba(var(--goodrgb),.9),0 0 4px rgba(var(--goodrgb),.5)}
+.rl.done.sm .rl-nd::after{box-shadow:0 0 2px rgba(var(--goodrgb),.9)}
+.rl.sm .rl-read{gap:0}
+.rl.sm .rl-num{font-size:11.5px;letter-spacing:-.02em}
+.rl.sm .rl-num i{font-size:6.5px;margin-left:1px}
+.rl.sm .rl-num.e1 i{margin-left:-2px}
+.rl.sm .rl-num.c3{font-size:10px}   /* "100" clears the spokes */
+.rl.sm::after{inset:0;border-width:1.5px}
+/* reduced motion: no sweep - no needle, no trail, just the number and the lit spokes */
 @media (prefers-reduced-motion:reduce){
-  .rl-pill b,.rl-tk b,.rl-rot,.rl-glow,.rl-hand{transition:none}
-  .rl-pill.cur::after{animation:none;opacity:.6}
+  .rl-rot{display:none}
+  .rl-rot,.rl-sp,.rl-sp b,.rl-trail{transition:none}
   .rl.done.land::after{animation:none}
 }
 
@@ -1747,8 +1737,8 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
     </div>
     <div id="scanbox"></div>
     <div class="mid">
-      <!-- DIALSHIP 2026-09-29: the ring-of-lights dial. rlHTML() fills it at load (lamps, the
-           100 lines, the hand, the number); the tracker on the result card draws a small copy -->
+      <!-- DIALV3 2026-09-29: Konnor's spoke dial. rlHTML() fills it at load (face, 90 spokes,
+           trail, centre circle, needle, number); the tracker on the result card draws a small copy -->
       <div class="rl" id="dial"></div>
       <div class="listening" id="listening">Finding song</div>
       <div class="sub" id="live" aria-live="polite">Reading the clip</div>
@@ -2195,111 +2185,97 @@ var live=document.getElementById('live'), scanbox=document.getElementById('scanb
 function say(html){live.style.opacity=0; setTimeout(function(){live.innerHTML=html; live.style.opacity=1;},90);}
 function saying(txt){say(txt);}
 function headline(t){document.getElementById('listening').textContent=t;}
-/* Progress reflects REAL milestones, not a timer: fetch -> song named -> edit hunt ->
-   done. Between milestones it creeps slowly toward the next one and stops there, so it
-   keeps moving without ever claiming progress the engine has not actually made. */
+/* DIALV3 2026-09-29: TWO DIALS, EACH A STEADY TIME-BASED SWEEP FROM 0 TO 100 (Konnor's spec,
+   dialv3/KONNOR-SPEC.md: "Drive the displayed progress from a steady, time-based animation ... not
+   straight from backend events that arrive in bursts"; Roham: "the timing that it turns should be
+   equal ... balanced ... it shouldn't shoot up halfway and then bang. Smooth.").
+   pgNow is the scan screen's dial: naming the song, tap to /base. hgNow is the tracker's small dial
+   on the result card: the edit hunt, from the moment the card takes the screen to the exact edit.
+   Each dial turns at ONE constant speed, calibrated on real scans so it reaches 90 at about the
+   p77 of that phase's real duration (dialv3/BUILD.md: 451 page-clock timelines rebuilt from the
+   engine logs of the gate_fn45, speedmax prove and realdial runs). Past 90 it eases into a slow
+   steady creep toward 97 and keeps creeping, so a long scan never stops and never parks low.
+   When the answer lands early, the dial runs smoothly to 100 in 400-800 ms, starting from its own
+   speed (a Hermite ease, never a snap, never backwards). The engine's own signals only ever speed
+   the sweep up, gently: when /progress says the scan is further along than the dial shows, the
+   dial's clock runs up to 1.15x, ramped over 300 ms, until it catches up. They never move it
+   directly, so nothing jumps. The pure part sits between the DIALV3-PACE-CORE markers so
+   dialv3/sim.js replays this exact code against the recordings. */
 var pgNow=0, pgCap=0, pgTimer=null;
-/* APPLYALL 2026-09-29: ONE DIAL FROM THE TAP TO THE EXACT VERSION, PACED TO THE REAL TIME
-   FRAME (the DIAL 2026-09-27 dial, merged onto FAST-NAME, pacing rebuilt). Roham: "it goes
-   really slow to like 30%. Then it shoots up to 100 ... the dial just needs to try to line
-   up with the time frame."
-   Every milestone the page can SEE sets a floor: tap 0, audio 26, early name 33, song named
-   40.5, hunt started 42, then the hunt's own counts (PROGRESS 2026-09-29, below). Between
-   milestones the dial walks at a pace that starts quick and settles into a creep of one
-   point every ~1.5 s, and it never passes the next floor (minus 0.4), so it never claims a
-   step the engine has not passed.
-   The floors come from 180 recorded scans (addify-harness/dial/timelines.json): each stage
-   has room for its slowest recorded run at the creep pace, so the number never sits still
-   for 3 s (the 09-27 curve froze for over 3 s on 93 of them, on a 60 s TikTok fetch and on
-   46 s hunt tails). That is why the audio floor is 26 and not its median share of 9: the
-   fetch is the stage with the longest tail. Only done may say 100. Catch-ups are capped at
-   14 points a second. The dial is
-   the scan screen's; once the song lands the SAME number carries on in the result card's
-   hunt tracker (PROGRESS 2026-09-29: "Matching the edit 64%"), so there is no second bar
-   and no restart from zero. The pure part sits between the PACE-CORE markers so
-   addify-harness/realdial/progress/hsim.js can replay this exact code against the recordings. */
-/* APPLYALL-PACE-CORE-BEGIN */
-var PGM={order:['tap','audio','named','base','hunt'],
-  must:{tap:1,audio:1,base:1,hunt:1},                  // a booster (named) never sets a ceiling
-  floor:{tap:0,audio:26,named:33,base:40.5,hunt:42},
-  r0:{tap:.4167,audio:.6,named:1,base:2,hunt:1.2},    // opening pace, points a second
-  tau:{tap:1,audio:3,named:3,base:1,hunt:2},          // seconds to settle into the creep
-  vmin:.65, margin:.4, cap:99.6, vmax:14};
-/* PROGRESS 2026-09-29: THE HUNT BUILDS FROM THE ENGINE'S OWN COUNTS, 42 TO 99, AND ONLY THE
-   ANSWER SAYS 100 (Roham: "it goes from 30 to 100. That's not how it works. It should build
-   up as it actually finds it"). /progress now carries what the hunt really has (server.py
-   _hunt_view): the start hold with its deadline, candidates queued / fetched / checked,
-   and the decide steps. Each stage has a floor it is only allowed onto once the engine
-   reports it and a ceiling it can never pass before the next report:
-     start hold   42 -> 42+0.7 a second of the engine's own deadline (max 10), walked at
-                  exactly that deadline's rate
-     searching    7 points, until the first candidates are queued
-     checking     floor = checked share of (queued + 6 more expected), fetched counting half;
-                  it heads for "this batch done" and past it only at the slow creep, never
-                  onto 91 before find_edit has returned
-     deciding     91 find_edit returned, 95 speed measured, 98 crown checked (cap 99.4)
-   Between reports it creeps (0.65 a point-second, a new number every ~1.6 s), never
-   backwards. Fitted on 237 clean scans rebuilt from today's engine logs plus the 180 in
-   dial/timelines.json (realdial/PROGRESS.md; replay with realdial/progress/hsim.js). */
-var PGH={holdRate:.7, holdMax:10, Bs:7, H1:91, R:6, A:2, wd:.5, D:[91,95,98], cap:99.4, vmin:.65,
-  w:{hold:.5,search:.5,work:.55,gap:.4,decide:.5}, tau:{hold:2,search:2,work:1.5,gap:2,decide:1.5}};
-var pgSt=null;
-function pgStage(name,F,now){
-  var i=PGM.order.indexOf(name), nx=null;
-  for(var j=i+1;j<PGM.order.length;j++){ if(PGM.must[PGM.order[j]]){nx=PGM.order[j]; break;} }
-  var Fn=nx?PGM.floor[nx]:PGM.floor.hunt+PGH.Bs;   // the hunt stage: until the engine's counts arrive
-  pgSt={name:name,i:i,F:F,t:now,C:Math.max(F,Math.min(PGM.cap,Fn-PGM.margin)),
-        r0:PGM.r0[name]||PGM.vmin, tau:PGM.tau[name]||1, vm:PGM.vmin};}
-/* A milestone the page has just seen. Forward only: a later one implies every earlier one
-   (the song landing implies the audio arrived). A booster lifts the floor, never the ceiling. */
-function pgMarkAt(name,now){
-  var i=PGM.order.indexOf(name); if(i<0||(pgSt&&i<=pgSt.i)) return false;
-  pgStage(name,Math.max(PGM.floor[name],pgNow,pgSt?pgSt.F:0),now); return true;}
-/* the hunt counts -> [floor, heading, ceiling, stage]; pure, so the replay runs this exact code */
-function pgHuntFC(h){
-  var m=PGM.margin, H=PGH, f0=PGM.floor.hunt, k, q, c, d, u, X, C;
-  var Bh=h.hu?Math.min(H.holdMax,H.holdRate*h.hu):0, Hs=f0+Bh, H0=Hs+H.Bs;
-  if(h.st==='decide'){ k=Math.max(0,Math.min(2,h.k|0)); C=(k<2?H.D[k+1]:H.cap+m)-m; return [H.D[k],C,C,'decide']; }
-  if(h.st==='hold') return [f0+Bh*Math.max(0,Math.min(1,+h.hw||0)),Hs-m,Hs-m,'hold'];
+/* DIALV3-PACE-CORE-BEGIN */
+var DVP={
+  // v: points a second; 90 at v/90 s (naming 11.4 s, the p77.5 of 451 real /base times; hunt:
+  // BUILD.md), then the ease (tau) into the creep c toward `top`, which fades out over tau2
+  scan:{v:7.9, e:90, c:.2, tau:.45, tau2:5},
+  hunt:{v:4.35, e:90, c:.2, tau:.8, tau2:5},
+  top:97, kmax:1.15, kramp:.3, fmin:.4, fmax:.65, fper:.005, dtmax:.25,
+  // where a milestone typically lands on the naming dial: 90 x its median share of the naming
+  // time (audio in 0.22, early name 0.75)
+  ahead:{audio:20, named:67},
+  // the hunt's counts on the hunt dial: 90 x the median share of the hunt at which each step
+  // happens (hold over 0.30, first versions queued 0.35, find_edit 0.89, speed 0.95, crown 1.0)
+  hE:{he:27, q:31, k:[80,85,90], R:6}};
+function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau-P.c*P.tau2)/P.c); }
+/* the steady curve at virtual second x: [value, speed] */
+function dvCurve(P,x){
+  var t90=P.e/P.v; if(x<=t90) return [P.v*x,P.v];
+  var d=x-t90, D1=dvD1(P), a=P.v-P.c, ea=Math.exp(-d/P.tau), val=P.e+a*P.tau*(1-ea), sp=a*ea, eb;
+  if(d<=D1){ val+=P.c*d; sp+=P.c; }
+  else { eb=Math.exp(-(d-D1)/P.tau2); val+=P.c*D1+P.c*P.tau2*(1-eb); sp+=P.c*eb; }
+  return [Math.min(val,DVP.top),sp]; }
+function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null}; }
+/* the engine says this dial should be at least at E: speed up (never jump) until it is */
+function dvAhead(s,E){ if(s&&!s.fin&&E>s.E) s.E=Math.min(DVP.top,E); }
+/* advance to `now`: never backwards; a throttled or backgrounded tab resumes, it does not leap */
+function dvStep(s,now){
+  var dt=Math.max(0,Math.min(DVP.dtmax,now-s.t)), f, u, h, kt, dk, c;
+  s.t=now;
+  if(s.fin){ f=s.fin; u=Math.max(0,Math.min(1,(now-f.t0)/f.T));
+    h=(2*u*u*u-3*u*u+1)*f.p0+(u*u*u-2*u*u+u)*f.m0+(3*u*u-2*u*u*u)*100;
+    if(u>=1) h=100; if(h>s.val) s.val=h; return s.val; }
+  kt=s.E>s.val+.5?DVP.kmax:1; dk=(DVP.kmax-1)*dt/DVP.kramp;
+  s.k=kt>s.k?Math.min(kt,s.k+dk):Math.max(kt,s.k-dk);
+  s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k; if(c[0]>s.val) s.val=c[0];
+  return s.val; }
+/* the answer: a run to 100 over 400 ms + 5 ms a point (at most 650 ms, so the eased needle lands inside 800 ms of the answer arriving) that leaves at the dial's
+   own speed and lands softly (cubic Hermite, monotone: the start slope is capped at 3x the gap) */
+function dvFinish(s,now){
+  if(s.fin) return s.fin;
+  var span=Math.max(0,100-s.val), T=Math.min(DVP.fmax,DVP.fmin+DVP.fper*span);
+  s.t=now; s.fin={t0:now,T:T,p0:s.val,m0:Math.min(Math.max(0,s.sp)*T,3*span)}; return s.fin; }
+/* the hunt's /progress counts (server.py _hunt_view) as a hunt-dial value, for dvAhead */
+function dvHuntE(h){
+  var A=DVP.hE, q, c, d;
+  if(!h) return 0;
+  if(h.st==='decide') return A.k[Math.max(0,Math.min(2,h.k|0))];
+  if(h.st==='hold') return A.he*Math.max(0,Math.min(1,+h.hw||0));
   q=h.q|0; d=Math.min(q,h.d|0); c=Math.min(d,h.c|0);
-  if(!q) return [Hs,H0-m,H0-m,'search'];
-  X=function(n,t){return H0+(H.H1-H0)*n/(t+H.R);};
-  u=c+H.wd*(d-c);
-  if(c<q) return [X(u,q),X(q,q),H.H1-m,'work'];
-  return [X(q,q),X(q+H.A,q+H.A),H.H1-m,'gap'];}
-/* a /progress hunt report: same stage and targets keeps walking; anything new starts a
-   segment from where the number is now (never backwards) */
-function pgHuntAt(h,now){
-  var fc=pgHuntFC(h), nm='h:'+fc[3];
-  if(pgSt&&pgSt.name===nm&&Math.abs(pgSt.S0-fc[1])<1e-6&&Math.abs(pgSt.C0-fc[2])<1e-6&&fc[0]<=pgSt.F0+1e-6) return false;
-  var cur=Math.max(pgNow,pgSt?pgTarget(now):0), F=Math.max(fc[0],cur), S=Math.max(F,fc[1]), C=Math.max(F,fc[2]);
-  var tau=PGH.tau[fc[3]], vm=PGH.vmin, r0=vm+PGH.w[fc[3]]*(S-F)/tau;
-  if(fc[3]==='hold') vm=r0=(C+PGM.margin-PGM.floor.hunt)/Math.max(.5,+h.hu||1);   // the deadline's own rate
-  pgSt={name:nm,i:PGM.order.length,F0:fc[0],S0:fc[1],C0:fc[2],F:F,t:now,S:S,C:C,tau:tau,vm:vm,r0:r0};
-  return true;}
-/* where the number should be now: the opening pace eases into the creep, capped at the ceiling */
-function pgTarget(now){
-  var s=pgSt, dt=Math.max(0,now-s.t), vm=s.vm;
-  return Math.min(s.C, s.F+vm*dt+Math.max(0,s.r0-vm)*s.tau*(1-Math.exp(-dt/s.tau)));}
-/* never backwards; a throttled or backgrounded tab catches up as a sweep, not a jump */
-function pgStep(now,dt){
-  if(!pgSt) return pgNow;
-  var tgt=pgTarget(now); return tgt>pgNow?Math.min(tgt,pgNow+PGM.vmax*dt):pgNow;}
-/* APPLYALL-PACE-CORE-END */
-var pgLastT=0, pgLabel='';
+  if(!q) return A.he;
+  return A.q+(A.k[0]-A.q)*(c+.5*(d-c))/(q+A.R); }
+/* DIALV3-PACE-CORE-END */
+var pgS=null, pgStg='', pgLabel='';            // the naming dial's pacer, and the last milestone seen
+var hgNow=0, hgS=null, hgE=0, hgHandP=null;    // the hunt dial: value, pacer, engine estimate, handover
+var PG_ORDER=['tap','audio','named','base','hunt'];
 function pgClock(){return ((window.performance&&performance.now)?performance.now():Date.now())/1000;}
-function pgMark(name){ if(pgLock) return; if(pgMarkAt(name,pgClock())) pgTickOn(); }
-function pgStageAt(name){return !!pgSt&&pgSt.i>=PGM.order.indexOf(name);}
+/* A milestone the page has just seen. Forward only: a later one implies every earlier one. 'tap'
+   starts the naming dial; the rest only feed its catch-up (dvAhead), and name the stage word. */
+function pgMark(name){
+  var i=PG_ORDER.indexOf(name), now=pgClock();
+  if(name==='tap'){ if(pgLock) return; pgS=dvNew(DVP.scan,now); pgStg='tap'; pgTickOn(); return; }
+  if(i<0||i<=PG_ORDER.indexOf(pgStg)) return;
+  pgStg=name;
+  if(pgS&&!pgLock&&DVP.ahead[name]!=null) dvAhead(pgS,DVP.ahead[name]); }
+function pgStageAt(name){return PG_ORDER.indexOf(pgStg)>=PG_ORDER.indexOf(name);}
 function pgTick(){
-  if(pgLock) return;
-  var now=pgClock(), dt=Math.min(.45,Math.max(0,now-pgLastT)); pgLastT=now;
-  if(pgSt){ var nx=pgStep(now,dt); if(nx>pgNow){ pgNow=nx; pgPaint(); } }
-  else if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
+  var now=pgClock(), v;
+  if(pgS&&!pgLock){ v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } }
+  else if(!pgS&&!pgLock&&pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
+  if(hgS&&!hgS.fin){ v=dvStep(hgS,now); if(v>hgNow){ hgNow=v; hgPaint(); } }
 }
-// PROGRESS 2026-09-29: 100 ms, was 400. A catch-up (a batch of candidates checked at once,
-// or the hunt reaching its decide step) moved the number 5-6 points per tick, which reads as
-// a jump; at 100 ms it counts up 1-2 at a time. Paints still write only what changed.
-function pgTickOn(){ if(pgTimer) return; pgLastT=pgClock(); pgTimer=setInterval(pgTick,100); }
+// 100 ms ticks; the dial's CSS eases each step over 300 ms linear, so the sweep is continuous
+function pgTickOn(){ if(pgTimer) return; pgTimer=setInterval(pgTick,100); }
+/* the tracker's dial starts when the card with the tracker takes the screen */
+function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); hgNow=0; hgPaint(); pgTickOn(); }
 /* APPLYALL 2026-09-29 (review finding 16): a hunt that ends without an answer takes its
    "still working" line off the card. finalize() cancels the 90 s re-render, the only thing
    that used to remove it, so it stayed for good. `.htrack` is the three-step tracker the
@@ -2326,81 +2302,85 @@ var HUNT_BUDGET_MS=4000;   // 2026-09-26: was 12000; the card now upgrades in pl
    its OWN timer that nothing else can clear, a lock that makes every other writer a
    no-op while it runs, and a hard deadline so the caller can never be left hanging. */
 var pgFin=null, pgFinP=null, pgLock=false, pgFinTok=0;
-/* DIALSHIP 2026-09-29: THE DIAL (CSS "the dial"): one component, drawn on the scan screen
-   (#dial) and again, small, as step 2 of the result card's hunt tracker. rlHTML(o) returns
-   one ALREADY PAINTED at o.v, so a card rebuilt mid-hunt shows the same dial with nothing
-   sweeping in from 0; rlPaint(root,v,stage) moves it, writing only the values that changed,
-   so a dial that is not moving costs nothing. o.n = lines (100 here, 50 small), o.sm = the
-   small copy (no stage word), o.big = the scan screen's (its number is the progressbar).
-   Math.floor, never round: 99.6 reads 99, because only the finishing run may say 100, and
-   100 is also what turns everything mint (with one bloom). */
-var RL={N:24, STEP:12, START:-144, SWEEP:288};     // 24 lamps 12 deg apart, 288 deg of travel
-function rlClamp(x){ return x<0?0:x>1?1:x; }
+/* DIALV3 2026-09-29: THE DIAL (CSS "the dial"): Konnor's spoke dial, one component drawn on the
+   scan screen (#dial, 90 spokes, the naming dial) and again, small, as step 2 of the result
+   card's hunt tracker (45 spokes, the edit hunt's dial). rlHTML(o) returns one ALREADY PAINTED at
+   o.v, so a card rebuilt mid-hunt shows the same dial with nothing sweeping in from 0;
+   rlPaint(root,v,stage) moves it, writing only the values that changed, so a dial that is not
+   moving costs nothing. o.n = spokes, o.sm = the small copy (no stage word), o.big = the scan
+   screen's (its number is the progressbar). A spoke is scanned (.on) when its angle is at or
+   behind the needle; its hot layer is 1 at the needle and 0 at 35% of the circle behind it.
+   Math.floor, never round: 99.6 reads 99, because only the finishing run may say 100, and 100 is
+   also what turns everything mint (with one bloom). */
+var RL={NB:90, NS:45, HOT:126, TRAIL:85};          // spokes big / small; 35% of 360 deg; trail width
 function rlText(v){ return String(v>=100?100:Math.floor(v)); }
-/* one line's light, p = progress counted in lines: the line being lit fills in, the newest
-   are brightest, and each settles to a steady glow once the hand is ~10% past it */
-function rlLine(i,p,n,done){
-  if(done) return 1;
-  var f=p-i; if(f<=0) return 0; if(f<1) return f;
-  return .7+.3*Math.max(0,1-(f-1)/Math.max(3,n*.1)); }
+function rlHot(A,a){ var d=A-a; return d<=RL.HOT?1-d/RL.HOT:0; }
 function rlHTML(o){
-  var n=o.n, v=Math.max(0,Math.min(100,+o.v||0)), done=v>=100, p=v/100*n, q=v/100*RL.N,
-      cur=done?-1:Math.floor(q), t=rlText(v), mj=n/10, s='', i, a;
-  s+='<div class="rl-glow" aria-hidden="true" style="opacity:'+(.08+.52*v/100).toFixed(3)+'"></div>'+
-     '<div class="rl-ring" aria-hidden="true">';
-  for(i=0;i<RL.N;i++){ a=RL.START+RL.STEP*(i+.5);
-    s+='<span class="rl-pill'+(i===cur?' cur':'')+'" style="--a:'+a+'deg"><b style="opacity:'+rlClamp(q-i).toFixed(3)+'"></b></span>'; }
-  s+='</div><div class="rl-seat"></div><div class="rl-knob"></div><div class="rl-lines" aria-hidden="true">';
-  for(i=0;i<n;i++){ a=RL.START+RL.SWEEP/n*(i+.5);
-    s+='<i class="rl-tk'+((i+1)%mj===0?' mj':'')+'" style="--a:'+a.toFixed(2)+'deg"><b style="opacity:'+rlLine(i,p,n,done).toFixed(3)+'"></b></i>'; }
-  s+='</div><div class="rl-rot" aria-hidden="true" style="transform:rotate('+(RL.START+RL.SWEEP*v/100).toFixed(2)+'deg)"><i class="rl-hand"></i></div>'+
+  // o.vn: where to draw the needle and trail when it differs from o.v (a rebuilt card, rlShown)
+  var n=o.n, v=Math.max(0,Math.min(100,+o.v||0)), A=v*3.6, st=360/n, t=rlText(v),
+      vn=o.vn!=null?Math.max(0,Math.min(v,+o.vn)):v, tr='rotate('+(vn*3.6).toFixed(2)+'deg)', s='', i, a, on;
+  s+='<div class="rl-face" aria-hidden="true"></div>'+
+     '<div class="rl-rot rl-rtr" aria-hidden="true" style="transform:'+tr+'"><i class="rl-trail" style="opacity:'+
+       Math.min(1,vn*3.6/RL.TRAIL).toFixed(3)+'"></i></div><div class="rl-spokes" aria-hidden="true">';
+  for(i=0;i<n;i++){ a=i*st; on=v>0&&a<=A+1e-6;
+    s+='<i class="rl-sp'+(on?' on':'')+'" style="--a:'+a+'deg"><b style="opacity:'+(on?rlHot(A,a):0).toFixed(3)+'"></b></i>'; }
+  s+='</div><div class="rl-cap" aria-hidden="true"></div>'+
+     '<div class="rl-rot rl-rnd" aria-hidden="true" style="transform:'+tr+'"><i class="rl-nd"></i></div>'+
      '<div class="rl-read"><div class="rl-num'+(/1$/.test(t)?' e1':'')+(t.length>2?' c3':'')+'"'+
        (o.big?' id="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+t+'" aria-label="Scan progress"':' aria-hidden="true"')+
        '><span class="rl-pct"'+(o.big?' id="dpct"':'')+'>'+t+'</span><i>%</i></div>'+
        (o.sm?'':'<div class="rl-stage">'+esc(o.stage||'')+'</div>')+'</div>';
   return s; }
+/* where a dial's needle is ON SCREEN: the 300 ms easing trails the value by ~0.3 s of travel.
+   A card rebuilt mid-hunt redraws the tracker from there, and the next paint eases it on to the
+   value, so the needle carries on at the same speed instead of leaping ahead and restarting from
+   rest (measured: a 1.5 point leap at the 4 s budget re-render, then a 1 s re-ramp). */
+function rlShown(root,v){
+  var r=root&&root.querySelector('.rl-rnd'), m, p, a;
+  if(!r) return v;
+  m=getComputedStyle(r).transform; if(!m||m==='none') return v;
+  p=m.match(/matrix\(([^)]+)\)/); if(!p) return v; p=p[1].split(',');
+  a=Math.atan2(parseFloat(p[1]),parseFloat(p[0]))*180/Math.PI; if(a<0) a+=360;
+  a/=3.6; if(v>=99.5||a>v) return v;
+  return a<v-10?v-10:a; }
 function rlW(el,k,v){ if(el&&el['_rl'+k]!==v){ el['_rl'+k]=v; el.style[k]=v; } }
 function rlPaint(root,v,stage){
   if(!root) return;
   var r=root._rl;
-  if(!r||!r.pct||!root.contains(r.pct)) r=root._rl={pills:root.querySelectorAll('.rl-pill'), lamps:root.querySelectorAll('.rl-pill b'),
-    lines:root.querySelectorAll('.rl-tk b'), rot:root.querySelector('.rl-rot'), glow:root.querySelector('.rl-glow'),
+  if(!r||!r.pct||!root.contains(r.pct)) r=root._rl={sp:root.querySelectorAll('.rl-sp'), hot:root.querySelectorAll('.rl-sp b'),
+    rtr:root.querySelector('.rl-rtr'), rnd:root.querySelector('.rl-rnd'), trail:root.querySelector('.rl-trail'),
     num:root.querySelector('.rl-num'), pct:root.querySelector('.rl-pct'), stg:root.querySelector('.rl-stage')};
   if(!r.pct) return;
   v=Math.max(0,Math.min(100,+v||0));
-  var n=r.lines.length, done=v>=100, p=v/100*n, q=v/100*RL.N, cur=done?-1:Math.floor(q), t=rlText(v), i, c;
-  for(i=0;i<r.lamps.length;i++){
-    rlW(r.lamps[i],'opacity',rlClamp(q-i).toFixed(3));
-    c=i===cur; if(r.pills[i]._rlc!==c){ r.pills[i]._rlc=c; r.pills[i].classList.toggle('cur',c); } }
-  for(i=0;i<n;i++) rlW(r.lines[i],'opacity',rlLine(i,p,n,done).toFixed(3));
-  rlW(r.rot,'transform','rotate('+(RL.START+RL.SWEEP*v/100).toFixed(2)+'deg)');
-  rlW(r.glow,'opacity',(.08+.52*v/100).toFixed(3));
+  var n=r.sp.length, A=v*3.6, st=360/n, done=v>=100, t=rlText(v), tr='rotate('+A.toFixed(2)+'deg)', i, a, on;
+  for(i=0;i<n;i++){ a=i*st; on=v>0&&a<=A+1e-6;
+    if(r.sp[i]._rlon!==on){ r.sp[i]._rlon=on; r.sp[i].classList.toggle('on',on); }
+    rlW(r.hot[i],'opacity',(on?rlHot(A,a):0).toFixed(3)); }
+  rlW(r.rtr,'transform',tr); rlW(r.rnd,'transform',tr);
+  rlW(r.trail,'opacity',Math.min(1,A/RL.TRAIL).toFixed(3));
   if(r.pct.textContent!==t){ r.pct.textContent=t; r.num.classList.toggle('e1',/1$/.test(t)); r.num.classList.toggle('c3',t.length>2);
     if(r.num.getAttribute('role')) r.num.setAttribute('aria-valuenow',t); }
   if(r.stg&&stage!=null&&r.stg.textContent!==stage) r.stg.textContent=stage;
   if(done!==root.classList.contains('done')){
     root.classList.toggle('done',done); root.classList.remove('land');
     if(done){ void root.offsetWidth; root.classList.add('land'); } } }
-/* the word under the scan screen's number, from the pacing stage the page has really seen:
-   reading the clip, naming the song (the audio is in), matching the edit (the song is named),
-   ready (the answer). Listen mode runs setProg's creep with no stages. */
+/* the word under the scan screen's number, from the milestones the page has really seen: reading
+   the clip, naming the song (the audio is in), matching (the early name is in), ready (100).
+   Listen mode runs setProg's creep with no milestones. */
 function rlStage(v){
   if(v>=100) return 'Ready';
-  if(!pgSt) return v>0?'Listening':'Reading';
-  return pgSt.name==='tap'?'Reading':pgSt.name==='audio'?'Naming':'Matching'; }
-(function(){ var d=document.getElementById('dial'); if(d) d.innerHTML=rlHTML({n:100,v:0,big:true,stage:'Reading'}); })();
-/* pgPaint: the scan screen's dial and, while the hunt runs, the tracker's small copy - the
-   same number on both */
+  if(!pgS||!pgStg) return v>0?'Listening':'Reading';
+  return pgStg==='tap'?'Reading':pgStg==='audio'?'Naming':'Matching'; }
+(function(){ var d=document.getElementById('dial'); if(d) d.innerHTML=rlHTML({n:RL.NB,v:0,big:true,stage:'Reading'}); })();
+/* pgPaint: the scan screen's dial (the naming dial) */
 function pgPaint(){
   var v=Math.max(0,Math.min(100,pgNow));
-  rlPaint(document.getElementById('dial'),v,rlStage(v));
-  huntPctPaint(rlText(v),v);
-}
-/* PROGRESS 2026-09-29: the same number on the result card's tracker while the hunt runs.
-   DIALSHIP 2026-09-29: it is the small dial now, step 2's circle, carrying on to 100. The
-   card is re-rendered several times mid-hunt, so the tracker is drawn with the dial already
-   painted (huntTracker) and repainted here. */
-function huntPctText(){ return rlText(Math.max(0,Math.min(100,pgNow))); }
+  rlPaint(document.getElementById('dial'),v,rlStage(v)); }
+/* hgPaint: the tracker's dial (the edit hunt's own 0-100). The card is re-rendered several
+   times mid-hunt, so the tracker is drawn with the dial already painted (huntTracker) and
+   repainted here. */
+function hgPaint(){ huntPctPaint(rlText(hgNow),hgNow); }
+function huntPctText(){ return rlText(Math.max(0,Math.min(100,hgNow))); }
 function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   if(h&&h.st==='hold') x+=', getting the clip details';
   else if(h&&h.st==='decide') x+=', picking the exact version';
@@ -2409,7 +2389,7 @@ function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   return x; }
 function huntPctPaint(t,v){
   var els=document.querySelectorAll('#result .htrack .hprog'); if(!els.length) return;
-  if(v==null) v=Math.max(0,Math.min(100,pgNow));
+  if(v==null) v=Math.max(0,Math.min(100,hgNow));
   t=t||rlText(v);
   Array.prototype.forEach.call(els,function(el){
     rlPaint(el.querySelector('.rl'),v);
@@ -2418,21 +2398,21 @@ function huntPctPaint(t,v){
 /* Listen mode keeps its cap-and-creep (sendListen); the link scan uses pgMark. */
 function setProg(pct, cap, label){
   if(pgLock) return;                 // a finishing run is in flight; it owns the number
-  pgSt=null; pgNow=Math.max(pgNow,pct); pgCap=cap;
+  pgS=null; pgNow=Math.max(pgNow,pct); pgCap=cap;
   pgPaint(); pgTickOn();
 }
-function pgReset(){clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval(pgFin);
-  pgSt=null; pgLabel='';
-  // APPLYALL 2026-09-29: back to 0 with no sweep - the 420 ms easing would otherwise unwind
-  // the last scan's ring backwards in front of the user
-  var _dl=document.getElementById('dial'); if(_dl) _dl.classList.add('fin');
-  // Retire the finishing run BY TOKEN, not just by clearing its timer. Phase one's run
-  // also arms a deadline timer, and a reset does not reach into a pending setTimeout -
-  // measured live, phase one's deadline fired 1s into the edit hunt and slammed phase
-  // two's bar to 100, where it sat for the remaining 15 seconds of a real lookup while
-  // the hunt was still going. A retired run must not touch a bar it no longer owns.
-  pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0; pgPaint();
-  if(_dl){ void _dl.offsetWidth; _dl.classList.remove('fin','land'); }}
+function pgReset(){clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval(pgFin); if(hgFin) clearInterval(hgFin);
+  pgS=null; pgStg=''; pgLabel='';
+  // back to 0 with no sweep (.rs): the easing would otherwise unwind the last scan's needle
+  // backwards in front of the user
+  var _dl=document.getElementById('dial'); if(_dl) _dl.classList.add('rs');
+  // Retire the finishing runs BY TOKEN, not just by clearing their timers: a pending backstop
+  // must never touch a dial it no longer owns (measured live 2026-09-26: an old deadline slammed
+  // the next phase's bar to 100 while the hunt was still going).
+  pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0;
+  hgFinTok++; hgFin=null; hgFinP=null; hgS=null; hgE=0; hgNow=0; hgHandP=null;
+  pgPaint();
+  if(_dl){ void _dl.offsetWidth; _dl.classList.remove('rs','fin','land'); }}
 /* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
    Naming the song is one awaited call, so between "reading the clip" and "song
    identified" the page had no event to move on: the bar parked at 30% for the whole
@@ -2452,7 +2432,12 @@ function huntEnd(){ huntPollU=''; progPollOff(); }
    before the crown card replaces it (measured in the replay: without the beat the swap
    landed in the same frame as 100, so 99 was the last number anyone saw) */
 function pgLand(){ return pgDone().then(function(){ return new Promise(function(r){ setTimeout(r,300); }); }); }
-function pgHunt(h){ pgHuntNow=h; if(pgLock) return; if(pgHuntAt(h,pgClock())) pgTickOn(); }
+/* DIALV3 2026-09-29: the hunt's answer runs the TRACKER's dial to 100 (its own 0-100), after the
+   naming dial has handed the screen over (hgHandP), then leaves 100 up for the same beat */
+var hgFin=null, hgFinP=null, hgFinTok=0;
+function hgLand(){ return (hgHandP||Promise.resolve()).then(hgDone).then(function(){ return new Promise(function(r){ setTimeout(r,300); }); }); }
+/* the hunt's counts only ever speed the tracker's dial up (dvAhead), kept until it starts */
+function pgHunt(h){ pgHuntNow=h; var E=dvHuntE(h); if(E>hgE) hgE=E; if(hgS) dvAhead(hgS,hgE); }
 /* FAST-NAME 9 (engine CRATE_PAGE_FAST_POLL, read from /health "features"): while the song is
    still unnamed the engine's early name sat in /progress for up to one 700 ms poll (0.44 s
    median, PROFILE). Poll every 250 ms until the name lands or /base answers, then 700 ms as
@@ -2498,7 +2483,8 @@ function progPollOn(u){
         if(p.label&&p.label!==pgLabel){ pgLabel=p.label; if(!namedEarly&&!pgStageAt('base')) pgScanLabel(p.label); }
         if(p.pct>=18) pgMark('audio');
         if(pgStageAt('base')){          // hunt steps only count once the song is in
-          // PROGRESS 2026-09-29: the engine's counts drive the hunt (pgHuntAt); an engine
+          // PROGRESS 2026-09-29: the engine's counts feed the hunt (DIALV3: pgHunt -> the tracker
+          // dial's catch-up only, never its value); an engine
           // without them still marks the hunt as started
           if(p.hunt){ pgMark('hunt'); pgHunt(p.hunt); }
           else if(p.pct>=60) pgMark('hunt');
@@ -2510,47 +2496,66 @@ function progPollOn(u){
   next();
 }
 function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; progBusy=false;}
-/* RUN IT UP TO 100, do not snap to it. Roham: "it keeps going up until 100, not stop
-   then jump". Snapping is the same complaint as parking at 30, just at the other end -
-   the number stops being a report of progress and becomes two states. This walks the
-   remaining gap in ~450ms and returns a promise so the caller can let the bar actually
-   ARRIVE before the finished card replaces the element it lives in. */
+/* RUN IT UP TO 100, do not snap to it (Roham: "it keeps going up until 100, not stop then jump").
+   DIALV3 2026-09-29: the finishing run is dvFinish (pace core): 400 ms + 5 ms a point, at most 650
+   ms, leaving at the dial's own speed and landing softly, so there is no kink where the
+   steady sweep ends. It paints at 16 ms frames on ITS OWN timer, which nothing else can clear,
+   under a lock that makes every other writer a no-op, with a backstop so the caller is never
+   left hanging (a throttled tab clamps timers). .fin shortens the dial's easing to 60 ms so the
+   needle follows the frames instead of trailing 300 ms behind. Returns a promise that resolves
+   when the dial has ARRIVED at 100, so the caller can hand over only then. */
 function pgDone(){
   if(pgFinP) return pgFinP;                 // already finishing - never start a second run
-  pgLock=true; clearInterval(pgTimer); pgTimer=null;
-  // APPLYALL 2026-09-29: the run paints at 16 ms frames, so the easing is switched off and
-  // the ring follows them exactly instead of trailing 420 ms behind
+  pgLock=true;
   var _fd=document.getElementById('dial'); if(_fd) _fd.classList.add('fin');
-  // DIALSHIP 2026-09-29: and the tracker's small dial, when the hunt's answer runs it to 100
-  Array.prototype.forEach.call(document.querySelectorAll('#result .htrack .rl'),function(e){e.classList.add('fin');});
-  var tok=++pgFinTok, from=pgNow, span=Math.max(0,100-from);
-  if(span<0.5){pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP;}
-  // TIME IT BY THE DISTANCE, not a fixed 450ms. The engine often names the song while
-  // the bar is still in single digits (measured: 6% on a cached clip), and covering
-  // 6 -> 100 in 450ms is not a climb, it is the jump Roham has called out twice.
-  // Long gaps get a real sweep, short ones stay snappy. Capped so the handover is
-  // never held up by more than a beat.
-  var ms=Math.min(1000, Math.round(380+span*7));
-  var t0=Date.now(), guard=null;
+  var tok=++pgFinTok, now=pgClock(), guard=null, f;
+  if(pgS) dvStep(pgS,now);
+  else { pgS=dvNew(DVP.scan,now); pgS.val=pgNow; }   // listen mode: finish from its creep
+  if(pgS.val>pgNow) pgNow=pgS.val;
+  if(100-pgNow<0.5){ pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP; }
+  f=dvFinish(pgS,now);
   pgFinP=new Promise(function(done){
     var end=function(){
       if(pgFin){clearInterval(pgFin); pgFin=null;}
       if(guard){clearTimeout(guard); guard=null;}   // or it fires again into the next phase
-      if(tok===pgFinTok){ pgNow=100; pgPaint(); }   // only if this run still owns the bar
+      if(tok===pgFinTok){ pgNow=100; pgPaint(); }   // only if this run still owns the dial
       done();
     };
     pgFin=setInterval(function(){
-      if(tok!==pgFinTok){ clearInterval(pgFin); pgFin=null; return done(); }
-      var k=Math.min(1,(Date.now()-t0)/ms);
-      pgNow=from+span*(1-Math.pow(1-k,2));    // ease out, never backwards
+      if(tok!==pgFinTok){ clearInterval(pgFin); pgFin=null; if(guard){clearTimeout(guard); guard=null;} return done(); }
+      var v=dvStep(pgS,pgClock()); if(v>pgNow) pgNow=v;   // never backwards
       pgPaint();
-      if(k>=1) end();
+      if(pgNow>=100) end();
     }, 16);
-    // Backstop: a throttled or backgrounded tab clamps timers, so the caller must not be
-    // able to wait on this forever. The handover happens either way.
-    guard=setTimeout(end, ms+1500);
+    guard=setTimeout(end, f.T*1000+1500);
   });
   return pgFinP;
+}
+/* the same run for the tracker's dial, when the hunt's exact edit lands */
+function hgDone(){
+  if(hgFinP) return hgFinP;
+  if(!hgS){ hgFinP=Promise.resolve(); return hgFinP; }   // no tracker dial running (a scan that moved on)
+  Array.prototype.forEach.call(document.querySelectorAll('#result .htrack .rl'),function(e){e.classList.add('fin');});
+  var tok=++hgFinTok, now=pgClock(), guard=null, f;
+  dvStep(hgS,now); if(hgS.val>hgNow) hgNow=hgS.val;
+  if(100-hgNow<0.5){ hgNow=100; hgPaint(); hgFinP=Promise.resolve(); return hgFinP; }
+  f=dvFinish(hgS,now);
+  hgFinP=new Promise(function(done){
+    var end=function(){
+      if(hgFin){clearInterval(hgFin); hgFin=null;}
+      if(guard){clearTimeout(guard); guard=null;}
+      if(tok===hgFinTok){ hgNow=100; hgPaint(); }
+      done();
+    };
+    hgFin=setInterval(function(){
+      if(tok!==hgFinTok){ clearInterval(hgFin); hgFin=null; if(guard){clearTimeout(guard); guard=null;} return done(); }
+      var v=dvStep(hgS,pgClock()); if(v>hgNow) hgNow=v;
+      hgPaint();
+      if(hgNow>=100) end();
+    }, 16);
+    guard=setTimeout(end, f.T*1000+1500);
+  });
+  return hgFinP;
 }
 /* Source card. Repainted in place as facts arrive (thumbnail, handle, audio confirmed),
    so pass null for anything you are not changing. The audio tick only goes green once
@@ -3245,16 +3250,17 @@ function sendFeedback(obj){
 var HUNT_ON=false;
 function huntTracker(){
   var ok='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
-  var v=Math.max(0,Math.min(100,pgNow)), t=rlText(v);
+  // DIALV3: the edit hunt's own 0-100; a card rebuilt mid-hunt draws the needle where it is
+  // on screen (rlShown), so it carries on instead of leaping ahead
+  var v=Math.max(0,Math.min(100,hgNow)), vn=rlShown(document.querySelector('#result .htrack .rl'),v), t=rlText(v);
   return '<div class="htrack hdial" role="status" aria-live="polite" aria-label="Song identified. Matching the edit.">'+
     '<div class="hs done"><span class="hc">'+ok+'</span><span class="hl">Song ID’d</span></div>'+
     '<span class="hbar done"></span>'+
-    // PROGRESS 2026-09-29: the scan's number, building to 100 as the hunt checks versions.
-    // DIALSHIP 2026-09-29: step 2's circle is the scan screen's dial, small, carrying on from
-    // where the big one stopped, its lines lighting the whole way to 100
+    // DIALV3 2026-09-29: step 2's circle is the spoke dial, small (45 spokes), running its own
+    // steady 0-100 for the edit hunt from the moment the card takes the screen
     '<div class="hs act hprog" role="progressbar" aria-label="Matching the edit" aria-valuemin="0" aria-valuemax="100"'+
       ' aria-valuenow="'+t+'" aria-valuetext="'+esc(huntPctVT(t))+'">'+
-      '<div class="rl sm'+(v>=100?' done':'')+'">'+rlHTML({n:50,v:v,sm:true})+'</div>'+
+      '<div class="rl sm'+(v>=100?' done':'')+(hgFinP?' fin':'')+'">'+rlHTML({n:RL.NS,v:v,vn:vn,sm:true})+'</div>'+
       '<span class="hl">Matching the edit</span></div>'+
     '<span class="hbar"></span>'+
     '<div class="hs"><span class="hc">3</span><span class="hl">Ready to save</span></div></div>';}
@@ -5195,7 +5201,14 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       // sooner because nothing waits on a finishing run.
       if(d.edits_pending){
         return Promise.resolve().then(function(){
-        setState('locked'); say('Locking in the exact version');
+        // DIALV3 2026-09-29: THE NAMING DIAL LANDS ON 100 BEFORE THE CARD TAKES THE SCREEN (Konnor:
+        // "If the song is found early, speed the needle up smoothly to 100%. Never snap"). The run
+        // is 400-800 ms from wherever the steady sweep had reached, then 100 holds for 300 ms, then
+        // the card, whose tracker starts the edit hunt's own dial from 0. The hunt itself is asked
+        // for right now, below, so the engine loses no time to the landing.
+        hgHandP=pgLand().then(function(){
+          if(tok!==scanTok||leftScan) return;
+          setState('locked'); say('Locking in the exact version'); hgStart(); });
         // PROGRESS 2026-09-29: NO RESET HERE. This used to zero the number and hand the hunt
         // a cap-and-creep to 94, so the card never showed the hunt's progress and the only
         // run to 100 happened off screen. The number the dial reached carries on, the poll
@@ -5238,7 +5251,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
             // is still on the card, so the number runs up to 100 there (380 ms plus 7 ms a
             // point, at most 1 s), holds for 300 ms, then the crown card replaces it.
             var _tok=tok;
-            pgLand().then(function(){
+            hgLand().then(function(){   // DIALV3: the tracker's dial runs to 100
               HUNT_ON=false;                             // TRACKER 2026-09-29: the answer is in
               if(_tok!==scanTok||!onScan()) return;
               try{
@@ -5289,7 +5302,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           // on the page, so it only held the card back by up to a second.
           // PROGRESS 2026-09-29: a hunt that answered inside the budget runs its number to 100
           // on the tracker first (the card has been showing it since /base)
-          var _pre=(lands(full)||lands(lateFull))?(huntEnd(),pgLand()):Promise.resolve();
+          var _pre=(lands(full)||lands(lateFull))?(huntEnd(),hgLand()):Promise.resolve();   // DIALV3: the tracker's dial
           return _pre.then(function(){
             baseShown=true;
             if(!full && lateFull) full=lateFull;   // F2: the hunt finished during pgDone()
