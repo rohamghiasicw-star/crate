@@ -2241,7 +2241,13 @@ var DVP={
   ahead:{audio:20, named:67},
   // the hunt's counts on the hunt dial: 90 x the median share of the hunt at which each step
   // happens (hold over 0.30, first versions queued 0.35, find_edit 0.89, speed 0.95, crown 1.0)
-  hE:{he:27, q:31, k:[80,85,90], R:6}};
+  hE:{he:27, q:31, k:[80,85,90], R:6},
+  // HUNT BUDGET: the final stretch. When /progress says the hunt is wrapping up ("wr": the
+  // engine's budget stopped it, or find_edit returned), a hunt dial already past 90 leaves
+  // its creep and eases toward 99.6 (tau 4.5 s, ramped in over kramp), so it keeps
+  // moving through the tail instead of sitting at 96-97. rlText floors, so it reads 99 at
+  // most; only the answer says 100.
+  wtop:99.6, wtau:4.5};
 /* seconds past 90 at which the steady creep reaches `top` */
 function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau)/P.c); }
 /* the steady curve at virtual second x: [value, speed] */
@@ -2251,7 +2257,9 @@ function dvCurve(P,x){
   if(d<=D1){ val+=P.c*d; sp+=P.c; }
   else { s=d-D1; eb=Math.exp(-s/P.tau2); val+=P.c*D1+P.cf*s+(P.c-P.cf)*P.tau2*(1-eb); sp+=P.cf+(P.c-P.cf)*eb; }
   return val>=DVP.lim?[DVP.lim,0]:[val,sp]; }
-function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null}; }
+function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null,w:0,wk:0}; }
+/* HUNT BUDGET: the engine is wrapping up: past 90 the dial takes its final stretch */
+function dvWrap(s){ if(s&&!s.fin) s.w=1; }
 /* the engine says this dial should be at least at E: speed up (never jump) until it is */
 function dvAhead(s,E){ if(s&&!s.fin&&E>s.E) s.E=Math.min(DVP.top,E); }
 /* advance to `now`: never backwards; a throttled or backgrounded tab resumes, it does not leap */
@@ -2264,6 +2272,10 @@ function dvStep(s,now){
   kt=s.E>s.val+.5?DVP.kmax:1; dk=(DVP.kmax-1)*dt/DVP.kramp;
   s.k=kt>s.k?Math.min(kt,s.k+dk):Math.max(kt,s.k-dk);
   s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k; if(c[0]>s.val) s.val=c[0];
+  if(s.w&&s.val>=s.P.e&&s.val<DVP.wtop){       // the final stretch (dvWrap), never backwards
+    s.wk=Math.min(1,s.wk+dt/DVP.kramp);
+    s.val+=(DVP.wtop-s.val)*(1-Math.exp(-dt/DVP.wtau))*s.wk;
+    s.sp=Math.max(s.sp,(DVP.wtop-s.val)/DVP.wtau*s.wk); }
   return s.val; }
 /* the answer: a run to 100 over 460 ms + 3.8 ms a point (at most 650 ms, so the eased needle lands inside 800 ms of the answer arriving;
    at least 460 ms so a run of under a point, a very long scan's, still lands inside 400-800 ms, FIX 2026-09-29) that leaves at the dial's
@@ -2284,6 +2296,7 @@ function dvHuntE(h){
 /* DIALV3-PACE-CORE-END */
 var pgS=null, pgStg='', pgLabel='';            // the naming dial's pacer, and the last milestone seen
 var hgNow=0, hgS=null, hgE=0, hgHandP=null;    // the hunt dial: value, pacer, engine estimate, handover
+var hgW=0;                                      // HUNT BUDGET: /progress said "wr" (wrapping up)
 var PG_ORDER=['tap','audio','named','base','hunt'];
 function pgClock(){return ((window.performance&&performance.now)?performance.now():Date.now())/1000;}
 /* A milestone the page has just seen. Forward only: a later one implies every earlier one. 'tap'
@@ -2304,7 +2317,7 @@ function pgTick(){
 // 100 ms ticks; the dial's CSS eases each step over 300 ms linear, so the sweep is continuous
 function pgTickOn(){ if(pgTimer) return; pgTimer=setInterval(pgTick,100); }
 /* the tracker's dial starts when the card with the tracker takes the screen */
-function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); hgNow=0; hgPaint(); pgTickOn(); }
+function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); if(hgW) dvWrap(hgS); hgNow=0; hgPaint(); pgTickOn(); }
 /* APPLYALL 2026-09-29 (review finding 16): a hunt that ends without an answer takes its
    "still working" line off the card. finalize() cancels the 90 s re-render, the only thing
    that used to remove it, so it stayed for good. `.htrack` is the three-step tracker the
@@ -2428,6 +2441,7 @@ function huntPctText(){ return rlText(Math.max(0,Math.min(100,hgNow))); }
 function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   if(h&&h.st==='hold') x+=', getting the clip details';
   else if(h&&h.st==='decide') x+=', picking the exact version';
+  else if(h&&h.wr) x+=', wrapping up';
   else if(h&&h.q) x+=', checked '+h.c+' of '+h.q+' versions';
   else x+=', searching for edits';
   return x; }
@@ -2454,7 +2468,7 @@ function pgReset(){clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval
   // must never touch a dial it no longer owns (measured live 2026-09-26: an old deadline slammed
   // the next phase's bar to 100 while the hunt was still going).
   pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0;
-  hgFinTok++; hgFin=null; hgFinP=null; hgS=null; hgE=0; hgNow=0; hgHandP=null;
+  hgFinTok++; hgFin=null; hgFinP=null; hgS=null; hgE=0; hgNow=0; hgHandP=null; hgW=0;
   pgPaint();
   if(_dl){ void _dl.offsetWidth; _dl.classList.remove('rs','fin','land'); }}
 /* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
@@ -2481,7 +2495,8 @@ function pgLand(){ return pgDone().then(function(){ return new Promise(function(
 var hgFin=null, hgFinP=null, hgFinTok=0;
 function hgLand(){ return (hgHandP||Promise.resolve()).then(hgDone).then(function(){ return new Promise(function(r){ setTimeout(r,300); }); }); }
 /* the hunt's counts only ever speed the tracker's dial up (dvAhead), kept until it starts */
-function pgHunt(h){ pgHuntNow=h; var E=dvHuntE(h); if(E>hgE) hgE=E; if(hgS) dvAhead(hgS,hgE); }
+function pgHunt(h){ pgHuntNow=h; var E=dvHuntE(h); if(E>hgE) hgE=E; if(hgS) dvAhead(hgS,hgE);
+  if(h&&h.wr){ hgW=1; if(hgS) dvWrap(hgS); } }   // HUNT BUDGET: the engine is wrapping up
 /* FAST-NAME 9 (engine CRATE_PAGE_FAST_POLL, read from /health "features"): while the song is
    still unnamed the engine's early name sat in /progress for up to one 700 ms poll (0.44 s
    median, PROFILE). Poll every 250 ms until the name lands or /base answers, then 700 ms as

@@ -628,6 +628,8 @@ def _prog_probe(key, ceiling):
 # Counters only, bumped by the hunt's own threads (E.hunt_hook_set): no timer, no network,
 # a dict update under a lock per candidate. /progress turns it into a stage when it is read.
 _HUNT_LOCK = threading.Lock()
+# HUNT BUDGET: the dial's wrap cue rides the engine flag (CRATE_HUNT_WRAP=0 turns just it off)
+HUNT_WRAP = bool(getattr(E, "HUNT_BUDGET", 0)) and E._speed_flag("CRATE_HUNT_WRAP", True)
 
 
 def _hunt_start(key):
@@ -651,6 +653,8 @@ def _hunt_ev(key, ev, n=1):
             h["c"] = min(h["d"], h["c"] + int(n))
         elif ev == "k":
             h["k"] = max(h["k"], int(n))
+        elif ev == "w":
+            h["w"] = 1               # HUNT BUDGET: the hunt stopped early and is wrapping up
     p["t"] = time.time()
 
 
@@ -675,6 +679,11 @@ def _hunt_view(h):
         span = max(0.05, hold[1] - hold[0])
         out["hu"] = round(span, 2)
         out["hw"] = 1.0 if hold[2] else round(min(1.0, max(0.0, (time.time() - hold[0]) / span)), 3)
+    # HUNT BUDGET: "wr" = the engine is wrapping up (the budget stopped the hunt, or
+    # find_edit has returned), so the page's tracker dial may enter its final stretch
+    # instead of creeping at 96-97. Only with the flag on; without it the view is today's.
+    if HUNT_WRAP and (h.get("w") or h["k"] >= 0):
+        out["wr"] = 1
     if h["k"] >= 0:
         out["st"] = "decide"
     elif hold and not hold[2]:
@@ -4084,6 +4093,10 @@ def _phase2(ctx, on_cand=None):
                     _cmlinks = list(_cmlinks) + [t for t in _ht
                                                  if t["url"] not in _have]
                     E.tlog("handle_tracks", 0.0, handle=_h, n=len(_ht))
+            # HUNT BUDGET (CRATE_HUNT_BUDGET, off by default): this find_edit is the scan's
+            # hunt, on the clock its tlog row is measured from (_t, huntbudget/MEASURE.md)
+            if hasattr(E, "hunt_budget_arm"):
+                E.hunt_budget_arm(_t)
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
@@ -4095,6 +4108,10 @@ def _phase2(ctx, on_cand=None):
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
             _hunt_ev(key, "k", 0)                           # PROGRESS 2026-09-29: deciding
+            if edit.get("hunt_budget"):
+                # HUNT BUDGET: the hunt stopped early (no row reached 0.62 by 25 s / 35 s);
+                # the answer below is built from the rows it did score, as on any hunt
+                res["hunt_budget"] = edit["hunt_budget"]
             # The creator block phase 1 refused to wait on. The hunt has just taken ~19s,
             # so this is free here, and /edits is the payload that carries it.
             if ctx.get("creator_h") is not None and not res.get("creator"):
@@ -4877,8 +4894,10 @@ def _phase2(ctx, on_cand=None):
                                     _csid, _corr_res["title"])
                 except Exception:
                     pass
-        if _corr_res is None or not _corr_res["transient"]:
+        if (_corr_res is None or not _corr_res["transient"]) and not res.get("hunt_budget"):
             # (a correction that was never even downloaded is retried on the next scan)
+            # HUNT BUDGET: nor is a hunt the budget cut short cached (it ends early only when
+            # the downloader is degraded; the next scan of this clip does the real work)
             _cache_put(key, res)
             _sound_cache_put(src, res)       # answer the SOUND, not just this clip
         return res

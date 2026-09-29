@@ -6821,7 +6821,7 @@ def _dl_direct(url, dst, seconds, budget):
     return _range_to_wav(media, dst, kbps, seconds, left)
 
 
-def dl_clip(url, dst, seconds=20, timeout=15):
+def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
     """Grab ~`seconds` of a candidate as wav. SoundCloud needs the android player client
     exemption; YouTube needs it too (web formats want a PO token now).
 
@@ -6854,9 +6854,18 @@ def dl_clip(url, dst, seconds=20, timeout=15):
     (the proven, more capable path) fetches the same audio anyway - so the cap costs
     nothing but a slightly slower fetch for that one candidate, and the worst case
     drops from 30s to 21s. The subprocess timeout itself stays untouched at 15s
-    (lowering THAT to 10s was tried and reverted - it lost a real best candidate)."""
+    (lowering THAT to 10s was tried and reverted - it lost a real best candidate).
+
+    `abort` (HUNT BUDGET, _HuntBudget or None): when the hunt's cap lets this download go,
+    the yt-dlp fallback is killed with its whole process group (its ffmpeg children too),
+    no fallback starts after the cap, and a direct fetch that lands after it is removed."""
     try:
-        return _dl_direct(url, dst, seconds, min(6, timeout))
+        if abort is None:
+            return _dl_direct(url, dst, seconds, min(6, timeout))
+        _got = _dl_direct(url, dst, seconds, min(6, timeout))
+        if abort.dead:
+            return None                          # the caller drops the file
+        return _got
     except Exception:
         pass                                     # fall through to the proven subprocess
     is_yt = "youtube.com" in url or "youtu.be" in url
@@ -6866,10 +6875,14 @@ def dl_clip(url, dst, seconds=20, timeout=15):
                              "--force-keyframes-at-cuts"]
     if is_yt:
         args += ["--extractor-args", _YT_CLIENTS]      # see _YT_CLIENTS
-    try:
-        subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
-    except Exception:
-        return None
+    if abort is not None:
+        if not abort.run(args, timeout):
+            return None
+    else:
+        try:
+            subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
+        except Exception:
+            return None
     if not os.path.exists(dst):
         return None
     return dst
@@ -7030,6 +7043,271 @@ def _web_quota(cands, max_dl, min_web=2):
     return (head[:max_dl - len(extra)] + extra)
 
 
+# ---------------------------------------------------------------- HUNT BUDGET (2026-09-29)
+# Konnor 22:34, "What Makes You Beautiful" slowed ~0.80x: "for original audios it can't be
+# waiting 2 minutes just for their to not even be other options". find_edit sat 140.8 s:
+# 21 of 24 downloads timed out at 20-27 s (normal failure 2.55 s) and two CPU-starved gaps
+# took 16.2 s and 17.9 s, so "no other versions" was answered without one upload checked.
+# The rule (huntbudget/MEASURE.md, 356 uncontended crowns, zero lost), clock = find_edit start:
+#   1. past T (25 s) with no scored row at core >= 0.62 or raw fp > 0.62, no new download
+#      wave starts (fast batch, dl_wave1, dl_main, extra_dir_dl, family_wave, evidence_lane,
+#      the creator alignment);
+#   2. at C (35 s), still with nothing >= 0.62, running downloads are abandoned (yt-dlp
+#      killed, files removed) and every wait still open is cut, so the hunt returns with the
+#      rows it already scored. A real timer, not a check between waves;
+#   3. once anything >= 0.62 is scored the rule is off and the hunt runs exactly as today.
+# ON by default since the 2026-09-30 ship (prove: 26 quiet scans ON vs OFF, 0 crowns lost, rule
+# fired on none of them). CRATE_HUNT_BUDGET=0 turns it off; "1"/"on"/unset = 25 s, or a number
+# of seconds; CRATE_HUNT_CAP is C (default 35). Only the phase-2 hunt arms it (server._phase2 calls
+# hunt_budget_arm); the section hunt and the CLI never do. With it off every line below is
+# unreachable and find_edit runs live's code path.
+import contextlib as _contextlib, glob as _glob, signal as _signal
+from concurrent.futures import TimeoutError as _FutTimeout
+
+
+def _hunt_budget_env():
+    # ON by default since the 2026-09-30 ship (huntbudget/SHIP.md): unset = 25 s
+    v = (os.environ.get("CRATE_HUNT_BUDGET") or "").strip().lower()
+    if v in ("0", "off", "false", "no"):
+        return 0.0
+    if v in ("", "1", "on", "true", "yes"):
+        return 25.0
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        return 0.0
+
+
+HUNT_BUDGET = _hunt_budget_env()               # T, seconds from find_edit start; 0 = off
+try:
+    HUNT_CAP = float(os.environ.get("CRATE_HUNT_CAP") or 35.0)      # C
+except ValueError:
+    HUNT_CAP = 35.0
+HUNT_CAP = max(HUNT_CAP, HUNT_BUDGET)
+HUNT_EVID_CORE = 0.62      # = CORE_EDIT: "a real edit match, not a coincidence"
+HUNT_EVID_FP = 0.62        # raw fp strictly above: all 504 false matcher pairs read <= 0.613
+_HB_TLS = threading.local()
+
+
+def hunt_budget_arm(t0=None):
+    """server._phase2, right before its find_edit call: that call is the scan's hunt, its
+    clock started at t0 (the `_t` the find_edit tlog row is measured from). No-op when off.
+    Honoured only by a find_edit entered within 5 s on this thread, then cleared."""
+    if HUNT_BUDGET > 0:
+        _HB_TLS.t0 = time.time() if t0 is None else float(t0)
+        _HB_TLS.armed_at = time.time()
+
+
+def _hunt_budget():
+    return getattr(_HB_TLS, "hb", None)
+
+
+def _hb_left(hb, t):
+    """A wait of `t` s (None = no limit), cut to what is left of the cap while armed."""
+    if hb is None:
+        return t
+    r = hb.remaining()
+    if r is None:
+        return t
+    return r if t is None else min(t, r)
+
+
+def _hb_go(hb, wave):
+    return hb is None or hb.may_start(wave)
+
+
+def _hb_call(hb, what, fn, *a, **kw):
+    default = kw.pop("default", None)
+    if hb is None:
+        return fn(*a, **kw)
+    return hb.call(what, fn, a, kw, default)
+
+
+def _killpg(p):
+    try:
+        os.killpg(p.pid, _signal.SIGKILL)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+
+class _HuntBudget(object):
+    """One per phase-2 hunt. `evidence` flips (under `lock`) the moment a row scores core
+    >= 0.62 or raw fp > 0.62, and from then on every method here answers "as today".
+    `dead` is set once when the cap fires: no commit, download or wave after it."""
+
+    def __init__(self, T, C, t0=None, hook=None, clock=time.time):
+        self.T, self.C, self.clock, self.hook = float(T), float(C), clock, hook
+        self.t0 = clock() if t0 is None else float(t0)
+        self.lock = threading.Lock()
+        self.evidence = self.dead = False
+        self.best_core = self.best_fp = 0.0
+        self.skipped, self.cut = [], []
+        self.abandoned = self.cancelled = self.dropped = 0
+        self.fired_at = None
+        self.procs = set()
+
+    def elapsed(self):
+        return self.clock() - self.t0
+
+    def remaining(self):
+        """None while the rule is off (evidence), else seconds left to the cap (>= 0)."""
+        if self.evidence:
+            return None
+        return max(0.0, self.C - self.elapsed())
+
+    def note(self, core, fp):
+        """Caller holds `lock` (the commit in _download_and_score)."""
+        core, fp = float(core or 0.0), float(fp or 0.0)
+        self.best_core, self.best_fp = max(self.best_core, core), max(self.best_fp, fp)
+        if core >= HUNT_EVID_CORE or fp > HUNT_EVID_FP:
+            self.evidence = True
+
+    def _fire(self):
+        first = self.fired_at is None
+        if first:
+            self.fired_at = round(self.elapsed(), 3)
+        return first
+
+    def _wrap(self, first):
+        if first:
+            _hunt_call(self.hook, "w")      # /progress: the hunt is wrapping up (the dial's cue)
+
+    def may_start(self, wave):
+        """Rule 1. False = do not start this wave (recorded in `skipped`)."""
+        if self.evidence:
+            return True
+        if not self.dead and self.elapsed() <= self.T:
+            return True
+        with self.lock:
+            if self.evidence:
+                return True
+            self.skipped.append(wave)
+            first = self._fire()
+        self._wrap(first)
+        return False
+
+    def cut_wait(self, what):
+        """Rule 2 on a wait that is not a download batch: the cap has passed."""
+        with self.lock:
+            if self.evidence:
+                return False
+            self.dead = True
+            self.cut.append(what)
+            first = self._fire()
+        self._wrap(first)
+        return True
+
+    def abandon(self, what, running, queued):
+        """Rule 2 on a download batch: kill what runs, cancel what waits. False if a row
+        reached the floor meanwhile (then the batch is waited for, as today)."""
+        with self.lock:
+            if self.evidence:
+                return False
+            self.dead = True
+            self.cut.append(what)
+            self.abandoned += running
+            self.cancelled += queued
+            procs = list(self.procs)
+            first = self._fire()
+        for p in procs:
+            _killpg(p)
+        self._wrap(first)
+        return True
+
+    def call(self, what, fn, a, kw, default):
+        """A blocking step (a search, a clip decode) that must not outlive the cap. It runs
+        on its own thread and is let go at the cap; its result is then `default`."""
+        if self.evidence:
+            return fn(*a, **kw)
+        rem = self.remaining()
+        if rem is None:
+            return fn(*a, **kw)
+        if rem <= 0:
+            self.cut_wait(what)
+            return default
+        ex = ThreadPoolExecutor(max_workers=1)
+        f = ex.submit(fn, *a, **kw)
+        ex.shutdown(wait=False)
+        try:
+            return f.result(timeout=rem)
+        except _FutTimeout:
+            if self.cut_wait(what):
+                return default
+            return f.result()               # a row reached the floor: wait, as today
+
+    def run(self, args, timeout):
+        """dl_clip's yt-dlp fallback, killable: its own process group, registered under
+        the lock so the cap can never miss one started at the same instant."""
+        with self.lock:
+            if self.dead:
+                return False
+            p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            self.procs.add(p)
+        try:
+            try:
+                p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _killpg(p)
+                p.wait()
+                return False
+            return p.returncode == 0 and not self.dead
+        except Exception:
+            _killpg(p)
+            return False
+        finally:
+            with self.lock:
+                self.procs.discard(p)
+
+    def drop(self, dst):
+        """RETENTION: every file an abandoned download made (yt-dlp's parts, the wav, the
+        spectrum's .c22.wav) goes, whatever the hunt's tmp dir does next."""
+        for f in _glob.glob(_glob.escape(os.path.splitext(dst)[0]) + ".*"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        with self.lock:
+            self.dropped += 1
+
+    def map_bounded(self, what, fn, items, workers):
+        """ex.map with the cap as a real deadline: the results in order, or, once the cap
+        has let the step go, None for every item. NOT a `with` block: its __exit__ would
+        wait for the very work the cap lets go (hard-rules.md, executor gotcha)."""
+        ex = ThreadPoolExecutor(max_workers=workers)
+        futs = [ex.submit(fn, it) for it in items]
+        gone = False
+        try:
+            pending = set(futs)
+            while pending:
+                done, pending = _cf_wait(pending, timeout=self.remaining())
+                if pending and self.remaining() is not None:
+                    running = sum(1 for f in pending if f.running())
+                    if self.abandon(what, running, len(pending) - running):
+                        gone = True
+                        break
+        finally:
+            ex.shutdown(wait=False, cancel_futures=gone)
+        if gone:
+            return [None] * len(futs)
+        return [f.result() for f in futs]   # a worker's exception surfaces, as ex.map's did
+
+    def run_batch(self, work, items, workers):
+        """_download_and_score's pool (see map_bounded)."""
+        self.map_bounded("batch", work, items, workers)
+
+    def summary(self):
+        return {"at": self.fired_at, "T": self.T, "C": self.C,
+                "cap": bool(self.cut), "waves_skipped": list(self.skipped),
+                "cut": list(self.cut), "inflight_abandoned": self.abandoned,
+                "queued_cancelled": self.cancelled,
+                "best_core": round(self.best_core, 4), "best_fp": round(self.best_fp, 4),
+                "hunt": round(self.elapsed(), 3)}
+
+
 def _editmatch_calc(core, not_other, artist_hit):
     """THE editmatch predicate, in exactly one place.
 
@@ -7044,31 +7322,46 @@ def _editmatch_calc(core, not_other, artist_hit):
 
 
 def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
-                        on_scored=None):
+                        on_scored=None, wave=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
     verify() returns a calibrated same-master score that survives speed / pitch /
     bass-boost edits, plus the measured speed and a bass-boost delta. This is the
     exact-edit decider - where the old averaged-spectrum + raw chromaprint both sat
     at the ~0.5 noise floor and let play counts silently pick the answer."""
     todo = [c for c in cands if not c.get("_done")][:max_dl]
+    # HUNT BUDGET: None unless armed (phase-2 hunt, CRATE_HUNT_BUDGET); rule 1 is this line
+    _bud = _hunt_budget()
+    if todo and _bud is not None and not _bud.may_start(
+            wave or ("fast" if start == FAST_FILE_BASE else "batch")):
+        return 0
     _hk = _hunt_hook()      # PROGRESS 2026-09-29: this scan's counter, read on the calling thread
     if todo:
         _hunt_call(_hk, "q", len(todo))
 
     def work(i_c):
         i, c = i_c
+        if _bud is not None and _bud.dead:      # HUNT BUDGET: the cap let it go unstarted
+            return
         c["_done"] = True
         _dt0 = time.time()
-        got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)),
-                      seconds=(c.get("dl_seconds") or 20))
+        _dst = os.path.join(tmp, "c%d.wav" % (start + i))
+        got = (dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20)) if _bud is None
+               else dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20), abort=_bud))
+        if _bud is not None and _bud.dead:      # abandoned mid-download: no row, no file
+            _bud.drop(_dst)
+            tlog("cand_abandoned", time.time() - _dt0, url=c.get("url"), at="download")
+            return
         _dt1 = time.time()
         _hunt_call(_hk, "d")
         if not got:
             tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
                  ok=False)
-            c.update(_spec=None, spectral=-1.0, fp=0.0, arr=0.0, vscore=0.0, core=0.0,
-                     score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
-                     clip_tilt=0.0, cand_tilt=0.0)
+            with (_bud.lock if _bud is not None else _contextlib.nullcontext()):
+                if _bud is not None and _bud.dead:
+                    return                  # HUNT BUDGET: past the cap no row changes
+                c.update(_spec=None, spectral=-1.0, fp=0.0, arr=0.0, vscore=0.0, core=0.0,
+                         score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
+                         clip_tilt=0.0, cand_tilt=0.0)
             _cand_tick()
             _hunt_call(_hk, "c")
             return
@@ -7093,20 +7386,37 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         # made every one WORSE (0.424->0.218, 0.433->0.297, 0.431->0.387), and all three
         # were still dropped - so it bought nothing and cost a second full download on a
         # meaningful share of candidates. Removed: it was pure latency.
-        c["_spec"] = _spec_of(got)          # kept for any spectrum-based fallback
-        c["path"] = got                     # kept so the caller can measure speed vs it
-        # slope_delta rides along because the bass claim needs BOTH halves: bass_delta is
-        # speed-contaminated (a 0.8x slow forges as much apparent bass as a real 14 dB
-        # shelf) and slope_delta is pitch-shift invariant. It was computed in verify() and
-        # dropped here, so bass_confirmed was False on 100% of live rows and the dual gate
-        # could never fire - which is why "bass boosted" kept reaching Roham unverified.
-        c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
-                 vscore=v["score"], score=v["score"], same=v["same"],
-                 vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
-                 speed_conf=v.get("speed_conf"),
-                 slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
-                 cand_slope=v.get("cand_slope"),
-                 clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
+        _sp = _spec_of(got)                 # kept for any spectrum-based fallback
+        # HUNT BUDGET: the row is committed under the budget's lock, so the cap and a
+        # commit never interleave: after the cap no row changes under the ranking pass.
+        # Without a budget this is a no-op context and the same three statements.
+        _gone = False
+        with (_bud.lock if _bud is not None else _contextlib.nullcontext()):
+            if _bud is not None and _bud.dead:
+                _gone = True
+            else:
+                c["_spec"] = _sp
+                c["path"] = got             # kept so the caller can measure speed vs it
+                # slope_delta rides along because the bass claim needs BOTH halves: bass_delta
+                # is speed-contaminated (a 0.8x slow forges as much apparent bass as a real
+                # 14 dB shelf) and slope_delta is pitch-shift invariant. It was computed in
+                # verify() and dropped here, so bass_confirmed was False on 100% of live rows
+                # and the dual gate could never fire - which is why "bass boosted" kept
+                # reaching Roham unverified.
+                c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
+                         vscore=v["score"], score=v["score"], same=v["same"],
+                         vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
+                         speed_conf=v.get("speed_conf"),
+                         slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
+                         cand_slope=v.get("cand_slope"),
+                         clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
+                if _bud is not None:
+                    _bud.note(v.get("core"), v.get("fp"))
+        if _gone:                           # the cap fired while it verified: no row, no file
+            _bud.drop(_dst)
+            tlog("cand_abandoned", time.time() - _dt0, url=c.get("url"), at="verify",
+                 core=v.get("core"))
+            return
         # THE MOMENT A CANDIDATE IS VERIFIED. Everything above is this candidate's own
         # audio evidence against the clip, complete - the rest of find_edit only decides
         # ORDER. So this is the one honest place to tell the UI "another one just
@@ -7119,6 +7429,11 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             except Exception:
                 pass
 
+    if todo and _bud is not None:           # HUNT BUDGET: the same pool, with the cap as a deadline
+        _bt0 = time.time()
+        _bud.run_batch(work, list(enumerate(todo)), min(16, len(todo)))
+        tlog("dl_score_batch", time.time() - _bt0, n=len(todo))
+        return len(todo)
     if todo:
         _bt0 = time.time()
         with ThreadPoolExecutor(max_workers=min(16, len(todo))) as ex:
@@ -7216,12 +7531,29 @@ async def find_edit(*args, **kwargs):
     left an empty dir. Every dir the body made is removed when it raises; on success any
     dir the result does not carry is removed. The returned dir is still the caller's."""
     tmps = []
+    # HUNT BUDGET: armed only by server._phase2 (hunt_budget_arm) and only with the flag on;
+    # the body reads it from this thread (_hunt_budget), so its signature is live's.
+    _t0, _armed = getattr(_HB_TLS, "t0", None), getattr(_HB_TLS, "armed_at", None)
+    _HB_TLS.t0 = _HB_TLS.armed_at = None
+    _hb = None
+    if (HUNT_BUDGET > 0 and _t0 is not None and _armed is not None
+            and time.time() - _armed < 5.0):
+        _hb = _HuntBudget(HUNT_BUDGET, HUNT_CAP, t0=_t0, hook=_hunt_hook())
+    _HB_TLS.hb = _hb
     try:
         res = await _find_edit_body(*args, _tmps=tmps, **kwargs)
     except BaseException:
         for d in tmps:
             _cleanup_dir(d)
         raise
+    finally:
+        _HB_TLS.hb = None
+    if _hb is not None and _hb.fired_at is not None and isinstance(res, dict):
+        # the rule fired: say so in the result (server copies it to the payload) and the tlog,
+        # so a gate can prove it only ever fired on scans that end without a crown
+        res["hunt_budget"] = _hb.summary()
+        tlog("hunt_budget", _hb.elapsed(), nranked=len(res.get("ranked") or []),
+             **res["hunt_budget"])
     keep = res.get("tmp") if isinstance(res, dict) else None
     for d in tmps:
         if d != keep:
@@ -7258,6 +7590,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     APPENDED to the download head, never substituted into it, so the pool every existing
     clip is scored on is unchanged and the only reachable outcome is that a new,
     audio-verified candidate wins."""
+    _hb = _hunt_budget()     # HUNT BUDGET: None unless the phase-2 hunt armed it (flag on)
     # `queries` is the list build_queries has always returned; `rescue_q` holds the
     # treatment forms its cap cut off (see QUERY_CAP), searched on their own lane below.
     queries, rescue_q = build_queries(credit_title, credit_author, base_title,
@@ -7408,7 +7741,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 ftmp = tempfile.mkdtemp()
                 if _tmps is not None:
                     _tmps.append(ftmp)       # APPLYALL 2026-09-29
-                fctx = _verify.prepare_clip(clip_audio)
+                fctx = _hb_call(_hb, "prepare_clip", _verify.prepare_clip, clip_audio)
                 _ft1 = time.time()
                 # STREAM THE FAST PATH TOO. Anything landing at FAST_EXIT_CORE is at or
                 # above CORE_SAME (provably the same audio), so it is guaranteed to be in
@@ -7576,7 +7909,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # where the web genuinely cracked it (Ark), the results that matter arrive early.
     f_web = ex.submit(web_search_edits, web_q)
     try:
-        cands = f_sc.result()
+        cands = f_sc.result(timeout=_hb_left(_hb, None))   # HUNT BUDGET: None = no limit
         # `search_scyt` still measures the search itself, from submit to answer, so it
         # stays comparable to every number already in tlog. `wait` is the new one worth
         # reading: how long this line actually BLOCKED, which is the thing that moved.
@@ -7587,6 +7920,13 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         spec_handles = _prod_handles_now(cands) if (prod_title and cands) else []
         f_prod = (ex.submit(_producer_search, spec_handles, prod_title)
                   if spec_handles else None)
+    except _FutTimeout:
+        # HUNT BUDGET: the cap passed with the broad search still out, so it adds no rows.
+        # Any other timeout (or no budget) raises exactly as before.
+        if _hb is None or _hb.remaining() != 0.0 or not _hb.cut_wait("search_scyt"):
+            ex.shutdown(wait=False)
+            raise
+        cands, spec_handles, f_prod = [], [], None
     except Exception:
         ex.shutdown(wait=False)
         raise
@@ -7614,8 +7954,10 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # producer chase another 1.8-2.5s, all strictly BEFORE the first download byte
     # moved. The final scored pool is kept byte-identical to the serial version's (see
     # the parity strip below), so this changes WHEN work happens, never WHAT is scored.
-    clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
-    clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
+    # HUNT BUDGET: _hb_call is the plain call without a budget; with one, a decode the cap
+    # overtakes (Konnor's scan: 17.9 s CPU-starved here) is let go at the cap
+    clip_spec = _hb_call(_hb, "clip_spec", lambda: _log_spec(_load(clip_audio)))   # kept only for clip_ok / speed fallback
+    clip_ctx = _hb_call(_hb, "prepare_clip", _verify.prepare_clip, clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = _fast_tmp or tempfile.mkdtemp()      # carried fast-path files live here too
     if _tmps is not None and tmp not in _tmps:
         _tmps.append(tmp)                      # APPLYALL 2026-09-29
@@ -7793,7 +8135,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                  titles=[(c.get("title") or "")[:60] for c in _style_x])
         _tw1 = time.time()
         n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
-                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit)
+                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit,
+                                wave="dl_wave1")
         tlog("dl_wave1", time.time() - _tw1, n=n)
         _wave1_done = [c for c in wave1 if c.get("_done")]
     else:
@@ -7804,7 +8147,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     try:
         _tw0 = time.time()
         try:
-            _w = f_web.result(timeout=max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+            _w = f_web.result(timeout=_hb_left(_hb, max(1.0, WEB_DEADLINE - (time.time() - _t_main))))
         except Exception:
             _w = []
         tlog("web_extra_wait", time.time() - _tw0, nw=len(_w))
@@ -7865,7 +8208,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     if _cre_lane is not None:
         _tc0 = time.time()
         _cre, _cre_pend = _cre_lane.collect(
-            max(1.0, CREATOR_DEADLINE - (time.time() - _cre_lane.t0)))
+            _hb_left(_hb, max(1.0, CREATOR_DEADLINE - (time.time() - _cre_lane.t0))))
         _creator_rows(_cre)
         # A URL THE MAIN SEARCH ALREADY FOUND STILL GAINS ITS PROVENANCE. Dropping the
         # duplicate outright threw away the whole point of the lane in the measured case:
@@ -7901,11 +8244,12 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             prod_cands = None
             if f_prod is not None and final_handles == spec_handles:
                 try:
-                    prod_cands = f_prod.result(timeout=30)
+                    prod_cands = f_prod.result(timeout=_hb_left(_hb, 30))
                 except Exception:
                     prod_cands = []
             else:
-                prod_cands = _producer_search(final_handles, prod_title)
+                prod_cands = _hb_call(_hb, "producer_search", _producer_search,
+                                      final_handles, prod_title, default=[])
             existing_urls = {c["url"] for c in cands}
             cands += [c for c in prod_cands if c["url"] not in existing_urls]
             tlog("producer_search", time.time() - _tp0, handles=final_handles,
@@ -8009,7 +8353,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # case it exists for is precisely the one the gate would skip - a candidate already at
     # CORE_SAME does not tell you WHICH upload of that recording the clip used, and the
     # creator's own link does.
-    _join_cm(max(1.0, WEB_DEADLINE - (time.time() - _t_main)))
+    _join_cm(_hb_left(_hb, max(1.0, WEB_DEADLINE - (time.time() - _t_main))))
     _cm_extra = _comment_extra(cm_cands, cands, head)
     _term_hits([c for c in _cm_extra if "title_hits" not in c])
     for c in _cm_extra:
@@ -8039,11 +8383,15 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         if id(c) not in _seen_head:
             _seen_head.add(id(c)); _appended.append(c)
     head = head + _appended
+    _hb_sk = len(_hb.skipped) if _hb is not None else 0
     n2 = _download_and_score(head, clip_audio, tmp, n, max_dl + len(_appended),
-                             clip_ctx=clip_ctx, on_scored=_hit)
+                             clip_ctx=clip_ctx, on_scored=_hit, wave="dl_main")
+    # HUNT BUDGET: a head that was never downloaded strips nothing (the strip keeps the scored
+    # pool equal to the serial one's; with no head there is nothing to be equal to)
+    _hb_main_off = _hb is not None and len(_hb.skipped) > _hb_sk
     head_ids = {id(c) for c in head}
     stripped = 0
-    for c in _wave1_done:
+    for c in ([] if _hb_main_off else _wave1_done):
         if id(c) not in head_ids:
             for k in ("_spec", "path", "spectral", "fp", "arr", "core", "vscore",
                       "score", "same", "vspeed", "bass_delta", "lag", "clip_tilt",
@@ -8056,17 +8404,18 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
 
     # a confirmed slow/speed the search didn't already target -> pull the edits directly
     swept = "slow" in edit_label or "sped" in edit_label
-    if known_dir and not swept and base_title:
+    if known_dir and not swept and base_title and _hb_go(_hb, "extra_dir_dl"):
         _te0 = time.time()
         extra_q = [_clean("%s %s %s" % (base_artist or "", base_title, known_dir)),
                    _clean("%s %s" % (base_title, known_dir))]
-        more = [c for c in search_edits(extra_q, per=5)
+        more = [c for c in _hb_call(_hb, "extra_dir_search", search_edits, extra_q, per=5,
+                                    default=[])
                 if c["url"] not in {x["url"] for x in cands}]
         for c in more:
             c["title_hits"] = sum(1 for t in key_terms if t and t in c["title"].lower())
         more.sort(key=lambda c: -(c["title_hits"] + c.get("plays", 0) / 1e7))
         _download_and_score(more, clip_audio, tmp, n, 5, clip_ctx=clip_ctx,
-                            on_scored=_hit)
+                            on_scored=_hit, wave="extra_dir_dl")
         cands += more
         tlog("extra_dir_dl", time.time() - _te0, n=len(more))
 
@@ -8112,6 +8461,10 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         _ev_dir = None if _ev_reup else known_dir
         _ev_lbl = "" if _ev_reup else edit_label
         _ev_on = bool(fq) or bool(_ev_dir)
+        # HUNT BUDGET rule 1: past T with nothing at 0.62, neither the family wave nor the
+        # length lane starts (checked only when one of them would run, so the log is exact)
+        if (fq or _ev_on) and not _hb_go(_hb, "family_wave" if fq else "evidence_lane"):
+            fq, _ev_on, _fw_why = [], False, "hunt_budget"
         _verified = any((c.get("core") or 0) >= CORE_EDIT for c in cands)
         try:
             _clip_len = duration_of(clip_audio) if _ev_on else 0
@@ -8125,8 +8478,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             # outside the head, so a wave that only admitted NEW urls could not reach
             # them (replayed 2026-09-24). Rows already scored (_done) are skipped.
             _by_url = {c["url"]: c for c in cands}
-            found = search_edits(fq, per=FAMILY_YT_PER, sc_per=FAMILY_SC_PER,
-                                 yt_per=FAMILY_YT_PER, yt_first=True, dedup=False)
+            found = _hb_call(_hb, "family_search", search_edits, fq, per=FAMILY_YT_PER,
+                             sc_per=FAMILY_SC_PER, yt_per=FAMILY_YT_PER, yt_first=True,
+                             dedup=False, default=[])
             by_q, fresh = {}, []
             for c in found:
                 hit = _by_url.get(c["url"])
@@ -8193,7 +8547,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                                           _clip_len, _ev_dir, _ev_lbl, song_terms,
                                           _artist_hit, _verified) if _ev_on else ([], ""))
             _download_and_score(more + _ev, clip_audio, tmp, n + 50, FAMILY_DL + len(_ev),
-                                clip_ctx=clip_ctx, on_scored=_hit)
+                                clip_ctx=clip_ctx, on_scored=_hit, wave="family_wave")
             _more_ids |= {id(c) for c in _ev}
             cands += [c for c in fresh if id(c) in _more_ids]
             tlog("family_wave", time.time() - _fw_t0, nq=len(fq), nfound=len(found),
@@ -8211,7 +8565,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                                              song_terms, _artist_hit, _verified)
                 if _ev:
                     _download_and_score(_ev, clip_audio, tmp, n + 50, len(_ev),
-                                        clip_ctx=clip_ctx, on_scored=_hit)
+                                        clip_ctx=clip_ctx, on_scored=_hit, wave="evidence_lane")
                 tlog("evidence_lane", time.time() - _te0, nc=len(_ev), why=_ev_why,
                      wave=False, hit=sum(1 for c in _ev if (c.get("core") or 0) >= CORE_EDIT))
 
@@ -8253,7 +8607,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         if (c.get("creator_upload") or c.get("creator_link")) and c.get("path")
         and (c.get("core") or 0) < CORE_KEEP
         and (c.get("spectral") or 0) >= 0.85][:3]
-    if _align:
+    if _align and _hb_go(_hb, "creator_align"):
         _ta0 = time.time()
         # PROGRESS 2026-09-29: each alignment is one more unit of hunt work (4-8 s of it
         # when it runs), counted like a candidate: queued, fetched, checked
@@ -8277,9 +8631,12 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 if src_dur <= 45:
                     return None
                 longer = os.path.join(tmp, "cl_%d.wav" % (id(c) % 100000))
-                got = dl_clip(c["url"], longer, seconds=180, timeout=30)
+                got = dl_clip(c["url"], longer, seconds=180, timeout=30, abort=_hb)
                 c["_hunt_d"] = True
                 _hunt_call(_hk, "d")
+                if _hb is not None and _hb.dead:     # HUNT BUDGET: let go at the cap
+                    _hb.drop(longer)
+                    return None
                 if not got:
                     return None
                 path = got
@@ -8289,6 +8646,11 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             best, at, bv = (c.get("core") or 0), None, None
             w = os.path.join(tmp, "al_%d.wav" % (id(c) % 100000))
             for off in range(15, int(dur) - 20, 15):
+                if _hb is not None and _hb.dead:     # HUNT BUDGET: let go at the cap
+                    _hb.drop(w)
+                    if path != c.get("path"):
+                        _hb.drop(path)
+                    return None
                 try:
                     cut(path, w, float(off), 1.0, span=25)
                     v = _verify.verify(clip_audio, w, 20, clip_ctx=clip_ctx)
@@ -8302,27 +8664,37 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
 
         def _slide_counted(c):
             try:
-                return _slide(c)
+                _r = _slide(c)
+                if _r and _hb is not None:          # HUNT BUDGET: an aligned hit is a scored row
+                    with _hb.lock:
+                        if not _hb.dead:
+                            _hb.note(_r[0], (_r[2] or {}).get("fp"))
+                return _r
             finally:
                 if not c.pop("_hunt_d", False):
                     _hunt_call(_hk, "d")
                 _hunt_call(_hk, "c")
 
-        with ThreadPoolExecutor(max_workers=min(3, len(_align))) as _aex:
-            for c, got in zip(_align, _aex.map(_slide_counted, _align)):
-                if not got:
-                    continue
-                best, at, bv, path = got
-                c["aligned_at"] = at
-                c["core_head"] = c.get("core")
-                c["path"] = path
-                c.update(core=bv["core"], spectral=bv["spectral"], fp=bv["fp"],
-                         arr=bv["arr"], same=bv["same"], vspeed=bv["speed"],
-                         speed_conf=bv.get("speed_conf"),
-                         bass_delta=bv["bass_delta"], cand_tilt=bv["cand_tilt"],
-                         slope_delta=bv.get("slope_delta"),
-                         clip_slope=bv.get("clip_slope"), cand_slope=bv.get("cand_slope"),
-                         score=bv["score"], vscore=bv["score"])
+        if _hb is None:
+            with ThreadPoolExecutor(max_workers=min(3, len(_align))) as _aex:
+                _slid = list(_aex.map(_slide_counted, _align))
+        else:       # HUNT BUDGET: the same pool with the cap as a deadline
+            _slid = _hb.map_bounded("creator_align", _slide_counted, _align,
+                                    min(3, len(_align)))
+        for c, got in zip(_align, _slid):
+            if not got:
+                continue
+            best, at, bv, path = got
+            c["aligned_at"] = at
+            c["core_head"] = c.get("core")
+            c["path"] = path
+            c.update(core=bv["core"], spectral=bv["spectral"], fp=bv["fp"],
+                     arr=bv["arr"], same=bv["same"], vspeed=bv["speed"],
+                     speed_conf=bv.get("speed_conf"),
+                     bass_delta=bv["bass_delta"], cand_tilt=bv["cand_tilt"],
+                     slope_delta=bv.get("slope_delta"),
+                     clip_slope=bv.get("clip_slope"), cand_slope=bv.get("cand_slope"),
+                     score=bv["score"], vscore=bv["score"])
         tlog("creator_align", time.time() - _ta0, n=len(_align),
              hit=sum(1 for c in _align if c.get("aligned_at") is not None))
 
