@@ -1290,6 +1290,20 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    beats the crown on raw audio. */
 .shelfnote{margin-top:9px;font-size:11.5px;line-height:1.45;color:var(--faint)}
 .shelfnote b{color:var(--muted);font-weight:700}
+/* NO CROWN, SO THE ANSWER IS THE SONG AT ITS MEASURED SPEED (RF2 2026-09-30). The pick card
+   when the engine crowned no upload. A plain raised card, NOT the crown's accent gradient,
+   no play button, no Open arrow and no percent, because no upload was matched. It is a note,
+   not a link: the Open in row above already opens the song. Same look as the NULLFP
+   source-at-speed card. */
+.nca{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:16px;
+  background:var(--raise);border:1px solid var(--line2);min-width:0}
+.nca .tart{width:52px;height:52px;border-radius:12px;flex:none}
+.nca img.tart{object-fit:cover;display:block;background:var(--raise2)}
+.nca .tart.ph svg{width:20px;height:20px}
+.nca .tt{min-width:0;flex:1}
+.nca .nm{font-size:15px;font-weight:700;letter-spacing:-.01em;line-height:1.3;overflow-wrap:anywhere}
+.nca .by{font-size:12.5px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+.nca .ncl{font-size:12.5px;line-height:1.4;color:var(--text);margin-top:7px}
 /* OTHER VERSIONS, COLLAPSED BY DEFAULT (layout spec item 6). CROWNED RESULTS ONLY. On a
    shelf with no crown the list IS the answer and it never collapses; the live hunt list is
    the progress indicator and it never collapses either.
@@ -3316,7 +3330,44 @@ var VF_FIRST=6;   // choices shown before "Show N more": the pick plus five
 var VF_THX_OK='Thanks. Glad we nailed it.', VF_ASK='Which one was it?',
     VF_THX_NO='We’re on it. We’ll tell you when we find the exact version.';
 var VF_PEND='addify-pending-fixes';
+/* ---------- NO CROWN: THE SONG AT ITS MEASURED SPEED IS THE ANSWER (RF2 2026-09-30) ----------
+   xfix2 REPORT item 9 and ledger T61: with no crown the card still headed an UPLOAD row "Our
+   pick" in the crown's gradient with a "39% version match" chip (Boom Clap on the live cache:
+   "OUR PICK: Boom Clap (ASTR Remix) 39%", the row the fp floor had refused), the X picker
+   tagged it "Our pick", and an X reported it as what we said (fix queue: partyfunk "Party Funk
+   (Slowed)", xcool "X-COOL! (SLOWED + REVERB)", neither ever crowned). The engine named the
+   song and measured its speed and matched no upload, so that is what the card says: the
+   song, its speed (the badge's own label), and that no upload of this exact version was
+   found. Every upload the hunt kept sits in the fold at its own figure. With the engine's
+   `source_at_speed` (a clean resample of the original) it words it the way NULLFP does. */
+function ncCrowned(d){var e=d&&d.exact; return !!(e&&(e.title||e.url));}
+function ncSpeed(d){
+  var s=d&&d.source_at_speed;
+  if(s&&s.title){
+    var sp=String(s.speed||'').trim();
+    if(/^(slowed|sped up) ~\d+(\.\d+)?x$/i.test(sp)) return sp.toLowerCase();
+    var x=+s.x;
+    return (x>0 && Math.abs(Math.log2(x))>0.03) ? (x<1?'slowed ~':'sped up ~')+x.toFixed(2)+'x' : '';}
+  var f=String((d&&d.speed)||'').trim();
+  return /^as posted$/i.test(f) ? 'normal speed' : f.replace(/[\u2013\u2014]/g,'-');}
+function ncSaid(d){
+  var s=d&&d.source_at_speed, sp=ncSpeed(d);
+  if(s&&s.title) return {title:s.title+' (the original'+(sp?', '+sp:', re-pitched')+')', url:''};
+  return {title:String(d.base_song||'')+(sp?' ('+sp+')':''), url:''};}
+function ncCard(d){
+  var s=(d&&d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null, sp=ncSpeed(d);
+  var ttl=s?s.title:String(d.base_song||''), who=s?(s.artist||''):String(d.base_artist||'');
+  var line=s ? 'The original'+(sp?', '+sp:', re-pitched')+'. No upload at this exact speed yet.'
+             : (sp?sp.charAt(0).toUpperCase()+sp.slice(1)+'. ':'')+'No upload of this exact version found yet.';
+  return '<div class="nca" role="note" aria-label="'+esc(ttl+(who?' by '+who:'')+'. '+line)+'">'+
+    rowThumb({art:d.art||'', title:ttl, uploader:who})+
+    '<span class="tt"><div class="nm">'+esc(ttl)+'</div>'+
+    (who?'<div class="by">'+esc(who)+'</div>':'')+
+    '<div class="ncl">'+esc(line)+'</div></span></div>';}
 function vfPick(d){
+  // RF2: no crown, so what the card said is the song at its speed (ncSaid), never an upload
+  // row. An X reports that as "said" in the fix queue, with no crown_url.
+  if(d && !ncCrowned(d) && d.base_song) return ncSaid(d);
   var e=d&&d.exact; if(e&&(e.title||e.url)) return e;
   var c=(d&&d.candidates)||[]; if(!c.length) return null;
   try{ return byMatch(c)[0]||null; }catch(x){ return c[0]||null; }}
@@ -3333,7 +3384,9 @@ function vfPendAdd(url,song){
 function verdictRow(d){
   if(!d||d.result!=='found'||!curURL) return '';
   var pk=vfPick(d), v=vfState(curURL).v;
-  var q=v==='right'?VF_THX_OK:v==='wrong'?VF_THX_NO:(pk?'Did we get the right version?':'Did we get the right song?');
+  // RF2: with no crown pk is the song at its speed (ncSaid), so the question keys off what was
+  // on screen, as before: a crown or version rows ask about the version, a bare song the song
+  var q=v==='right'?VF_THX_OK:v==='wrong'?VF_THX_NO:((ncCrowned(d)||((d.candidates||[]).length&&pk))?'Did we get the right version?':'Did we get the right song?');
   return '<div class="vfeed'+(v?' done is-'+v:'')+'" id="vfeed" role="group" aria-label="Rate this result">'+
     '<span class="vq" id="vfq" aria-live="polite">'+q+'</span><span class="vbx">'+
     '<button type="button" class="vy'+(v==='right'?' on':'')+'" id="vfy" aria-label="Right version"'+(v?' disabled':'')+'>'+VF_OK+'</button>'+
@@ -3367,6 +3420,9 @@ function vfAsk(row,d,url,rows,anim){
     (rows.length>VF_FIRST?'<button type="button" class="vmore" id="vfmore">Show '+(rows.length-VF_FIRST)+' more</button>':'')+
     '<button type="button" class="vnone" id="vfnone">Not in the list</button></div>');
   row.classList.add('asking');
+  // RF2: with no crown no upload was our pick (the card named the song at its speed), so the
+  // first row loses the tag the line above gives it
+  if(!ncCrowned(d)) [].forEach.call(row.querySelectorAll('#vfpick .vpr .lvtag'),function(t){t.remove();});
   var q=document.getElementById('vfq'); if(q) q.textContent=VF_ASK;
   var box=document.getElementById('vfpick'), busy=false;
   box.addEventListener('click',function(e){
@@ -4163,14 +4219,17 @@ function renderResult(d,partial){
     // match (job 567 order), on the same card the crowned screen uses; the rest sit in the
     // same neutral fold. No crown was called, so the heading never says "exact" and the
     // header still reads "Song identified"; each row keeps its own figure.
-    var _ork=byMatch(cands), _opk=_ork[0], _orest=_ork.slice(1);
+    // RF2 2026-09-30: no crown, so no upload row is "Our pick". The pick is the song at its
+    // measured speed (ncCard), and every row, the highest figure first, sits in the fold with
+    // its own figure and no crown styling (xfix2 REPORT item 9, ledger T61).
+    var _ork=byMatch(cands);
     shelf='<div class="sect">Our pick</div>'+crowdCard+
-      '<div class="list">'+trackRow(_opk,true,'',false,{rank:1})+'</div>'+
-      (_orest.length?'<details class="othv"><summary>'+
-        '<span>Other versions we checked · '+_orest.length+'</span>'+
+      '<div class="list">'+ncCard(d)+'</div>'+
+      '<details class="othv"><summary>'+
+        '<span>Other versions we checked · '+_ork.length+'</span>'+
         '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
-        _orest.slice(0,12).map(function(c,i){
-          return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>':'');
+        _ork.slice(0,12).map(function(c,i){
+          return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div></details>';
     }}
   // ONE SEQUENCE (Roham 2026-09-26: "the hunting the exact version and finding the exact version
   // should be one sequence"). The hunt used to show its own 0-100% bar here, then a different
