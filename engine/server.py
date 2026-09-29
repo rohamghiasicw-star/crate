@@ -4645,7 +4645,10 @@ def trending_sounds():
 
 FEEDBACK = os.path.join(HERE, "feedback.jsonl")
 
-FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict")
+FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict",
+                   # VERDICT 2026-09-29: the result card's check / X ("right version?")
+                   # records what the engine answered, so a "wrong" names the upload to fix
+                   "kind", "crown_title", "crown_url")
 
 def record_review_note(obj):
     """One line of Roham's feedback -> eval/inbox.jsonl, tied to the clip URL.

@@ -575,6 +575,25 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .vbtn{flex:1;padding:11px 0;border-radius:12px;font-size:13px;font-weight:700;transition:filter .15s}
 .vbtn.yes{background:var(--accent);color:#fff}
 .vbtn.no{background:var(--raise2);color:var(--text)}
+/* VERDICT 2026-09-29 (Roham): "a little check or an X to say if it's wrong or right", only
+   once the final answer is on screen. One quiet row under the pick: a question on the left,
+   two round buttons on the right. The chosen one fills (check = --good mint, X = neutral
+   raise with a line), the other fades, and the question becomes a thank-you. */
+.vfeed{display:flex;align-items:center;gap:12px;margin:14px 0 2px;padding:11px 12px 11px 14px;
+  border:1px solid var(--line);border-radius:14px;background:var(--raise)}
+.vfeed .vq{flex:1;min-width:0;font-size:13.5px;font-weight:600;color:var(--muted);line-height:1.3}
+.vfeed .vbx{display:flex;gap:8px}
+.vfeed button{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid var(--line2);background:var(--raise2);color:var(--text);
+  transition:background .18s,border-color .18s,opacity .18s,transform .12s}
+.vfeed button svg{width:18px;height:18px}
+.vfeed button:active{transform:scale(.94)}
+.vfeed button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+.vfeed button.vy.on{background:var(--good);border-color:var(--good);color:#0F0D15}
+.vfeed button.vn.on{background:var(--raise);border-color:var(--text);color:var(--text)}
+.vfeed.done button:not(.on){opacity:.32}
+.vfeed.done .vq{color:var(--text)}
+@media (prefers-reduced-motion:reduce){.vfeed button{transition:none}}
 .trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
 .cta{display:block;width:100%;margin-top:14px;padding:13px 0;border-radius:13px;text-align:center;
   background:var(--accent);color:#fff;font-size:14px;font-weight:700;transition:filter .15s}
@@ -1334,6 +1353,27 @@ a.clippill:hover{filter:brightness(1.12)}
   .saved:hover{transform:translateY(-1px)}
   .saved .rm:hover{background:var(--raise2);color:var(--text)}
 }
+/* TRACKER 2026-09-29 (Konnor's spec + mockup): one 3-step tracker under the title while the
+   edit hunt runs, replacing the "Checking versions" pill and the "Finding the exact version"
+   line. Done = mint check, active = accent circle with a pulsing ring, next = grey outline.
+   The lines between fill mint as each step completes. */
+.htrack{display:flex;align-items:flex-start;justify-content:center;gap:0;margin:14px auto 4px;max-width:340px;width:100%}
+.htrack .hs{display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;min-width:64px;text-align:center}
+.htrack .hc{position:relative;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;border:2px solid var(--line2);color:var(--faint);background:transparent}
+.htrack .hc svg{width:15px;height:15px}
+.htrack .hs.done .hc{background:var(--good);border-color:var(--good);color:#0F0D15}
+.htrack .hs.act .hc{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.htrack .hs.act .hc::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--accent2);
+  opacity:0;animation:htpulse 1.6s ease-out infinite}
+@keyframes htpulse{0%{transform:scale(.8);opacity:.75}100%{transform:scale(1.25);opacity:0}}
+.htrack .hl{font-size:11.5px;font-weight:600;color:var(--faint);line-height:1.2;white-space:nowrap}
+.htrack .hs.done .hl{color:var(--muted)}
+.htrack .hs.act .hl{color:var(--text);font-weight:700}
+.htrack .hs:first-child,.htrack .hs:last-child{width:84px}   /* equal outer columns: the middle circle sits dead centre */
+.htrack .hbar{flex:1;height:2px;margin:13px 6px 0;border-radius:2px;background:var(--line2);min-width:12px}
+.htrack .hbar.done{background:var(--good)}
+@media (prefers-reduced-motion:reduce){.htrack .hs.act .hc::after{animation:none;opacity:.5;transform:scale(1.12)}}
 .latehunt{display:flex;align-items:center;gap:10px;margin:16px 2px 6px;color:rgba(255,255,255,.62);font-size:13.5px;font-weight:600;letter-spacing:.1px}
 .latehunt i{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid rgba(107,95,224,.3);border-top-color:#6B5FE0;animation:lhspin .8s linear infinite}
 @keyframes lhspin{to{transform:rotate(360deg)}}
@@ -2732,6 +2772,51 @@ function sendFeedback(obj){
     body:JSON.stringify(obj)}).then(function(r){return r.json();})
     .then(function(j){if(j&&j.id){var a=lsGet('addify-fbids','[]'); a.push(j.id); lsSet('addify-fbids',a);}})
     .catch(function(){});}
+/* TRACKER 2026-09-29: true from the song being named until the exact edit lands, so a card
+   drawn mid-hunt (the 4 s budget renders it without `partial`) still shows the tracker and
+   never the verdict row. */
+var HUNT_ON=false;
+function huntTracker(){
+  var ok='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
+  return '<div class="htrack" role="status" aria-live="polite" aria-label="Song identified. Matching the edit.">'+
+    '<div class="hs done"><span class="hc">'+ok+'</span><span class="hl">Song ID’d</span></div>'+
+    '<span class="hbar done"></span>'+
+    '<div class="hs act"><span class="hc">2</span><span class="hl">Matching the edit</span></div>'+
+    '<span class="hbar"></span>'+
+    '<div class="hs"><span class="hc">3</span><span class="hl">Ready to save</span></div></div>';}
+/* VERDICT 2026-09-29: right / wrong on the final answer. One vote per clip, remembered on
+   the phone so a revisit shows the choice; sent through /feedback (erasable, like the rest). */
+var VF_OK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
+var VF_NO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+function vfPick(d){
+  var e=d&&d.exact; if(e&&(e.title||e.url)) return e;
+  var c=(d&&d.candidates)||[]; if(!c.length) return null;
+  try{ return byMatch(c)[0]||null; }catch(x){ return c[0]||null; }}
+function verdictRow(d){
+  if(!d||d.result!=='found'||!curURL) return '';
+  var pk=vfPick(d), v=(lsGet('addify-verdicts','{}')||{})[curURL]||'';
+  var q=v==='right'?'Thanks. Glad we nailed it.':v==='wrong'?'Thanks. We’ll look at this one.':
+        (pk?'Did we get the right version?':'Did we get the right song?');
+  return '<div class="vfeed'+(v?' done':'')+'" id="vfeed" role="group" aria-label="Rate this result">'+
+    '<span class="vq" id="vfq" aria-live="polite">'+q+'</span><span class="vbx">'+
+    '<button type="button" class="vy'+(v==='right'?' on':'')+'" id="vfy" aria-label="Right version"'+(v?' disabled':'')+'>'+VF_OK+'</button>'+
+    '<button type="button" class="vn'+(v==='wrong'?' on':'')+'" id="vfn" aria-label="Wrong version"'+(v?' disabled':'')+'>'+VF_NO+'</button>'+
+    '</span></div>';}
+function vfWire(d){
+  var row=document.getElementById('vfeed'); if(!row||row.classList.contains('done')) return;
+  var url=curURL, pk=vfPick(d);
+  var vote=function(v){
+    var m=lsGet('addify-verdicts','{}')||{}; m[url]=v; lsSet('addify-verdicts',m);
+    sendFeedback({kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
+      guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''});
+    row.classList.add('done');
+    var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on');
+    ['vfy','vfn'].forEach(function(id){var x=document.getElementById(id); if(x) x.disabled=true;});
+    var q=document.getElementById('vfq');
+    if(q) q.textContent=v==='right'?'Thanks. Glad we nailed it.':'Thanks. We’ll look at this one.';};
+  var y=document.getElementById('vfy'), n=document.getElementById('vfn');
+  if(y) y.onclick=function(){vote('right');};
+  if(n) n.onclick=function(){vote('wrong');};}
 function eraseMyFeedback(){
   var ids=lsGet('addify-fbids','[]');
   return Promise.all(ids.map(function(id){
@@ -3067,17 +3152,18 @@ function renderResult(d,partial){
   // it: same shape, no layout jump when the real badge arrives.
   // `soft`, not `orig`: the hunt has not finished, so this is a held slot, not a mint
   // "measured as the original". Same words, same shape, no verdict implied.
-  var badge = partial ? '<span class="badge soft">Checking versions</span>' : editBadge(d);
+  var hunting = partial || HUNT_ON;               // TRACKER 2026-09-29
+  var badge = hunting ? huntTracker() : editBadge(d);
   // Konnor: the "Original" pill sits redundantly right under the song name and eats room,
   // so drop it. Edit verdicts (Slowed, Sped up, remix, mashup) are measured facts about
   // the clip, not a redundant label, so those pills stay exactly as they were.
-  if(!partial && /badge orig/.test(badge)) badge='';
+  if(!hunting && /badge orig/.test(badge)) badge='';
   /* Item 4, "version pill stands alone. Mint for originals, purple for edits and mashups".
      A measured verdict (not a caption claim or a held slot, which stay neutral) gets the
      tick, the same mark the save card uses for "this is settled". */
   if(!partial) badge=badge.replace(/^<span class="badge( orig)?">/, function(m){return m+IC.tick;});
   var _mparts=(d.sections&&d.sections.length>1)?d.sections:((d.songs&&d.songs.length>1)?d.songs:null);
-  if(!partial && _mparts) badge='<span class="badge mash">'+IC.layers+'Mashup · '+_mparts.length+' songs</span>';
+  if(!hunting && _mparts) badge='<span class="badge mash">'+IC.layers+'Mashup · '+_mparts.length+' songs</span>';
   /* ---------- PREVIEW ON THE COVER (layout spec item 7) ----------
      Two honesty guards, both of them real failure modes:
      1. WHAT IS PLAYING. The sleeve is the BASE song's cover while the thing this button
@@ -3400,8 +3486,8 @@ function renderResult(d,partial){
   // should be one sequence"). The hunt used to show its own 0-100% bar here, then a different
   // spinner line after the budget: two hunts on screen. It is now the same single live line
   // from the moment the song is named until the exact edit lands.
-  else if(partial){shelf='<div class="latehunt"><i></i><span>Finding the exact version</span></div>'+
-    // verified candidates stack up in here while the hunt runs
+  else if(partial){shelf=
+    // verified candidates stack up in here while the hunt runs (the tracker above says what is happening)
     '<div class="list" id="livelist" style="margin-top:11px"></div>';}
   // NOTHING AT ALL WHEN THE CLIP IS JUST THE TRACK.
   //
@@ -3501,7 +3587,7 @@ function renderResult(d,partial){
       noCrown ? 'Song identified' : 'Match found';
   // inlinePlayer is rendered inside the crown card (in `shelf`), not here, so the video
   // opens on the card the user tapped. It stays out of this concat to avoid a second copy.
-  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+plat+quotes+actions+'</div>';
+  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+(hunting?'':verdictRow(d))+plat+quotes+actions+'</div>';   // VERDICT 2026-09-29
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   var _heroImg=result.querySelector('.hero img.art');   // the cover on screen (a crown: the version's)
@@ -3509,6 +3595,7 @@ function renderResult(d,partial){
   paintRecCanvas();
   artGlow(_heroArt, _phc);
   autoSave(d,!partial);                          // scan = saved, no tap required; a final result updates the /base entry (FLOW-AUDIT 3)
+  if(!hunting) vfWire(d);                        // VERDICT 2026-09-29: the check / X row
   var ob=document.getElementById('otherbtn');
   if(ob) ob.onclick=function(){
     // Connected: the real picker - their own playlists, add anywhere, create new.
@@ -4342,6 +4429,7 @@ function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); sca
   document.getElementById('listening').classList.remove('ok');}
 var curURL='';
 function run(raw){if(busy) return; var p=parseLink(raw);
+  HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
@@ -4373,7 +4461,8 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       setSpeedFromLabel(d.speed);
       if(d.handle) showChip(null,(p.host==='instagram'?'reel by @':'clip by @')+d.handle,d.thumb,true);
       headline(d.base_song);
-      say('Matching versions &middot; slowed &middot; sped up &middot; remix &middot; original');
+      // TRACKER 2026-09-29: the scan screen calls the hunt what the card's tracker calls it (Konnor)
+      say(d.edits_pending?'Matching the edit':'Song found');
       setProg(pgNow, 58, 'Song identified');
       renderResult(d, d.edits_pending);
       // HAND THE SCREEN OVER THE MOMENT THE SONG IS KNOWN.
@@ -4405,7 +4494,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // Raise the ceiling only. The old line assigned 60 outright, which is what put a
         // 43-to-60 leap on screen at the handover; the engine reports 60 itself the
         // moment the hunt starts, so the poll will carry the bar there smoothly.
-        setProg(pgNow, 94, 'Hunting the exact version');
+        setProg(pgNow, 94, 'Matching the edit');
         // Settle the screen exactly once, whether the hunt finished or the budget fired.
         // FILL THE BAR THE USER IS WATCHING, THEN swap in the finished card. Doing it
         // the other way round was why the hunt bar never showed 100: renderResult with
@@ -4424,6 +4513,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
            scan or Back ends it, so the song we named is all this scan will ever have), or at
            the 90 s cap. It runs even after the user moved on, since it is this scan's record. */
         var finalize=function(fd){
+          HUNT_ON=false;                      // TRACKER 2026-09-29
           if(scanFinal) return; scanFinal=true;
           clearTimeout(lateCap);
           if(!(fd&&fd.base_song)) fd=d;
@@ -4434,7 +4524,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
            After the 90 s cap the post already went out, so a crown that lands later corrects
            the card, Finds and the log entry in place and is never posted a second time. */
         var lateUpgrade=function(full){
-          clearTimeout(lateCap);
+          clearTimeout(lateCap); HUNT_ON=false;          // TRACKER 2026-09-29: the answer is in
           if(onScan()){
             try{
               if(full.wave)setWaveData(full.wave);
@@ -4459,7 +4549,13 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               // the result to that branch instead; it renders this in place of the base card.
               if(!baseShown){ lateFull=full; return; }
               lateUpgrade(full);
-            } else if(budgetHit && full) finalize(null);   // the hunt failed: the named song is final
+            } else if(budgetHit && full){
+              finalize(null);   // the hunt failed: the named song is final
+              // TRACKER 2026-09-29: and the card says so. Without this the tracker kept
+              // pulsing "Matching the edit" forever (finalize clears the 90 s cap that would
+              // have settled it). Same card the cap draws, with whatever verified so far.
+              if(baseShown && onScan()){ try{renderResult(Object.assign({},d,{
+                candidates:(LIVE.length?LIVE.slice():(d.candidates||[])), edits_pending:false}),false);}catch(e){} }}
             return;}
           settledUI=true;
           clearTimeout(huntBudget);
@@ -4491,16 +4587,20 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               // payload through lateUpgrade, exactly as today.
               var _lrows=!!(engineInfo&&engineInfo.features&&engineInfo.features.live_rows);
               var dshow=_lrows?Object.assign({},d,{candidates:[],edits_pending:false}):dd;
+              // TRACKER 2026-09-29: the hunt already failed or was ended during pgDone():
+              // the named song is final, so draw it as final (no tracker, no 90 s cap).
+              if(scanFinal){ try{renderResult(dd,false);}catch(e){} }
+              else {
+              HUNT_ON=true;                      // TRACKER 2026-09-29: the card shows the tracker, not a second line
               try{renderResult(dshow,false);}catch(e){renderResult(d,false);}
-              try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect'), _lh=document.createElement('div');
-                _lh.className='latehunt'; _lh.innerHTML='<i></i><span>Finding the exact version</span>';
-                if(_s) _s.parentNode.insertBefore(_lh,_s); else _r.appendChild(_lh);
+              try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect');
                 if(_lrows){ var _ll=document.createElement('div'); _ll.className='list'; _ll.id='livelist';
-                  _ll.style.marginTop='11px'; _lh.parentNode.insertBefore(_ll,_lh.nextSibling); livePaint(''); }}catch(e){}
+                  _ll.style.marginTop='11px'; if(_s) _s.parentNode.insertBefore(_ll,_s); else _r.appendChild(_ll); livePaint(''); }}catch(e){}
               lateCap=setTimeout(function(){
+                HUNT_ON=false;                   // TRACKER 2026-09-29
                 if(onScan()){ try{renderResult(dd,false);}catch(e){} }
                 finalize(null);                  // the 90 s cap: the named song is final
-              }, 90000);}
+              }, 90000);}}
             // held: the log entry and the bridge post wait for the final answer (finalize)
             finish(full||d, true);
             if(full) finalize((full.result&&full.result!=='engine_down')?full:null);});};
@@ -4929,6 +5029,7 @@ function cleanupListen(){
   if(lStream){lStream.getTracks().forEach(function(t){t.stop();}); lStream=null;}}
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
 function sendListen(blob){
+  HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
