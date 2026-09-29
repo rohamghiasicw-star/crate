@@ -228,10 +228,18 @@ def sound_page(music_id, tries=3):
         hit = _SOUND_PAGE.get(key)
         if hit and now - hit[0] < _TTL:
             return hit[1], None
-    html, err = _get(_EMBED_MUSIC % key, tries=tries)
-    if not html:
-        return None, err
-    node = _frontity(html, "/embed/music/x-%s" % key) or {}
+    # CRATE_SOUNDPAGE_RETRY: the engine's own memo of the same page (its hint thread fetches
+    # it at the same moment). One page, one request, both readers; with the flag off neither
+    # side reads the other and this is exactly the old fetch.
+    _shared = getattr(E, "SOUNDPAGE_RETRY", False)
+    node = (E.sound_page_peek(key) or {}) if _shared else {}
+    if not node.get("videoList"):
+        html, err = _get(_EMBED_MUSIC % key, tries=tries)
+        if not html:
+            return None, err
+        node = _frontity(html, "/embed/music/x-%s" % key) or {}
+        if _shared:
+            E.sound_page_offer(key, node)
     info = node.get("embedInfo") or {}
     out = {
         "video_count": info.get("videoCount"),

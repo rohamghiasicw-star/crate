@@ -298,6 +298,23 @@ NULL_FP = _speed_flag("CRATE_NULL_FP", False)
 # Stricter than NULL_FP: when both flags are on, the guard decides.
 NULL_FP_GUARDED = _speed_flag("CRATE_NULL_FP_GUARDED", True)   # gated 2026-09-29: nullfp prove/PROVE.md, D/07/27/24 x2 + reg x2 + 12 clips ABAB
 NULL_FP_GAP = float(os.environ.get("CRATE_NULL_FP_GAP", 0.10))
+# FINAL 2026-09-30 (addify-harness/final/BUILD.md, PROVE in final/SHIP.md).
+#   CRATE_SOUNDPAGE_RETRY  mason stability. TikTok's /embed/music/ answers 503 in bursts (a
+#                          26-byte body in 0.11 s; measured 0 of 8 at 2.5 s spacing and 1 of 6
+#                          per URL form at 0.7 s spacing on 2026-09-30 02:3x). sound_page() gave
+#                          up after 3 tries 0.5 s apart (~1.9 s, the "sound_page_comments hints 0"
+#                          signature on every mason miss on record). With the flag: the same first
+#                          3 tries at shorter gaps, then more with backoff for as long as the
+#                          fingerprint is still running (so the wait costs no wall time), the
+#                          m.tiktok.com host of the same page once in the background (5 of 8
+#                          answered while www answered 5 of 8, not in the same slots; ~6.5 s per
+#                          answer), a page creator_check fetched is shared, and a scan's sound-page
+#                          hints are kept per sound id for SOUNDPAGE_HINT_TTL s.
+SOUNDPAGE_RETRY = _speed_flag("CRATE_SOUNDPAGE_RETRY", True)   # gated 2026-09-30: final/SHIP.md, reg (mason x6) + 7 reported x2 + 45-clip ABAB
+SOUNDPAGE_RETRY_GAPS = (0.35, 0.6, 0.9, 1.2, 1.5, 1.5)   # waits before tries 2..7
+SOUNDPAGE_RETRY_FLOOR = 3              # tries made whatever the stop says (today's count)
+SOUNDPAGE_RETRY_CAP = float(os.environ.get("CRATE_SOUNDPAGE_RETRY_CAP", 6.0))
+SOUNDPAGE_HINT_TTL = float(os.environ.get("CRATE_SOUNDPAGE_HINT_TTL", 1800.0))
 VOTE_XWIN = _speed_flag("CRATE_VOTE_XWIN", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
 #   F  CRATE_CORROB_RETRY    a corroboration probe that TIMED OUT is re-asked once before the
 #                            vote, so a stall is never read as "no rival": DbPVEFtykpl live
@@ -2364,7 +2381,7 @@ def tt_music_id(full_url):
 _TT_SOUND_PAGE = {}        # music id -> the parsed sound-page node (bounded)
 
 
-def sound_page(mid):
+def sound_page(mid, stop=None):
     """The sound's OWN page, parsed once and remembered.
 
     Two different techniques need this exact blob - `viral_sound_comments` (whose videos
@@ -2380,12 +2397,18 @@ def sound_page(mid):
     (0.42s median vs 0.96s for a 200), so three attempts cost ~0.4s in the bad case and
     take the miss rate from 34% to ~4%. Failures are NOT memoised, successes are.
 
-    Returns the node dict (`videoList` + `embedInfo`) or {}."""
+    Returns the node dict (`videoList` + `embedInfo`) or {}.
+
+    `stop` (CRATE_SOUNDPAGE_RETRY only): a threading.Event the caller sets when waiting any
+    longer would cost the scan wall time (server.py: the fingerprint has returned). Ignored
+    with the flag off, where this function is exactly the three-try loop below."""
     if not mid:
         return {}
     hit = _TT_SOUND_PAGE.get(mid)
     if hit:
         return hit
+    if SOUNDPAGE_RETRY:
+        return _sound_page_retry(mid, stop)
     node = {}
     for _attempt in range(3):
         try:
@@ -2407,6 +2430,168 @@ def sound_page(mid):
         _TT_SOUND_PAGE.clear()
     _TT_SOUND_PAGE[mid] = node
     return node
+
+
+# ---- CRATE_SOUNDPAGE_RETRY (FINAL 2026-09-30). Nothing below runs with the flag off.
+_SOUNDPAGE_WWW = "https://www.tiktok.com/embed/music/x-%s"
+# The same embed page on TikTok's mobile host. Measured 2026-09-30, 8 paired requests 3 s apart:
+# www 5 of 8, m. 5 of 8, and m. answered on 2 of the 3 slots where www was in a 503 burst. It
+# is slow (6.0-6.9 s per 200, 0.8-1.3 s per 503), so it never holds a scan: it runs once per
+# sound on its own thread and only fills the memo, for this scan's later tries or the next scan.
+_SOUNDPAGE_ALT = "https://m.tiktok.com/embed/music/x-%s"
+_SP_LOCK = threading.Lock()
+_SP_ALT_INFLIGHT = set()
+_SP_HINTS = {}             # sound id -> (t, sound-page hints, pasted links) of a scan that got some
+
+
+def _sound_page_parse(html, mid):
+    m = re.search(r'<script id="__FRONTITY_CONNECT_STATE__"[^>]*>(.*?)</script>',
+                  html or "", re.S)
+    if not m:
+        return {}
+    try:
+        return ((json.loads(m.group(1)).get("source") or {}).get("data") or {}) \
+            .get("/embed/music/x-%s" % mid) or {}
+    except Exception:
+        return {}
+
+
+def sound_page_offer(mid, node):
+    """Remember a sound page fetched somewhere else (creator_check, the m. host). Only a page
+    that lists videos is kept, exactly the rule sound_page() applies to its own fetch; an
+    entry already there is never replaced. -> True when the memo now holds a page."""
+    if not SOUNDPAGE_RETRY or not mid or not (node or {}).get("videoList"):
+        return False
+    with _SP_LOCK:
+        if len(_TT_SOUND_PAGE) > 256:
+            _TT_SOUND_PAGE.clear()
+        _TT_SOUND_PAGE.setdefault(str(mid), node)
+    return True
+
+
+def sound_page_peek(mid):
+    """The remembered page for this sound, or None. No request."""
+    if not mid:
+        return None
+    return _TT_SOUND_PAGE.get(str(mid)) or _TT_SOUND_PAGE.get(mid)
+
+
+def _sound_page_alt(mid):
+    """One background fetch of the page from the m. host, at most one in flight per sound."""
+    k = str(mid)
+    with _SP_LOCK:
+        if k in _SP_ALT_INFLIGHT:
+            return False
+        _SP_ALT_INFLIGHT.add(k)
+
+    def _run():
+        t0, ok, st = time.time(), False, None
+        try:
+            r = _cffi_get(_SOUNDPAGE_ALT % k, timeout=12)
+            st = getattr(r, "status_code", None)
+            ok = sound_page_offer(k, _sound_page_parse(r.text, k))
+        except Exception:
+            st = "exc"
+        finally:
+            with _SP_LOCK:
+                _SP_ALT_INFLIGHT.discard(k)
+            tlog("sound_page_alt", time.time() - t0, ok=ok, st=st)
+    try:
+        threading.Thread(target=_run, name="soundpage-alt", daemon=True).start()
+    except Exception:
+        with _SP_LOCK:
+            _SP_ALT_INFLIGHT.discard(k)
+        return False
+    return True
+
+
+def _sound_page_retry(mid, stop=None):
+    """sound_page() with CRATE_SOUNDPAGE_RETRY on.
+
+    Tries 1-3 always run (today's count, at 0.35 / 0.6 s gaps instead of 0.5 / 0.5, so they
+    end sooner than today's ~1.9 s). Tries 4-7 back off (0.9 / 1.2 / 1.5 / 1.5 s) and run only
+    while `stop` is unset and inside SOUNDPAGE_RETRY_CAP, so the wait lives inside the
+    fingerprint the scan is running anyway. Before every try the memo is re-read, because the
+    m. host (started after try 1) or creator_check may have landed the page meanwhile. A first
+    try that works returns exactly as today: same URL, same timeout, no extra request."""
+    k = str(mid)
+    t0 = time.time()
+    tries, sts, via, node = 0, [], None, {}
+    waited = 0.0
+    while True:
+        hit = sound_page_peek(k)
+        if hit:
+            node, via = hit, "memo"
+            break
+        tries += 1
+        try:
+            r = _cffi_get(_SOUNDPAGE_WWW % k, timeout=(20 if tries == 1 else 6))
+            sts.append(getattr(r, "status_code", None))
+            node = _sound_page_parse(r.text, k)
+        except Exception:
+            sts.append("exc")
+            node = {}
+        if node.get("videoList"):
+            via = "www"
+            break
+        node = {}
+        if tries == 1:
+            _sound_page_alt(k)
+        if tries > len(SOUNDPAGE_RETRY_GAPS):
+            break
+        gap = SOUNDPAGE_RETRY_GAPS[tries - 1]
+        if tries < SOUNDPAGE_RETRY_FLOOR:
+            time.sleep(gap)
+            waited += gap
+            continue
+        if stop is not None and stop.is_set():
+            break
+        if max(time.time() - t0, waited) + gap > SOUNDPAGE_RETRY_CAP:
+            break
+        waited += gap
+        if stop is not None and stop.wait(gap):
+            hit = sound_page_peek(k)           # the scan moved on: no new request, memo only
+            if hit:
+                node, via = hit, "memo"
+            break
+        if stop is None:
+            time.sleep(gap)
+    tlog("sound_page_fetch", time.time() - t0, tries=tries, ok=bool(node.get("videoList")),
+         via=via, st=sts[:8])
+    if not node.get("videoList"):
+        return {}                                  # failures are never memoised
+    sound_page_offer(k, node)
+    return sound_page_peek(k) or node
+
+
+def soundpage_hints_get(mid):
+    """CRATE_SOUNDPAGE_RETRY: the sound-page hints (and pasted links) a scan of this same sound
+    got within SOUNDPAGE_HINT_TTL s -> (hints, links, age_s), or None. Text only, never audio."""
+    if not SOUNDPAGE_RETRY or not mid:
+        return None
+    k = str(mid)
+    with _SP_LOCK:
+        e = _SP_HINTS.get(k)
+        if e and time.time() - e[0] > SOUNDPAGE_HINT_TTL:
+            _SP_HINTS.pop(k, None)
+            e = None
+    if not e:
+        return None
+    return (list(e[1]), [dict(l) if isinstance(l, dict) else l for l in e[2]],
+            time.time() - e[0])
+
+
+def soundpage_hints_put(mid, hints, links=None):
+    """Keep a scan's sound-page hints for this sound. Only a non-empty hint list is kept (a
+    miss must never shadow a later hit). -> True when stored."""
+    if not SOUNDPAGE_RETRY or not mid or not hints:
+        return False
+    with _SP_LOCK:
+        if len(_SP_HINTS) > 256:
+            _SP_HINTS.clear()
+        _SP_HINTS[str(mid)] = (time.time(), list(hints),
+                               [dict(l) if isinstance(l, dict) else l for l in (links or [])])
+    return True
 
 
 # "original sound - world.of.sounder" / "son original - wtkh.edt7" / "nhạc nền - x".
@@ -2540,7 +2725,7 @@ def pick_sound_videos(vids, top=3, floor=_SOUND_PLAYS_FLOOR):
     return (live + dead)[:top]
 
 
-def viral_sound_comments(full_url, top=3, per=60):
+def viral_sound_comments(full_url, top=3, per=60, stop=None):
     """Comments from the videos on this sound worth reading, not just this clip's.
 
     Roham's own manual technique, recorded as the `tiktok-sound-id` skill: when a clip is
@@ -2582,7 +2767,8 @@ def viral_sound_comments(full_url, top=3, per=60):
     # a song no catalogue knows, had been silently returning nothing. TikTok's own embed
     # page for a sound answers 200 in ~1.0s with the same list, needs no key and no
     # browser, and is not behind anyone's 1 req/s tier.
-    vids = sound_page(mid).get("videoList") or []
+    # `stop` rides along to sound_page (CRATE_SOUNDPAGE_RETRY; ignored with it off)
+    vids = sound_page(mid, stop=stop).get("videoList") or []
     if not vids:
         return []
     out, spare = [], []

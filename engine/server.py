@@ -1148,6 +1148,9 @@ def _phase1(url, key, t0):
     _hints_ex = None
     _hints_fut = None
     _page_fut = None
+    # CRATE_SOUNDPAGE_RETRY: set the moment the fingerprint returns. The sound page's extra
+    # tries run only while it is unset, so they never hold the scan (E._sound_page_retry).
+    _fp_done_ev = threading.Event()
     _is_tt = src["platform"] == "tiktok"
     if _is_tt:
         def _fetch_hints():
@@ -1212,8 +1215,18 @@ def _phase1(url, key, t0):
         def _fetch_page():
             _t = time.time()
             page_pool = []
+            # CRATE_SOUNDPAGE_RETRY: hints a scan of this same sound got in the last
+            # SOUNDPAGE_HINT_TTL s are reused as they are, with no TikTok or tikwm request.
+            _spr = bool(getattr(E, "SOUNDPAGE_RETRY", False))
+            _sp_mid = (E._TT_MUSIC_ID.get(url) or src.get("sound_id")) if _spr else None
+            _sp_hit = E.soundpage_hints_get(_sp_mid) if _sp_mid else None
+            if _sp_hit:
+                E.tlog("sound_page_comments", time.time() - _t, hints=len(_sp_hit[0]),
+                       cached=True, age=round(_sp_hit[2], 1))
+                return _sp_hit[0], _sp_hit[1]
             try:
-                page_pool = E.viral_sound_comments(url)
+                page_pool = (E.viral_sound_comments(url, stop=_fp_done_ev) if _spr
+                             else E.viral_sound_comments(url))
                 page = E.strong_song_hints(page_pool) or []
             except Exception:
                 page = []
@@ -1223,6 +1236,9 @@ def _phase1(url, key, t0):
                 links = E.comment_audio_urls(page_pool or [], with_meta=True) or []
             except Exception:
                 links = []
+            if _spr and page:
+                E.soundpage_hints_put(E._TT_MUSIC_ID.get(url) or src.get("sound_id")
+                                      or _sp_mid, page, links)
             return page, links
 
         _hints_ex = ThreadPoolExecutor(max_workers=2)
@@ -1543,6 +1559,7 @@ def _phase1(url, key, t0):
         _creator_attach(_sc, _cr, budget=2.0)
         # the hint threads now start ABOVE this return, so this path shuts them down
         # itself - the try/finally that used to own that begins further down.
+        _fp_done_ev.set()
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
         _cleanup(src.get("tmp"))
@@ -1576,6 +1593,7 @@ def _phase1(url, key, t0):
                 _fp_end = time.time()
         finally:
             E.PROBE_HOOK = _prev_hook
+            _fp_done_ev.set()           # CRATE_SOUNDPAGE_RETRY: extra page tries stop here
         # Second pass at both comment threads, now that the sweep has run and given them
         # its whole duration to finish in. Anything that missed the consensus vote still
         # gets to seed the edit search, which is where a crowd hint does most of its work.
@@ -1913,6 +1931,7 @@ def _phase1(url, key, t0):
         return res, ctx
     finally:
         loop.close()
+        _fp_done_ev.set()
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
 
