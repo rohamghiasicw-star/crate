@@ -5,6 +5,17 @@ struct AddifyApp: App {
     @StateObject private var bridge = EngineBridge()
     @Environment(\.scenePhase) private var scenePhase
 
+    /* The engine-address Settings sheet is a developer tool and ships in Debug builds only
+       (App Review 2.3.1: no hidden features; 2.1: no placeholder UI). A TestFlight tester
+       who typed an address into an older build would otherwise stay pinned to it forever
+       with no screen left to clear it, so a Release build drops the manual override and
+       goes back to the automatic directory lookup. */
+    init() {
+        #if !DEBUG
+        EngineConfig.setBaseURL("")
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

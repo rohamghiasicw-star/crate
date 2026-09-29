@@ -28,11 +28,13 @@ final class EngineBridge: ObservableObject {
     private let haptic = UINotificationFeedbackGenerator()
 
     /* addify://scan?url=<link>  (from the Share Extension)
-       addify://settings         (dev convenience) */
+       addify://settings         (dev convenience, Debug builds only: see AddifyApp.init) */
     func handleIncoming(_ url: URL) {
         guard url.scheme?.lowercased() == "addify" else { return }
         let host = (url.host ?? "").lowercased()
+        #if DEBUG
         if host == "settings" { showSettings = true; return }
+        #endif
         guard host == "scan" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let raw = comps?.queryItems?.first(where: { $0.name == "url" })?.value ?? ""

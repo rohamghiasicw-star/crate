@@ -19,6 +19,8 @@
 		AD00B009000000000000B009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AD00F00A000000000000F00A /* Assets.xcassets */; };
 		AD00B00A000000000000B00A /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F00B000000000000F00B /* ShareViewController.swift */; };
 		AD00B00B000000000000B00B /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F005000000000000F005 /* SharedInbox.swift */; };
+		AD00B00E000000000000B00E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AD00F010000000000000F010 /* PrivacyInfo.xcprivacy */; };
+		AD00B00F000000000000B00F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AD00F011000000000000F011 /* PrivacyInfo.xcprivacy */; };
 		AD00B00C000000000000B00C /* AddifyShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AD00A002000000000000A002 /* AddifyShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -64,6 +66,8 @@
 		AD00F00C000000000000F00C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AD00F00D000000000000F00D /* AddifyShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AddifyShare.entitlements; sourceTree = "<group>"; };
 		AD00F00E000000000000F00E /* Addify.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Addify.entitlements; sourceTree = "<group>"; };
+		AD00F010000000000000F010 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AD00F011000000000000F011 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -106,6 +110,7 @@
 				AD00F006000000000000F006 /* ResultToast.swift */,
 				AD00F007000000000000F007 /* SettingsView.swift */,
 				AD00F00A000000000000F00A /* Assets.xcassets */,
+				AD00F010000000000000F010 /* PrivacyInfo.xcprivacy */,
 				AD00F009000000000000F009 /* Info.plist */,
 				AD00F00E000000000000F00E /* Addify.entitlements */,
 			);
@@ -116,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				AD00F00B000000000000F00B /* ShareViewController.swift */,
+				AD00F011000000000000F011 /* PrivacyInfo.xcprivacy */,
 				AD00F00C000000000000F00C /* Info.plist */,
 				AD00F00D000000000000F00D /* AddifyShare.entitlements */,
 			);
@@ -213,6 +219,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AD00B009000000000000B009 /* Assets.xcassets in Resources */,
+				AD00B00E000000000000B00E /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -220,6 +227,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD00B00F000000000000B00F /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -329,7 +337,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = Addify/Addify.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -338,11 +346,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -353,7 +361,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = Addify/Addify.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -362,11 +370,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -375,7 +383,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AddifyShare/AddifyShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AddifyShare/Info.plist;
@@ -384,12 +392,12 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -398,7 +406,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AddifyShare/AddifyShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AddifyShare/Info.plist;
@@ -407,12 +415,12 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.addify.app.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};

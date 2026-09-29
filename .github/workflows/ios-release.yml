@@ -130,6 +130,23 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             archive 2>&1 | tee archive.log
 
+      # App Review checks (2026-09-29): both bundles must carry PrivacyInfo.xcprivacy
+      # (required-reason API declarations, ITMS-91053), and the version/build/device family
+      # that is about to be uploaded is printed so the log proves what shipped.
+      - name: Check the archive carries the privacy manifests and version
+        run: |
+          app=build/Addify.xcarchive/Products/Applications/Addify.app
+          for f in "$app/PrivacyInfo.xcprivacy" "$app/PlugIns/AddifyShare.appex/PrivacyInfo.xcprivacy"; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            plutil -lint "$f"
+          done
+          for p in "$app/Info.plist" "$app/PlugIns/AddifyShare.appex/Info.plist"; do
+            v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$p" || true)
+            b=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$p" || true)
+            fam=$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$p" 2>/dev/null | tr -d '\n ' || true)
+            echo "$p version=$v build=$b UIDeviceFamily=$fam"
+          done
+
       - name: Export the ipa
         run: |
           cat > /tmp/export.plist <<PLIST
