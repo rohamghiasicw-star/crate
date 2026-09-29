@@ -24,7 +24,8 @@ ensure_engine(){
     for _p in $(lsof -t -nP -iTCP:8788 -sTCP:LISTEN 2>/dev/null); do kill "$_p" 2>/dev/null; done
     sleep 2
     ( cd ~/crate
-      export IG_LOCAL_SESSION=1 BIND=0.0.0.0 CRATE_TIMING=/tmp/tlog.jsonl
+      # ADDIFY_CLOSE_INTERNAL=1 (2026-09-29): internal pages 404 through the tunnel, same as restart_live.sh
+      export IG_LOCAL_SESSION=1 BIND=0.0.0.0 CRATE_TIMING=/tmp/tlog.jsonl ADDIFY_CLOSE_INTERNAL=1
       nohup /usr/bin/python3 server.py > /tmp/addify_srv.log 2>&1 & )
     for i in $(seq 1 20); do
       curl -s -o /dev/null -m 4 "http://127.0.0.1:8788/health" && { log "engine back up"; return; }

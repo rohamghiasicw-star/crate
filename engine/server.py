@@ -26,6 +26,10 @@ import speed_from_master
 import links as L
 import find_song as FS
 import phone_probes as P     # on-device ShazamKit, off unless CRATE_PHONE_PROBES=1
+# APPLYALL 2026-09-29: per-client limits, strict link check, internal pages closed. All off
+# unless ADDIFY_RATE_LIMIT / ADDIFY_STRICT_LINKS / ADDIFY_CLOSE_INTERNAL are set.
+import ratelimit as RL
+RL.configure(tlog=E.tlog)     # rl_seen / rl_refuse rows, only when CRATE_TIMING is set
 
 # ---------------------------------------------------------------- creator evidence
 # NEW 2026-08-13. The check Roham did by hand on ZS4qqMqXq, in code: whose sound is
@@ -107,6 +111,17 @@ def _phone_unconfirmed(res):
     return named
 
 
+def _phone_nomatch(res):
+    """APPLYALL 2026-09-29 (review finding 2). A phone that answered a probe "no_match" is
+    client input as much as a phone that named a song: phone_probes never re-asks the
+    server after a phone "no". A FAILED result from such a scan stays with that scan
+    instead of blanking the clip for everyone for FAIL_TTL. Found results are unaffected."""
+    if (res or {}).get("_phone_nomatch"):
+        return True
+    _ph = FS.PHONE.get(None) if hasattr(FS, "PHONE") else None
+    return bool(_ph is not None and (getattr(_ph, "n", {}).get("no_match") or 0) > 0)
+
+
 def _sound_cache_put(src, res):
     sid = (src or {}).get("sound_id")
     if not sid or not res or res.get("result") != "found":
@@ -143,6 +158,8 @@ def _cache_get(key):
 
 def _cache_put(key, res):
     if _phone_unconfirmed(res):
+        return
+    if res.get("result") != "found" and _phone_nomatch(res):   # APPLYALL 2026-09-29
         return
     CACHE[key] = res
     if res.get("result") in ("no_match", "error", "rate_limited", "uncertain"):
@@ -183,7 +200,36 @@ def _disk_epoch():
                 h.update(fh.read())
         except OSError:
             h.update(f.encode())
+    # APPLYALL 2026-09-29 (review finding 8): THE TOOLCHAIN IS PART OF THE ANSWER. A dead
+    # fpcalc (brew ffmpeg ABI bump) or a broken yt-dlp makes weaker "found" answers that
+    # persist 14 days, and fixing the tool changed no .py, so a restart reloaded them. A
+    # tool that fails to start hashes as its error: the break and the fix both start empty.
+    for v in _toolchain_versions():
+        h.update(v.encode("utf-8", "replace"))
     return h.hexdigest()
+
+
+def _toolchain_versions():
+    import subprocess, sys as _sys
+    out = []
+    ytd = list(getattr(E, "YTDLP_YT", None) or ["yt-dlp"])
+    for name, cmd in (("fpcalc", ["fpcalc", "-version"]),
+                      ("ffmpeg", ["ffmpeg", "-version"]),
+                      ("yt-dlp", [ytd[0], "--version"] if ytd[0] != _sys.executable
+                       else [_sys.executable, "-m", "yt_dlp", "--version"])):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=10)
+            line = ((r.stdout or r.stderr or b"").decode("utf-8", "replace")
+                    .strip().splitlines() or [""])[0]
+            out.append("%s rc=%d %s" % (name, r.returncode, line[:200]))
+        except Exception as e:
+            out.append("%s missing %s" % (name, type(e).__name__))
+    try:                                   # the module SoundCloud still runs on (YTDLP_SC)
+        from importlib import metadata as _md
+        out.append("yt_dlp-module %s" % _md.version("yt-dlp"))
+    except Exception as e:
+        out.append("yt_dlp-module missing %s" % type(e).__name__)
+    return out
 
 
 def _disk_open():
@@ -3590,6 +3636,7 @@ def _phase2(ctx, on_cand=None):
     _prev_cand_hook = E.CAND_HOOK
     E.CAND_HOOK = lambda: _prog_probe(key, 96)
     loop = asyncio.new_event_loop()
+    edit = None     # APPLYALL 2026-09-29: find_edit's result, so the finally sees its tmp
     try:
         exact = None
         candidates = []
@@ -4418,7 +4465,7 @@ def _phase2(ctx, on_cand=None):
         _write_figs(res)
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
-        E.tlog("request_done", time.time() - t0, url=key)
+        E.tlog("request_done", time.time() - t0, url=key, outcome="hunt")   # APPLYALL 2026-09-29
         _cache_put(key, res)
         _sound_cache_put(src, res)       # answer the SOUND, not just this clip
         return res
@@ -4434,14 +4481,20 @@ def _phase2(ctx, on_cand=None):
         # long ago and this costs nothing. The short ceiling keeps a hung yt-dlp from
         # holding the request open, and if it IS still running the dir is swept again
         # the moment it stops, on a daemon thread nobody waits for.
-        if _ref_fut is not None:
+        # APPLYALL 2026-09-29 (review finding 5): the re-upload prefetch (_reup_fut) writes
+        # pre_ro*.wav into the same dir and was joined only inside the speed block, so it
+        # gets the same sweep-later treatment. It is never waited on here (timeout 0), so
+        # the answer goes out exactly as fast as before.
+        for _pf in (_ref_fut, _reup_fut):
+            if _pf is None:
+                continue
             try:
-                _ref_fut.result(timeout=5)
+                _pf.result(timeout=5 if _pf is _ref_fut else 0)
             except Exception:
                 pass
-            if not _ref_fut.done():
+            if not _pf.done():
                 _td = src.get("tmp")
-                def _sweep_later(_f=_ref_fut, _d=_td):
+                def _sweep_later(_f=_pf, _d=_td):
                     try:
                         _f.result(timeout=180)
                     except Exception:
@@ -4449,7 +4502,46 @@ def _phase2(ctx, on_cand=None):
                     _cleanup(_d)
                 threading.Thread(target=_sweep_later, daemon=True).start()
         loop.close()
+        # APPLYALL 2026-09-29: the candidate WAVs. Removed on the success path above, and
+        # here on every other path (an exception after find_edit returned left them).
+        if isinstance(edit, dict):
+            _cleanup(edit.get("tmp"))
         _cleanup(src.get("tmp"))
+
+
+# APPLYALL 2026-09-29 (review finding 12): REQUEST_DONE ON EVERY PATH THAT ENDS A SCAN.
+# request_start is logged by every _phase1, request_done only at the end of phase 2, so a
+# sound-cache hit, a TikTok rate limit, a named-no-hunt answer or an exception left an open
+# start that run_batch_helpers.live_busy() read as a live user scan for 180 s. `outcome`
+# keeps speed analyses able to filter to full hunts ("hunt", logged in _phase2). A /base
+# that PARKS its session logs nothing: its hunt is still to come.
+def _log_done(key, t0, outcome):
+    E.tlog("request_done", time.time() - t0, url=key, outcome=outcome)
+
+
+def _p1(url, key):
+    """_phase1, plus request_done when no phase 2 will follow. -> (res, ctx)."""
+    t0 = time.time()
+    try:
+        res, ctx = _phase1(url, key, t0)
+    except Exception:
+        _log_done(key, t0, "error")
+        raise
+    if not (ctx and ctx.get("worth")):
+        r = res or {}
+        _log_done(key, t0, "sound_cache" if r.get("from_sound_cache") else
+                  r.get("result") if r.get("result") in
+                  ("rate_limited", "no_match", "uncertain", "error") else "named")
+    return res, ctx
+
+
+def _p2(ctx, on_cand=None):
+    """_phase2, plus request_done when it raises (its own success path logs "hunt")."""
+    try:
+        return _phase2(ctx, on_cand=on_cand)
+    except Exception:
+        _log_done(ctx.get("key"), ctx.get("t0") or time.time(), "error")
+        raise
 
 
 def identify_base(url):
@@ -4464,7 +4556,7 @@ def identify_base(url):
     old = SESSIONS.pop(key, None)
     if old:
         _cleanup((old.get("src") or {}).get("tmp"))
-    res, ctx = _phase1(url, key, time.time())
+    res, ctx = _p1(url, key)   # APPLYALL 2026-09-29
     if ctx and ctx.get("worth"):
         SESSIONS[key] = ctx              # /edits will finish it and free the audio
     elif ctx:
@@ -4487,7 +4579,7 @@ def identify_edits(url):
     if not ctx:                      # no live session (expired / called cold) - do it all
         return identify(url)
     try:
-        return _phase2(ctx)
+        return _p2(ctx)   # APPLYALL 2026-09-29
     finally:
         _cleanup((ctx.get("src") or {}).get("tmp"))
 
@@ -4509,7 +4601,7 @@ def _edits_job(url, on_cand):
         # No live session: either /base was never called or the server restarted under
         # the page (every .py edit does that). Do the whole job rather than answering
         # with an empty hunt - the same recovery identify_edits already performs.
-        res, ctx = _phase1(url, key, time.time())
+        res, ctx = _p1(url, key)   # APPLYALL 2026-09-29
         if not ctx:                       # rate-limited: no audio was ever fetched
             return res
         if not ctx.get("worth"):          # named it, nothing left to hunt for
@@ -4518,7 +4610,7 @@ def _edits_job(url, on_cand):
             _cleanup((ctx.get("src") or {}).get("tmp"))
             return res
     try:
-        return _phase2(ctx, on_cand=on_cand)
+        return _p2(ctx, on_cand=on_cand)   # APPLYALL 2026-09-29
     finally:
         _cleanup((ctx.get("src") or {}).get("tmp"))
 
@@ -4532,7 +4624,7 @@ def identify(url):
     _c = _cache_get(key)
     if _c is not None:
         return _c
-    res, ctx = _phase1(url, key, time.time())
+    res, ctx = _p1(url, key)   # APPLYALL 2026-09-29
     if not ctx:                          # rate-limited: no audio was ever fetched
         return res
     if not ctx.get("worth"):             # named it, nothing left to hunt for
@@ -4541,7 +4633,7 @@ def identify(url):
         _cleanup((ctx.get("src") or {}).get("tmp"))
         return res
     try:
-        return _phase2(ctx)
+        return _p2(ctx)   # APPLYALL 2026-09-29
     finally:
         _cleanup((ctx.get("src") or {}).get("tmp"))
 
@@ -7031,6 +7123,12 @@ def search_text(text, mode="auto"):
                  "elapsed_ms": int((time.time() - t0) * 1000)}
 
 
+def _probe_state(kit):
+    """APPLYALL 2026-09-29. For ratelimit.probe_ok: None (no phone session), "open", "closed"."""
+    s = P.session(kit, create=False)
+    return None if s is None else ("closed" if s.closed else "open")
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -7041,6 +7139,37 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
+
+    # APPLYALL 2026-09-29: the limiter's answers (only reached with ADDIFY_RATE_LIMIT on)
+    def _send_ra(self, code, obj, retry_after):
+        """A limiter answer: JSON with Retry-After, never cached by anything in between."""
+        b = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Retry-After", str(int(retry_after)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _limited(self, path, key, refusal):
+        """A scan the limiter refused. HTTP 200 in-band like every scan answer, so the page
+        renders it as rate_limited; /edits/stream gets it as one `done` event."""
+        body = RL.limited_body(key, refusal)
+        if path == "/edits/stream":
+            try:
+                self.wfile.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
+                    b"Cache-Control: no-store\r\nConnection: close\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    + ("Retry-After: %d\r\n\r\nretry: 3600000\n\n" % body["retry_after"]).encode()
+                    + ("event: done\ndata: %s\n\n" % json.dumps(body)).encode())
+            except Exception:
+                pass
+            self.close_connection = True
+            return
+        return self._send_ra(200, body, body["retry_after"])
 
     # ---- Server-Sent Events -------------------------------------------------------
     # WHY SSE AND NOT POLLING: this is a ThreadingHTTPServer, so a long-lived response
@@ -7058,14 +7187,20 @@ class H(BaseHTTPRequestHandler):
     SSE_PING = 5.0        # a comment line often enough that nothing calls the socket dead
     SSE_MAX = 300.0       # hard ceiling; the slowest measured hunt is well under a minute
 
-    def _sse(self, link):
+    def _sse(self, link, tk=None):
         q = queue.Queue()
 
         def worker():
+            _r = None
             try:
-                q.put(("done", _edits_job(link, lambda row: q.put(("cand", row)))))
+                _r = _edits_job(link, lambda row: q.put(("cand", row)))
+                q.put(("done", _r))
             except Exception as e:
-                q.put(("fail", {"result": "error", "error": str(e)[:200]}))
+                _r = {"result": "error", "error": str(e)[:200]}
+                q.put(("fail", _r))
+            finally:
+                # APPLYALL 2026-09-29: the in-flight slot frees when the WORK ends
+                RL.settle(tk, _r)
 
         try:
             self.wfile.write(
@@ -7083,6 +7218,7 @@ class H(BaseHTTPRequestHandler):
                 # only the belt to that braces.
                 b"retry: 3600000\n\n")
         except Exception:
+            RL.settle(tk, None)          # APPLYALL 2026-09-29: no worker, free its slot
             return
         self.close_connection = True
         threading.Thread(target=worker, daemon=True).start()
@@ -7233,6 +7369,10 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        _ra = RL.over_any(self)        # APPLYALL 2026-09-29: 0 unless enforce and over
+        if _ra:
+            return self._send_ra(429, RL.limited_body("", {"limit": "any", "retry_after": _ra}),
+                                 _ra)
         # serve the app itself, so page + engine share one origin (no CORS/PNA)
         # /share is the landing point for EVERY share path - the Android Web Share
         # Target, an iOS Shortcut, or a native Share Extension all just need somewhere to
@@ -7279,12 +7419,16 @@ class H(BaseHTTPRequestHandler):
                 'stroke="#fff" stroke-width="46" stroke-linecap="round"/></svg>',
                 "image/svg+xml")
         if u.path == "/review":
+            if not RL.internal_ok(self):      # APPLYALL 2026-09-29: ADDIFY_CLOSE_INTERNAL
+                return self._send(404, {"error": "not found"})
             return self._send_review()
         # /privacy, /support, /terms - the .html suffix is accepted too, so the same link
         # works whether it points at the engine or at a static copy of the page.
         name = u.path.strip("/")
         if name.endswith(".html"):
             name = name[:-5]
+        if name == "backend-map" and not RL.internal_ok(self):   # APPLYALL 2026-09-29
+            return self._send(404, {"error": "not found"})
         if name in STATIC_PAGES:
             return self._send_static_page(name)
         if u.path == "/progress":
@@ -7323,8 +7467,23 @@ class H(BaseHTTPRequestHandler):
                                     # FAST-NAME 9 / 10: page behaviour, only when one is on
                                     **({"features": {"fast_poll": PAGE_FAST_POLL,
                                                      "live_rows": PAGE_LIVE_ROWS}}
-                                       if (PAGE_FAST_POLL or PAGE_LIVE_ROWS) else {})})
+                                       if (PAGE_FAST_POLL or PAGE_LIVE_ROWS) else {}),
+                                    # APPLYALL 2026-09-29: THIS caller's tier and scans left,
+                                    # only with the limiter on. Installed builds decode only
+                                    # {ok, service, build}, so an extra key is safe.
+                                    **({"limits": RL.health(self)}
+                                       if RL.MODE != "off" else {})})
         if u.path == "/probes/next":
+            if RL.MODE != "off" and not RL.probe_ok(
+                    self, (parse_qs(u.query).get("kit") or [""])[0].strip(),
+                    _probe_state, P.drop):
+                # APPLYALL 2026-09-29: over this caller's open-session cap. The "feature
+                # off" answer, so the page stops polling and the scan runs on the server.
+                self.send_response(404)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             return self._probes_next(u)
         if u.path == "/trending":
             try:
@@ -7335,6 +7494,11 @@ class H(BaseHTTPRequestHandler):
             # Free-text search (lyric / vibe / creator). Text sources only: never Shazam,
             # never an audio download. See search_text().
             sq = parse_qs(u.query, keep_blank_values=True)
+            _ra = RL.take(self, "search")         # APPLYALL 2026-09-29: 0 unless over
+            if _ra:
+                return self._send_ra(429, {"ok": False, "retry_after": _ra, "error":
+                                           "Searching too fast. Try again in a few seconds."},
+                                     _ra)
             try:
                 code, body = search_text((sq.get("q") or [""])[0],
                                          (sq.get("mode") or ["auto"])[0])
@@ -7345,14 +7509,37 @@ class H(BaseHTTPRequestHandler):
         if u.path not in ("/find", "/base", "/edits", "/edits/stream"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
-        link = (q.get("url") or [""])[0].strip()
-        if not link or not any(h in link for h in ("tiktok.com", "instagram.com")):
+        # APPLYALL 2026-09-29 (review finding 7). ADDIFY_STRICT_LINKS off: today's substring
+        # test, unchanged. On: https/http, no userinfo, default port, a parsed tiktok.com /
+        # instagram.com host and a real path shape, so a crafted link never points the
+        # engine at another host. Look-alikes (tiktok.com.evil.io) fail the host parse.
+        link, _why = RL.scan_link((q.get("url") or [""])[0])
+        if not link:
             return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
+        forced = (q.get("nocache") or [""])[0] in ("1", "true", "yes")
+        _tk = None
+        if RL.MODE != "off":
+            # APPLYALL 2026-09-29: THE LIMITER (off by default). Charged when new work is
+            # ADMITTED, before any of it starts; a cache hit or a parked hunt costs nothing.
+            _key = link.split("?")[0]
+            if not RL.origin_ok(self, u.path):
+                return self._send(403, {"error": "origin not allowed"})
+            if forced and not RL.forced_ok(self):
+                forced = False               # nocache evicts everyone's answer: testers only
+            if not forced and _cache_get(_key) is not None:
+                _paid = "cache"
+            elif u.path in ("/edits", "/edits/stream") and _key in SESSIONS:
+                _paid = "session"
+            else:
+                _paid = None
+            _tk, _refusal = RL.admit_scan(self, u.path, _paid)
+            if _refusal:
+                return self._limited(u.path, _key, _refusal)
         # /edits/stream is /edits with the answers pushed out as they verify. /edits
         # itself is untouched and stays the fallback for any client that can't stream.
         if u.path == "/edits/stream":
-            return self._sse(link)
-        if (q.get("nocache") or [""])[0] in ("1", "true", "yes"):
+            return self._sse(link, _tk)
+        if forced:
             _NOCACHE[link.split("?")[0]] = True
         fn = {"/base": identify_base, "/edits": identify_edits}.get(u.path, identify)
         # ON-DEVICE SHAZAMKIT. ?kit= is the page's scan id when the phone offered to run the
@@ -7360,7 +7547,10 @@ class H(BaseHTTPRequestHandler):
         # it goes to the phone (find_song.PHONE, phone_probes.PhoneSession). None when the
         # flag is off or the page did not ask, and then this is the old call, unchanged.
         _ph = P.bind((q.get("kit") or [""])[0]) if u.path in ("/base", "/find") else None
+        if _ph is not None:
+            RL.probe_bound(_ph.kit)      # APPLYALL 2026-09-29: a real scan, never dropped idle
         _tok = FS.PHONE.set(_ph) if _ph is not None else None
+        res = None
         try:
             res = fn(link)
             if _ph is not None and isinstance(res, dict) and (_ph.n.get("matched") or 0) > 0:
@@ -7370,6 +7560,13 @@ class H(BaseHTTPRequestHandler):
                 _sess = SESSIONS.get(link.split("?")[0])
                 if _sess and isinstance(_sess.get("res"), dict):
                     _sess["res"]["_phone_named"] = True
+            if _ph is not None and isinstance(res, dict) and (_ph.n.get("no_match") or 0) > 0:
+                # APPLYALL 2026-09-29 (review finding 2): a phone said no_match. Mark the
+                # parked session so phase 2 keeps a failure out of the shared URL cache
+                # too (_phone_nomatch). Phase 1 already read it off FS.PHONE.
+                _sess = SESSIONS.get(link.split("?")[0])
+                if _sess and isinstance(_sess.get("res"), dict):
+                    _sess["res"]["_phone_nomatch"] = True
             if _ph is not None and isinstance(res, dict):
                 # a copy: `res` may be the cached answer, and these numbers are this scan's
                 res = dict(res, phone=_ph.report())
@@ -7377,30 +7574,56 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             self._send(200, {"result": "error", "error": str(e)[:200]})
         finally:
+            RL.settle(_tk, res)          # APPLYALL 2026-09-29: no-op unless admitted
             if _ph is not None:
                 FS.PHONE.reset(_tok)
                 P.release(_ph)          # waiting polls get 410 and the page stops asking
 
     def do_POST(self):
         u = urlparse(self.path)
+        _ra = RL.over_any(self)        # APPLYALL 2026-09-29: 0 unless enforce and over
+        if _ra:
+            return self._send_ra(429, RL.limited_body("", {"limit": "any", "retry_after": _ra}),
+                                 _ra)
+        if u.path == "/review/note" and not RL.internal_ok(self):   # APPLYALL 2026-09-29
+            return self._send(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > 32 * 1024 * 1024:
             return self._send(400, {"error": "bad body size"})
         body = self.rfile.read(n)
+        if u.path in ("/review/note", "/feedback", "/feedback/erase") and RL.MODE != "off":
+            # APPLYALL 2026-09-29: stored writes get a small bucket, capped strings and
+            # capped files (erase is never refused for a full file)
+            _ra = RL.take(self, "write")
+            _full = RL.file_full(os.path.join(HERE, "eval", "inbox.jsonl")
+                                 if u.path == "/review/note" else FEEDBACK)
+            if _ra or (_full and u.path != "/feedback/erase"):
+                return self._send_ra(200, {"ok": False, "error":
+                                           "Too many at once. Try again in a minute."},
+                                     _ra or 60)
         try:
             if u.path == "/listen":
                 ct = (self.headers.get("Content-Type") or "").lower()
                 kind = ("mp4" if "mp4" in ct else "ogg" if "ogg" in ct else "webm")
-                return self._send(200, identify_mic(body, kind))
+                # APPLYALL 2026-09-29: a mic scan is new work like /base (limiter on only)
+                _tk, _refusal = RL.admit_scan(self, "/listen", None)
+                if _refusal:
+                    return self._limited("/listen", "listen", _refusal)
+                _res = None
+                try:
+                    _res = identify_mic(body, kind)
+                    return self._send(200, _res)
+                finally:
+                    RL.settle(_tk, _res)
             if u.path == "/review/note":
-                return self._send(200, record_review_note(json.loads(body.decode())))
+                return self._send(200, record_review_note(RL.cap_body(json.loads(body.decode()))))
             if u.path == "/probes/result":
                 return self._send(*P.http_result(parse_qs(u.query), body))
             if u.path == "/feedback":
-                return self._send(200, record_feedback(json.loads(body.decode())))
+                return self._send(200, record_feedback(RL.cap_body(json.loads(body.decode()))))
             if u.path == "/feedback/erase":
                 return self._send(200, erase_feedback(
-                    (json.loads(body.decode()) or {}).get("id")))
+                    (RL.cap_body(json.loads(body.decode())) or {}).get("id")))
             return self._send(404, {"error": "not found"})
         except Exception as e:
             return self._send(200, {"result": "error", "error": str(e)[:200]})

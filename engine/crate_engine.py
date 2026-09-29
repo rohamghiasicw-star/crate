@@ -23,6 +23,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from find_song import (resolve, scrape_music, fetch, cut, duration_of,
                        windows_for, shazam, SWEEP)
 import find_song as _find_song   # PHONE / probe_ceiling: on-device ShazamKit (phone_probes.py)
+try:
+    import ratelimit as _RL      # APPLYALL 2026-09-29: ADDIFY_STRICT_LINKS host rule (off unless set)
+except Exception:
+    _RL = None
 import ig
 import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
 import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
@@ -579,6 +583,8 @@ def _fast_full(url):
         return resolve(url), "follow"
     u = url
     for hop in range(3):
+        if _RL is not None and _RL.STRICT_LINKS and not _RL.url_ok(u):
+            break                        # APPLYALL 2026-09-29: never follow a hop off the allowlist
         try:
             r = creq.get(u, impersonate="chrome", allow_redirects=False, timeout=8)
             loc = r.headers.get("location")
@@ -2703,6 +2709,8 @@ def _get_source_impl(url, defer_crosscheck, tmp):
             full = resolve(url)
         except Exception:
             full = url
+    if _RL is not None and _RL.STRICT_LINKS and not _RL.url_ok(full):
+        raise RuntimeError("link not readable")   # APPLYALL 2026-09-29: never fetch off the allowlist
     # FAST-NAME 4: the cross-check's mp4 waits on this gate (see _tt_video_audio_after).
     # Its ceiling is the one the caller will join with: settle_source's XCHECK_CEIL when
     # deferred, the inline 12 s otherwise - both counted from the mp3 landing, as today.
@@ -6693,10 +6701,30 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
     return len(todo)
 
 
-async def find_edit(clip_audio, credit_title, credit_author, base_title, base_artist,
-                    edit_label, known_dir=None, handle=None, max_dl=14,
-                    hints=None, shazam_reliable=True, pair=None, on_cand=None,
-                    creator=None, comment_urls=None):
+async def find_edit(*args, **kwargs):
+    """APPLYALL 2026-09-29 (review finding 5): find_edit with its temp dirs accounted for
+    (RETENTION). The body hands its dir back only inside the result, so an exception
+    anywhere in it left up to ~14 candidate WAVs on disk, and the no-candidates return
+    left an empty dir. Every dir the body made is removed when it raises; on success any
+    dir the result does not carry is removed. The returned dir is still the caller's."""
+    tmps = []
+    try:
+        res = await _find_edit_body(*args, _tmps=tmps, **kwargs)
+    except BaseException:
+        for d in tmps:
+            _cleanup_dir(d)
+        raise
+    keep = res.get("tmp") if isinstance(res, dict) else None
+    for d in tmps:
+        if d != keep:
+            _cleanup_dir(d)
+    return res
+
+
+async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, base_artist,
+                          edit_label, known_dir=None, handle=None, max_dl=14,
+                          hints=None, shazam_reliable=True, pair=None, on_cand=None,
+                          creator=None, comment_urls=None, _tmps=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -6868,6 +6896,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
                  ncomment=len(cm_cands))
             if hc:
                 ftmp = tempfile.mkdtemp()
+                if _tmps is not None:
+                    _tmps.append(ftmp)       # APPLYALL 2026-09-29
                 fctx = _verify.prepare_clip(clip_audio)
                 _ft1 = time.time()
                 # STREAM THE FAST PATH TOO. Anything landing at FAST_EXIT_CORE is at or
@@ -7062,6 +7092,8 @@ async def find_edit(clip_audio, credit_title, credit_author, base_title, base_ar
     clip_spec = _log_spec(_load(clip_audio))   # kept only for clip_ok / speed fallback
     clip_ctx = _verify.prepare_clip(clip_audio)   # decode+fingerprint the clip ONCE, reuse
     tmp = _fast_tmp or tempfile.mkdtemp()      # carried fast-path files live here too
+    if _tmps is not None and tmp not in _tmps:
+        _tmps.append(tmp)                      # APPLYALL 2026-09-29
 
     # key terms = the CORE song identity, NOT the edit qualifiers. Including
     # "instrumental"/"slowed" made instrumental uploads out-title-match the popular

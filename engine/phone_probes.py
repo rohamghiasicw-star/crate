@@ -395,6 +395,15 @@ def release(s):
         s.close()
 
 
+def drop(kit):
+    """APPLYALL 2026-09-29. Close and forget a session no scan ever bound (ratelimit.probe_ok,
+    only with ADDIFY_RATE_LIMIT=enforce). Frees its table slot now, not after SESSION_TTL."""
+    with _SESS_LOCK:
+        s = _SESS.pop(kit, None)
+    if s is not None:
+        s.close()
+
+
 def health():
     return {"on": ON, "v": PROTOCOL, "conc": CONC, "sr": SR, "max_secs": MAX_SECS}
 

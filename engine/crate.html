@@ -45,6 +45,10 @@
   /* result cover depth + trending rank glow (Konnor's design notes, 2026-09-26) */
   --art-glow-a:.6; --art-drop:0 24px 30px -14px rgba(0,0,0,.8),0 10px 22px -6px rgba(0,0,0,.45);
   --art-hl:rgba(255,255,255,.4); --rk-glow:color-mix(in oklab,var(--accent) 70%,transparent);
+  /* APPLYALL 2026-09-29: the dial and the hunt tile paint with rgba() of these channel
+     triplets instead of color-mix(), which iOS 16.0-16.1 drops (the app targets 16.0).
+     --glowa / --corea are the two lights' strength, lower on the light theme. */
+  --a1rgb:107,95,224; --a2rgb:140,130,240; --goodrgb:93,202,165; --glowa:.42; --corea:.6;
 }
 :root[data-theme="light"]{
   --bg:#ECEAF1; --bg2:#F5F4F8;
@@ -57,6 +61,7 @@
   --shadow:0 20px 50px rgba(23,20,31,.12);
   --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
   --art-hl:rgba(255,255,255,.55); --rk-glow:color-mix(in oklab,var(--accent) 32%,transparent);
+  --a2rgb:90,78,203; --goodrgb:14,159,110; --glowa:.19; --corea:.27;   /* APPLYALL 2026-09-29 */
 }
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
@@ -69,8 +74,12 @@
     --shadow:0 20px 50px rgba(23,20,31,.12);
     --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
     --art-hl:rgba(255,255,255,.55); --rk-glow:color-mix(in oklab,var(--accent) 32%,transparent);
+    --a2rgb:90,78,203; --goodrgb:14,159,110; --glowa:.19; --corea:.27;   /* APPLYALL 2026-09-29 */
   }
 }
+/* APPLYALL 2026-09-29 (build 3, Vercel): native controls, scrollbars and autofill follow the theme */
+:root{color-scheme:dark} :root[data-theme="light"]{color-scheme:light}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){color-scheme:light}}
 *{box-sizing:border-box}
 /* Any class that sets display (grid, flex) silently beats the UA [hidden] rule, so an
    element toggled with .hidden stayed visible - the search clear button did exactly that. */
@@ -128,7 +137,8 @@ a{color:inherit;text-decoration:none}
 .fheart svg{width:12px;height:12px}
 .vchip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:var(--r-pill);flex:none;white-space:nowrap}
 .vchip.orig{color:var(--good);background:color-mix(in oklab,var(--good) 15%,transparent)}
-.vchip.edit{color:var(--accent2);background:color-mix(in oklab,var(--accent) 16%,transparent);
+.vchip.note{color:var(--muted);background:var(--raise2)}   /* APPLYALL 2026-09-29 (finding 20) */
+.vchip.edit{color:var(--accent2);background:color-mix(in oklab,var(--accent) 11%,transparent);   /* APPLYALL 2026-09-29 (build 3): 16% tint left the text at 4.4:1 */
   border:1px solid color-mix(in oklab,var(--accent) 38%,transparent)}
 .fplay{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;color:var(--accent2);position:relative}
 .fplay svg{width:13px;height:13px}
@@ -166,7 +176,7 @@ a{color:inherit;text-decoration:none}
 .sexb{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .sexhd{display:flex;align-items:center;gap:8px;min-width:0}
 .sexk{font-size:10px;font-weight:750;letter-spacing:.05em;text-transform:uppercase;color:var(--accent2);flex:none;
-  background:color-mix(in oklab,var(--accent) 15%,transparent);padding:2px 8px;border-radius:var(--r-pill)}
+  background:color-mix(in oklab,var(--accent) 11%,transparent);padding:2px 8px;border-radius:var(--r-pill)}   /* APPLYALL 2026-09-29 (build 3): was 4.45:1 */
 .sexd{font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sext{min-width:0;font-size:14.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sexgo{color:var(--faint);flex:none;display:grid;place-items:center}
@@ -327,6 +337,12 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
 .listening.ok{color:var(--good)}
 .sub{font-size:13px;color:var(--muted);text-align:center;line-height:1.45;margin-top:5px;min-height:19px;
   transition:opacity .2s}
+/* APPLYALL 2026-09-29 (from DIAL 2026-09-27): the scan status line reads as status, not a
+   caption. Scoped to the scan screen: .listening and .sub are also used on Listen and Home. */
+#s-scan .listening{font-size:21px;font-weight:700;margin-top:24px;max-width:320px}
+#s-scan #live{font-size:14px;font-weight:500;line-height:1.4;margin-top:6px;min-height:20px;max-width:320px;
+  text-wrap:balance;transition:opacity .18s}
+#s-scan #live.ok{color:var(--good)}
 
 /* ---------- source card ----------
    The green "audio" tick is the one piece of state worth surfacing here: pulling the
@@ -350,20 +366,66 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
   animation:pop .3s var(--ease) both}
 .abadge svg{width:11px;height:11px}
 
-/* ---------- the dial ---------- */
-.dial{position:relative;width:206px;height:206px;display:grid;place-items:center;margin:0 auto}
-.dial svg.rings{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
-.dtrack{fill:none;stroke:var(--dialtrack);stroke-width:9}
-.dfill{fill:none;stroke:url(#dialgrad);stroke-width:9;stroke-linecap:round;
-  stroke-dasharray:540.35;stroke-dashoffset:540.35;
-  transition:stroke-dashoffset .55s cubic-bezier(.25,.9,.3,1),stroke .35s,filter .35s;
-  filter:drop-shadow(0 0 9px color-mix(in oklab,var(--accent2) 60%,transparent))}
-.dial.done .dfill{stroke:var(--good);
-  filter:drop-shadow(0 0 12px color-mix(in oklab,var(--good) 65%,transparent))}
-.dinner{display:flex;flex-direction:column;align-items:center;gap:12px;z-index:1}
-.dnum{display:flex;align-items:baseline;font-size:49px;font-weight:750;letter-spacing:-.045em;line-height:1;
-  font-variant-numeric:tabular-nums}
-.dnum i{font-style:normal;font-size:25px;font-weight:700;letter-spacing:-.02em;margin-left:1px}
+/* ---------- the dial ----------
+   APPLYALL 2026-09-29: the DIAL 2026-09-27 design (Roham: "it's like a dial ... you fill out
+   the inside and it lights up a little bit"), rebuilt so it costs no layout per frame and
+   needs nothing newer than iOS 16.0. A dark face, a wedge of light filling it in the same
+   clockwise sweep as the arc, a light behind the number and a glow on the ground that grow
+   with progress, a spark on the arc tip, mint and one bloom at 100.
+   pgPaint writes plain values on each 400 ms pacing tick and the browser eases between them
+   over 420 ms: stroke-dashoffset for the arc and the wedge (paint only, on the svg's own
+   layer), transform for the spark and opacity for the two lights (compositor). The 09-27
+   build animated one registered custom property instead, which cost a layout every frame
+   (606 vs 38 per 10 s, V-truth) and needs @property (iOS 16.4). Colours are rgba() of the
+   channel tokens, never color-mix(). .fin turns the easing off for pgDone's own frames and
+   for the reset to 0. */
+:root{--dial:224px}
+@media (max-width:380px){:root{--dial:208px}}
+@media (max-height:690px){:root{--dial:184px}}
+.dial{position:relative;width:var(--dial);height:var(--dial);display:grid;place-items:center;margin:0 auto;
+  isolation:isolate}
+.dglow,.dcore{position:absolute;border-radius:50%;pointer-events:none;will-change:opacity;
+  transition:opacity 420ms linear}
+.dglow{inset:-30px;z-index:-1;opacity:.12;
+  background:radial-gradient(closest-side,rgba(var(--a2rgb),var(--glowa)),rgba(var(--a2rgb),0) 78%)}
+.dcore{inset:21%;z-index:0;opacity:.06;
+  background:radial-gradient(closest-side,rgba(var(--a2rgb),var(--corea)),rgba(var(--a2rgb),0))}
+.dial.done .dglow{background:radial-gradient(closest-side,rgba(var(--goodrgb),var(--glowa)),rgba(var(--goodrgb),0) 78%)}
+.dial.done .dcore{background:radial-gradient(closest-side,rgba(var(--goodrgb),var(--corea)),rgba(var(--goodrgb),0))}
+.dial svg.rings{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible;
+  will-change:transform}
+.dface{fill:var(--raise);fill-opacity:.7}
+/* the inside filling: a pie drawn as a fat stroke (r=40, width 80, so radius 80) */
+.dwedge{fill:none;stroke:url(#wedgegrad);stroke-width:80;stroke-dasharray:251.33px;stroke-dashoffset:251.33px;
+  transition:stroke-dashoffset 420ms linear}
+.dwgood{fill:url(#wedgegood);opacity:0;transition:opacity 320ms ease}
+.dtrack{fill:none;stroke:rgba(var(--a1rgb),.17);stroke-width:10}
+.dfill{fill:none;stroke:url(#dialgrad);stroke-width:10;stroke-linecap:round;
+  stroke-dasharray:552.92px;stroke-dashoffset:552.92px;transition:stroke-dashoffset 420ms linear,stroke .32s;
+  filter:drop-shadow(0 0 6px rgba(var(--a2rgb),.55))}
+/* the spark rides the arc tip: an HTML dot on a layer that only rotates */
+.dtipw{position:absolute;inset:0;pointer-events:none;will-change:transform;
+  transition:transform 420ms linear,opacity 160ms ease}
+.dtipw i{position:absolute;left:50%;top:6%;width:2.6%;height:2.6%;margin:-1.3% 0 0 -1.3%;border-radius:50%;
+  background:#fff;opacity:.95;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.dial.p0 .dfill,.dial.p0 .dtipw{opacity:0}   /* a zero-length round-capped dash paints a dot */
+.dial.fin .dfill,.dial.fin .dwedge,.dial.fin .dtipw,.dial.fin .dglow,.dial.fin .dcore{transition:none}
+.dial.done .dfill{stroke:var(--good);filter:drop-shadow(0 0 10px rgba(var(--goodrgb),.6))}
+.dial.done .dwgood{opacity:1}
+.dial.done .dtipw{opacity:0}
+.dial.done .dnum i{color:var(--good)}
+.dial::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--good);opacity:0;
+  pointer-events:none}
+.dial.done.land::after{animation:dbloom 620ms var(--ease) 1 both}
+@keyframes dbloom{from{opacity:.55;transform:scale(.94)}to{opacity:0;transform:scale(1.16)}}
+@media (prefers-reduced-motion:reduce){.dtipw{display:none}.dial.done.land::after{animation:none}}
+.dinner{position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;z-index:1}
+.dnum{display:flex;align-items:baseline;font-size:calc(var(--dial) * .232);font-weight:750;letter-spacing:-.04em;
+  line-height:1;font-variant-numeric:tabular-nums}
+.dnum i{font-style:normal;font-size:.48em;font-weight:700;letter-spacing:-.01em;margin-left:.04em;
+  color:var(--muted);transition:color 320ms ease}
+/* tabular numerals give a "1" the width of a "0", so a number ending in 1 read as "1 %" */
+.dnum.e1 i{margin-left:-.28em}
 /* Equalizer bars, driven by the clip's own amplitude envelope once the server sends it
    (W.amp). Before that they idle low - they never invent motion for audio we don't have. */
 .eq{display:flex;align-items:flex-end;gap:3.5px;height:17px}
@@ -389,7 +451,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .app[data-state="idle"] .tabbar,.app[data-state="trending"] .tabbar,.app[data-state="search"] .tabbar,
 .app[data-state="library"] .tabbar,.app[data-state="profile"] .tabbar{display:flex}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0 4px;
-  font-size:10px;font-weight:650;color:var(--faint);border-radius:12px;transition:color .15s}
+  font-size:11px;font-weight:650;color:var(--faint);border-radius:12px;transition:color .15s}   /* APPLYALL 2026-09-29 (build 3): 10px was under the legibility floor */
 .tab svg{width:19px;height:19px}
 .tab.on{color:var(--text)}
 .tab.on svg{color:var(--accent2)}
@@ -857,7 +919,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .ipbtn{position:relative;width:64px;height:64px;flex:none;border-radius:50%;
   background:var(--raise2);color:#fff;display:grid;place-items:center;cursor:pointer;
   transition:transform .12s,filter .15s}
-.ipbtn:hover{transform:scale(1.05)}
+@media (hover:hover) and (pointer:fine){.ipbtn:hover{transform:scale(1.05)}}   /* APPLYALL 2026-09-29 (build 3): unguarded hover sticks after a tap on iOS */
 .ipbtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .ipgl{position:relative;z-index:2;display:grid;place-items:center;line-height:0}
 .ipgl svg{width:22px;height:22px}
@@ -1287,7 +1349,7 @@ button.savecard[disabled]{pointer-events:none}
 .clippill .cp{color:var(--faint);flex:none}
 /* the source chip is a link back to the clip you scanned */
 a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:filter .15s}
-a.clippill:hover{filter:brightness(1.12)}
+@media (hover:hover) and (pointer:fine){a.clippill:hover{filter:brightness(1.12)}}   /* APPLYALL 2026-09-29 (build 3) */
 .clippill .cgo{display:grid;color:var(--faint);flex:none;margin-left:1px}
 .clippill .cgo svg{width:11px;height:11px}
 /* item 5: open in - quiet search marker */
@@ -1377,6 +1439,53 @@ a.clippill:hover{filter:brightness(1.12)}
 .latehunt{display:flex;align-items:center;gap:10px;margin:16px 2px 6px;color:rgba(255,255,255,.62);font-size:13.5px;font-weight:600;letter-spacing:.1px}
 .latehunt i{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid rgba(107,95,224,.3);border-top-color:#6B5FE0;animation:lhspin .8s linear infinite}
 @keyframes lhspin{to{transform:rotate(360deg)}}
+
+/* APPLYALL 2026-09-29 (build 3, Impeccable audit Fix 4 + Vercel guidelines): tap targets and
+   focus. Every small control keeps its look and gets a 44 px hit area from an invisible
+   ::before (Apple's floor; the header back button Konnor kept missing was 36). :where() keeps
+   the position:relative at zero specificity so no rule that already positions one of these
+   is overridden. */
+:where(.ib,.sadd,.smic,.sclear,.sw,.tog,#pastebtn,#gobtn,.chipf,.urow .retry,.unm .retry,a.clippill,.oblater,#seeall){position:relative}
+.ib::before,.sadd::before,.smic::before,.sclear::before{content:"";position:absolute;inset:-4px;border-radius:50%}
+.trk .pl::before{content:"";position:absolute;inset:-8px;border-radius:50%}
+.sw::before{content:"";position:absolute;inset:-10px -2px}
+.tog::before{content:"";position:absolute;inset:-9px -1px}
+#pastebtn::before,#gobtn::before{content:"";position:absolute;inset:-3px 0}
+.chipf::before{content:"";position:absolute;inset:-7px 0}
+.urow .retry::before,.unm .retry::before,a.clippill::before{content:"";position:absolute;inset:-5px 0}
+.oblater::before{content:"";position:absolute;inset:-12px 0}
+#seeall::before{content:"";position:absolute;inset:-12px -8px}
+/* the Finds search box had outline:none on its input and no focus style of its own */
+.search:focus-within{border-color:var(--accent2)}
+/* the highlighted search row: its meta line was 4.3:1 on the tinted row */
+.srow.top .smeta{color:var(--muted)}
+/* sheets and the picker scroll on their own without dragging the page behind them */
+.sheetcard,.pkcard{overscroll-behavior:contain}
+/* Home joins the other tab pages in the screen-height lock (Impeccable Fix 1): on a 375x667
+   phone the tab bar sat at y 745-807, below the screen, and an inline paste error pushed it
+   off a 393x852 one too. #s-home already scrolls inside the card. */
+html.native .app[data-state="idle"]{height:100vh;height:100dvh}
+.app[data-state="idle"] #s-home{min-height:0}
+
+/* APPLYALL 2026-09-29 (build 3b): the last small targets from the 44 px sweep. A text field
+   cannot carry a pseudo-element, so it takes the height and gives it back as negative
+   margin: the same box on screen, a 44 px tap. */
+.form input{min-height:44px;margin:-2.5px 0}
+.search input{min-height:44px;margin:-11px 0}
+:where(.legal a,#pfsp,#spbtn,#sretry,.vbtn){position:relative}
+.legal a::before{content:"";position:absolute;inset:-13px -4px}
+#pfsp::before{content:"";position:absolute;inset:-12px -4px}
+#spbtn::before,#sretry::before{content:"";position:absolute;inset:-3px 0}
+.vbtn::before{content:"";position:absolute;inset:-1px 0}
+.chipf::before{inset:-7px -3px}
+
+/* APPLYALL 2026-09-29 (build 3c): two light-theme contrast misses. The paste error kept its
+   dark-theme pink (#FFC2C2, 1.2:1 on the light card, unreadable) and the "Original" chip used
+   --good, 2.9:1 as 10.5px text. The dark theme is unchanged. */
+:root[data-theme="light"] .err{color:#B3261E}
+:root[data-theme="light"] .vchip.orig{color:#08704E}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .err{color:#B3261E}
+  :root:not([data-theme="dark"]) .vchip.orig{color:#08704E}}
 </style>
 </head>
 <body>
@@ -1386,7 +1495,7 @@ a.clippill:hover{filter:brightness(1.12)}
   <section class="screen" id="s-home">
     <div class="hd">
       <div class="brand"><span id="mark"></span> Addify</div>
-      <span class="pill" id="scanpill">5 free scans</span>
+      <span class="pill" id="scanpill" hidden></span>
     </div>
 
     <div class="mid" style="padding:10px 0 4px;gap:10px">
@@ -1400,14 +1509,14 @@ a.clippill:hover{filter:brightness(1.12)}
       <div class="miccopy" id="miccopy"><span id="ico-mic"></span>Listen mode works on anything playing out loud</div>
       <form class="form" id="form" autocomplete="off">
         <span class="lk" id="ico-link"></span>
-        <input id="url" type="text" placeholder="Paste a TikTok or Instagram link" aria-label="Clip link" spellcheck="false">
+        <input id="url" type="text" placeholder="Paste a TikTok or Instagram link" aria-label="Clip link" spellcheck="false" inputmode="url" autocomplete="off" autocapitalize="off">
         <!-- the clipboard path lives HERE, not on the scan dial: on iOS reading the
              clipboard summons a native "Paste" button the user must tap, which is fine
              beside a control that says paste and wrong on a control that says scan -->
         <button class="pastebtn" type="button" id="pastebtn" aria-label="Paste link from clipboard">Paste</button>
         <button class="go" type="submit" id="gobtn">Find it</button>
       </form>
-      <div class="err" id="err" hidden></div>
+      <div class="err" id="err" hidden aria-live="polite"></div>
     </div>
 
     <button class="plcard" id="plcard">
@@ -1447,9 +1556,8 @@ a.clippill:hover{filter:brightness(1.12)}
       <input id="sq" type="search" enterkeyhint="search" spellcheck="false" autocapitalize="off"
              placeholder="a lyric, a vibe, or a creator" aria-label="Search by lyric, vibe or creator">
       <button type="button" class="sclear" id="sclear" hidden aria-label="Clear search"></button>
-      <button type="button" class="smic" id="smic" disabled aria-label="Hum to search is coming soon"></button>
+      <!-- REVIEW 2026-09-29 (App Review 2.1): no "coming soon" hum mic until hum search exists -->
     </form>
-    <p class="shint" id="shint">Hum to search is coming soon</p>
     <div id="sbody" aria-live="polite"></div>
   </section>
 
@@ -1460,7 +1568,7 @@ a.clippill:hover{filter:brightness(1.12)}
       <button type="button" class="ib plain" id="libsort" aria-label="Oldest first"></button>
     </div>
     <div class="search"><span id="ico-search"></span>
-      <input id="libq" type="text" placeholder='"that song from the reel..."' aria-label="Search your finds"></div>
+      <input id="libq" type="text" placeholder='“that song from the reel…”' autocomplete="off" aria-label="Search your finds"></div>
     <div class="chips" id="libchips"></div>
     <div id="libmonths"></div>
     <div id="libbody"></div>
@@ -1501,22 +1609,36 @@ a.clippill:hover{filter:brightness(1.12)}
     </div>
     <div id="scanbox"></div>
     <div class="mid">
-      <div class="dial" id="dial">
+      <!-- APPLYALL 2026-09-29: face, filling wedge, track, arc, then the spark and the two lights -->
+      <div class="dial p0" id="dial">
+        <div class="dglow" id="dglow"></div>
         <svg class="rings" viewBox="0 0 200 200" aria-hidden="true">
-          <defs><linearGradient id="dialgrad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="var(--accent2)"/><stop offset="100%" stop-color="var(--accent)"/>
-          </linearGradient></defs>
-          <circle class="dtrack" cx="100" cy="100" r="86"/>
-          <circle class="dfill" id="dfill" cx="100" cy="100" r="86"/>
+          <defs>
+            <linearGradient id="dialgrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" style="stop-color:var(--accent2)"/><stop offset="100%" style="stop-color:var(--accent)"/></linearGradient>
+            <radialGradient id="wedgegrad" cx="100" cy="100" r="80" gradientUnits="userSpaceOnUse">
+              <stop offset="0" style="stop-color:var(--accent2);stop-opacity:0"/><stop offset=".5" style="stop-color:var(--accent2);stop-opacity:.06"/>
+              <stop offset=".82" style="stop-color:var(--accent2);stop-opacity:.16"/><stop offset="1" style="stop-color:var(--accent2);stop-opacity:.34"/></radialGradient>
+            <radialGradient id="wedgegood" cx="100" cy="100" r="80" gradientUnits="userSpaceOnUse">
+              <stop offset="0" style="stop-color:var(--good);stop-opacity:0"/><stop offset=".5" style="stop-color:var(--good);stop-opacity:.06"/>
+              <stop offset=".82" style="stop-color:var(--good);stop-opacity:.15"/><stop offset="1" style="stop-color:var(--good);stop-opacity:.30"/></radialGradient>
+          </defs>
+          <circle class="dface" cx="100" cy="100" r="83"/>
+          <circle class="dwedge" id="dwedge" cx="100" cy="100" r="40"/>
+          <circle class="dwgood" cx="100" cy="100" r="80"/>
+          <circle class="dtrack" cx="100" cy="100" r="88"/>
+          <circle class="dfill" id="dfill" cx="100" cy="100" r="88"/>
         </svg>
+        <div class="dtipw" id="dtipw" aria-hidden="true"><i></i></div>
+        <div class="dcore" id="dcore"></div>
         <div class="dinner">
           <div class="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
-               id="dnum"><span id="dpct">0</span><i>%</i></div>
+               aria-label="Scan progress" id="dnum"><span id="dpct">0</span><i>%</i></div>
           <div class="eq" id="eq"><b></b><b></b><b></b><b></b><b></b></div>
         </div>
       </div>
       <div class="listening" id="listening">Finding song</div>
-      <div class="sub" id="live">Reading the clip</div>
+      <div class="sub" id="live" aria-live="polite">Reading the clip</div>
     </div>
     <div class="tl" id="tl">
       <div class="tlhead"><span id="tl0">0:00</span><span class="win" id="tlwin">reading audio</span>
@@ -1531,7 +1653,7 @@ a.clippill:hover{filter:brightness(1.12)}
   <section class="screen" id="s-match">
     <div class="hd">
       <button class="ib plain" id="back" title="Back" aria-label="Back"></button>
-      <div class="ttl" id="matchttl">Match found</div>
+      <div class="ttl" id="matchttl" aria-live="polite">Match found</div>
       <button class="ib plain" id="share" title="Share" aria-label="Share"></button>
     </div>
     <div id="result"></div>
@@ -1541,7 +1663,7 @@ a.clippill:hover{filter:brightness(1.12)}
 
   <!-- four tabs, no more - settings and accounts live under Profile so the bar stays clean -->
   <nav class="tabbar" id="tabbar" aria-label="Tabs">
-    <button class="tab on" data-tab="idle" id="tb-home"><span class="ticon"></span>Home</button>
+    <button class="tab on" data-tab="idle" id="tb-home" aria-current="page"><span class="ticon"></span>Home</button>
     <button class="tab" data-tab="search" id="tb-search"><span class="ticon"></span>Search</button>
     <button class="tab" data-tab="library" id="tb-lib"><span class="ticon"></span>Finds</button>
     <button class="tab" data-tab="profile" id="tb-prof"><span class="ticon"></span>You</button>
@@ -1565,7 +1687,7 @@ a.clippill:hover{filter:brightness(1.12)}
       <div class="hd"><button class="ib plain" id="sheetx" title="Close" aria-label="Close settings"></button><div class="ttl">Settings</div></div>
       <div class="setrow">
         <div><b>Auto-save</b><span>Every match goes to your playlist</span></div>
-        <button class="tog" id="togauto"><i></i></button>
+        <button class="tog" id="togauto" role="switch" aria-checked="false" aria-label="Auto-save"><i></i></button>
       </div>
       <div class="setrow">
         <div><b id="splabel">Spotify</b><span id="spsub">Not connected</span></div>
@@ -1582,11 +1704,11 @@ a.clippill:hover{filter:brightness(1.12)}
     </div>
 </div>
 <div class="sheet keep" id="keep" hidden>
-  <div class="sheetcard keepcard" role="dialog" aria-modal="true" aria-label="Keep your plan">
-    <h2 id="keeph">Don't cancel and get 1 month for free</h2>
-    <p id="keepp">Stay and your next month is on us.</p>
-    <button class="kbtn" id="keepyes">Get 1 month free</button>
-    <button class="klink" id="keepno">Continue cancelling</button>
+  <div class="sheetcard keepcard" role="dialog" aria-modal="true" aria-labelledby="keeph">
+    <h2 id="keeph"></h2>
+    <p id="keepp"></p>
+    <button class="kbtn" id="keepyes"></button>
+    <button class="klink" id="keepno"></button>
   </div>
 </div>
 
@@ -1744,6 +1866,18 @@ var pal=readPal();
 /* ---------- engine ---------- */
 var ENGINE=(function(){try{var q=new URLSearchParams(location.search).get('engine'); if(q) return q.replace(/\/+$/,'');}catch(e){}
   if(location.protocol==='http:'||location.protocol==='https:') return ''; return 'http://127.0.0.1:8788';})();
+/* APPLYALL 2026-09-29 (build 3, App Review): THE LAUNCH PAGE HAS NO DEVELOPER TOOLS AND NO
+   SPOTIFY SIGN-IN. Spotify caps an app in development mode at 5 users, so a sign-in button
+   would fail for everyone else; "Open in Spotify" links need no sign-in and stay. The
+   Developer settings row and the Client ID field were in front of every user. No page-level
+   hidden path existed (the native long-press opens the native engine settings, which cannot
+   reach this sheet), so ?dev=1 on the page URL turns both back on for this device, like the
+   existing ?engine= override, and ?dev=0 turns them off. SP_SIGNIN follows DEV until Spotify
+   grants extended quota; then set it to true. */
+var DEV=(function(){try{var q=new URLSearchParams(location.search).get('dev');
+  if(q==='1') localStorage.setItem('addify-dev','on'); else if(q==='0') localStorage.removeItem('addify-dev');
+  return localStorage.getItem('addify-dev')==='on';}catch(e){return false;}})();
+var SP_SIGNIN=DEV;
 /* ONLY THE POSITIVE IS CACHED. A failed health check must never be sticky: the engine
    restarts often (any .py edit needs one), and a page that was open across a restart used
    to latch to engine_down forever and answer every later scan offline WITHOUT contacting
@@ -1952,6 +2086,78 @@ function headline(t){document.getElementById('listening').textContent=t;}
    done. Between milestones it creeps slowly toward the next one and stops there, so it
    keeps moving without ever claiming progress the engine has not actually made. */
 var pgNow=0, pgCap=0, pgTimer=null;
+/* APPLYALL 2026-09-29: ONE DIAL FROM THE TAP TO THE EXACT VERSION, PACED TO THE REAL TIME
+   FRAME (the DIAL 2026-09-27 dial, merged onto FAST-NAME, pacing rebuilt). Roham: "it goes
+   really slow to like 30%. Then it shoots up to 100 ... the dial just needs to try to line
+   up with the time frame."
+   Every milestone the page can SEE sets a floor: tap 0, audio 26, early name 33, song named
+   40.5, hunt started 42, first candidate checked 60. Between milestones the dial walks at a
+   pace that starts quick and settles into a creep of one point every 2.4 s, and it never
+   passes the next floor (minus 0.4), so it never claims a step the engine has not passed.
+   The floors come from 180 recorded scans (addify-harness/dial/timelines.json): each stage
+   has room for its slowest recorded run at the creep pace, so the number never sits still
+   for 3 s (the 09-27 curve froze for over 3 s on 93 of them, on a 60 s TikTok fetch and on
+   46 s hunt tails). That is why the audio floor is 26 and not its median share of 9: the
+   fetch is the stage with the longest tail. Only done may say 100. Catch-ups are capped at
+   14 points a second. The dial is
+   the scan screen's; once the song lands the result card's own hunt indicator takes over,
+   so there is no second bar. The pure part sits between the
+   PACE-CORE markers so
+   addify-harness/applyall/pace/sim.js can replay this exact code against the recordings. */
+/* APPLYALL-PACE-CORE-BEGIN */
+var PGM={order:['tap','audio','named','base','hunt','cand','v95'],
+  must:{tap:1,audio:1,base:1,hunt:1,cand:1},          // boosters (named, v95) never set a ceiling
+  floor:{tap:0,audio:26,named:33,base:40.5,hunt:42,cand:60},
+  r0:{tap:.4167,audio:.6,named:1,base:2,hunt:6,cand:26,v95:2},   // opening pace, points a second
+  tau:{tap:1,audio:3,named:3,base:1,hunt:1.4,cand:.8,v95:4},     // seconds to settle into the creep
+  vmin:.4167, margin:.4, cap:99.6, vmax:14, boost:12, boostCap:90};
+// ponytail: fit to the 180 recorded scans. A TikTok fetch over ~61 s or a hunt tail over ~46 s
+// still holds the number; re-fit with addify-harness/applyall/pace/sim.js if engine timing moves.
+var pgSt=null;
+function pgStage(name,F,now){
+  var i=PGM.order.indexOf(name), nx=null;
+  for(var j=i+1;j<PGM.order.length;j++){ if(PGM.must[PGM.order[j]]){nx=PGM.order[j]; break;} }
+  var Fn=nx?PGM.floor[nx]:100;
+  pgSt={name:name,i:i,F:F,t:now,C:Math.max(F,Math.min(PGM.cap,Fn-PGM.margin)),
+        r0:PGM.r0[name]||PGM.vmin, tau:PGM.tau[name]||1};}
+/* A milestone the page has just seen. Forward only: a later one implies every earlier one
+   (the song landing implies the audio arrived). A booster lifts the floor, never the ceiling. */
+function pgMarkAt(name,now){
+  var i=PGM.order.indexOf(name); if(i<0||(pgSt&&i<=pgSt.i)) return false;
+  var F=name==='v95'?Math.min(PGM.boostCap,pgNow+PGM.boost):PGM.floor[name];
+  pgStage(name,Math.max(F,pgNow,pgSt?pgSt.F:0),now); return true;}
+/* where the dial should be now: the opening pace eases into the creep, capped under the
+   next floor */
+function pgTarget(now){
+  var s=pgSt, dt=Math.max(0,now-s.t), vm=PGM.vmin;
+  return Math.min(s.C, s.F+vm*dt+Math.max(0,s.r0-vm)*s.tau*(1-Math.exp(-dt/s.tau)));}
+/* never backwards; a throttled or backgrounded tab catches up as a sweep, not a jump */
+function pgStep(now,dt){
+  if(!pgSt) return pgNow;
+  var tgt=pgTarget(now); return tgt>pgNow?Math.min(tgt,pgNow+PGM.vmax*dt):pgNow;}
+/* APPLYALL-PACE-CORE-END */
+var pgLastT=0, pgLabel='';
+function pgClock(){return ((window.performance&&performance.now)?performance.now():Date.now())/1000;}
+function pgMark(name){ if(pgLock) return; if(pgMarkAt(name,pgClock())) pgTickOn(); }
+function pgStageAt(name){return !!pgSt&&pgSt.i>=PGM.order.indexOf(name);}
+function pgTick(){
+  if(pgLock) return;
+  var now=pgClock(), dt=Math.min(.45,Math.max(0,now-pgLastT)); pgLastT=now;
+  if(pgSt){ var nx=pgStep(now,dt); if(nx>pgNow){ pgNow=nx; pgPaint(); } }
+  else if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
+}
+function pgTickOn(){ if(pgTimer) return; pgLastT=pgClock(); pgTimer=setInterval(pgTick,400); }
+var DDASH=552.92, WDASH=251.33;   // circumferences: r 88 (arc), r 40 (wedge)
+/* APPLYALL 2026-09-29 (review finding 16): a hunt that ends without an answer takes its
+   "still working" line off the card. finalize() cancels the 90 s re-render, the only thing
+   that used to remove it, so it stayed for good. `.htrack` is the three-step tracker the
+   verdict build puts in the same place (TRACKER 2026-09-29), so the merged page drops it too. */
+function huntLineOff(){Array.prototype.forEach.call(document.querySelectorAll('#result .latehunt, #result .htrack'),function(e){e.remove();});}
+/* scan screen wording from the engine's own labels (server.py _prog_set), not a timer */
+function pgScanLabel(l){
+  if(l==='Got the audio') say('Got the audio');
+  else if(l==='Building the fingerprint'){headline('Listening'); say('Matching the audio fingerprint');}
+  else if(l==='Known sound') say('Seen this sound before');}
 /* IT NEEDS TO BE FAST (Konnor, job 456): the base song lands in a few seconds and is shown
    at once. The exact-version hunt is the long tail, and on some clips the engine sits near
    the top of the bar for minutes before it emits "done". After this budget we stop waiting
@@ -1968,38 +2174,44 @@ var HUNT_BUDGET_MS=4000;   // 2026-09-26: was 12000; the card now upgrades in pl
    its OWN timer that nothing else can clear, a lock that makes every other writer a
    no-op while it runs, and a hard deadline so the caller can never be left hanging. */
 var pgFin=null, pgFinP=null, pgLock=false, pgFinTok=0;
-var DASH=2*Math.PI*86;          // r=86 inside the dial's 200x200 viewBox
+/* APPLYALL 2026-09-29: pgPaint writes the arc, the wedge, the spark and the two lights as
+   plain values (the CSS eases them over 420 ms), and the number. Each value is written only
+   when it changed, so a dial that is not moving costs nothing. Math.floor, never round: 99.6
+   must read 99, because only the finishing run is allowed to say 100. */
+function pgW(el,k,v){ if(el&&el['_pg'+k]!==v){ el['_pg'+k]=v; el.style[k]=v; } }
 function pgPaint(){
-  var n=Math.round(pgNow), v=n+'%';
-  // scaleX, not width: see .prog i. The bar is full width and squashed from the left.
-  var _f=Math.max(0,Math.min(100,n))/100;
-  ['progbar','progbar2'].forEach(function(id){var b=document.getElementById(id);
-    if(b) b.style.transform='scaleX('+_f+')';});
-  ['progpct','progpct2'].forEach(function(id){var t=document.getElementById(id); if(t) t.textContent=v;});
-  var f=document.getElementById('dfill');
-  if(f) f.style.strokeDashoffset=(DASH*(1-Math.min(100,n)/100)).toFixed(2);
-  var p=document.getElementById('dpct'); if(p) p.textContent=n;
-  var d=document.getElementById('dnum'); if(d) d.setAttribute('aria-valuenow',n);
+  var v=Math.max(0,Math.min(100,pgNow)), n=v>=100?100:Math.floor(v), f=v/100, t=String(n), e1=/1$/.test(t);
+  var dl=document.getElementById('dial');
+  if(dl){
+    dl.classList.toggle('p0',v<1);
+    pgW(document.getElementById('dfill'),'strokeDashoffset',(DDASH*(1-f)).toFixed(2)+'px');
+    pgW(document.getElementById('dwedge'),'strokeDashoffset',(WDASH*(1-f)).toFixed(2)+'px');
+    pgW(document.getElementById('dtipw'),'transform','rotate('+(f*360).toFixed(2)+'deg)');
+    pgW(document.getElementById('dglow'),'opacity',(.12+.68*f).toFixed(3));
+    pgW(document.getElementById('dcore'),'opacity',(.06+.44*f).toFixed(3));
+  }
+  var p=document.getElementById('dpct'); if(p&&p.textContent!==t) p.textContent=t;
+  var d=document.getElementById('dnum');
+  if(d&&d.getAttribute('aria-valuenow')!==t){ d.setAttribute('aria-valuenow',t); d.classList.toggle('e1',e1); }
 }
+/* Listen mode keeps its cap-and-creep (sendListen); the link scan uses pgMark. */
 function setProg(pct, cap, label){
   if(pgLock) return;                 // a finishing run is in flight; it owns the number
-  pgNow=Math.max(pgNow,pct); pgCap=cap;
-  if(label){['progtxt','progtxt2'].forEach(function(id){var l=document.getElementById(id); if(l) l.textContent=label;});}
-  pgPaint();
-  clearInterval(pgTimer);
-  pgTimer=setInterval(function(){
-    // Chases the ceiling fast enough to keep up with a batch of candidates landing at
-    // once, slow enough to read as movement rather than a jump.
-    if(pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }
-  }, 400);
+  pgSt=null; pgNow=Math.max(pgNow,pct); pgCap=cap;
+  pgPaint(); pgTickOn();
 }
-function pgReset(){clearInterval(pgTimer); if(pgFin) clearInterval(pgFin);
+function pgReset(){clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval(pgFin);
+  pgSt=null; pgLabel='';
+  // APPLYALL 2026-09-29: back to 0 with no sweep - the 420 ms easing would otherwise unwind
+  // the last scan's ring backwards in front of the user
+  var _dl=document.getElementById('dial'); if(_dl) _dl.classList.add('fin');
   // Retire the finishing run BY TOKEN, not just by clearing its timer. Phase one's run
   // also arms a deadline timer, and a reset does not reach into a pending setTimeout -
   // measured live, phase one's deadline fired 1s into the edit hunt and slammed phase
   // two's bar to 100, where it sat for the remaining 15 seconds of a real lookup while
   // the hunt was still going. A retired run must not touch a bar it no longer owns.
-  pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0; pgPaint();}
+  pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0; pgPaint();
+  if(_dl){ void _dl.offsetWidth; _dl.classList.remove('fin','land'); }}
 /* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
    Naming the song is one awaited call, so between "reading the clip" and "song
    identified" the page had no event to move on: the bar parked at 30% for the whole
@@ -2014,15 +2226,23 @@ var progT=null, namedEarly=false, progFast=false, progBusy=false;
    before; a poll still in flight is never doubled up. Without the feature: today's loop. */
 function progPollOn(u){
   progPollOff();
-  progFast=!!(engineInfo&&engineInfo.features&&engineInfo.features.fast_poll);
+  /* APPLYALL 2026-09-29: (1) the feature is read on every tick, not once here. On the first
+     scan after the page loads, /health has not answered yet when this starts (checkEngine
+     runs inside call('/base')), so the 250 ms poll never engaged on that scan - and in the
+     app every shared scan is one, since EngineBridge reloads /share. progFast now means
+     "phase one is still running"; /base clears it as before. Without the feature every tick
+     is 700 ms, as before. */
+  progFast=true;
+  var feat=function(){return !!(engineInfo&&engineInfo.features&&engineInfo.features.fast_poll);};
+  var quick=function(){ return feat()&&progFast&&!namedEarly; };
   var tick=function(){
     if(!busy){progPollOff(); return;}
-    var guard=progFast;
+    var guard=quick();
     if(guard){ if(progBusy) return; progBusy=true; }
     fetch(ENGINE+'/progress?url='+encodeURIComponent(u),{cache:'no-store'})
       .then(function(r){return r.json();})
       .then(function(p){
-        if(!busy||!p||!p.pct) return;
+        if(!busy||curURL!==u||!p||!p.pct) return;   // APPLYALL: a late reply for an old scan must not drive the new one
         // THE SONG, THE MOMENT THE ENGINE DECIDES IT (engine CRATE_EARLY_NAME). The first
         // Shazam window and its three speed checks agreed, and nothing later in the scan
         // can change that title, so it goes on screen now instead of when the whole
@@ -2035,19 +2255,22 @@ function progPollOn(u){
           var _nsp=p.named.speed?(p.named.speed==='as posted'?'original':esc(p.named.speed)):'';
           say(p.named.artist?('by '+esc(p.named.artist)+' &middot; '+(_nsp||'checking the speed'))
                             :(_nsp?(_nsp.charAt(0).toUpperCase()+_nsp.slice(1)):'Checking the speed'));
+          pgMark('named');
         }
-        // THE ENGINE'S NUMBER IS THE CEILING, NOT THE VALUE. Assigning it directly makes
-        // the bar teleport: the hunt downloads candidates in a concurrent batch, so a
-        // dozen can finish between two polls and the reading leaps - measured 71% to 92%
-        // in one step. Feeding it in as a cap lets the existing creep walk there instead,
-        // which is the same information delivered as motion. Never 100; only finishing
-        // is allowed to say 100.
-        if(p.pct>pgCap) setProg(pgNow, Math.min(97,p.pct), p.label||null);
+        // APPLYALL 2026-09-29 (DIAL): THE ENGINE'S NUMBER IS A MILESTONE SIGNAL, NOT THE VALUE.
+        // It is front-loaded (phase one converges on 42; the hunt passes 90 early and sits at
+        // 96), so it only tells us which step the engine has passed. pgMark turns that into
+        // the dial's floor for the real time frame. Never 100; only finishing may say 100.
+        if(p.label&&p.label!==pgLabel){ pgLabel=p.label; if(!namedEarly&&!pgStageAt('base')) pgScanLabel(p.label); }
+        if(p.pct>=18) pgMark('audio');
+        if(pgStageAt('base')){          // hunt steps only count once the song is in
+          if(p.pct>60.05) pgMark('cand');
+          else if(p.pct>=60) pgMark('hunt');
+        }
       }).catch(function(){}).then(function(){ if(guard) progBusy=false; });
   };
-  if(!progFast){ progT=setInterval(tick, 700); return; }
   var next=function(){ progT=setTimeout(function(){ tick(); if(progT!==null) next(); },
-                                        (progFast&&!namedEarly)?250:700); };
+                                        quick()?250:700); };
   next();
 }
 function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; progBusy=false;}
@@ -2059,6 +2282,9 @@ function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; pr
 function pgDone(){
   if(pgFinP) return pgFinP;                 // already finishing - never start a second run
   pgLock=true; clearInterval(pgTimer); pgTimer=null;
+  // APPLYALL 2026-09-29: the run paints at 16 ms frames, so the easing is switched off and
+  // the ring follows them exactly instead of trailing 420 ms behind
+  var _fd=document.getElementById('dial'); if(_fd) _fd.classList.add('fin');
   var tok=++pgFinTok, from=pgNow, span=Math.max(0,100-from);
   if(span<0.5){pgNow=100; pgPaint(); pgFinP=Promise.resolve(); return pgFinP;}
   // TIME IT BY THE DISTANCE, not a fixed 450ms. The engine often names the song while
@@ -2650,7 +2876,9 @@ function imgTag(a){
   for(var k in a){
     if(!Object.prototype.hasOwnProperty.call(a,k)) continue;
     var v=a[k];
-    if(v===null||v===undefined||v===false||v==='') continue;
+    // APPLYALL 2026-09-29 (build 3): alt="" is kept, it marks a cover as decorative. Dropping
+    // it with the other empty values left every cover with no alt at all.
+    if(v===null||v===undefined||v===false||(v===''&&k!=='alt')) continue;
     out+=' '+k+'="'+esc(v)+'"';
   }
   return out+'>';}
@@ -2897,6 +3125,7 @@ function setEndTitle(d){var t=document.getElementById('matchttl'); if(t) t.textC
 function renderResult(d,partial){
   lastResult=d;
   backHandler=goHome;  // the top-left chevron always goes to Addify home (COMMIT-AUDIT F5)
+  document.getElementById('share').hidden=!songURL(d);   // APPLYALL 2026-09-29 (build 3): no dead Share on a miss card
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
   // label the /base payload did not (the consensus re-measure, see the stale-speed note
   // in the no-crown branch), and this runs again on that payload, so the shelf follows.
@@ -2904,7 +3133,17 @@ function renderResult(d,partial){
   // so the page reads the same one; an older payload falls back to the label.
   CLIP_PITCHED=(typeof d.fig_pitched==='boolean')?d.fig_pitched:
                /slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
-  if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','Too many pulls from this network.<br>Wait a moment and try again.'); return;}
+  // APPLYALL 2026-09-29 (security build, engine ADDIFY_RATE_LIMIT): the engine's own scan
+  // limit says so (busy:"limit" + retry_after). It is not TikTok being busy, so it does not
+  // borrow that card's words.
+  if(d.result==='rate_limited'&&d.busy==='limit'){setEndTitle(d);
+    var _rm=Math.max(1,Math.round((+d.retry_after||60)/60));
+    result.innerHTML=errCard('sat','Scan limit reached','You started a lot of new scans in a short time.<br>Try again in about '+_rm+' min.'); return;}
+  // APPLYALL 2026-09-29 (build 3): plain words, and a Try again button (the card was a dead end)
+  if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','TikTok is limiting requests right now.<br>Wait a moment and try again.','<button class="cta" id="retrybtn">Try again</button>');
+    var _rtb=document.getElementById('retrybtn');
+    if(_rtb) _rtb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
+    return;}
   if(d.result==='engine_down'){ setEndTitle(d);
     result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
       (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
@@ -2951,7 +3190,7 @@ function renderResult(d,partial){
         'But we got close. Is this the base song?',
         '<div class="guessrow"><span class="sq" style="background:'+SQ[0]+'">'+IC.note+'</span>'+
           '<span class="tt"><b>'+esc(guess)+'</b><span>'+esc(d.base_artist_guess||d.base_artist||'')+' · original</span></span></div>'+
-        '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes, it’s an edit</button>'+
+        '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes, that’s it</button>'+
           '<button class="vbtn no" id="fbno">Not it</button></div>'+
         '<div class="trainnote" id="fbnote">Confirming helps Addify learn this edit for everyone</div>');
       var done=function(v){
@@ -2964,7 +3203,8 @@ function renderResult(d,partial){
       if(y) y.onclick=function(){done('yes');};
       if(no) no.onclick=function(){done('no');};
       return;}
-    result.innerHTML=errCard('?', d.result==='no_match'?'No song here':'Couldn’t nail this one',
+    // APPLYALL 2026-09-29 (build 3): "No song here" read as "this clip has no music"
+    result.innerHTML=errCard('?', d.result==='no_match'?'We couldn’t name this one':'Couldn’t nail this one',
       d.result==='no_match'
         ? 'We listened all the way through and couldn’t match it. It may be sped up, edited, or just not in our database yet.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
@@ -3260,7 +3500,7 @@ function renderResult(d,partial){
            words were heard but a vocal over another beat has no fingerprint to place. */
         // "0:00 to 0:36", not "0:00 - 0:36": no spaced dash in app copy (Roham, Konnor 09-24, U2).
         var when=p.voc?'vocals \u00B7 from the lyrics':mmss(p.at||0)+(p.to?' to '+mmss(p.to):'');
-        var link=(p.ex&&p.ex.url)||p.sz||'';
+        var link=songURL({exact:p.ex,shazam:p.sz,base_song:p.song,base_artist:p.artist});   // APPLYALL (finding 17)
         var art=(secs.length>1?secs[i]:alt[i])||{};
         var bar='';
         if(_clen&&!p.voc){var a0=Math.max(0,Math.min(1,(p.at||0)/_clen)), a1=Math.max(a0,Math.min(1,(p.to||_clen)/_clen));
@@ -3355,7 +3595,9 @@ function renderResult(d,partial){
       // instead of a band up by the hero. Same #ipl element job 293 built and both triangles
       // (the hero cover corner and this card) open it.
       inlinePlayer;
-    var others=cands.filter(function(c){return c.url!==ex.url;});
+    // APPLYALL 2026-09-29 (review finding 19): rows the verifier rejected (core under
+    // SHELF_FLOOR, "No audio match") are never shown, crowned or not - same filter as the held list
+    var others=cands.filter(function(c){return c.url!==ex.url&&(c.core||0)>=SHELF_FLOOR;});
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
@@ -3807,11 +4049,35 @@ var SP = (function(){
    visible opt-out: people are protective of their library, so the toggle is real. */
 /* The local write, on its own so the manual Save button can reuse it.
    Returns true when this match was actually new. */
+/* APPLYALL 2026-09-29 (review finding 17): WE NEVER SEND ANYONE TO SHAZAM, here either. With
+   no crown, Finds rows, their play triangle, Share and the mashup rows fell back to the
+   shazam.com page. Now: the crown, else the first verified store link the engine returned,
+   else a link a trending row passed in (never a Shazam page), else the Spotify search the
+   card's own Open in row builds. */
+function isShazamURL(u){return /^https?:\/\/([^\/?#]+\.)?shazam\.com(\/|$)/i.test(String(u||''));}
+function songURL(d){
+  if(!d) return '';
+  if(d.exact&&d.exact.url) return d.exact.url;
+  var l=(d.links||[]).filter(function(x){return x&&x.exact&&x.url;})[0]; if(l) return l.url;
+  if(d.shazam&&!isShazamURL(d.shazam)) return d.shazam;
+  return d.base_song?'https://open.spotify.com/search/'+encodeURIComponent((d.base_artist?d.base_artist+' ':'')+d.base_song):'';}
+/* APPLYALL 2026-09-29 (review finding 20): the card's own verdict when it will not say
+   "Original" (editBadge): stored with the find so Finds says the same thing. */
+/* a find saved before this fix may still hold a Shazam page: send it to the search instead */
+function findURL(x){return songURL({shazam:x.url,base_song:x.song,base_artist:x.artist});}
+function speedNote(d){
+  if(!d) return '';
+  var sp=d.speed;
+  if(sp&&sp!=='as posted') return '';
+  if(d.from_caption) return 'From the caption';
+  if(d.lyric_guess) return 'Matched from on-screen text';
+  if(!sp&&d.reupload) return 'Speed not measured';
+  return '';}
 function saveOne(d,final){
   if(!d || !d.base_song) return false;
   var a=loadCrate();
   var item={song:d.base_song,artist:d.base_artist,art:d.art||'',
-            url:(d.exact&&d.exact.url)||d.shazam||'',speed:d.speed||'',
+            url:songURL(d),speed:d.speed||'',note:speedNote(d),
             handle:urlHandle(d.url)||d.poster||d.handle||'',ts:Date.now(),listen:!!d.listen,via:d.via||'',
             clip:d.url||''};
   if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})){
@@ -3835,8 +4101,13 @@ function updateSaved(d){
   if(!crown && !sameClip) return false;
   if(crown && x.url!==crown){x.url=crown; ch=true;}
   if(d.speed && x.speed!==d.speed){x.speed=d.speed; ch=true;}
+  var _nt=speedNote(d); if((x.note||'')!==_nt){x.note=_nt; ch=true;}   // APPLYALL 2026-09-29 (finding 20)
   if(ch){ if(d.url) x.clip=d.url; storeCrate(a); }
   return ch;}
+/* APPLYALL 2026-09-29 (review finding 18): songs this session really added to the default
+   Spotify playlist. The picker only says "already saved" for these: autosave skips Spotify
+   when it is off or the song was already in Finds, and a failed add was reported nowhere. */
+var spDone={};
 function autoSave(d,final){
   if(!d || !d.base_song) return;
   // Autosave off: nothing new is saved, but an entry the user saved by hand still takes
@@ -3850,6 +4121,7 @@ function autoSave(d,final){
   // Spotify at all (it lives on SoundCloud/YouTube), so what lands there is the base
   // track - and the card says so rather than implying the edit was saved.
   SP.add(d.base_song, d.base_artist).then(function(){
+    spDone[likeKey(d.base_song,d.base_artist)]=true;   // APPLYALL 2026-09-29 (finding 18)
     return SP.count();
   }).then(function(n){
     var sub=document.getElementById('savesub'); if(!sub) return;
@@ -3902,11 +4174,16 @@ function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
 var FREE_SCANS=5;
+/* PAYWALL 2026-09-29 (App Review 3.1.1): v1.0 SHIPS FREE. There is no In-App Purchase yet,
+   so every price, plan, cancel-plan, free-month and scan-counter surface is off and nothing
+   limits scans. Flip to true only once StoreKit In-App Purchase is wired (1.1). */
+var PAYWALL_ON=false;
 function scanKey(){var d=new Date(); return 'addify-scans-'+d.getFullYear()+'-'+(d.getMonth()+1);}
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
-function useScan(){try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
-function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed());
-  document.getElementById('scanpill').textContent = left>0 ? left+' scan'+(left===1?'':'s')+' left'
+function useScan(){if(!PAYWALL_ON) return; try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
+function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.getElementById('scanpill');
+  pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
+  pill.textContent = left>0 ? left+' scan'+(left===1?'':'s')+' left'
     : 'demo · unlimited';}
 function speedKind(sp){sp=(sp||'').toLowerCase();
   if(!sp||sp==='as posted') return 'original';
@@ -3914,7 +4191,7 @@ function speedKind(sp){sp=(sp||'').toLowerCase();
   if(sp.indexOf('sped')>=0||sp.indexOf('night')>=0) return 'sped up';
   if(sp.indexOf('bass')>=0) return 'bass boosted';
   return 'remix';}
-function speedLabel(x){return (x.speed&&x.speed!=='as posted')?x.speed:'original';}
+function speedLabel(x){return (x.speed&&x.speed!=='as posted')?x.speed:(x.note||'original');}   // APPLYALL (finding 20)
 function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
   if(m<1) return 'just now'; if(m<60) return Math.floor(m)+' min ago';
   if(m<60*24) return Math.floor(m/60)+(m<120?' hour ago':' hours ago');
@@ -3938,7 +4215,8 @@ function nav(state){setState(state);
      Home tab stays lit and the header carries a back button. */
   var map={idle:'tb-home',trending:'tb-home',search:'tb-search',library:'tb-lib',profile:'tb-prof'};
   ['tb-home','tb-search','tb-lib','tb-prof'].forEach(function(id){
-    document.getElementById(id).classList.toggle('on',map[state]===id);});
+    var _t=document.getElementById(id), _on=map[state]===id; _t.classList.toggle('on',_on);
+    if(_on) _t.setAttribute('aria-current','page'); else _t.removeAttribute('aria-current');});   // APPLYALL 2026-09-29 (build 3)
   if(state==='search') renderSearch();
   if(state==='idle') paintHome();
   if(state==='trending') renderTrend();
@@ -4078,7 +4356,7 @@ function dayGroup(ts){
     ? {weekday:'short',month:'short',day:'numeric'} : {month:'short',day:'numeric',year:'numeric'});}
 function vchip(x){
   var sp=(x.speed||'').toLowerCase(), lbl=speedLabel(x);
-  var cls=!isEdit(x)?'orig':'edit';
+  var cls=isEdit(x)?'edit':(x.note?'note':'orig');   // APPLYALL (finding 20): a note is neither
   return '<span class="vchip '+cls+'">'+esc(lbl.charAt(0).toUpperCase()+lbl.slice(1))+'</span>';}
 function srcLine(x){
   if(x.listen) return 'listen mode';
@@ -4110,7 +4388,7 @@ function renderLib(){
       var y=+k.slice(0,4), m=+k.slice(5)-1, tint=MONTH_TINT[m];
       return '<button type="button" class="mtile'+(libMonth===k?' on':'')+'" data-m="'+k+'" aria-pressed="'+(libMonth===k)+'">'+
         '<span class="mcov" style="--mt:'+tint+'"><span class="mg">'+waveGlyph(22)+'</span>'+
-          '<span class="ml">'+MONTHS[m].slice(0,3).toUpperCase()+' '+String(y).slice(2)+'</span></span>'+
+          '<span class="ml">'+MONTHS[m].slice(0,3).toUpperCase()+' '+y+'</span></span>'+   // APPLYALL 2026-09-29 (build 3): "SEP 26" read as September 26
         '<b>'+MONTHS[m]+'</b><span>'+songs(months[k])+'</span></button>';}).join('')+'</div>';
     Array.prototype.forEach.call(mb.querySelectorAll('.mtile'),function(t){
       t.onclick=function(){var k=t.getAttribute('data-m'); libMonth=(libMonth===k)?'':k; renderLib();};});
@@ -4124,7 +4402,7 @@ function renderLib(){
       if(!match(x)) return false;
       if(libMonth && monthKey(x.ts)!==libMonth) return false;
       if(libFilter==='Edits') return isEdit(x);
-      if(libFilter==='Originals') return !isEdit(x);
+      if(libFilter==='Originals') return !isEdit(x)&&!x.note;   // APPLYALL (finding 20)
       if(libFilter==='Liked') return isLiked(x.song,x.artist);
       return true;});
     list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
@@ -4138,7 +4416,7 @@ function renderLib(){
           '<span class="tt"><b>'+ttlHTML(x.song)+(isLiked(x.song,x.artist)?'<i class="fheart" aria-label="Liked">'+IC.heartfill+'</i>':'')+'</b>'+
             '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span>'+
           (x.url?'<span class="fplay" role="button" tabindex="0" aria-label="Play '+esc(x.song)+'"'+
-            ' data-play="'+esc(x.url)+'" data-src="" data-title="'+esc(x.song)+'">'+IC.play+'</span>':'')+
+            ' data-play="'+esc(findURL(x))+'" data-src="" data-title="'+esc(x.song)+'">'+IC.play+'</span>':'')+
           '</div>';}).join('')+'</div>';});
     if(libFilter==='All'&&un.length&&!q&&!libMonth)
       html+='<div class="daylbl">Not matched yet</div><div class="flist">'+un.map(unRow).join('')+'</div>';
@@ -4148,7 +4426,7 @@ function renderLib(){
   b.innerHTML=html;
   Array.prototype.forEach.call(b.querySelectorAll('.frow[data-i]'),function(row){
     var x=loadCrate()[+row.getAttribute('data-i')]; if(!x) return;
-    row.onclick=function(){if(x.url) window.open(x.url,'_blank','noopener');};
+    row.onclick=function(){if(x.url) window.open(findURL(x),'_blank','noopener');};
     row.onkeydown=function(e){if(e.key==='Enter'&&e.target===row) row.onclick();};});
   Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
@@ -4220,9 +4498,7 @@ function renderSearch(){
               (x.src?srcChip(x.src):'')+
               (x.plays?'<span>'+plays(x.plays)+' plays</span>':'')+'</div></span>'+
           '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+(saved?'Saved to Finds':'Save to Finds')+'">'+
-            (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>'+
-      '<div class="snone"><span class="sexi">'+IC.mic+'</span><span><b>None of these?</b>Humming it will narrow it down</span>'+
-        '<span class="soon">Soon</span></div>';
+            (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>';   // APPLYALL 2026-09-29 (build 3): the "Soon" hum row is gone
     Array.prototype.forEach.call(body.querySelectorAll('.sadd'),function(b){
       b.onclick=function(){var x=sState.res[+b.getAttribute('data-i')]; if(!x||b.classList.contains('did')) return;
         saveOne({base_song:x.title,base_artist:x.artist,art:x.art||'',exact:{url:x.url},
@@ -4279,7 +4555,7 @@ function sRun(q,mode){
 (function(){
   var f=document.getElementById('sform'), inp=document.getElementById('sq');
   document.querySelector('#sform .sico').innerHTML=IC.search;
-  document.getElementById('smic').innerHTML=IC.mic;
+  var _smic=document.getElementById('smic'); if(_smic) _smic.innerHTML=IC.mic;   // REVIEW 2026-09-29: absent for 1.0
   document.getElementById('sclear').innerHTML=IC.x;
   f.onsubmit=function(e){e.preventDefault(); inp.blur(); sRun(inp.value,'auto');};
   inp.oninput=function(){document.getElementById('sclear').hidden=!inp.value;
@@ -4292,7 +4568,7 @@ function sRun(q,mode){
 /* ---------- profile ---------- */
 /* Paid plan + cancel save offer (Konnor). Hitting Cancel plan first offers a free month;
    the offer is made once, after that Cancel plan cancels straight away. */
-function planOn(){try{return localStorage.getItem('addify-plan')==='on';}catch(e){return false;}}
+function planOn(){if(!PAYWALL_ON) return false; try{return localStorage.getItem('addify-plan')==='on';}catch(e){return false;}}
 function keepShown(h,p,yes,no){document.getElementById('keeph').textContent=h;
   document.getElementById('keepp').textContent=p;
   var y=document.getElementById('keepyes'), n=document.getElementById('keepno');
@@ -4317,37 +4593,41 @@ function renderProf(){
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>'+(planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
-    '<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
-      '<button class="upbtn" id="upbtn">Upgrade</button></div>'+
-    '<div class="sect">Connected accounts</div><div class="setlist">'+
+      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
+    (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
+      '<button class="upbtn" id="upbtn">Upgrade</button></div>':'')+
+    // APPLYALL 2026-09-29 (build 3, App Review): no "iOS app" placeholder rows. The Spotify row
+    // shows with SP_SIGNIN, or for someone already signed in, who can still sign out.
+    ((SP_SIGNIN||SP.connected())?'<div class="sect">Connected accounts</div><div class="setlist">'+
       '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
-        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected<span class="itick">'+IC.tick+'</span>':'Connect')+'</button></div>'+
-      '<div class="setrow" style="opacity:.55"><span class="si">'+IC.apple+'</span><span class="st">Apple Music</span>'+
-        '<span class="sv">iOS app</span></div></div>'+
+        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected<span class="itick">'+IC.tick+'</span>':'Connect')+'</button></div></div>':'')+
     '<div class="sect">Scanning</div><div class="setlist">'+
       '<div class="setrow"><span class="st">Auto-save to playlist</span><button class="sw'+(autoOn()?' on':'')+'" id="pfauto" role="switch" aria-checked="'+autoOn()+'" aria-label="Auto-save to playlist"></button></div>'+
-      '<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>'+
-      '<div class="setrow" style="opacity:.55"><span class="st">Notifications</span><span class="sv">iOS app</span></div></div>'+
+      // REVIEW 2026-09-29 (App Review 2.1): Monthly playlists only names Spotify playlists, so it shows with Spotify
+      ((SP_SIGNIN||SP.connected())?'<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>':'')+
+      '</div>'+   // APPLYALL 2026-09-29 (build 3): the "Notifications / iOS app" placeholder row is gone
     '<div class="sect">Manage</div><div class="setlist">'+
       '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
-      '<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>'+
+      (DEV?'<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>':'')+   // APPLYALL 2026-09-29 (build 3)
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       (planOn()?'<button class="setrow" id="pfcancel"><span class="si">'+IC.x+'</span><span class="st">Cancel plan</span><span class="go2">'+IC.rchev+'</span></button>':'')+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
       '<a class="setrow" id="pfpriv" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Privacy policy</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<a class="setrow" id="pfsup" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Support</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<button class="setrow danger" id="pfdel"><span class="st">Delete account</span></button></div>';
-  document.getElementById('upbtn').onclick=function(){this.textContent='With the iOS app'; };
-  document.getElementById('pfsp').onclick=function(){
+  var _upbtn=document.getElementById('upbtn');   // PAYWALL 2026-09-29: absent while PAYWALL_ON is false
+  if(_upbtn) _upbtn.onclick=function(){this.textContent='With the iOS app'; };
+  var _pfsp=document.getElementById('pfsp');   // APPLYALL 2026-09-29 (build 3): the row may be off
+  if(_pfsp) _pfsp.onclick=function(){
     if(!SP.connected()){SP.login();} else nav('profile');};
   document.getElementById('pfauto').onclick=function(){
     try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} renderProf();};
-  document.getElementById('pfmon').onclick=function(){
+  var _pfmon=document.getElementById('pfmon');   // REVIEW 2026-09-29: the row may be off
+  if(_pfmon) _pfmon.onclick=function(){
     try{localStorage.setItem('addify-monthly', monthlyOn()?'off':'on');}catch(e){}
     SP.forgetPlaylist(); renderProf();};
   document.getElementById('pfexp').onclick=exportFinds;
-  document.getElementById('pfdev').onclick=openSheet;
+  var _pfdev=document.getElementById('pfdev'); if(_pfdev) _pfdev.onclick=openSheet;   // APPLYALL 2026-09-29 (build 3)
   document.getElementById('pfclear').onclick=function(){
     if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
   // Review wants privacy + support reachable from inside the app, next to the deletion
@@ -4424,35 +4704,46 @@ syncFormAction();
 var phaseT=null, finishT=null;
 function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
   WIN=null; clipSecs=0;
-  document.getElementById('dial').classList.remove('done');
+  document.getElementById('dial').classList.remove('done','land');   // APPLYALL 2026-09-29
+  live.classList.remove('ok');
   document.getElementById('tl').classList.remove('done');
   document.getElementById('listening').classList.remove('ok');}
 var curURL='';
+/* APPLYALL 2026-09-29 (review finding 15): A SCAN CANCELLED WHILE ITS CLIP IS BEING READ IS
+   OVER. goHome never cleared `busy`, so every new link was silently dropped, and the old
+   /base answer then pulled the user from Home back onto the cancelled card. Each scan now
+   carries a token; goHome, a new scan and listen mode move it on, and the old scan's
+   callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
+   answered yet", the window in which Back cancels the scan outright. */
+var scanTok=0, p1Busy=false;
 function run(raw){if(busy) return; var p=parseLink(raw);
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
   curURL=p.url;
+  var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
   showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
   document.getElementById('tl1').textContent='--:--';
   document.getElementById('tlwin').textContent='reading audio';
   headline('Finding song'); say('Reading the clip');
-  pgReset(); setProg(6, 30, 'Reading the clip');
+  // APPLYALL 2026-09-29 (DIAL): start at 0 on the real map (was setProg(6,30), a ceiling
+  // above the engine's first three milestones, so the first ~10 s ran on a timer)
+  pgReset(); pgMark('tap');
   tipsOn(); scanAnimOn();
-  // Fetch and fingerprint happen inside ONE awaited call, so there is no server event at
-  // the boundary between them. This timer only advances the WORDING; the bar itself still
-  // moves on real milestones, and it backs off if the answer already landed.
+  // APPLYALL 2026-09-29 (DIAL): the wording follows the engine's own labels in the /progress
+  // poll (pgScanLabel). The old 2.4 s timer that guessed "Listening" is retired.
   namedEarly=false;
-  phaseT=setTimeout(function(){if(busy&&pgNow<40&&!namedEarly){headline('Listening'); say('Building the audio fingerprint');}},2400);
   progPollOn(p.url);
   // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
   call('/base',p.url,{kit:true}).then(function(d){
+    if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
+    p1Busy=false;
     clearTimeout(phaseT); progFast=false;
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
     setWindow(d&&d.win, d&&d.clip_secs);
@@ -4463,7 +4754,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       headline(d.base_song);
       // TRACKER 2026-09-29: the scan screen calls the hunt what the card's tracker calls it (Konnor)
       say(d.edits_pending?'Matching the edit':'Song found');
-      setProg(pgNow, 58, 'Song identified');
+      pgMark('base');                  // APPLYALL (DIAL): song named = 40.5 on the whole-scan dial, not 100
       renderResult(d, d.edits_pending);
       // HAND THE SCREEN OVER THE MOMENT THE SONG IS KNOWN.
       //
@@ -4487,8 +4778,13 @@ function run(raw){if(busy) return; var p=parseLink(raw);
       // the same animated finish the end of a lookup uses), THEN the card takes the screen,
       // and the edit hunt starts its own bar from zero on the card. Naming the song is a
       // finished job and now looks like one; the cost is under half a second.
+      // APPLYALL 2026-09-29 (DIAL): NO RUN TO 100 HERE ANY MORE. That run was the "shoots up
+      // to 100": about 60 points in under a second at ~12 s of a ~29 s scan. The dial spans
+      // the whole scan now, so the song lands at ~40 and the card (with its own hunt
+      // indicator) takes the screen at once; the card and the hunt request come up to 1 s
+      // sooner because nothing waits on a finishing run.
       if(d.edits_pending){
-        return pgDone().then(function(){
+        return Promise.resolve().then(function(){
         setState('locked'); say('Locking in the exact version');
         pgReset();                       // phase 2 owns the inline bar, starting at zero
         // Raise the ceiling only. The old line assigned 60 outright, which is what put a
@@ -4534,7 +4830,17 @@ function run(raw){if(busy) return; var p=parseLink(raw);
           } else { try{ updateSaved(full); }catch(e){} }
           if(!scanFinal) finalize(full);
           else if(full.base_song){ try{ logTs=logScan(full,logTs); }catch(e){} }};
+        /* APPLYALL 2026-09-29 (review finding 14): A HUNT THAT ENDS WITHOUT A SONG DOES NOT TAKE
+           THE SONG AWAY. Only engine_down used to count as a failed hunt, so an error,
+           rate_limited or song-less no_match after /base had named the song replaced the card
+           with "Couldn't read that link" / "No song here", while finalize() still posted and
+           logged the named song and Finds kept it. Now a late payload with no base_song keeps
+           the named card and ends as "the named song is final", like engine_down. The
+           engine's own retraction (base_uncertain: a likely-wrong Shazam cover) still renders
+           as before: withdrawing a name the card already showed is the owners' call. */
+        var lands=function(x){return !!(x&&x.result&&x.result!=='engine_down'&&(x.base_song||x.base_uncertain));};
         var settle=function(full){
+          if(tok!==scanTok) return;        // APPLYALL (finding 15): a later scan owns the screen
           if(settledUI){
             // THE EXACT EDIT CAN LAND AFTER THE BUDGET (2026-09-26, Roham: "the exact edit is
             // not being found anymore, just the base song"). The budget only decides when the
@@ -4542,7 +4848,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
             // after the song was named, so the old early return threw away every crown that
             // arrived after 12 s and the card stayed on the base song. A late answer now
             // upgrades the card in place, as long as the user is still on this scan.
-            if(budgetHit && full && full.result && full.result!=='engine_down'){
+            if(budgetHit && lands(full)){
               // COMMIT-AUDIT F2: the budget branch below is still inside pgDone() (380-1000
               // ms) and has not drawn the base card yet. Rendering the crown now let the base
               // card land over it a few ms later and stay there (mason, done at 12.45 s). Hand
@@ -4550,7 +4856,8 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               if(!baseShown){ lateFull=full; return; }
               lateUpgrade(full);
             } else if(budgetHit && full){
-              finalize(null);   // the hunt failed: the named song is final
+              // the hunt failed: the named song is final (APPLYALL finding 16: the line goes too)
+              huntLineOff(); finalize(null);
               // TRACKER 2026-09-29: and the card says so. Without this the tracker kept
               // pulsing "Matching the edit" forever (finalize clears the 90 s cap that would
               // have settled it). Same card the cap draws, with whatever verified so far.
@@ -4559,10 +4866,12 @@ function run(raw){if(busy) return; var p=parseLink(raw);
             return;}
           settledUI=true;
           clearTimeout(huntBudget);
-          return pgDone().then(function(){
+          // APPLYALL 2026-09-29: no run to 100 first. The bar it filled (progbar2) is no longer
+          // on the page, so it only held the card back by up to a second.
+          return Promise.resolve().then(function(){
             baseShown=true;
             if(!full && lateFull) full=lateFull;   // F2: the hunt finished during pgDone()
-            if(full&&full.result&&full.result!=='engine_down'){
+            if(lands(full)){
               if(full.wave)setWaveData(full.wave);
               if(full.win)setWindow(full.win,full.clip_secs);
               setSpeedFromLabel(full.speed); renderResult(full,false);}
@@ -4602,19 +4911,30 @@ function run(raw){if(busy) return; var p=parseLink(raw);
                 finalize(null);                  // the 90 s cap: the named song is final
               }, 90000);}}
             // held: the log entry and the bridge post wait for the final answer (finalize)
-            finish(full||d, true);
-            if(full) finalize((full.result&&full.result!=='engine_down')?full:null);});};
-        var huntBudget=setTimeout(function(){ budgetHit=true; say('Still finding the exact version'); settle(null); }, HUNT_BUDGET_MS);
+            // APPLYALL (finding 14): a song-less failure finishes as the named song, not as an
+            // error (engine_down keeps its retry queue, as before)
+            finish((lands(full)||(full&&full.result==='engine_down'))?full:d, true);
+            if(full&&!lands(full)) huntLineOff();   // APPLYALL (finding 16): a failure before the budget too
+            if(full) finalize(lands(full)?full:null);});};
+        // APPLYALL 2026-09-29: no "Still finding the exact version" line: the scan screen it
+        // was written to is already gone
+        var huntBudget=setTimeout(function(){ if(tok!==scanTok) return; budgetHit=true; settle(null); }, HUNT_BUDGET_MS);
         return huntEdits(p.url,function(c,n){
           liveAdd(c);
           // No setProg here any more. This fires only on candidates that VERIFY, and the
           // engine now ticks on every candidate CHECKED, which is the honest denominator
           // and covers the common case where nothing verifies at all. Two sources both
-          // writing the bar is what made it jump. This one just narrates.
-          say('Verified '+(n===1?'1 version':n+' versions')+' &middot; still checking');
+          // writing the bar is what made it jump.
+          // APPLYALL 2026-09-29: the "Verified N versions" line it used to write went to the
+          // scan screen, which is already gone; the rows themselves drop into the card.
         }).then(function(full){
           // A new scan or Back ended this hunt (see HUNT): nothing more will come for it.
-          if(full&&full.result==='aborted'){ finalize(null); return; }
+          // APPLYALL 2026-09-29: Back before the 4 s budget settles now,
+          // so `busy` clears at once instead of dropping new scans until the budget fires
+          // (finding 15, hunt window)
+          if(full&&full.result==='aborted'){
+            if(!settledUI&&tok===scanTok){ budgetHit=true; settle(null); }
+            finalize(null); return; }
           return settle(full); });
         });
       } else finish(d);
@@ -4651,12 +4971,12 @@ function finish(d,held){stopClock(); busy=false; progPollOff(); pgDone(); clearT
   if(!held){ logScan(d); postBridge(d); }
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
-  document.getElementById('dial').classList.add('done');
+  // APPLYALL 2026-09-29 (DIAL): the dial turns mint when the run ARRIVES at 100 (below)
   document.getElementById('tl').classList.add('done');
   var hl=document.getElementById('listening'); hl.classList.add('ok');
   hl.innerHTML='Match found '+IC.tick;
   var _mvs=mainVersion(d);
-  say(esc(_mvs?_mvs.title:d.base_song)+' &middot; '+esc(d.speed&&d.speed!=='as posted'?d.speed:'original'));
+  say(esc(_mvs?_mvs.title:d.base_song)+' &middot; '+esc(d.speed&&d.speed!=='as posted'?d.speed:(speedNote(d)||'original')));   // APPLYALL (finding 20)
   tipsOff(); paintTl(0);
   // setState BEFORE hideChip, or the card blinks out a frame early on the screen it is
   // still sitting on.
@@ -4675,7 +4995,10 @@ function finish(d,held){stopClock(); busy=false; progPollOff(); pgDone(); clearT
   // failure being fixed. Landing first, then handing over, is the whole point.
   if(handed){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas(); return;}
   pgDone().then(function(){
-    finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},260);});}
+    // APPLYALL 2026-09-29 (DIAL): the landing - mint ring, one bloom, mint status line - then hand over
+    var _dl=document.getElementById('dial'); _dl.classList.remove('fin'); _dl.classList.add('done','land');
+    live.classList.add('ok');
+    finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},360);});}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
@@ -4686,6 +5009,11 @@ function paintSheet(){
   var on=SP.connected();
   document.getElementById('spsub').textContent=on?'Connected · saving to Found with Addify':'Not connected';
   document.getElementById('spbtn').textContent=on?'Disconnect':'Connect';
+  // APPLYALL 2026-09-29 (build 3, App Review): the Spotify row and the Client ID field are
+  // developer tools. A signed-in tester still gets Disconnect.
+  document.getElementById('spbtn').parentNode.hidden=!(SP_SIGNIN||on);
+  document.getElementById('spid').parentNode.hidden=!DEV;
+  document.getElementById('togauto').setAttribute('aria-checked',String(autoOn()));
   document.getElementById('lgpriv').href=legalURL('privacy');
   document.getElementById('lgsup').href=legalURL('support');
   document.getElementById('lgterms').href=legalURL('terms');
@@ -4932,6 +5260,11 @@ document.getElementById('spbtn').onclick=function(){
 /* ---------- nav ---------- */
 function goHome(){nav('idle'); endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
   leftScan=true;                 // a still-running hunt must not finish() us back onto the result
+  // APPLYALL 2026-09-29 (review finding 15): Back while the clip is still being read cancels
+  // the scan. Its /base answer is ignored (the token moved on) and the next link can start.
+  if(p1Busy){ p1Busy=false; scanTok++; busy=false; progPollOff(); pgReset(); stopClock();
+    document.getElementById('gobtn').removeAttribute('disabled');
+    if(typeof syncFormAction==='function') syncFormAction(); }
   try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
   result.innerHTML=''; hideChip(); urlEl.value='';}
 /* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
@@ -4957,9 +5290,9 @@ var backHandler=goHome;
 document.getElementById('cancel').onclick=goHome;
 document.getElementById('lcancel').onclick=goHome;
 document.getElementById('share').onclick=function(){
-  var d=lastResult; if(!d) return; var u=(d.exact&&d.exact.url)||d.shazam||''; if(!u) return;
+  var d=lastResult; if(!d) return; var u=songURL(d); if(!u) return;   // APPLYALL 2026-09-29 (finding 17)
   var sh=document.getElementById('share');
-  var confirm=function(){sh.innerHTML=IC.savefill; setTimeout(function(){sh.innerHTML=IC.share;},1400);};
+  var confirm=function(){sh.innerHTML=IC.tick; setTimeout(function(){sh.innerHTML=IC.share;},1400);};   // APPLYALL 2026-09-29 (build 3): a tick, not the saved bookmark
   var title=d.base_song||'Addify', artist=d.base_artist||'';
   var text=d.base_song?(d.base_song+(artist?' by '+artist:'')):'';
   // Inside the app the share sheet has to come from the native side. WKWebView does not
@@ -5030,6 +5363,9 @@ function cleanupListen(){
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
 function sendListen(blob){
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
+  // APPLYALL 2026-09-29 (review finding 15): listen mode ends any running link scan first, so
+  // the old /base answer or hunt budget cannot draw over the listen result
+  endHunt(); progPollOff(); scanTok++; p1Busy=false;
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
@@ -5068,7 +5404,8 @@ function openPicker(d){
     var defId=SP.defaultId();
     ls.sort(function(a,b){return (b.id===defId)-(a.id===defId);});
     body.innerHTML=ls.map(function(p){
-      var isDef=p.id===defId;
+      // APPLYALL 2026-09-29 (finding 18): "already saved" only when this song's add resolved
+      var isDef=p.id===defId&&!!spDone[likeKey(d.base_song,d.base_artist)];
       return '<button class="pkrow'+(isDef?' def':'')+'" data-id="'+esc(p.id)+'">'+
         '<span class="sq" style="background:'+SQ[1]+'">'+(p.img?'<img src="'+esc(p.img)+'" alt="">':IC.note)+'</span>'+
         '<span class="tt"><b>'+esc(p.name)+'</b><span>'+(isDef?'Default · already saved<span class="itick">'+IC.tick+'</span>':songs(p.n))+'</span></span>'+
@@ -5081,6 +5418,7 @@ function openPicker(d){
       row.onclick=function(){
         pp.innerHTML='…';
         SP.addTo(pid,d.base_song,d.base_artist).then(function(){
+          if(pid===defId) spDone[likeKey(d.base_song,d.base_artist)]=true;   // APPLYALL (finding 18)
           pp.classList.add('did'); pp.innerHTML=IC.tick;
           row.querySelector('.tt span').innerHTML='Added'+'<span class="itick">'+IC.tick+'</span>';
         }).catch(function(e){
@@ -5113,7 +5451,11 @@ function onbDone(){try{localStorage.setItem('addify-onboarded','1');}catch(e){}
 function openOnb(step){onbStep=step||0; document.getElementById('onb').hidden=false; paintOnb();}
 function paintOnb(){
   var dots=document.getElementById('onbdots');
-  dots.innerHTML=[0,1,2,3,4].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
+  // APPLYALL 2026-09-29 (build 3, App Review): with the Spotify sign-in off for launch the
+  // connect card (step 2) has nothing left to connect, so it is skipped and the dots count 4.
+  var _steps=[0,1,2,3,4].filter(function(i){return i!==2||SP_SIGNIN||SP.connected();});
+  if(_steps.indexOf(onbStep)<0) onbStep++;
+  dots.innerHTML=_steps.map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
   var b=document.getElementById('onbbody'), h='';
   if(onbStep===0){                                     /* 1 · the pitch - seven words */
     h='<div class="obmark">'+waveGlyph(36)+'</div>'+
@@ -5126,7 +5468,7 @@ function paintOnb(){
       '<div class="tsteps">'+
         '<div class="tstep" id="ts0"><span class="tn" style="background:linear-gradient(140deg,#F9407B,#B043E8)">'+IC.ig+'</span><div><b>Share the reel</b><span>Hit share → tap Addify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
         '<div class="tstep" id="ts1"><span class="tn" style="background:linear-gradient(150deg,var(--accent2),var(--accent))">'+waveGlyph(18)+'</span><div><b>We find the exact version</b><span>Slowed · sped up · bass boosted · reverb · remix</span></div><span class="tchk">'+IC.tick+'</span></div>'+
-        '<div class="tstep" id="ts2"><span class="tn" style="background:color-mix(in oklab,var(--good) 30%,var(--raise2))">'+IC.savefill+'</span><div><b>Saved to your playlist</b><span>Automatically, in your Spotify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+        '<div class="tstep" id="ts2"><span class="tn" style="background:color-mix(in oklab,var(--good) 30%,var(--raise2))">'+IC.savefill+'</span><div><b>Saved to your playlist</b><span>Automatically, in your '+(SP_SIGNIN?'Spotify':'Finds')+'</span></div><span class="tchk">'+IC.tick+'</span></div>'+
       '</div>'+
       '<button class="obcta" id="ob-next">Let\'s set it up</button>';
   } else if(onbStep===2){                              /* 2 · connect - the highest-stakes screen */
@@ -5136,8 +5478,7 @@ function paintOnb(){
       '<div style="margin-top:18px">'+
         '<button class="obrow'+(on?' done':'')+'" id="ob-sp"><span class="oi">'+IC.spotify+'</span>Connect Spotify'+
           '<span class="ov'+(on?' ok':'')+'">'+(on?'Connected<span class="itick">'+IC.tick+'</span>':'›')+'</span></button>'+
-        '<button class="obrow" disabled><span class="oi">'+IC.apple+'</span>Connect Apple Music<span class="ov">iOS app</span></button>'+
-        '<button class="obrow" disabled><span class="oi">'+IC.soundcloud+'</span>Connect SoundCloud<span class="ov">soon</span></button>'+
+        // APPLYALL 2026-09-29 (build 3): the "Apple Music / iOS app" and "SoundCloud / soon" rows are gone
       '</div>'+
       '<div class="locknote">'+IC.lock+'<span>Addify can only create playlists and add songs. We never see your password or change anything else.</span></div>'+
       '<button class="obcta" id="ob-next">Continue</button>'+
@@ -5166,7 +5507,7 @@ function paintOnb(){
     var left=Math.max(0,FREE_SCANS-scansUsed());
     h='<div class="okring">'+IC.tick+'</div>'+
       '<div class="obh">You\'re set.</div>'+
-      '<div class="obs">'+left+' free scans on us.<br>Go find that song.</div>'+
+      '<div class="obs">'+(PAYWALL_ON?left+' free scans on us.<br>':'')+'Go find that song.</div>'+
       (SP.connected()?'<div class="obtag"><span class="itick">'+IC.tick+'</span>Spotify connected · playlist ready</div>':'')+
       '<button class="obcta" id="ob-next">Start scanning</button>';
   }

@@ -15,6 +15,7 @@ The bit that makes this work on TikTok specifically:
 Usage:  python3 find_song.py <tiktok url> [more urls...]
 """
 import asyncio, contextvars, json, re, subprocess, sys, tempfile, os, urllib.parse, urllib.request
+import urllib.error   # APPLYALL 2026-09-29: _PinnedRedirect
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
@@ -98,9 +99,34 @@ def fetch(url, binary=False, timeout=30):
         return r.read() if binary else r.read().decode("utf-8", "replace")
 
 
+try:
+    import ratelimit as _RL          # APPLYALL 2026-09-29: the host rule; off unless set
+except Exception:                    # never take the engine down for it
+    _RL = None
+
+
+class _PinnedRedirect(urllib.request.HTTPRedirectHandler):
+    """APPLYALL 2026-09-29, ADDIFY_STRICT_LINKS: every redirect hop must stay on http(s)
+    tiktok.com / instagram.com, so a short link cannot bounce the engine onto another host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _RL.url_ok(newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirect off the allowlist",
+                                         headers, fp)
+        return urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+
+
 def resolve(url):
     """Follow vt.tiktok.com short links, which is what Share actually gives you."""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
+    if _RL is not None and _RL.STRICT_LINKS:      # APPLYALL 2026-09-29
+        if not _RL.url_ok(url):
+            raise RuntimeError("link not readable")
+        with urllib.request.build_opener(_PinnedRedirect).open(req, timeout=30) as r:
+            out = r.geturl()
+        if not _RL.url_ok(out):
+            raise RuntimeError("link not readable")
+        return out
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.geturl()
 
