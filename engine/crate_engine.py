@@ -156,6 +156,28 @@ SPEED_DEFER_XCHECK = _speed_flag("CRATE_DEFER_XCHECK", True)
 # Submit the broad SC/YT search BEFORE the fast path runs, not after it misses.  ~1.5s
 SPEED_EARLY_BROAD_SEARCH = _speed_flag("CRATE_EARLY_BROAD_SEARCH", True)
 
+# --- FAST-NAME (2026-09-27, ~/addify-harness/FAST-NAME-PLAN.md). ALL DEFAULT OFF. ---
+# Each flag turns on exactly one change; with none set the engine runs the pre-FAST-NAME
+# code path line for line. (The get_source retention fix has no flag: the hard rules
+# forbid an off switch for "audio is never persisted".)
+# 1. the video id straight from the link: no page load for /video/<id> links, one
+#    no-redirect request per hop for short links (FETCH: 0.78 / 0.87 s median saved)
+FN_FAST_RESOLVE = _speed_flag("CRATE_FAST_RESOLVE", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# 2. embed/v2 retried at once on 503/429/400/exception, warm curl_cffi sessions, and the
+#    empty-playUrl IndexError fixed (FETCH: first try OK on only 6/14 and 8/20)
+FN_EMBED_RETRY = _speed_flag("CRATE_EMBED_RETRY", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# 3. the sound mp3 starts without waiting for oEmbed; oEmbed is joined after it
+FN_OEMBED_NOWAIT = _speed_flag("CRATE_OEMBED_NOWAIT", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# 4. the cross-check mp4 starts after the mp3 lands, smaller variant, ranged, hard stop
+FN_XCHECK_AFTER_MP3 = _speed_flag("CRATE_XCHECK_AFTER_MP3", False)
+# 4b. (added in the build, after the first A/B) the same smaller variant, ranged fetch and
+#    hard stop, but started at t0 like today instead of after the mp3. First lab A/B: with
+#    4 on, the check missed its 6 s ceiling on 4 of 9 scans (the mp4 now starts ~1 s in
+#    and gets only what is left of the ceiling) vs 1 of 5 off. Ignored when 4 is on.
+FN_XCHECK_SMALL = _speed_flag("CRATE_XCHECK_SMALL", False)
+# 5. title, Shazam id, skews, master offset and bridge t_total on every shazam_probe row
+FN_PROBE_LOG = _speed_flag("CRATE_PROBE_LOG", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+
 # --- paid ---
 _SPEED_FAST = _speed_flag("CRATE_FAST", False)
 # Phase 1 scan windows 6 -> 3. Saves ~1.6s and it is the ONLY lever that moves phase 1
@@ -540,6 +562,36 @@ def _tt_id(url):
     return m.group(1) if m else None
 
 
+def _fast_full(url):
+    """FAST-NAME 1 (CRATE_FAST_RESOLVE) -> (full_url, how).
+
+    resolve() GETs the whole TikTok page with urllib and follows every redirect, only to
+    read the final URL - even when the link already carries /video/<id>. Measured: 0.78 s
+    median wasted on canonical links, and 1.03-1.17 s following a vt.tiktok.com short link
+    where reading the first `Location` header takes 0.16-0.22 s (same video id 12/12 FETCH,
+    10/10 SHAZAM, 5/5 PROFILE). So: an id already in the link is used as is; otherwise
+    one no-redirect request per hop (at most 3; the m.tiktok.com/v/<id>.html form takes a
+    second hop) until a /video/ or /photo/ URL appears; anything else falls back to
+    today's resolve()."""
+    if _tt_id(url):
+        return url.split("?")[0], "id"
+    if not HAVE_CFFI:
+        return resolve(url), "follow"
+    u = url
+    for hop in range(3):
+        try:
+            r = creq.get(u, impersonate="chrome", allow_redirects=False, timeout=8)
+            loc = r.headers.get("location")
+        except Exception:
+            loc = None
+        if not loc:
+            break
+        u = urllib.parse.urljoin(u, loc)
+        if _tt_id(u):
+            return u, "location%d" % (hop + 1)
+    return resolve(url), "follow"
+
+
 def tiktok_oembed(url):
     api = "https://www.tiktok.com/oembed?url=" + urllib.parse.quote(url.split("?")[0])
     try:
@@ -604,7 +656,83 @@ def tt_embed_v2(video_id):
     r = _cffi_get("https://www.tiktok.com/embed/v2/%s" % video_id)
     if r.status_code != 200 or len(r.text) < 5000:
         return None
-    m = re.search(r'id="__FRONTITY_CONNECT_STATE__"[^>]*>(\{.*?\})</script>', r.text, re.S)
+    return _embed_parse(r.text, False)
+
+
+# ---- FAST-NAME 2 (CRATE_EMBED_RETRY): warm sessions + an immediate retry --------------
+# embed/v2 answered "503 overload-protect triggered" (or 429 / 400 / an empty playUrl) on
+# the first try for 8 of 14 bench clips and 12 of 20 slow-paced probes (FETCH), and one
+# failure drops the scan to tikwm, whose mp3 host is ~2 s slower. A failed try costs
+# 0.07-0.33 s and an immediate retry usually works (18/20 within 4 tries).
+# A small pool of curl_cffi Sessions keeps the TLS connections warm across tries and
+# scans (CDN first byte 0.19 vs 0.38 s). Each Session is used by one thread at a time
+# (checked out, then back), and NEVER with stream=True: curl_cffi 0.13.0 double-frees in
+# curl_easy_reset when a reused Session follows a streamed response (SIGABRT, FETCH).
+_FN_SESS = queue.LifoQueue()
+
+
+def _fn_sess_get():
+    try:
+        return _FN_SESS.get_nowait()
+    except queue.Empty:
+        return creq.Session(impersonate="chrome")
+
+
+def _fn_sess_put(s, broken=False):
+    if broken or _FN_SESS.qsize() >= 6:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return
+    _FN_SESS.put(s)
+
+
+def tt_embed_v2_retry(video_id, tries=5):
+    """tt_embed_v2 with FAST-NAME 2: up to `tries` asks, retried at once on 503/429/400 or
+    an exception; the second 200 without a playUrl ends it (some sounds never carry one:
+    someone else's sound). Counted across the whole run, not "in a row": in the first lab
+    A/B a no-playUrl sound alternated 200-empty / 503 and burned all 5 tries (2.15 s)
+    before tikwm. Any other status is final, as today. Same parse, same dict."""
+    if not HAVE_CFFI:
+        return tt_embed_v2(video_id)
+    s = _fn_sess_get()
+    empty = 0
+    try:
+        for i in range(tries):
+            _t = time.time()
+            try:
+                r = s.get("https://www.tiktok.com/embed/v2/%s" % video_id, timeout=25)
+            except Exception as ex:
+                tlog("embed_try", time.time() - _t, i=i, st="exc", err=type(ex).__name__)
+                _fn_sess_put(s, broken=True)
+                s = creq.Session(impersonate="chrome")
+                continue
+            st = r.status_code
+            if st in (503, 429, 400):
+                tlog("embed_try", time.time() - _t, i=i, st=st)
+                continue
+            if st != 200:
+                tlog("embed_try", time.time() - _t, i=i, st=st)
+                return None
+            info = _embed_parse(r.text, True) if len(r.text) >= 5000 else None
+            if info and info.get("playUrl"):
+                tlog("embed_try", time.time() - _t, i=i, st=200, ok=True)
+                return info
+            empty += 1
+            tlog("embed_try", time.time() - _t, i=i, st=200, empty=empty, n=len(r.text))
+            if empty >= 2:
+                return None
+        return None
+    finally:
+        _fn_sess_put(s)
+
+
+def _embed_parse(text, fix_empty):
+    """The embed/v2 page -> the music dict (tt_embed_v2's parse, unchanged). `fix_empty`
+    (FAST-NAME 2 only) turns an empty playUrl list into None instead of the IndexError
+    `pu[0]` raises on [] - tiktok_fetch caught that and fell to tikwm either way."""
+    m = re.search(r'id="__FRONTITY_CONNECT_STATE__"[^>]*>(\{.*?\})</script>', text, re.S)
     if not m:
         return None
     try:
@@ -613,6 +741,8 @@ def tt_embed_v2(video_id):
     except (ValueError, StopIteration):
         return None
     pu = mo.get("playUrl")
+    if fix_empty and isinstance(pu, list) and not pu:
+        return None
     pu = pu[0] if isinstance(pu, list) else pu
     if not pu:
         return None
@@ -1905,6 +2035,127 @@ def tt_video_audio(full_url, tmp, seconds=30):
     return wav if _decode_ok() else None
 
 
+def _tt_video_audio_after(full_url, tmp, gate, seconds=30):
+    """FAST-NAME 4 (CRATE_XCHECK_AFTER_MP3): tt_video_audio, with the mp4 held back until
+    the answer-bearing mp3 is on disk.
+
+    FETCH measured the mp4 starving the mp3: tikwm's answer released both at once, the
+    engine took the bigger `play` file and pulled the whole mp4 for any video under 45 s
+    (worst: a 59.8 MB file made a 385 KB mp3 take 12.07 s instead of 0.29 s), and the
+    thread kept downloading 11-48 s into the scan on 7 of 15 clips, over the probes and the
+    hunt's downloads. Here:
+      - the tikwm lookup still starts at t0 (it is the credit chain's single-flight);
+      - the mp4 GET waits for `gate["ev"]` (set by get_source when the mp3 landed);
+      - the smaller of play / hdplay, fetched whole up to 45 s and head-ranged beyond, with
+        tt_video_audio's own head size (the plan's (seconds+2)/duration range for every
+        length lost checks in the first lab A/B, see the fetch policy below);
+      - one total timeout = what is left of the ceiling (`gate["ceil"]`, counted from the
+        mp3 landing, exactly settle_source's clock), and no full-download fallback;
+      - a decode shorter than today's own bar (min(seconds, duration) - 0.5 s) is a failed
+        check (None = keep the credited sound, the same as a check past its ceiling),
+        never a short reference handed to the swap test.
+    The swap rule, CORE_KEEP and the ceiling itself do not change."""
+    vu_play = vu_hd = None
+    sz_play = sz_hd = None
+    vdur = None
+    for attempt in range(2):
+        try:
+            _j = _tikwm_api(full_url, force=(attempt > 0))
+            if _j is None:
+                return None
+            d = (_j.get("data") or {})
+            _remember_music_id(d.get("music_info") or {}, full_url)
+            _remember_sound_credit(d.get("music_info") or {}, full_url)
+            vu_play, vu_hd = d.get("play"), d.get("hdplay")
+            try:
+                vdur = float(d.get("duration") or 0) or None
+            except (TypeError, ValueError):
+                vdur = None
+            try:
+                sz_play = int(d.get("size") or 0) or None
+            except (TypeError, ValueError):
+                sz_play = None
+            try:
+                sz_hd = int(d.get("hd_size") or 0) or None
+            except (TypeError, ValueError):
+                sz_hd = None
+        except Exception:
+            return None
+        if vu_play or vu_hd:
+            # the same memo value tt_video_audio writes (play or hdplay, tikwm's `size`)
+            _remember_video_url(full_url, vu_play or vu_hd, vdur, sz_play)
+            break
+        time.sleep(1.3)
+    if not (vu_play or vu_hd):
+        return None
+    if gate.get("nowait"):
+        # FAST-NAME 4b (CRATE_XCHECK_SMALL): start now, as today; the hard stop is the old
+        # inline ceiling counted from here, so the thread can never run on for 11-48 s
+        if gate.get("cancel") or not os.path.isdir(tmp):
+            return None
+        deadline = time.time() + float(gate.get("hard") or 12.0)
+    else:
+        # wait for the mp3 (get_source sets the gate on success AND on every raise path)
+        gate["ev"].wait(60)
+        if gate.get("cancel") or not gate.get("t") or not os.path.isdir(tmp):
+            return None
+        deadline = gate["t"] + float(gate.get("ceil") or XCHECK_CEIL)
+    opts = [(sz, vu) for vu, sz in ((vu_play, sz_play), (vu_hd, sz_hd)) if vu]
+    known = [o for o in opts if o[0]]
+    vsize, vu = (min(known, key=lambda o: o[0]) if len(known) == len(opts) else opts[0])
+    left = deadline - time.time() - 0.35          # keep ~0.35 s for the decode
+    if left < 0.3:
+        tlog("xc_after", 0.0, why="no_time")
+        return None
+    # WHAT TO FETCH: today's own policy, so the only changes are the variant and the stop.
+    # The plan's (seconds+2)/duration range decoded 27.3 s of a 105 s video in the first
+    # A/B (under the 29.5 s bar, so the check was lost), and ranged pulls of short videos
+    # were slow on the US video CDN there. So: the whole file up to 45 s, and over 45 s
+    # tt_video_audio's measured head size ((seconds+6)/duration + 256 KB, at least 1.5 MB).
+    hdr = {}
+    want = None
+    if vsize and vdur and vdur > 45:
+        want = min(vsize, max(int(vsize * (seconds + 6) / vdur) + 262_144, 1_500_000))
+        if want < vsize:
+            hdr["Range"] = "bytes=0-%d" % (want - 1)
+    mp4 = os.path.join(tmp, "v.mp4")
+    wav = os.path.join(tmp, "v.wav")
+    _t = time.time()
+    try:
+        if HAVE_CFFI:
+            rr = creq.get(vu, impersonate="chrome", timeout=left, headers=hdr)
+            ok = rr.status_code in (200, 206)
+            body = rr.content if ok else b""
+        else:
+            req = urllib.request.Request(vu, headers=hdr)
+            with urllib.request.urlopen(req, timeout=left) as r2:
+                body = r2.read()
+            ok = True
+    except Exception as ex:
+        tlog("xc_after", time.time() - _t, why="dl", err=type(ex).__name__,
+             pick=("hd" if vu == vu_hd and vu != vu_play else "play"), want=want)
+        return None
+    if not ok or len(body) < 20_000 or gate.get("cancel") or not os.path.isdir(tmp):
+        tlog("xc_after", time.time() - _t, why="short", bytes=len(body))
+        return None
+    try:
+        open(mp4, "wb").write(body)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4,
+                        "-t", str(seconds), "-ac", "1", "-ar", "44100", wav],
+                       check=True, capture_output=True,
+                       timeout=max(2.0, deadline - time.time() + 1.0))
+    except Exception:
+        tlog("xc_after", time.time() - _t, why="decode", bytes=len(body))
+        return None
+    got = duration_of(wav) or 0
+    need = min(seconds, vdur) - 0.5 if vdur else 1.0
+    tlog("xc_after", time.time() - _t, bytes=len(body), want=want, dur=round(got, 1),
+         pick=("hd" if vu == vu_hd and vu != vu_play else "play"), ok=bool(got >= need))
+    if got < need:
+        return None
+    return wav
+
+
 def tiktok_fetch(url, _full=None):
     """(full_url, info-or-None). Chain (all tested to survive an IP soft-wall in
     order): embed/v2 -> tikwm -> item-detail API -> HTML scrape.
@@ -1914,7 +2165,7 @@ def tiktok_fetch(url, _full=None):
     iid = _tt_id(full)
     if iid:
         try:
-            info = tt_embed_v2(iid)
+            info = tt_embed_v2_retry(iid) if FN_EMBED_RETRY else tt_embed_v2(iid)
             if info and info.get("playUrl"):
                 _remember_music_id({"id": info.get("music_id")}, full, url)
                 return full, info
@@ -2301,6 +2552,26 @@ def _apply_xcheck(out, vid_audio):
 XCHECK_CEIL = float(os.environ.get("CRATE_XCHECK_CEIL", 6.0))
 
 
+def _xc_drop_late(fut, tmp):
+    """RETENTION (FAST-NAME R). The cross-check missed its ceiling, so nothing will ever
+    read its v.mp4 / v.wav (the credited sound was kept) - but the thread may still be
+    downloading and would leave the video's audio on disk until the scan's own cleanup,
+    or for good if that already ran. Delete both files the moment the thread ends."""
+    if fut is None or not tmp:
+        return
+
+    def _drop(_f):
+        for _n in ("v.mp4", "v.wav"):
+            try:
+                os.remove(os.path.join(tmp, _n))
+            except OSError:
+                pass
+    try:
+        fut.add_done_callback(_drop)
+    except Exception:
+        pass
+
+
 def settle_source(out):
     """Join the credit cross-check that get_source(defer_crosscheck=True) left pending.
 
@@ -2324,6 +2595,7 @@ def settle_source(out):
         vid_audio = fut.result(timeout=max(0.0, XCHECK_CEIL - (time.time() - started)))
     except Exception:
         vid_audio = None
+        _xc_drop_late(fut, out.get("tmp"))
     tlog("tt_audio_xcheck", time.time() - started, vid_ok=bool(vid_audio))
     before = out.get("audio")
     _apply_xcheck(out, vid_audio)
@@ -2368,8 +2640,23 @@ def get_source(url, defer_crosscheck=False):
     `defer_crosscheck=True` returns as soon as the ANSWER-BEARING audio is on disk, with
     the TikTok-credit cross-check still running behind `out["_xcheck"]`; the caller must
     then call settle_source(out) before it reads sound_match_core, trusts the credit, or
-    fingerprints. Defaults False so every other caller is byte-identical to before."""
+    fingerprints. Defaults False so every other caller is byte-identical to before.
+
+    RETENTION (FAST-NAME R, no flag: hard-rules "audio is never persisted"). The temp dir
+    used to survive every raise - tiktok_rate_limited, "unavailable", an Instagram or
+    download error - because the caller only ever learns the path from a returned dict.
+    FETCH and PROFILE both found leaked scan dirs (a.mp3, v.mp4, v.wav) in $TMPDIR. Any
+    exception now removes it here; the TikTok cross-check thread, which may still be
+    writing, removes it again when it ends (the TikTok branch of _get_source_impl)."""
     tmp = tempfile.mkdtemp()
+    try:
+        return _get_source_impl(url, defer_crosscheck, tmp)
+    except BaseException:
+        _cleanup_dir(tmp)
+        raise
+
+
+def _get_source_impl(url, defer_crosscheck, tmp):
     if "instagram.com" in url:
         r = ig.fetch_reel(url)
         audio = os.path.join(tmp, "a.wav")
@@ -2400,21 +2687,53 @@ def get_source(url, defer_crosscheck=False):
     # short link resolves and run the whole credit chain (embed/v2 etc.) alongside
     # them, instead of only overlapping the video leg with the final audio download.
     _gt0 = time.time()
-    try:
-        full = resolve(url)
-    except Exception:
-        full = url
+    if FN_FAST_RESOLVE:
+        # FAST-NAME 1: the id from the link (see _fast_full); resolve() only as fallback
+        try:
+            full, _how = _fast_full(url)
+        except Exception:
+            try:
+                full = resolve(url)
+            except Exception:
+                full = url
+            _how = "follow"
+        tlog("gs_resolve", time.time() - _gt0, how=_how)
+    else:
+        try:
+            full = resolve(url)
+        except Exception:
+            full = url
+    # FAST-NAME 4: the cross-check's mp4 waits on this gate (see _tt_video_audio_after).
+    # Its ceiling is the one the caller will join with: settle_source's XCHECK_CEIL when
+    # deferred, the inline 12 s otherwise - both counted from the mp3 landing, as today.
+    _gate = None
+    if FN_XCHECK_AFTER_MP3 or FN_XCHECK_SMALL:
+        _gate = {"ev": threading.Event(), "t": None, "cancel": False,
+                 "ceil": (XCHECK_CEIL if (defer_crosscheck and SPEED_DEFER_XCHECK) else 12.0),
+                 "nowait": not FN_XCHECK_AFTER_MP3, "hard": 12.0}
     _ex = ThreadPoolExecutor(max_workers=2)
+    _fv = None
+    _src_ok = False
     try:
-        _fv = _ex.submit(tt_video_audio, full, tmp)
+        if _gate is not None:
+            _fv = _ex.submit(_tt_video_audio_after, full, tmp, _gate)
+        else:
+            _fv = _ex.submit(tt_video_audio, full, tmp)
         _fo = _ex.submit(tiktok_oembed, full)
         full, info = tiktok_fetch(url, _full=full)
         _gt1 = time.time()
-        try:
-            oe = _fo.result(timeout=20) or {}
-        except Exception:
-            oe = {}
-        tlog("tt_fetch", _gt1 - _gt0, oembed=round(time.time() - _gt1, 3))
+        if FN_OEMBED_NOWAIT and info and info.get("playUrl"):
+            # FAST-NAME 3: the mp3 does not wait on oEmbed; it is joined right after the
+            # download below, with what is left of the same 20 s. Only the failure path
+            # (no playUrl) needs it before, and that path still reads it first.
+            oe = None
+            tlog("tt_fetch", _gt1 - _gt0, oembed="after_mp3")
+        else:
+            try:
+                oe = _fo.result(timeout=20) or {}
+            except Exception:
+                oe = {}
+            tlog("tt_fetch", _gt1 - _gt0, oembed=round(time.time() - _gt1, 3))
         if not info or not info.get("playUrl"):
             # A DELETED OR PRIVATE VIDEO lands here too, and "TikTok is busy, try again"
             # sent people round that loop forever (the regression clip "cookie" was deleted
@@ -2431,11 +2750,32 @@ def get_source(url, defer_crosscheck=False):
         audio = os.path.join(tmp, "a.mp3")
         _ga0 = time.time()
         try:
-            open(audio, "wb").write(_cffi_get(info["playUrl"], timeout=90,
-                                              referer="https://www.tiktok.com/").content)
+            if FN_EMBED_RETRY and HAVE_CFFI:
+                # FAST-NAME 2: a warm pooled Session (no stream=True, see _FN_SESS)
+                _s = _fn_sess_get()
+                _sb = True
+                try:
+                    _r = _s.get(info["playUrl"], timeout=90,
+                                headers={"Referer": "https://www.tiktok.com/"})
+                    _sb = False
+                finally:
+                    _fn_sess_put(_s, broken=_sb)
+                open(audio, "wb").write(_r.content)
+            else:
+                open(audio, "wb").write(_cffi_get(info["playUrl"], timeout=90,
+                                                  referer="https://www.tiktok.com/").content)
         except Exception:
             open(audio, "wb").write(fetch(info["playUrl"], binary=True, timeout=90))
         _ga1 = time.time()
+        if _gate is not None:
+            _gate["t"] = _ga1
+            _gate["ev"].set()
+        if oe is None:
+            try:
+                oe = _fo.result(timeout=max(0.0, 20.0 - (time.time() - _gt1))) or {}
+            except Exception:
+                oe = {}
+            tlog("oembed_join", time.time() - _ga1)
         # HOW LONG THE CROSS-CHECK STREAM GETS. This leg is the video's OWN audio, used
         # only to test TikTok's credited sound against what the video actually plays. The
         # answer-bearing audio (playUrl) is already on disk one line up, so every second
@@ -2463,15 +2803,27 @@ def get_source(url, defer_crosscheck=False):
                 vid_audio = _fv.result(timeout=12)
             except Exception:
                 vid_audio = None
+                _xc_drop_late(_fv, tmp)
             tlog("tt_audio", _ga1 - _ga0, vid_wait=round(time.time() - _ga1, 3),
                  vid_ok=bool(vid_audio))
+        _src_ok = True
     finally:
+        if _gate is not None and (not _src_ok or not _gate["ev"].is_set()):
+            _gate["cancel"] = True          # the mp3 never landed: the mp4 must not start
+            _gate["ev"].set()
         _ex.shutdown(wait=False)
+        if not _src_ok and _fv is not None:
+            # RETENTION: get_source's wrapper removes tmp now; the cross-check may still be
+            # writing v.mp4 / v.wav into it, so remove it again the moment that thread ends
+            _fv.add_done_callback(lambda _f, _d=tmp: _cleanup_dir(_d))
 
     out = {"platform": "tiktok", "audio": audio,
            "credit_title": info.get("sound_title") or oe.get("credit_title"),
            "credit_author": info.get("sound_author") or oe.get("credit_author"),
-           "is_original": bool(info.get("is_original")), "desc": info.get("desc") or "",
+           # desc: embed/v2 carries no caption, so a scan whose audio came from embed
+           # lost the caption hints (5 of 12 fresh clips, 2026-09-29 A/B). oEmbed has it.
+           "is_original": bool(info.get("is_original")),
+           "desc": info.get("desc") or (oe or {}).get("desc") or "",
            "handle": info.get("creator") or oe.get("handle"),
            # THE SOUND'S OWN ID, carried out so a result can be cached against the SOUND
            # rather than the clip. Thousands of different videos use one sound, so one
@@ -3004,8 +3356,33 @@ def _shazamkit_release(fd):
         pass
 
 
+def _probe_log_fields(wav, hit):
+    """FAST-NAME 5 (CRATE_PROBE_LOG): what a probe answered, so a probe plan can be replayed
+    offline with no quota. Read-only: the hit is not modified."""
+    f = {}
+    try:
+        m = _find_song.PROBE_META.pop(wav, None) if wav else None
+        if m:
+            f["t_bridge"] = m.get("t_total")
+            f["t_sig"] = m.get("t_sig")
+            if m.get("reason"):
+                f["reason"] = m.get("reason")
+        if hit:
+            f["title"] = (hit.get("title") or "")[:80]
+            f["artist"] = (hit.get("artist") or "")[:60]
+            f["tkey"] = _title_key(hit.get("title"))
+            f["sid"] = hit.get("key")
+            f["fskew"] = hit.get("freqskew")
+            f["tskew"] = hit.get("timeskew")
+            f["moff"] = hit.get("offset_in_master")
+            f["junk"] = bool(_junk_id(hit))
+    except Exception:
+        pass
+    return f
+
+
 async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, stats=None,
-                            named_fn=None):
+                            named_fn=None, hints_ready=None):
     """Owns the probe temp dir and REMOVES it, whichever way the scan ends (a return, an
     exception, or a cancel from FingerprintJob). The body below used to mkdtemp() and never
     clean up: 1,617 probe WAVs of clip audio sat in $TMPDIR (SPEED-DESIGN-1 "In passing"),
@@ -3015,7 +3392,8 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, st
     try:
         return await _fingerprint_core_body(audio, hints=hints, _scan_out=_scan_out,
                                             hints_fn=hints_fn, tmp=tmp, _precut=precut,
-                                            stats=stats, named_fn=named_fn)
+                                            stats=stats, named_fn=named_fn,
+                                            hints_ready=hints_ready)
     finally:
         # an ffmpeg cut still writing (a sweep chunk read ahead of an exit) must land
         # before the dir goes, or it could recreate a WAV inside a half-removed dir
@@ -3029,7 +3407,7 @@ async def _fingerprint_core(audio, hints=None, _scan_out=None, hints_fn=None, st
 
 
 async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=None, tmp=None,
-                                 _precut=None, stats=None, named_fn=None):
+                                 _precut=None, stats=None, named_fn=None, hints_ready=None):
     """Base song(s) + how they were edited. Phase 1 scans the whole clip in short
     windows CONCURRENTLY and collects DISTINCT songs (a clip can hold two). Phase 2
     is a fine counter-speed sweep in concurrent batches for a heavily-edited song.
@@ -3090,22 +3468,24 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             _precut[k] = t
         return t
 
-    async def probe(off, rate, label, span=20, t_sink=None, timeout=None):
+    async def probe(off, rate, label, span=20, t_sink=None, timeout=None, psum_out=None):
         if _conc <= 1 and not SPEED_PRECUT:
             return await _probe_serial(off, rate, label, span, t_sink, timeout)
         _ct = _cut_task(off, rate, span)
         async with sem:
             if _one_at_a_time() and _conc > 1:
                 async with _serial:
-                    return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
-            return await _probe_one(off, rate, label, span, t_sink, timeout, _ct)
+                    return await _probe_one(off, rate, label, span, t_sink, timeout, _ct,
+                                            psum_out)
+            return await _probe_one(off, rate, label, span, t_sink, timeout, _ct, psum_out)
 
-    async def _probe_one(off, rate, label, span, t_sink, timeout, ct):
+    async def _probe_one(off, rate, label, span, t_sink, timeout, ct, psum_out=None):
         _pt0 = time.time()
         _slot = None
         _sw = 0.0
         _cdur = 0.0
         _pc = [0.0]                      # when the Shazam call itself started
+        wav = None
         if _st["_in"] == 0:
             _st["_b0"] = _pt0
         _st["_in"] += 1
@@ -3120,10 +3500,11 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             hit = await asyncio.wait_for(shazam(wav), timeout=_to)
             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                  off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
-                 slot_wait=round(_sw, 3))
+                 slot_wait=round(_sw, 3), **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}))
         except asyncio.TimeoutError:
             tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
-                 span=span, hit=False, timeout=True, conc=_conc)
+                 span=span, hit=False, timeout=True, conc=_conc,
+                 **(_probe_log_fields(wav, None) if FN_PROBE_LOG else {}))
             if _conc > 1 and not _degraded["on"]:
                 _degraded["on"] = True
                 tlog("probe_conc_degraded", 0.0, why="timeout")
@@ -3146,7 +3527,10 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             _pe_t = time.time()
             # the serial engine held the lock for the cut AND the call; the slot wait is
             # an artefact of running concurrently, so it is not counted as serial time
-            _st["psum"] += _cdur + ((_pe_t - _pc[0]) if _pc[0] else 0.0)
+            _inc = _cdur + ((_pe_t - _pc[0]) if _pc[0] else 0.0)
+            _st["psum"] += _inc
+            if psum_out is not None:
+                psum_out["v"] = _inc        # FAST-NAME 8: a discarded probe is taken back out
             _st["_in"] -= 1
             if _st["_in"] == 0:
                 _st["busy"] += _pe_t - _st["_b0"]
@@ -3176,7 +3560,8 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                     SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
                 hit = await asyncio.wait_for(shazam(wav), timeout=_to)
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
-                     off=off, rate=rate, span=span, hit=bool(hit))
+                     off=off, rate=rate, span=span, hit=bool(hit),
+                     **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}))
             except asyncio.TimeoutError:
                 tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
                      span=span, hit=False, timeout=True)
@@ -3304,10 +3689,27 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     span = 12 if len(scan) > 1 else 20
     _scan_to = []
     _early_extra = None                 # CORROB answers already paid for by the early name
+    _early_hints = None                 # FAST-NAME 7: the comment hints, joined once, reused
     if SPEED_EARLY_NAME and named_fn is not None and scan:
         res = [None] * len(scan)
         _i = 0
-        while _i < len(scan):
+        _spec = None                    # FAST-NAME 8: CORROB[0] at scan[0], asked with w0
+        if (FN_SPEC_CORROB and _conc == 2 and CORROB_N >= 1 and not _one_at_a_time()):
+            _sp_ps = {}
+            _g0 = await asyncio.gather(
+                probe(scan[0], 1.00, "as posted", span=span, t_sink=_scan_to),
+                probe(scan[0], CORROB[0][0], CORROB[0][1], psum_out=_sp_ps))
+            res[0] = _g0[0]
+            _i = 1
+            if _g0[0]:
+                _spec = [_g0[1]]
+            else:
+                # window 0 missed: the speculative answer is thrown away unread and its
+                # time comes back out of the serial-equivalent sum (the evidence walls in
+                # server._phase1 are held to the serial engine's instants)
+                _st["psum"] -= _sp_ps.get("v", 0.0)
+                tlog("spec_corrob_wasted", _sp_ps.get("v", 0.0))
+        while _i < len(scan) and not any(res[:_i]):
             _chunk = scan[_i:_i + max(1, _conc)]
             _got = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span,
                                                 t_sink=_scan_to) for o in _chunk])
@@ -3317,26 +3719,129 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             if any(_got):
                 break
         _first = next((h for h in res if h), None)
-        if _first is not None and not _junk_id(_first):
+        if _first is not None and _spec is not None and _junk_id(_first):
+            # FAST-NAME 8, junk window 0: the vote below asks window 0's CORROB anyway (off0
+            # is scan[0]); finish it here and hand it over, so the one speculative answer is
+            # reused rather than asked twice. No early name, as today.
+            _early_extra = (scan[0], [h for h in (_spec + list(await asyncio.gather(
+                *[probe(scan[0], r, lbl) for r, lbl in CORROB[1:CORROB_N]]))) if h])
+        elif _first is not None and not _junk_id(_first):
             _off0 = scan[res.index(_first)]
-            _early_extra = [h for h in await asyncio.gather(
-                *[probe(_off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
+            if _spec is not None:
+                # FAST-NAME 8: window 0 hit, so _off0 is scan[0] and the speculative answer
+                # IS CORROB[0] there - same (offset, rate, span), kept in CORROB order
+                _early_extra = [h for h in (_spec + list(await asyncio.gather(
+                    *[probe(_off0, r, lbl) for r, lbl in CORROB[1:CORROB_N]]))) if h]
+            else:
+                _early_extra = [h for h in await asyncio.gather(
+                    *[probe(_off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
             _pk = _title_key(_first.get("title"))
+            _pw_task = None
             if _pk and all(_title_key(h.get("title")) == _pk for h in _early_extra):
                 try:
                     named_fn(dict(_first))
-                    tlog("early_named", 0.0, title=(_first.get("title") or "")[:80],
-                         artist=(_first.get("artist") or "")[:80], off=_off0)
+                    if FN_EARLY_POSTED_WINS:
+                        tlog("early_named", 0.0, title=(_first.get("title") or "")[:80],
+                             artist=(_first.get("artist") or "")[:80], off=_off0,
+                             via="unanimous", corrob_n=len(_early_extra))
+                    else:
+                        tlog("early_named", 0.0, title=(_first.get("title") or "")[:80],
+                             artist=(_first.get("artist") or "")[:80], off=_off0)
                 except Exception:
                     pass
+            elif (FN_EARLY_POSTED_WINS and hints_fn is not None and hints_ready is not None
+                  and _pk and _off0 == scan[0]
+                  and not any(_junk_id(h) for h in _early_extra)):
+                # FAST-NAME 7: A RIVAL, BUT THE POSTED READ MAY STILL WIN OUTRIGHT. The
+                # vote below builds `groups` from exactly [this hit] + these CORROB answers
+                # (off0 is this window: probed in scan order, no earlier window hit), reads
+                # the comment hints, and falls through to the posted-wins path - whose
+                # primary is the earliest non-junk hit, this one - iff every rival's key is
+                # strictly below the posted key. So the same test on the same inputs,
+                # through the vote's own _vote_key, names the same song. The hints are
+                # joined once, when the comment thread has finished, and the vote reuses
+                # that list. Ties and rival wins wait for the full scan as before.
+                _pw_first, _pw_extra = _first, list(_early_extra)
+                _pw_t0 = time.time()
+
+                def _pw_test(hs):
+                    _hw = _hint_words(hs)
+                    _g = {}
+                    for _h in [_pw_first] + _pw_extra:
+                        _k = _title_key(_h.get("title"))
+                        if _k:
+                            _g.setdefault(_k, []).append(_h)
+                    _riv = [k for k in _g if k != _pk]
+                    return bool(_riv) and max(_vote_key(k, _g, _hw) for k in _riv) < \
+                        _vote_key(_pk, _g, _hw)
+
+                async def _pw_watch():
+                    nonlocal _early_hints
+                    while True:
+                        try:
+                            _rdy = bool(hints_ready())
+                        except Exception:
+                            _rdy = False
+                        if _rdy:
+                            break
+                        await asyncio.sleep(0.05)
+                    try:
+                        _hs = hints_fn() or []
+                    except Exception:
+                        _hs = []
+                    _early_hints = list(_hs)
+                    try:
+                        _won = _pw_test(_early_hints)
+                    except Exception:
+                        _won = False
+                    if _won:
+                        try:
+                            named_fn(dict(_pw_first))
+                            tlog("early_named", 0.0, title=(_pw_first.get("title") or "")[:80],
+                                 artist=(_pw_first.get("artist") or "")[:80], off=_off0,
+                                 via="posted_wins", corrob_n=len(_pw_extra),
+                                 waited=round(time.time() - _pw_t0, 3))
+                        except Exception:
+                            pass
+                    else:
+                        tlog("early_name_rival", 0.0, n=len(_pw_extra), hints=True,
+                             waited=round(time.time() - _pw_t0, 3))
+
+                _rdy0 = False
+                try:
+                    _rdy0 = bool(hints_ready())
+                except Exception:
+                    _rdy0 = False
+                if _rdy0:
+                    await _pw_watch()
+                elif _i < len(scan):
+                    # the comments are still running: recheck the moment they land, while
+                    # the remaining windows run (see the cancel after them below)
+                    _pw_task = asyncio.ensure_future(_pw_watch())
+                else:
+                    tlog("early_name_rival", 0.0, n=len(_early_extra), hints=False)
             else:
                 tlog("early_name_rival", 0.0, n=len(_early_extra))
             _early_extra = (_off0, _early_extra)
+        else:
+            _pw_task = None
+        if _first is None or _junk_id(_first):
+            _pw_task = None
         if _i < len(scan):
             _rest = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span,
                                                  t_sink=_scan_to) for o in scan[_i:]])
             for _j, _h in enumerate(_rest):
                 res[_i + _j] = _h
+        if _pw_task is not None and not _pw_task.done():
+            # the full scan returned before the comments did: the vote decides now, as
+            # before (it joins the hints itself), and no early name goes out
+            _pw_task.cancel()
+            try:
+                await _pw_task
+            except BaseException:
+                pass
+            tlog("early_name_rival", 0.0, n=len(_early_extra[1]) if _early_extra else 0,
+                 hints=False, late=True)
     else:
         res = await asyncio.gather(*[probe(o, 1.00, "as posted", span=span, t_sink=_scan_to)
                                      for o in scan])
@@ -3352,10 +3857,13 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     # decisions - the serial version merely paid the two costs back to back.
     if hints_fn is not None:
         _th0 = time.time()
-        try:
-            hints = hints_fn() or []
-        except Exception:
-            hints = []
+        if _early_hints is not None:
+            hints = list(_early_hints)  # FAST-NAME 7: joined once (final then), reused
+        else:
+            try:
+                hints = hints_fn() or []
+            except Exception:
+                hints = []
         tlog("hints_join_wait", time.time() - _th0, hints=len(hints))
     hits, seen = [], set()
     for off, h in zip(scan, res):
@@ -3417,9 +3925,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             # full credit for its own exact word. `conf` then breaks a rung+rates tie
             # toward the name a real catalogue actually carries - the skill's step 4 -
             # and is deliberately ranked BELOW nrates so it cannot overrule the audio.
-            rung, conf = _hint_support(k, hw)
-            return (rung, nrates(k),
-                    any(not _junk_id(h) for h in groups.get(k, [])), conf)
+            return _vote_key(k, groups, hw)
         if groups:
             key_posted = _key(posted)
             # NEVER use max(groups, key=_key) to find a rival - on a tie it silently
@@ -3926,14 +4432,25 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     return fp
 
 
-async def fingerprint(audio, hints=None, hints_fn=None, stats=None, named_fn=None):
+async def fingerprint(audio, hints=None, hints_fn=None, stats=None, named_fn=None,
+                      hints_ready=None, decided_fn=None):
     """Name the song(s). Thin wrapper: the Shazam work is _fingerprint_core, then the
     mashup pass looks at the raw window evidence and decides whether this clip is one
     song or two. The pass is free on single-song clips - it returns before probing
-    unless the scan already disagreed with itself."""
+    unless the scan already disagreed with itself.
+
+    `decided_fn(fp)` (FAST-NAME 6, server CRATE_NAME_AT_DECIDE; None = today) is called the
+    moment the core returns, BEFORE the mashup pass: the title is final there (`rendition`
+    is set inside the core and tier 2 only appends mashup / sections / songs), so the
+    caller can publish the name without waiting for tier 2."""
     scan = []
     fp = await _fingerprint_core(audio, hints=hints, _scan_out=scan, hints_fn=hints_fn,
-                                 stats=stats, named_fn=named_fn)
+                                 stats=stats, named_fn=named_fn, hints_ready=hints_ready)
+    if fp and decided_fn is not None:
+        try:
+            decided_fn(fp)
+        except Exception:
+            pass          # publishing a name early is a bonus, never a reason to fail an ID
     if fp:
         try:
             await annotate_mashup(audio, fp, scan)
@@ -3960,6 +4477,34 @@ SPEED_EARLY_PROBES = _speed_flag("CRATE_EARLY_PROBES", True)
 # results, same decision; only the order moves, and the CORROB answers are reused below.
 # Anything with a rival, a junk first hit or no hit waits for the full scan as before.
 SPEED_EARLY_NAME = _speed_flag("CRATE_EARLY_NAME", True)
+# FAST-NAME 7 (CRATE_EARLY_POSTED_WINS, default off). A rival among the CORROB answers used
+# to cancel the early name even when the vote would still pick the posted read (PROFILE:
+# 3 of 16 fresh clips, the name reached the phone 14.8 / 8.4 / 4.9 s after it was
+# decided). The vote reads only window 0's hit, its CORROB answers and the comment hints,
+# so once the comment thread has finished the same vote can run here: _vote_key is the
+# vote's own ranking function, the hints are joined once and REUSED by the vote below.
+# Names only on a STRICT posted win, with the first hit at scan[0], not junk, and no junk
+# CORROB answer. If the comments are still running it rechecks the moment they finish,
+# while the remaining windows run, and gives up if those windows finish first.
+FN_EARLY_POSTED_WINS = _speed_flag("CRATE_EARLY_POSTED_WINS", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# FAST-NAME 8 (CRATE_SPEC_CORROB, default off, OWNER CALL). Window 0's first CORROB probe
+# rides with window 0 in round 1 ([w0, w0@1.12] then [w0@1.20, w0@0.85]), so the early
+# name decides in 2 rounds instead of 3 when window 0 hits (15 of 16, -0.63 s median,
+# PROFILE). When window 0 misses, the speculative answer is thrown away unread and the
+# scan goes on from window 1 (+~0.7 s and one wasted probe, 1 of 16). Same probes at the
+# same (offset, rate, span) whenever window 0 hits; only the order and `probes` change.
+# Only at exactly 2 probes in flight (the Mac bridge); any other concurrency runs today's.
+FN_SPEC_CORROB = _speed_flag("CRATE_SPEC_CORROB", False)
+
+
+def _vote_key(k, groups, hw):
+    """THE base-song vote's ranking key, shared so the posted-wins early name (FAST-NAME 7)
+    ranks with the vote's own function rather than a copy: the rung is 2=exact / 1=fuzzy /
+    0=none, then how many distinct rates agree, then whether any of them is a real
+    (non-junk) track, then the catalogue confidence of the hint - see _key in the vote."""
+    rung, conf = _hint_support(k, hw)
+    return (rung, len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])}),
+            any(not _junk_id(h) for h in groups.get(k, [])), conf)
 
 
 class FingerprintJob(object):
@@ -3968,7 +4513,8 @@ class FingerprintJob(object):
     cancel it. cancel() waits for the task to unwind: the bridge child is killed and the
     probe temp dir is removed (_fingerprint_core's finally) before it returns."""
 
-    def __init__(self, audio, hints_fn=None, stats=None, named_fn=None):
+    def __init__(self, audio, hints_fn=None, stats=None, named_fn=None, hints_ready=None,
+                 decided_fn=None):
         self.t0 = time.time()
         self.t_end = None
         self._started = threading.Event()
@@ -3982,7 +4528,8 @@ class FingerprintJob(object):
             self._started.set()
             try:
                 return await fingerprint(audio, hints_fn=hints_fn, stats=stats,
-                                         named_fn=named_fn)
+                                         named_fn=named_fn, hints_ready=hints_ready,
+                                         decided_fn=decided_fn)
             finally:
                 self.t_end = time.time()
                 self._done.set()

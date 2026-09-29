@@ -412,6 +412,22 @@ SESSION_TTL = 900
 _PROG = {}
 _PROG_TTL = 300.0
 
+# ---- FAST-NAME (2026-09-27, ~/addify-harness/FAST-NAME-PLAN.md). ALL DEFAULT OFF. ----
+# 6. publish the song on /progress the moment the fingerprint decides it (after the credit
+#    cross-check settled with no swap), not after mashup tier 2, the sound-page wait and
+#    Apple Music. The name is built exactly as /base builds it; `name_fp_check` logs it.
+NAME_AT_DECIDE = E._speed_flag("CRATE_NAME_AT_DECIDE", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# 11. the Apple Music lookup starts at the first published name; /base takes it when its
+#     own (title, artist) is the same key, else calls it as today
+LINKS_EARLY = E._speed_flag("CRATE_LINKS_EARLY", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# 9 / 10. page behaviour, served to the page in /health "features"
+PAGE_FAST_POLL = E._speed_flag("CRATE_PAGE_FAST_POLL", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+PAGE_LIVE_ROWS = E._speed_flag("CRATE_PAGE_LIVE_ROWS", True)   # gated 2026-09-29: reg x2 + 45-clip ABAB, 0 crowns lost
+# OWNER CALL 1 kill switch: every early name waits for the credit cross-check to settle
+# (no swap, no sound-cache hit) before it is shown. Off = today (early names can go out
+# before the check; 0 audio swaps in 215 scans on 2026-09-27).
+EARLY_NAME_WAIT_XCHECK = E._speed_flag("CRATE_EARLY_NAME_WAIT_XCHECK", False)
+
 
 def _prog_set(key, pct, label=None):
     p = _PROG.get(key)
@@ -424,18 +440,27 @@ def _prog_set(key, pct, label=None):
     p["t"] = time.time()
 
 
-def _prog_named(key, hit, t0):
+def _prog_named(key, hit, t0, via=None, speed=None):
     """The engine decided the song before the fingerprint finished (E.SPEED_EARLY_NAME):
     park it where /progress can hand it to the page. Per scan, keyed by the clip, so two
-    people scanning at once never see each other's song."""
+    people scanning at once never see each other's song.
+    `via` / `speed` (FAST-NAME 6 only): how it was decided, and the speed label /base will
+    show for a name published at the decision. Absent on every other name."""
     p = _PROG.get(key)
     if p is None:
         _prog_set(key, 30)
         p = _PROG.get(key)
     p["named"] = {"title": hit.get("title") or "", "artist": hit.get("artist") or "",
                   "art": hit.get("art") or "", "t": round(time.time() - t0, 3)}
+    if via:
+        p["named"]["via"] = via
+    if speed:
+        p["named"]["speed"] = speed
     p["t"] = time.time()
-    E.tlog("named_early", time.time() - t0, title=(hit.get("title") or "")[:80])
+    if via:
+        E.tlog("named_early", time.time() - t0, title=(hit.get("title") or "")[:80], via=via)
+    else:
+        E.tlog("named_early", time.time() - t0, title=(hit.get("title") or "")[:80])
 
 
 def _prefetch_hunt(src, hit, hints):
@@ -797,6 +822,41 @@ def _rendition_final_speed(res):
     res["speed"] = sp
 
 
+def _decided_display(src, fp):
+    """FAST-NAME 6: the song exactly as /base will show it, built from the decided fp and the
+    SETTLED source by the same functions, in the same order, as _phase1's tail: fp title ->
+    the speed label -> _credit_qualifier -> the re-upload speed word -> _name_rendition on
+    a scratch copy. None of them reads the comment or sound-page joins. -> {title, artist,
+    art, speed}; `name_fp_check` compares it with /base on every scan."""
+    base_title = fp.get("title")
+    if not base_title:
+        return None
+    edit_label = fp.get("edit_label") or ""
+    sweep_rate = fp.get("rate", 1.0)
+    skew = fp.get("freqskew")
+    mdir = None
+    speed_label = "as posted"
+    if sweep_rate != 1.0:
+        speed_label = edit_label
+        mdir = "slowed" if "slow" in edit_label else ("sped up" if "sped" in edit_label else None)
+    elif skew is not None and 0.04 <= abs(skew) <= 0.06:
+        sp = 1.0 + skew
+        mdir = "slowed" if sp < 1 else "sped up"
+        speed_label = "%s ~%.2fx" % (mdir, sp)
+    r = {"base_song": fp.get("title"), "base_artist": fp.get("artist"),
+         "shazam": fp.get("url"), "art": fp.get("art"), "speed": speed_label}
+    _cq = _credit_qualifier(src, base_title)
+    if _cq:
+        base_title = _cq
+        r["base_song"] = _cq
+    reup = _reupload_base(base_title) if (REUPLOAD_BASE and base_title) else None
+    if reup and REUPLOAD_LABEL != "credit":
+        r["speed"] = _reup_expect(reup["dir"], speed_label, mdir)
+    _name_rendition(r, fp)
+    return {"title": r["base_song"], "artist": r["base_artist"], "art": r.get("art") or "",
+            "speed": r.get("speed")}
+
+
 def _phase1(url, key, t0):
     """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
@@ -1082,6 +1142,80 @@ def _phase1(url, key, t0):
                                             - time.time()))
         return _join_hints()
 
+    # ---- FAST-NAME 6 / 11 / owner-call-1 wiring. With every flag off, _on_named is exactly
+    # the old lambda (_prog_named, then _prefetch_hunt) and nothing else here runs.
+    _dec = {"lock": threading.Lock(), "ready": False, "fp": None, "done": False,
+            "early": None}
+    _lk_early = {}
+
+    def _links_start(title, artist):
+        # FAST-NAME 11: Apple Music at the first published name (see the /base links call)
+        if not (LINKS_EARLY and title):
+            return
+        with _dec["lock"]:
+            if _lk_early:
+                return
+            _lex = ThreadPoolExecutor(max_workers=1)
+            _lk_early["key"] = (title, artist)
+            _lk_early["fut"] = _lex.submit(L.official_links, title, artist)
+            _lex.shutdown(wait=False)
+        E.tlog("links_early_start", time.time() - t0)
+
+    def _publish_decided(fpd):
+        try:
+            if (_PROG.get(key) or {}).get("named") or _dec.get("early"):
+                return                      # an early name already went out: it stands
+            nm = _decided_display(src, fpd)
+            if not nm or not nm.get("title"):
+                return
+            _prog_named(key, nm, t0, via="decided", speed=nm.get("speed"))
+            _links_start(nm["title"], nm["artist"])
+        except Exception as _ex:
+            E.tlog("name_decided_failed", 0.0, err=type(_ex).__name__)
+
+    def _decided_fn(fp):
+        # FAST-NAME 6, called by the fingerprint the moment its core returns (before tier 2).
+        # Published only once the credit cross-check has settled with no swap and no
+        # sound-cache hit (_decided_ready), whichever of the two comes second.
+        snap = dict(fp)
+        with _dec["lock"]:
+            if _dec["done"]:
+                return
+            if not _dec["ready"]:
+                _dec["fp"] = snap
+                return
+            _dec["done"] = True
+        _publish_decided(snap)
+
+    def _decided_ready():
+        with _dec["lock"]:
+            _dec["ready"] = True
+            early, _dec["early"] = _dec["early"], None
+            fpd = _dec["fp"]
+            if fpd is not None and not _dec["done"]:
+                _dec["done"] = True
+            else:
+                fpd = None
+        if early is not None:
+            _prog_named(key, early, t0)     # owner-call-1 switch: held until settled
+        if fpd is not None:
+            _publish_decided(fpd)
+
+    def _on_named(h):
+        held = False
+        if EARLY_NAME_WAIT_XCHECK:
+            with _dec["lock"]:
+                if not _dec["ready"]:
+                    _dec["early"] = dict(h)
+                    held = True
+        if not held:
+            _prog_named(key, h, t0)
+        _prefetch_hunt(src, h, hint_texts)
+        _links_start(h.get("title"), h.get("artist"))
+
+    def _hints_ready():
+        return _hints_fut is None or _hints_fut.done()
+
     if (E.SPEED_EARLY_PROBES and not (src.get("sound_id") in SOUND_CACHE
                                        and key not in _NO_SOUND_CACHE)):
         _early_prev_hook = E.PROBE_HOOK
@@ -1090,7 +1224,8 @@ def _phase1(url, key, t0):
             _fp_t["fp_start"], _fp_t["early"] = time.time(), True
             _early = E.FingerprintJob(
                 src["audio"], hints_fn=(_join_hints_serial if _hints_fn is not None else None),
-                stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts))))
+                stats=_fpstats, named_fn=_on_named, hints_ready=_hints_ready,
+                decided_fn=(_decided_fn if NAME_AT_DECIDE else None))
         except Exception:
             _early = None
             _fp_t["early"] = False
@@ -1146,6 +1281,10 @@ def _phase1(url, key, t0):
         _fpstats.clear()
         E.PROBE_HOOK = _early_prev_hook
     if _swapped:
+        with _dec["lock"]:                  # decided on the credited audio: void
+            _dec["fp"] = None
+            _dec["early"] = None
+    if _swapped:
         _t = time.time()
         res["peaks"] = _peaks(src["audio"])
         res["wave"] = _wave(src["audio"])
@@ -1194,6 +1333,8 @@ def _phase1(url, key, t0):
         _cleanup(src.get("tmp"))
         return _sc, None
 
+    # settled, no swap, no sound-cache hit: a decided (or held early) name may go out now
+    _decided_ready()
 
     loop = asyncio.new_event_loop()
     try:
@@ -1215,7 +1356,8 @@ def _phase1(url, key, t0):
                 fp = loop.run_until_complete(E.fingerprint(
                     src["audio"],
                     hints_fn=(_join_hints_serial if _hints_fn is not None else None),
-                    stats=_fpstats, named_fn=(lambda h: (_prog_named(key, h, t0), _prefetch_hunt(src, h, hint_texts)))))
+                    stats=_fpstats, named_fn=_on_named, hints_ready=_hints_ready,
+                    decided_fn=(_decided_fn if NAME_AT_DECIDE else None)))
                 _fp_end = time.time()
         finally:
             E.PROBE_HOOK = _prev_hook
@@ -1465,8 +1607,20 @@ def _phase1(url, key, t0):
                    speed=res["speed"])
         if base_title:
             try:
-                _lk = L.official_links(*((res["base_song"], res["base_artist"]) if _named
-                                         else (base_title, base_artist)))
+                _la = ((res["base_song"], res["base_artist"]) if _named
+                       else (base_title, base_artist))
+                _lf = (_lk_early.get("fut") if (LINKS_EARLY and _lk_early.get("key") == _la)
+                       else None)
+                if _lf is not None:
+                    # FAST-NAME 11: the same call on the same key, started at the name.
+                    # official_links bounds itself (TIMEOUT + 1), so this wait is too.
+                    _lw0 = time.time()
+                    _lk = _lf.result(timeout=L.TIMEOUT + 2)
+                    E.tlog("official_links_early", time.time() - _lw0)
+                else:
+                    if LINKS_EARLY and _lk_early.get("key"):
+                        E.tlog("official_links_rekey", 0.0)
+                    _lk = L.official_links(*_la)
                 if _lk.get("links"):
                     res["links"] = _lk["links"]
                 if _lk.get("preview"):
@@ -1495,6 +1649,20 @@ def _phase1(url, key, t0):
             # gate can fail on a single mismatch before this ships.
             E.tlog("early_name_check", 0.0, same=(_nm["title"] == (base_title or "")),
                    early=_nm["title"][:80], final=(base_title or "")[:80], t_early=_nm["t"])
+            if (NAME_AT_DECIDE or E.FN_EARLY_POSTED_WINS or E.FN_SPEC_CORROB
+                    or EARLY_NAME_WAIT_XCHECK):
+                # FAST-NAME: the published name against what /base shows. A decided name
+                # must match on title AND artist (it is built to); an early name is the
+                # raw first hit, so a credit-qualifier or rendition rename is expected.
+                E.tlog("name_fp_check", 0.0, via=_nm.get("via") or "early",
+                       same=(_nm["title"] == (res.get("base_song") or "")
+                             and _nm["artist"] == (res.get("base_artist") or "")),
+                       same_title=(_nm["title"] == (res.get("base_song") or "")),
+                       pub=_nm["title"][:80], pub_artist=(_nm["artist"] or "")[:60],
+                       base=(res.get("base_song") or "")[:80],
+                       base_artist=(res.get("base_artist") or "")[:60],
+                       pub_speed=_nm.get("speed"), base_speed=res.get("speed"),
+                       t_pub=_nm["t"])
         worth = bool((_edit_worthy(src, fp) or res.get("from_caption"))
                      and (base_title or E._is_named_credit(src.get("credit_title"))))
         res["edits_pending"] = worth
@@ -7148,7 +7316,11 @@ class H(BaseHTTPRequestHandler):
                                     # the page reads this before it offers a scan to the
                                     # phone's ShazamKit (docs/SHAZAMKIT-ON-DEVICE.md)
                                     "phone_probes": P.health(),
-                                    "does": ["tiktok", "instagram", "soundcloud", "youtube"]})
+                                    "does": ["tiktok", "instagram", "soundcloud", "youtube"],
+                                    # FAST-NAME 9 / 10: page behaviour, only when one is on
+                                    **({"features": {"fast_poll": PAGE_FAST_POLL,
+                                                     "live_rows": PAGE_LIVE_ROWS}}
+                                       if (PAGE_FAST_POLL or PAGE_LIVE_ROWS) else {})})
         if u.path == "/probes/next":
             return self._probes_next(u)
         if u.path == "/trending":

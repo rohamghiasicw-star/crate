@@ -218,7 +218,29 @@ async def _shazam_shazamkit(path):
     if proc.returncode != 0 or not out.strip():
         raise RuntimeError("shazamkit bridge exit %s: %s" % (
             proc.returncode, (err or out or b"").decode("utf-8", "replace").strip()[:300]))
-    return _kit_hit(json.loads(out.decode("utf-8").splitlines()[-1]))
+    _j = json.loads(out.decode("utf-8").splitlines()[-1])
+    if PROBE_LOG:
+        _probe_meta_put(path, _j)
+    return _kit_hit(_j)
+
+
+# FAST-NAME 5 (CRATE_PROBE_LOG, default off). The bridge's own timings for the probe that
+# cut `path`, handed to crate_engine's shazam_probe row (which pops it by path). Read-only
+# logging: the hit dict the engine reads is untouched. Bounded so a probe that never pops
+# (a timeout) cannot grow it.
+PROBE_LOG = os.environ.get("CRATE_PROBE_LOG", "").strip().lower() not in (
+    "", "0", "false", "no", "off")
+PROBE_META = {}
+
+
+def _probe_meta_put(path, j):
+    try:
+        if len(PROBE_META) > 512:
+            PROBE_META.clear()
+        PROBE_META[path] = {"t_total": j.get("t_total"), "t_sig": j.get("t_signature"),
+                            "reason": None if j.get("matched") else j.get("reason")}
+    except Exception:
+        pass
 
 
 def _kit_hit(r, backend="shazamkit"):

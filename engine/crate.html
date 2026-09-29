@@ -1967,11 +1967,18 @@ function pgReset(){clearInterval(pgTimer); if(pgFin) clearInterval(pgFin);
    /progress reports milestones the engine actually passed - audio fetched, fingerprint
    started, one more Shazam probe done - so the bar moves only on work that happened,
    and STOPS moving if the engine genuinely stalls, which is the honest thing to show. */
-var progT=null, namedEarly=false;
+var progT=null, namedEarly=false, progFast=false, progBusy=false;
+/* FAST-NAME 9 (engine CRATE_PAGE_FAST_POLL, read from /health "features"): while the song is
+   still unnamed the engine's early name sat in /progress for up to one 700 ms poll (0.44 s
+   median, PROFILE). Poll every 250 ms until the name lands or /base answers, then 700 ms as
+   before; a poll still in flight is never doubled up. Without the feature: today's loop. */
 function progPollOn(u){
   progPollOff();
-  progT=setInterval(function(){
+  progFast=!!(engineInfo&&engineInfo.features&&engineInfo.features.fast_poll);
+  var tick=function(){
     if(!busy){progPollOff(); return;}
+    var guard=progFast;
+    if(guard){ if(progBusy) return; progBusy=true; }
     fetch(ENGINE+'/progress?url='+encodeURIComponent(u),{cache:'no-store'})
       .then(function(r){return r.json();})
       .then(function(p){
@@ -1984,7 +1991,10 @@ function progPollOn(u){
         if(p.named && p.named.title && !namedEarly && curURL===u){
           namedEarly=true; clearTimeout(phaseT);
           headline(p.named.title);
-          say(p.named.artist?('by '+esc(p.named.artist)+' &middot; checking the speed'):'Checking the speed');
+          // FAST-NAME 6: a name published at the decision carries the speed /base will show
+          var _nsp=p.named.speed?(p.named.speed==='as posted'?'original':esc(p.named.speed)):'';
+          say(p.named.artist?('by '+esc(p.named.artist)+' &middot; '+(_nsp||'checking the speed'))
+                            :(_nsp?(_nsp.charAt(0).toUpperCase()+_nsp.slice(1)):'Checking the speed'));
         }
         // THE ENGINE'S NUMBER IS THE CEILING, NOT THE VALUE. Assigning it directly makes
         // the bar teleport: the hunt downloads candidates in a concurrent batch, so a
@@ -1993,10 +2003,14 @@ function progPollOn(u){
         // which is the same information delivered as motion. Never 100; only finishing
         // is allowed to say 100.
         if(p.pct>pgCap) setProg(pgNow, Math.min(97,p.pct), p.label||null);
-      }).catch(function(){});
-  }, 700);
+      }).catch(function(){}).then(function(){ if(guard) progBusy=false; });
+  };
+  if(!progFast){ progT=setInterval(tick, 700); return; }
+  var next=function(){ progT=setTimeout(function(){ tick(); if(progT!==null) next(); },
+                                        (progFast&&!namedEarly)?250:700); };
+  next();
 }
-function progPollOff(){clearInterval(progT); progT=null;}
+function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; progBusy=false;}
 /* RUN IT UP TO 100, do not snap to it. Roham: "it keeps going up until 100, not stop
    then jump". Snapping is the same complaint as parking at 30, just at the other end -
    the number stops being a report of progress and becomes two states. This walks the
@@ -4351,7 +4365,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
   call('/base',p.url,{kit:true}).then(function(d){
-    clearTimeout(phaseT);
+    clearTimeout(phaseT); progFast=false;
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
     setWindow(d&&d.win, d&&d.clip_secs);
     if(W.amp.length) showChip(null,null,d&&d.thumb,true);
@@ -4467,10 +4481,22 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               // says still digging and searching edits and remixes"). The partial render's bar is
               // no longer driven after the budget, so it sat at 0% under "Still digging". The card
               // now renders as final, with one small live line that the late crown replaces.
-              try{renderResult(dd,false);}catch(e){renderResult(d,false);}
+              // FAST-NAME 10 (engine CRATE_PAGE_LIVE_ROWS, from /health "features"): VERSIONS
+              // DROP IN AS THEY VERIFY. #livelist only existed in the partial render, so every
+              // version that verified after this budget went into LIVE and was never drawn
+              // until "done" (Roham: one line instead of rows). With the feature, the card is
+              // drawn without the provisional rows (never "Our pick" before the engine's final
+              // answer) and the live line is followed by #livelist, which liveAdd keeps painting
+              // high to low, row 1 "Best so far". "done" replaces all of it with the final
+              // payload through lateUpgrade, exactly as today.
+              var _lrows=!!(engineInfo&&engineInfo.features&&engineInfo.features.live_rows);
+              var dshow=_lrows?Object.assign({},d,{candidates:[],edits_pending:false}):dd;
+              try{renderResult(dshow,false);}catch(e){renderResult(d,false);}
               try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect'), _lh=document.createElement('div');
                 _lh.className='latehunt'; _lh.innerHTML='<i></i><span>Finding the exact version</span>';
-                if(_s) _s.parentNode.insertBefore(_lh,_s); else _r.appendChild(_lh);}catch(e){}
+                if(_s) _s.parentNode.insertBefore(_lh,_s); else _r.appendChild(_lh);
+                if(_lrows){ var _ll=document.createElement('div'); _ll.className='list'; _ll.id='livelist';
+                  _ll.style.marginTop='11px'; _lh.parentNode.insertBefore(_ll,_lh.nextSibling); livePaint(''); }}catch(e){}
               lateCap=setTimeout(function(){
                 if(onScan()){ try{renderResult(dd,false);}catch(e){} }
                 finalize(null);                  // the 90 s cap: the named song is final
