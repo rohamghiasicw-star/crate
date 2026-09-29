@@ -28,6 +28,10 @@
   --text:#F4F2FA; --muted:#B4AEC6; --faint:#8C85A1;
   --accent:#6B5FE0; --accent2:#8C82F0; --accent-press:#5A4ECB; --on-accent:#FFFFFF;
   --signal:#A855F7; --cool:#2DD4BF; --good:#5DCAA5;
+  /* VERDICT v2 2026-09-29: the check / X fills. --yes is a truer green than the mint --good
+     (Roham: "the check mark should go green"), --bad is the X's red. Both carry a white
+     glyph (--on-verdict): 3.2:1 on --yes, 3.9:1 on --bad here; 3.6:1 / 4.8:1 in light. */
+  --yes:#30A46C; --bad:#E5484D; --on-verdict:#FFFFFF;
   /* --warn is for a caveat, never for an error: a held-back crown and an upload whose
      title outruns its measurement are both "read this before you trust it", not failures. */
   --warn:#F5B94D;
@@ -57,6 +61,7 @@
   --text:#17141F; --muted:#524B61; --faint:#756E84;
   --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE; --on-accent:#FFFFFF;
   --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+  --yes:#2B9A66; --bad:#D93036;
   --scan:#F5F4F8; --dialtrack:rgba(23,20,31,.08);
   --shadow:0 20px 50px rgba(23,20,31,.12);
   --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
@@ -70,6 +75,7 @@
     --text:#17141F; --muted:#524B61; --faint:#756E84;
     --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE;
     --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
+  --yes:#2B9A66; --bad:#D93036;
     --scan:#F5F4F8; --dialtrack:rgba(23,20,31,.08);
     --shadow:0 20px 50px rgba(23,20,31,.12);
     --art-glow-a:.42; --art-drop:0 24px 30px -14px rgba(23,20,31,.36),0 10px 22px -6px rgba(23,20,31,.16);
@@ -639,23 +645,93 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .vbtn.no{background:var(--raise2);color:var(--text)}
 /* VERDICT 2026-09-29 (Roham): "a little check or an X to say if it's wrong or right", only
    once the final answer is on screen. One quiet row under the pick: a question on the left,
-   two round buttons on the right. The chosen one fills (check = --good mint, X = neutral
-   raise with a line), the other fades, and the question becomes a thank-you. */
-.vfeed{display:flex;align-items:center;gap:12px;margin:14px 0 2px;padding:11px 12px 11px 14px;
-  border:1px solid var(--line);border-radius:14px;background:var(--raise)}
+   two round buttons on the right. The chosen one fills, the other fades, and the question
+   becomes a thank-you.
+   v2 (Roham, testing on his phone: "when I press the X, the X should go red and the check
+   mark should go green"): the tapped check fills --yes green, the tapped X fills --bad red,
+   both with a white glyph, and the row's border takes a faint tint of the same colour.
+   An X then opens "Which one was it?" inside the same row (.vpick, below the question, so
+   nothing above it moves): the rows on screen as one-tap choices, plus "Not in the list". */
+.vfeed{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:14px 0 2px;padding:11px 12px 11px 14px;
+  border:1px solid var(--line);border-radius:14px;background:var(--raise);transition:border-color .18s}
 .vfeed .vq{flex:1;min-width:0;font-size:13.5px;font-weight:600;color:var(--muted);line-height:1.3}
 .vfeed .vbx{display:flex;gap:8px}
-.vfeed button{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+.vfeed .vbx button{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
   border:1px solid var(--line2);background:var(--raise2);color:var(--text);
-  transition:background .18s,border-color .18s,opacity .18s,transform .12s}
-.vfeed button svg{width:18px;height:18px}
-.vfeed button:active{transform:scale(.94)}
+  transition:background .18s,border-color .18s,color .18s,opacity .18s,transform .12s}
+.vfeed .vbx button svg{width:18px;height:18px}
+.vfeed .vbx button:active{transform:scale(.94)}
 .vfeed button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
-.vfeed button.vy.on{background:var(--good);border-color:var(--good);color:#0F0D15}
-.vfeed button.vn.on{background:var(--raise);border-color:var(--text);color:var(--text)}
-.vfeed.done button:not(.on){opacity:.32}
+.vfeed .vbx button.vy.on{background:var(--yes);border-color:var(--yes);color:var(--on-verdict)}
+.vfeed .vbx button.vn.on{background:var(--bad);border-color:var(--bad);color:var(--on-verdict)}
+.vfeed .vbx button.on.pop{animation:vfpop .3s var(--ease)}
+@keyframes vfpop{from{transform:scale(.84)}to{transform:scale(1)}}
+.vfeed.done .vbx button:not(.on){opacity:.32}
 .vfeed.done .vq{color:var(--text)}
-@media (prefers-reduced-motion:reduce){.vfeed button{transition:none}}
+.vfeed.is-right{border-color:color-mix(in oklab,var(--yes) 34%,var(--line))}
+.vfeed.is-wrong{border-color:color-mix(in oklab,var(--bad) 34%,var(--line))}
+/* "Which one was it?" A full-width line of the same row, edge to edge under a hairline.
+   The choices reuse the shelf row look (.trk: cover, rank, title, match, source) as buttons,
+   with a ring on the right that fills in the accent when tapped. */
+.vpick{flex:0 0 calc(100% + 26px);min-width:0;margin:0 -12px 0 -14px;padding:8px 6px 0;
+  border-top:1px solid var(--line)}
+.vpick.anim{animation:vpin .28s var(--ease) both}
+@keyframes vpin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.vpick .vpl{display:flex;flex-direction:column}
+.vpick .vpr{width:100%;text-align:left;cursor:pointer}
+.vpick .vpr:active{background:var(--raise2)}
+.vpick .lvtag{background:var(--raise2);color:var(--muted)}
+.vpick .vrd{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;
+  border:1.5px solid var(--line2);transition:background .15s,border-color .15s}
+.vpick .vpr.sel{background:color-mix(in oklab,var(--accent) 14%,transparent);
+  border-color:color-mix(in oklab,var(--accent2) 45%,transparent)}
+.vpick .vpr.sel .vrd{background:var(--accent);border-color:var(--accent)}
+.vpick .vpr.sel .vrd::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--on-accent)}
+.vpick button:disabled{cursor:default}
+.vpick .vpr:disabled:not(.sel),.vpick .vnone:disabled:not(.sel),.vpick .vmore:disabled{opacity:.45}
+.vpick .vmore{display:block;width:100%;padding:9px 0 5px;font-size:12.5px;font-weight:650;color:var(--accent2);text-align:center}
+.vpick .vnone{display:block;width:calc(100% - 4px);margin:8px 2px 1px;padding:11px 0;border-radius:12px;
+  border:1px solid var(--line2);background:var(--raise2);font-size:13px;font-weight:650;color:var(--text);
+  transition:background .15s,border-color .15s}
+.vpick .vnone:active{background:var(--card)}
+.vpick .vnone.sel{border-color:var(--accent2);background:color-mix(in oklab,var(--accent) 14%,var(--raise2))}
+@media (hover:hover) and (pointer:fine){
+  .vpick .vpr:not(:disabled):hover{background:var(--raise2);border-color:var(--line)}
+  .vpick .vnone:not(:disabled):hover{border-color:var(--faint)}
+}
+@media (prefers-reduced-motion:reduce){.vfeed button,.vfeed{transition:none}.vpick.anim,.vfeed .vbx button.on.pop{animation:none}}
+/* "We found it" (VERDICT v2, X-TO-FIX-PLAN phase 1): a fix for a clip the user X'd landed
+   while they were away. A notification-style strip at the top: the green check disc says
+   "found", the song name carries the weight, the upload's title sits under it in muted.
+   One tap opens the right upload; the x dismisses; it leaves by itself after 12 s. Fixed,
+   so it is appended to <body>, never inside .app (the rise-animation containing-block trap).
+   It covers only its own strip, and waits while a scan or the splash/onboarding is up. */
+.fixban{position:fixed;z-index:70;left:0;right:0;top:max(10px,env(safe-area-inset-top));margin:0 auto;
+  width:calc(100% - 24px);max-width:400px;display:flex;align-items:center;gap:2px;padding:5px 5px 5px 6px;
+  border-radius:18px;background:var(--raise);border:1px solid color-mix(in oklab,var(--yes) 40%,var(--line2));
+  box-shadow:var(--shadow);animation:fbin .32s var(--ease) both}
+.fixban.out{animation:fbout .24s ease both}
+@keyframes fbin{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
+@keyframes fbout{to{opacity:0;transform:translateY(-10px)}}
+.fixban .fbgo{flex:1;min-width:0;display:flex;align-items:center;gap:11px;padding:6px 4px 6px 5px;
+  text-align:left;border-radius:13px}
+.fixban .fbgo:active{background:var(--raise2)}
+.fixban .fbic{width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--yes);color:var(--on-verdict)}
+.fixban .fbic svg{width:17px;height:17px}
+.fixban .fbtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.fixban .fbtx b{font-size:13.5px;font-weight:600;color:var(--text);line-height:1.28}
+/* the song name never breaks in half: it drops to its own line whole, and a very long one
+   ends in an ellipsis rather than overflowing */
+.fixban .fbtx b i{font-style:normal;font-weight:750;display:inline-block;max-width:100%;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.fixban .fbtx span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fixban .fbch{flex:none;display:grid;color:var(--faint)}
+.fixban .fbx{width:36px;height:36px;flex:none;border-radius:50%;display:grid;place-items:center;color:var(--faint)}
+.fixban .fbx svg{width:15px;height:15px}
+.fixban .fbx:active{background:var(--raise2)}
+.fixban button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.fixban,.fixban.out{animation:none}}
 .trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
 .cta{display:block;width:100%;margin-top:14px;padding:13px 0;border-radius:13px;text-align:center;
   background:var(--accent);color:#fff;font-size:14px;font-weight:700;transition:filter .15s}
@@ -3013,38 +3089,201 @@ function huntTracker(){
     '<span class="hbar"></span>'+
     '<div class="hs"><span class="hc">3</span><span class="hl">Ready to save</span></div></div>';}
 /* VERDICT 2026-09-29: right / wrong on the final answer. One vote per clip, remembered on
-   the phone so a revisit shows the choice; sent through /feedback (erasable, like the rest). */
+   the phone so a revisit shows the choice; sent through /feedback (erasable, like the rest).
+   v2 (Roham, testing: "when I press the X ... store that data and go and fix it and find the
+   right one"): an X asks "Which one was it?" right there. The choices are the version rows
+   actually on screen, in the order shown (the pick first, then "Other versions we checked"),
+   one tap each, plus "Not in the list". The tap goes to /feedback as kind "correction":
+   verdict "pick" with pick_title + pick_url, or verdict "none". One correction per clip
+   (addify-vfpicks), never asked after a check, and never in the way: it is inline, every
+   other control on the card keeps working, and an unanswered X asks again on a revisit.
+   Every X also parks the clip in addify-pending-fixes ({url, song, asked_at}), so when the
+   fix lands the app can say so (vfFixCheck below). Parked on the X itself, not only after
+   the "Which one" answer: the X alone reaches the fix queue, so skipping the question must
+   not cost the user the "we found it". */
 var VF_OK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
 var VF_NO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+var VF_FIRST=6;   // choices shown before "Show N more": the pick plus five
+var VF_THX_OK='Thanks. Glad we nailed it.', VF_ASK='Which one was it?',
+    VF_THX_NO='We’re on it. We’ll tell you when we find the exact version.';
+var VF_PEND='addify-pending-fixes';
 function vfPick(d){
   var e=d&&d.exact; if(e&&(e.title||e.url)) return e;
   var c=(d&&d.candidates)||[]; if(!c.length) return null;
   try{ return byMatch(c)[0]||null; }catch(x){ return c[0]||null; }}
+function vfState(url){
+  return {v:(lsGet('addify-verdicts','{}')||{})[url]||'', p:(lsGet('addify-vfpicks','{}')||{})[url]||''};}
+function vfPending(){var a=lsGet(VF_PEND,'[]'); return Array.isArray(a)?a:[];}
+function vfPendAdd(url,song){
+  if(!url) return;
+  var a=vfPending();
+  for(var i=0;i<a.length;i++) if(a[i]&&a[i].url===url){
+    if(song&&!a[i].song){a[i].song=song; lsSet(VF_PEND,a);}
+    return;}
+  a.unshift({url:url,song:song||'',asked_at:Date.now()}); lsSet(VF_PEND,a.slice(0,50));}
 function verdictRow(d){
   if(!d||d.result!=='found'||!curURL) return '';
-  var pk=vfPick(d), v=(lsGet('addify-verdicts','{}')||{})[curURL]||'';
-  var q=v==='right'?'Thanks. Glad we nailed it.':v==='wrong'?'Thanks. We’ll look at this one.':
-        (pk?'Did we get the right version?':'Did we get the right song?');
-  return '<div class="vfeed'+(v?' done':'')+'" id="vfeed" role="group" aria-label="Rate this result">'+
+  var pk=vfPick(d), v=vfState(curURL).v;
+  var q=v==='right'?VF_THX_OK:v==='wrong'?VF_THX_NO:(pk?'Did we get the right version?':'Did we get the right song?');
+  return '<div class="vfeed'+(v?' done is-'+v:'')+'" id="vfeed" role="group" aria-label="Rate this result">'+
     '<span class="vq" id="vfq" aria-live="polite">'+q+'</span><span class="vbx">'+
     '<button type="button" class="vy'+(v==='right'?' on':'')+'" id="vfy" aria-label="Right version"'+(v?' disabled':'')+'>'+VF_OK+'</button>'+
     '<button type="button" class="vn'+(v==='wrong'?' on':'')+'" id="vfn" aria-label="Wrong version"'+(v?' disabled':'')+'>'+VF_NO+'</button>'+
     '</span></div>';}
+/* The version rows the card is showing right now, crown first, deduped by url. Read off the
+   rendered card rather than rebuilt from the payload, so the question can only offer what the
+   user actually saw (the shelf caps "Other versions" at 12 and hides the list entirely when
+   nothing clears SHELF_FLOOR). The mashup's "Songs in this mix" (.list.mix) is not a version. */
+function vfRows(d){
+  var pool=[d&&d.exact].concat((d&&d.candidates)||[]), out=[], seen={};
+  var els=document.querySelectorAll('#result .card>.list:not(.mix):not(#livelist)>a.trk,'+
+                                    '#result .card>details.othv>.list>a.trk');
+  for(var i=0;i<els.length;i++){
+    var u=els[i].getAttribute('href')||''; if(!u||seen[u]) continue; seen[u]=1;
+    var c=null; for(var j=0;j<pool.length;j++) if(pool[j]&&pool[j].url===u){c=pool[j]; break;}
+    if(!c){var nm=els[i].querySelector('.nm'); c={url:u,title:nm?nm.textContent:''};}
+    out.push(c);}
+  return out;}
+function vfAsk(row,d,url,rows,anim){
+  if(document.getElementById('vfpick')) return;
+  var pk=vfPick(d);
+  row.insertAdjacentHTML('beforeend',
+    '<div class="vpick'+(anim?' anim':'')+'" id="vfpick" role="group" aria-label="'+VF_ASK+'"><div class="vpl">'+
+    rows.map(function(c,i){var src=(c.source||'').toLowerCase();
+      return '<button type="button" class="trk vpr" data-i="'+i+'"'+(i>=VF_FIRST?' hidden':'')+'>'+
+        '<span class="rkn">'+(i+1)+'</span>'+rowThumb(c)+
+        '<span class="tt"><span class="nm">'+esc(c.title||'Untitled')+'</span><span class="mt">'+
+          (i===0?'<span class="lvtag">Our pick</span>':'')+confChip(c,false)+(src?srcChip(src):'')+
+        '</span></span><span class="vrd" aria-hidden="true"></span></button>';}).join('')+'</div>'+
+    (rows.length>VF_FIRST?'<button type="button" class="vmore" id="vfmore">Show '+(rows.length-VF_FIRST)+' more</button>':'')+
+    '<button type="button" class="vnone" id="vfnone">Not in the list</button></div>');
+  row.classList.add('asking');
+  var q=document.getElementById('vfq'); if(q) q.textContent=VF_ASK;
+  var box=document.getElementById('vfpick'), busy=false;
+  box.addEventListener('click',function(e){
+    var b=e.target.closest&&e.target.closest('button'); if(!b||busy||b.disabled) return;
+    if(b.id==='vfmore'){
+      [].forEach.call(box.querySelectorAll('.vpr[hidden]'),function(x){x.hidden=false;});
+      b.remove(); return;}
+    var c=b.classList.contains('vpr')?rows[+b.getAttribute('data-i')]:null;
+    if(!c&&b.id!=='vfnone') return;
+    busy=true;
+    var m=lsGet('addify-vfpicks','{}')||{}; m[url]=c?'pick':'none'; lsSet('addify-vfpicks',m);
+    var o={kind:'correction',url:url,verdict:c?'pick':'none',guess_song:d.base_song||'',
+      guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
+    if(c){o.pick_title=c.title||''; o.pick_url=c.url||'';}
+    sendFeedback(o);
+    vfPendAdd(url,d.base_song||'');
+    b.classList.add('sel');
+    [].forEach.call(box.querySelectorAll('button'),function(x){x.disabled=true;});
+    setTimeout(function(){vfThanks(row);},320);   // long enough to see the ring fill
+  });}
+function vfThanks(row){
+  var box=document.getElementById('vfpick'); if(box&&row.contains(box)) box.remove();
+  row.classList.remove('asking');
+  var q=document.getElementById('vfq'); if(q&&row.contains(q)) q.textContent=VF_THX_NO;
+  // the list closed under the question; if the user had scrolled into it, bring the row back
+  if(row.isConnected&&row.getBoundingClientRect().top<0&&row.scrollIntoView){
+    var calm=false; try{calm=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(x){}
+    row.scrollIntoView({block:'nearest',behavior:calm?'auto':'smooth'});}}
 function vfWire(d){
-  var row=document.getElementById('vfeed'); if(!row||row.classList.contains('done')) return;
-  var url=curURL, pk=vfPick(d);
+  var row=document.getElementById('vfeed'); if(!row) return;
+  var url=curURL, pk=vfPick(d), st=vfState(url);
+  if(st.v){                                      // already voted on this clip
+    if(st.v==='wrong'){
+      vfPendAdd(url,d.base_song||'');
+      if(!st.p){var rs0=vfRows(d); if(rs0.length) vfAsk(row,d,url,rs0,false);}}
+    return;}
   var vote=function(v){
     var m=lsGet('addify-verdicts','{}')||{}; m[url]=v; lsSet('addify-verdicts',m);
     sendFeedback({kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''});
-    row.classList.add('done');
-    var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on');
+    if(v==='wrong') vfPendAdd(url,d.base_song||'');
+    row.classList.add('done','is-'+v);
+    var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on','pop');
     ['vfy','vfn'].forEach(function(id){var x=document.getElementById(id); if(x) x.disabled=true;});
+    var rs=v==='wrong'?vfRows(d):[];
     var q=document.getElementById('vfq');
-    if(q) q.textContent=v==='right'?'Thanks. Glad we nailed it.':'Thanks. We’ll look at this one.';};
+    if(q) q.textContent=v==='right'?VF_THX_OK:(rs.length?VF_ASK:VF_THX_NO);
+    if(rs.length) vfAsk(row,d,url,rs,true);};
   var y=document.getElementById('vfy'), n=document.getElementById('vfn');
   if(y) y.onclick=function(){vote('right');};
   if(n) n.onclick=function(){vote('wrong');};}
+/* "WE FOUND IT" (Phase 1 of X-TO-FIX-PLAN.md: no push yet, so the app asks on its own).
+   On every open, every return to the foreground and every time Finds opens, if any X'd clip
+   is still waiting: GET /fixes?urls=<up to 20, newest first> -> {fixes:[{url, right_title,
+   right_url, fixed_at}]}. Each fix for a clip on the list: that Find now opens the right
+   upload, the clip leaves the list, and one banner says "We found the exact version of
+   <song>". The banner is one tap (opens the right upload, link-out like a Finds row), never
+   blocks the screen, waits while a scan or the splash/onboarding is up, and leaves by itself.
+   Only X'd clips are ever on the list, so a check never produces one. The fixed clip's stored
+   vote is dropped too: its answer changed, and a rescan should ask about the new one instead
+   of showing "We're on it" under a corrected crown. Offline or an older engine without
+   /fixes: nothing happens, the list waits for the next open. */
+var vfFixAt=0, vfFixBusy=false, vfBanQ=[], vfBanEl=null, vfBanT=0;
+function vfFixCheck(){
+  var a=vfPending(); if(!a.length||vfFixBusy) return;
+  var now=Date.now(); if(now-vfFixAt<5000) return;      // an open fires load + visibility together
+  var urls=a.slice(0,20).map(function(x){return x&&x.url;}).filter(Boolean); if(!urls.length) return;
+  vfFixAt=now; vfFixBusy=true;
+  fetch(ENGINE+'/fixes?urls='+encodeURIComponent(urls.join(',')),{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(j){vfFixBusy=false; var fx=j&&j.fixes; if(Array.isArray(fx)&&fx.length) vfApplyFixes(fx);})
+    .catch(function(){vfFixBusy=false;});}
+function vfApplyFixes(fx){
+  var pend=vfPending(), crate=loadCrate(), vs=lsGet('addify-verdicts','{}')||{},
+      ps=lsGet('addify-vfpicks','{}')||{}, ch=false, n=0;
+  fx.forEach(function(f){
+    if(!f||!f.url||!/^https?:\/\//i.test(f.right_url||'')) return;
+    var it=null;
+    for(var i=0;i<pend.length;i++) if(pend[i]&&pend[i].url===f.url){it=pend[i]; pend.splice(i,1); break;}
+    if(!it) return;                              // not waiting here (already told, or a check)
+    n++;
+    crate.forEach(function(x){if(x&&x.clip===f.url){
+      x.url=f.right_url; x.fixed={title:f.right_title||'',at:f.fixed_at||Date.now()}; ch=true;}});
+    delete vs[f.url]; delete ps[f.url];
+    vfBanQ.push({song:it.song||'',title:f.right_title||'',url:f.right_url});});
+  if(!n) return;
+  lsSet(VF_PEND,pend); lsSet('addify-verdicts',vs); lsSet('addify-vfpicks',ps);
+  if(ch) storeCrate(crate);
+  vfBanNext();}
+function vfBanBlocked(){
+  if(busy) return true;
+  var s=document.getElementById('splash'), o=document.getElementById('onb');
+  return !!((s&&!s.hidden&&!s.classList.contains('bye'))||(o&&!o.hidden));}
+function vfBanNext(){
+  if(vfBanEl||!vfBanQ.length) return;
+  if(vfBanBlocked()){setTimeout(vfBanNext,2500); return;}
+  var b=vfBanQ.shift(), el=document.createElement('div');
+  el.className='fixban'; el.id='fixban'; el.setAttribute('role','status'); el.setAttribute('aria-live','polite');
+  el.innerHTML='<button type="button" class="fbgo"><span class="fbic">'+VF_OK+'</span>'+
+    '<span class="fbtx"><b>We found the exact version'+(b.song?' of <i>'+esc(b.song)+'</i>':'')+'</b>'+
+    (b.title?'<span>'+esc(b.title)+'</span>':'')+'</span><span class="fbch">'+IC.rchev+'</span></button>'+
+    '<button type="button" class="fbx" aria-label="Dismiss">'+VF_NO+'</button>';
+  document.body.appendChild(el);                 // position:fixed lives outside .app (design rule)
+  vfBanEl=el;
+  el.querySelector('.fbgo').onclick=function(){window.open(b.url,'_blank','noopener'); vfBanHide();};
+  el.querySelector('.fbx').onclick=vfBanHide;
+  vfBanT=setTimeout(vfBanHide,12000);}
+function vfBanHide(){
+  if(!vfBanEl) return;
+  clearTimeout(vfBanT);
+  var el=vfBanEl, calm=false; vfBanEl=null;
+  try{calm=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(x){}
+  el.classList.add('out');
+  setTimeout(function(){if(el.parentNode) el.parentNode.removeChild(el); vfBanNext();},calm?0:240);}
+document.addEventListener('visibilitychange',function(){if(!document.hidden) vfFixCheck();});
+window.addEventListener('pageshow',function(e){if(e.persisted) vfFixCheck();});
+setTimeout(function(){
+  /* once per phone: an X from before this build (v1 kept no list) still gets its banner.
+     Roham's 15:37 X on the "Welcome to my Crib (slowed)" reel is exactly this case. */
+  try{if(!localStorage.getItem('addify-pend-v2')){
+    localStorage.setItem('addify-pend-v2','1');
+    var vs=lsGet('addify-verdicts','{}')||{}, cr=loadCrate();
+    Object.keys(vs).forEach(function(u){if(vs[u]!=='wrong') return;
+      var s=''; for(var i=0;i<cr.length;i++) if(cr[i]&&cr[i].clip===u){s=cr[i].song||''; break;}
+      vfPendAdd(u,s);});}}catch(e){}
+  vfFixCheck();},1200);
 function eraseMyFeedback(){
   var ids=lsGet('addify-fbids','[]');
   return Promise.all(ids.map(function(id){
@@ -4220,7 +4459,7 @@ function nav(state){setState(state);
   if(state==='search') renderSearch();
   if(state==='idle') paintHome();
   if(state==='trending') renderTrend();
-  if(state==='library') renderLib();
+  if(state==='library'){renderLib(); vfFixCheck();}   // VERDICT v2: a pending fix may have landed
   if(state==='profile') renderProf();}
 Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
   b.onclick=function(){nav(b.getAttribute('data-tab'));};});

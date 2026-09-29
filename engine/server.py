@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 import crate_engine as E
+import corrections as CX      # X-TO-FIX 2026-09-29: corrections store, fix queue, X alerts
 import wrong_song
 import speed_from_master
 import links as L
@@ -143,6 +144,7 @@ def _sound_cache_put(src, res):
 
 def _cache_get(key):
     """Cached result for `key`, or None. Expires stale failures."""
+    CORR.poll()     # CORRECTIONS: a new fix drops the stale answer before it is served
     c = CACHE.get(key)
     if c is None:
         return None
@@ -171,6 +173,70 @@ def _cache_put(key, res):
         _disk_put("url", key, res)
     else:
         _disk_put("url", key, None)
+
+
+# ------------------------------------------------ CORRECTIONS (X-TO-FIX 2026-09-29)
+# corrections.json next to this file: clips the owners confirmed wrong, with the upload that
+# is right (corrections.py). Re-read when it changes (one stat per POLL_S, no restart). A
+# matching scan hunts as usual with the right upload added to its candidates; server-side it
+# is crowned only when it passes the same verify gates as any crown (see _phase2). A changed
+# file drops every cached answer (URL, sound, disk) the change made stale, so the next scan
+# of that clip or sound does the real work instead of replaying the wrong answer.
+def _corr_sid(res):
+    m = re.search(r"/music/x-(\d+)", (res or {}).get("sound_url") or "")
+    return m.group(1) if m else None
+
+
+def _corr_sound_ok(res):
+    """Same guard as the sound cache: the credited sound must BE the clip's audio."""
+    c = (res or {}).get("sound_match_core")
+    return not (res or {}).get("sound_mismatch") and (c is None or c >= E.CORE_KEEP)
+
+
+def _corr_want(store, key, res):
+    """The right_url the corrections want this cached answer to carry, or None."""
+    for k in sorted(CX.clip_keys(key) | CX.clip_keys((res or {}).get("url") or "")):
+        e = store.by_key.get(k)
+        if e is not None:
+            return e["right_url"]
+    sid = _corr_sid(res)
+    if sid and sid in store.by_sid and _corr_sound_ok(res):
+        return store.by_sid[sid]["right_url"]
+    return None
+
+
+def _corr_sync(store):
+    """Drop cached answers whose correction no longer matches the file: new fixes, changed
+    fixes and removed fixes alike. A kept row is exactly one the file agrees with."""
+    du = ds = 0
+    for ck, r in list(CACHE.items()):
+        want = _corr_want(store, ck, r)
+        have = ((r or {}).get("correction") or {}).get("url")
+        if want == have:
+            continue
+        CACHE.pop(ck, None)
+        _FAIL_AT.pop(ck, None)
+        _disk_put("url", ck, None)
+        du += 1
+        sid = _corr_sid(r)    # every other video on this sound was served the same answer
+        if want and sid and sid in SOUND_CACHE and \
+                ((SOUND_CACHE[sid].get("correction") or {}).get("url") != want):
+            SOUND_CACHE.pop(sid, None)
+            _disk_put("sound", sid, None)
+            ds += 1
+    for sid, r in list(SOUND_CACHE.items()):
+        e = store.by_sid.get(sid)
+        want = e["right_url"] if e is not None else None
+        if want == ((r or {}).get("correction") or {}).get("url"):
+            continue
+        SOUND_CACHE.pop(sid, None)
+        _disk_put("sound", sid, None)
+        ds += 1
+    E.tlog("corrections_sync", 0.0, entries=len(store.entries), urls=du, sounds=ds)
+
+
+CORR = CX.Store(on_change=_corr_sync)
+XALERT = CX.XAlert(port=PORT)
 
 
 # ------------------------------------------------ RESULTS THAT SURVIVE A RESTART (speed3)
@@ -1357,7 +1423,21 @@ def _phase1(url, key, t0):
 
     _forced = key in _NO_SOUND_CACHE
     _NO_SOUND_CACHE.discard(key)
+    # CORRECTIONS 2026-09-29 (X-TO-FIX): a clip the owners confirmed wrong. Matched on the
+    # link, on the video id get_source resolved, or on the TikTok sound when the sound IS
+    # the clip's audio (the sound cache's own guard).
+    _corr = None
+    try:
+        _corr = CORR.match(url, video_id=src.get("video_id"),
+                           sound_id=(src.get("sound_id") if _corr_sound_ok(src) else None))
+    except Exception:
+        _corr = None
+    if _corr is not None:
+        E.tlog("correction_match", 0.0, right=_corr["right_url"][:120])
     _sc = None if _forced else _sound_cache_get(src)
+    if _sc and _corr is not None and \
+            (_sc.get("correction") or {}).get("url") != _corr["right_url"]:
+        _sc = None       # the sound's cached answer predates the fix: hunt and verify it
     if _sc and _early is not None:
         _early.cancel("sound_cache")
         _early = None
@@ -1711,6 +1791,9 @@ def _phase1(url, key, t0):
                        t_pub=_nm["t"])
         worth = bool((_edit_worthy(src, fp) or res.get("from_caption"))
                      and (base_title or E._is_named_credit(src.get("credit_title"))))
+        if _corr is not None and not worth and (
+                base_title or E._is_named_credit(src.get("credit_title"))):
+            worth = True        # CORRECTIONS: the fix is verified in the hunt, so hunt
         res["edits_pending"] = worth
         # ctx always carries src so the caller can free its temp audio, even when
         # there's no hunt to run.
@@ -1719,6 +1802,7 @@ def _phase1(url, key, t0):
                "shazam_reliable": shazam_reliable, "t0": t0, "key": key, "url": url,
                "res": res, "worth": worth, "comment_links": comment_links,
                "reupload": reup}
+        ctx["correction"] = _corr          # CORRECTIONS 2026-09-29 (None almost always)
         # Joined last so it never delays the fingerprint. By now it has had the whole
         # Shazam sweep to finish in, so the budget is a backstop, not a wait.
         #
@@ -3577,6 +3661,8 @@ def _phase2(ctx, on_cand=None):
     base_title, base_artist = ctx["base_title"], ctx["base_artist"]
     edit_label, mdir = ctx["edit_label"], ctx["mdir"]
     hint_texts, shazam_reliable = ctx["hint_texts"], ctx["shazam_reliable"]
+    _corr = ctx.get("correction")          # CORRECTIONS 2026-09-29
+    _corr_res = None
     # THE GATES READ THE SWEEP'S LABEL AND THE SOURCE'S NAME, NOT THE RENDITION'S (see
     # _name_rendition). The speed is not the only thing a gate reads off `res`:
     # _crown_other_song builds its known-artist set from res["base_artist"], so the
@@ -3771,6 +3857,21 @@ def _phase2(ctx, on_cand=None):
             # the pool for every clip, while this only ever APPENDS a URL that still has
             # to clear verify() against the real clip audio.
             _cmlinks = ctx.get("comment_links") or res.get("comment_links") or []
+            if _corr is not None:
+                # CORRECTIONS 2026-09-29: the owner-confirmed upload joins the pool the way
+                # a pasted comment link does - APPENDED, downloaded and verified against the
+                # clip like any row. A comment link that already is it just gets the flag.
+                _cml, _chit = [], False
+                for _l in _cmlinks:
+                    _lu = _l.get("url") if isinstance(_l, dict) else _l
+                    if CX.norm_audio_url(_lu) == _corr["right_url"]:
+                        _l = dict(_l) if isinstance(_l, dict) else {"url": _lu}
+                        _l["correction"], _chit = True, True
+                    _cml.append(_l)
+                if not _chit:
+                    _cml.append({"url": _corr["right_url"], "likes": 0,
+                                 "from_creator": False, "correction": True})
+                _cmlinks = _cml
             # @HANDLE -> THAT PRODUCER'S SOUNDCLOUD. The comments named the maker but
             # pasted no link, so _cmlinks is empty and the search would run blind while
             # the exact upload sits under the handle (the Manziel clip: creator answered
@@ -4195,6 +4296,50 @@ def _phase2(ctx, on_cand=None):
                        tried=len(_fig_info.get("tried") or []))
             except Exception as _fex:
                 E.tlog("crown_by_figure", 0.0, error=type(_fex).__name__)
+            # CORRECTIONS 2026-09-29 (X-TO-FIX). The owners confirmed the right upload for
+            # this clip. It is NEVER crowned blind: it takes the crown only if it passed the
+            # engine's own editmatch (verify() against the clip audio), the keep bar, the
+            # dead-link check, the same four crown gates every row above ran through, and
+            # the time-reversed null control (corrections.verify_pick). If anything refuses
+            # it, the reason is logged and the engine's own pick stands.
+            if _corr is not None:
+                def _cgate(c):
+                    _w, _s = _crown_tempo_mismatch(c, measured, base_title)
+                    if not _w:
+                        _w = _crown_contradicts(c, _gate_label, mdir, measured=measured,
+                                                tilt_readable=(_s is None))
+                    if not _w:
+                        _w = _crown_other_song(c, _corr.get("song") or base_title, _reup, res)
+                    if not _w:
+                        _w = _rendition_original_why(c, res.get("rendition"))
+                    return _w, _s
+                try:
+                    _crow, _csv, _cwhy, _ctr = CX.verify_pick(
+                        _corr["right_url"], verified, edit.get("ranked") or [],
+                        edit.get("corr_rows") or [], E.CORE_KEEP, _cgate,
+                        lambda c: _time_reversed_null(src.get("audio"), c.get("url"),
+                                                      c.get("core")),
+                        _is_dead)
+                except Exception as _cex:
+                    _crow, _csv, _cwhy, _ctr = None, None, "check failed: %s" % type(_cex).__name__, True
+                _corr_res = {"entry": _corr, "ok": _crow is not None, "why": _cwhy,
+                             "transient": _ctr, "core": (_crow or {}).get("core"),
+                             "title": (_crow or {}).get("title")}
+                E.tlog("correction", 0.0, ok=_crow is not None, why=(_cwhy or "")[:160],
+                       right=_corr["right_url"][:120],
+                       moved=bool(_crow is not None and _crow is not top),
+                       core=(_crow or {}).get("core"))
+                if _crow is not None:
+                    top, _source_v = _crow, _csv
+                    for _k in ("unsure", "weak_exact", "crown_rejected", "crown_by_figure"):
+                        res.pop(_k, None)
+                    for _ri in [i for i, (_w, _c) in _rejects.items() if _c is _crow]:
+                        _rejects.pop(_ri, None)
+                    try:
+                        res["fig_pitched"] = bool(_FIG_PITCH.search(
+                            _fig_label(res, measured, _reup, top, _source_v) or ""))
+                    except Exception:
+                        pass
             if top is None:
                 # every row above the bar was refused - report the FIRST refusal, which is
                 # the one about the strongest candidate and the one worth showing.
@@ -4466,8 +4611,35 @@ def _phase2(ctx, on_cand=None):
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key, outcome="hunt")   # APPLYALL 2026-09-29
-        _cache_put(key, res)
-        _sound_cache_put(src, res)       # answer the SOUND, not just this clip
+        if _corr_res is not None:
+            # CORRECTIONS 2026-09-29: the answer says it came from a correction; a refused
+            # one says why. last_check goes back onto the entry (corrections.py list shows
+            # it, /fixes stops announcing a fix that fails), and the TikTok sound is learned
+            # when this clip's sound is its audio, so every video on that sound gets the fix.
+            _ce = _corr_res["entry"]
+            res["correction"] = {"url": _ce["right_url"],
+                                 "title": ((_corr_res["title"] if _corr_res["ok"] else None)
+                                           or _ce.get("right_title") or ""),
+                                 "ok": _corr_res["ok"]}
+            if _corr_res["ok"]:
+                res["from_correction"] = True
+                if _ce.get("song"):
+                    res["base_song"] = _ce["song"]
+                    res["base_artist"] = _ce.get("artist") or res.get("base_artist")
+            elif _corr_res["why"]:
+                res["correction"]["why"] = _corr_res["why"]
+            if not _corr_res["transient"]:
+                _csid = (src.get("sound_id") if (_corr_res["ok"] and _corr_sound_ok(src)
+                                                  and not _phone_unconfirmed(res)) else None)
+                try:
+                    CORR.note_check(_ce, _corr_res["ok"], _corr_res["why"], _corr_res["core"],
+                                    _csid, _corr_res["title"])
+                except Exception:
+                    pass
+        if _corr_res is None or not _corr_res["transient"]:
+            # (a correction that was never even downloaded is retried on the next scan)
+            _cache_put(key, res)
+            _sound_cache_put(src, res)       # answer the SOUND, not just this clip
         return res
     finally:
         E.CAND_HOOK = _prev_cand_hook
@@ -4740,7 +4912,11 @@ FEEDBACK = os.path.join(HERE, "feedback.jsonl")
 FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict",
                    # VERDICT 2026-09-29: the result card's check / X ("right version?")
                    # records what the engine answered, so a "wrong" names the upload to fix
-                   "kind", "crown_title", "crown_url")
+                   "kind", "crown_title", "crown_url",
+                   # VERDICT v2 2026-09-29: after an X, "Which one was it?" sends kind
+                   # "correction", verdict "pick" (naming the upload that was right) or
+                   # "none" (not in the list)
+                   "pick_title", "pick_url")
 
 def record_review_note(obj):
     """One line of Roham's feedback -> eval/inbox.jsonl, tied to the clip URL.
@@ -4797,6 +4973,16 @@ def record_feedback(obj):
     row["ts"] = int(time.time())
     with open(FEEDBACK, "a") as f:
         f.write(json.dumps(row) + "\n")
+    # X-TO-FIX 2026-09-29: an X on a result (or the "Which one was it?" pick after it) also
+    # lands in fixqueue.jsonl, same id so erasure reaches it, and DMs Roham from a daemon
+    # thread (XALERT never blocks or fails this request).
+    try:
+        _fx = CX.fix_row(obj, row["id"], row["ts"])
+        if _fx is not None:
+            CX.fixq_append(_fx)
+            XALERT.feedback(_fx)
+    except Exception:
+        pass
     return {"ok": True, "id": row["id"]}
 
 
@@ -4817,6 +5003,10 @@ def erase_feedback(row_id):
     if gone:
         with open(FEEDBACK, "w") as f:
             f.writelines(kept)
+    try:
+        CX.fixq_erase(row_id)            # X-TO-FIX: the fix-queue copy of the same row
+    except Exception:
+        pass
     return {"ok": True, "erased": gone}
 
 
@@ -7506,6 +7696,17 @@ class H(BaseHTTPRequestHandler):
                 code, body = 502, {"ok": False, "error": "Search failed on our side. (%s)"
                                                          % str(e)[:80]}
             return self._send(code, body)
+        if u.path == "/fixes":
+            # X-TO-FIX 2026-09-29: which of these clips now have a correction. The page asks
+            # on open with the links the user X'd, to say "we found the exact version".
+            # A dict lookup per link: no scan, no fetch, no cache write.
+            _fq = parse_qs(u.query)
+            _fl = [x.strip() for v in (_fq.get("urls") or []) for x in v.split(",")
+                   if x.strip()][:20]
+            try:
+                return self._send(200, {"fixes": CORR.fixes_for(_fl)})
+            except Exception:
+                return self._send(200, {"fixes": []})
         if u.path not in ("/find", "/base", "/edits", "/edits/stream"):
             return self._send(404, {"error": "not found"})
         q = parse_qs(u.query)
@@ -7643,4 +7844,6 @@ if __name__ == "__main__":
     _pu, _ps = _disk_load()
     if _pu or _ps:
         print("restored %d url + %d sound answers from the per-port store" % (_pu, _ps))
+    CORR.poll(force=True)   # first load; its sync drops restored answers it disagrees with
+    print("corrections: %d loaded; X alerts %s" % (len(CORR.entries), XALERT.why))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

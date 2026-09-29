@@ -2839,6 +2839,9 @@ def _get_source_impl(url, defer_crosscheck, tmp):
            # another clip already used. It costs nothing here - tt_tikwm already parsed
            # it and _remember_music_id kept it.
            "sound_id": _TT_MUSIC_ID.get(full) or _TT_MUSIC_ID.get(url),
+           # CORRECTIONS 2026-09-29: the resolved video id, so corrections.json can match
+           # a clip whichever of its links was scanned. Read by server.py only.
+           "video_id": _tt_id(full or "") or _tt_id(url or ""),
            "thumb": oe.get("thumb"), "tmp": tmp}
 
     # ---------------- WHO MADE THE SOUND (the creator check, zero requests) ----------
@@ -5111,6 +5114,8 @@ def comment_candidates(links):
                     # carried through when the link came from producer_handle_tracks,
                     # which reads it out of the JSON it already fetched. Display only.
                     "thumb": (L.get("thumb") if isinstance(L, dict) else None)})
+        if isinstance(L, dict) and L.get("correction"):
+            out[-1]["correction"] = True     # CORRECTIONS 2026-09-29 (server.py decides it)
     return out
 
 
@@ -5168,9 +5173,14 @@ def _comment_extra(comment_cands, cands, head, want=3):
         hit["creator_link"] = hit.get("creator_link") or c.get("creator_link")
         hit["comment_likes"] = max(hit.get("comment_likes") or 0,
                                    c.get("comment_likes") or 0)
+        if c.get("correction"):
+            hit["correction"] = True          # CORRECTIONS 2026-09-29
         if id(hit) not in in_head:
             out.append(hit)
-    out.sort(key=lambda c: (0 if c.get("creator_link") else 1,
+    # a correction link always keeps its slot (CORRECTIONS 2026-09-29); every other row
+    # sorts exactly as before, since the new first key is 1 for all of them
+    out.sort(key=lambda c: (0 if c.get("correction") else 1,
+                            0 if c.get("creator_link") else 1,
                             -(c.get("comment_likes") or 0)))
     return out[:want]
 
@@ -6891,6 +6901,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                     hit["creator_link"] = (hit.get("creator_link")
                                            or c.get("creator_link"))
                     hit["comment_likes"] = c.get("comment_likes")
+                    if c.get("correction"):
+                        hit["correction"] = True     # CORRECTIONS 2026-09-29
             hc = hc + _fresh
             tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc),
                  ncomment=len(cm_cands))
@@ -6930,6 +6942,17 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                     on_tempo, _demote = fast_exit_vouch(on_tempo, _fast_dir, base_title)
                     tlog("fast_exit_gate", 0.0, clip_dir=_fast_dir, n=_n_in,
                          ok=(len(on_tempo) - len(_demote)), exit=bool(on_tempo))
+                # CORRECTIONS 2026-09-29: an owner-confirmed upload (corrections.json)
+                # that did not reach FAST_EXIT_CORE would be dropped by the shortcut, which
+                # returns only `good`. It has to reach the rank pass, where server.py holds
+                # it to the full verify gates, so the shortcut steps aside: the scored rows
+                # carry into the broad hunt exactly as on an off-tempo decline. Inert on
+                # every clip without a correction row.
+                _good_ids = {id(g) for g in good}
+                if good and on_tempo and any(c.get("correction") and id(c) not in _good_ids
+                                             for c in hc):
+                    tlog("fast_declined_correction", 0.0, n=len(good))
+                    on_tempo = []
                 if good and not on_tempo:
                     tlog("fast_declined", 0.0, n=len(good),
                          v=round(float(good[0].get("vspeed") or 1.0), 4))
@@ -8254,7 +8277,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     for c in ranked:
         if c.get("core", 0) >= CORE_SAME:      # only collapse provably identical audio
             sig = _edit_sig(c)
-            if sig in seen_sig:
+            # CORRECTIONS 2026-09-29: never collapse the owner-confirmed upload into another
+            # upload of the same audio; WHICH upload is exactly what the owners corrected
+            if sig in seen_sig and not c.get("correction"):
                 continue
             seen_sig.add(sig)
         deduped.append(c)
@@ -8323,6 +8348,12 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                   master_path=(master.get("path") if master else None),
                   master_core=(master.get("core", 0.0) if master else None),
                   ref_paths=ref_paths)
+    # CORRECTIONS 2026-09-29: how the owner-confirmed upload scored, kept or not, so the
+    # server can tell "did not verify" from "never downloaded". Absent without one.
+    _corr_rows = [c for c in cands if c.get("correction")]
+    if _corr_rows:
+        result["corr_rows"] = [{"url": c.get("url"), "core": c.get("core"),
+                                "editmatch": c.get("editmatch")} for c in _corr_rows]
     return result
 
 

@@ -22,3 +22,8 @@ mobile/.expo/
 
 mobile/dist/
 .expo-token
+
+# X-TO-FIX 2026-09-29: user reel links and fix-queue rows, never committed (the repo is public)
+engine/corrections.json
+engine/corrections.json.lock
+engine/fixqueue.jsonl
