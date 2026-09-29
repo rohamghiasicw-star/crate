@@ -2524,8 +2524,26 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst,
                         "-af", "areverse", "-ac", "1", "-ar", "44100", rev],
                        check=True, timeout=30)
-        rc = _verify.verify(clip_audio, rev, 20).get("core") or 0.0
+        _rv = _verify.verify(clip_audio, rev, 20)
+        rc = _rv.get("core") or 0.0
         if rc >= fwd_core:
+            if E.NULL_FP and fwd_core >= 0.999 and rc >= 0.999:
+                # ROOTFIX D (CRATE_NULL_FP). Both cores pinned at 1.000 carry no comparison
+                # at all (findings/core-saturation.md), so ask the unsaturated signal: raw
+                # chromaprint fp, forward vs reversed, over the SAME downloaded 20 s. The
+                # rule is unchanged - refuse when the reversed copy scores at least as
+                # high - only the number it reads is. DdrXqlANC_m (Sounder's mashup): core
+                # 1.000 vs 1.000, fp 0.971 vs 0.744 (xfix/WRONG-ANSWERS.md D). fp 0.0 is a
+                # dead fpcalc, which reads as no evidence and refuses exactly as before.
+                _fv = _verify.verify(clip_audio, dst, 20)
+                ffp, rfp = float(_fv.get("fp") or 0.0), float(_rv.get("fp") or 0.0)
+                E.tlog("null_fp", 0.0, url=(cand_url or "")[:120], fwd_fp=round(ffp, 4),
+                       rev_fp=round(rfp, 4), fwd_core=round(float(_fv.get("core") or 0), 4),
+                       rev_core=round(rc, 4), refuse=bool(rfp >= ffp))
+                if rfp < ffp:
+                    return None
+                return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
+                        "%.3f), so the match is texture, not this recording" % (rc, rfp, ffp))
             return ("scores %.3f against a time-reversed copy of itself, so the match is "
                     "texture, not this recording" % rc)
         return None
@@ -2750,6 +2768,78 @@ def _reconcile_single_ref(measured, phase1_label, verified, base_title=None):
         return rep, ("one reference read %.3fx; %d plain uploads of the same recording "
                      "agree on %.3fx" % (m, n, ps))
     return measured, None
+
+
+def _proven_name(fp, src, top, exact):
+    """ROOTFIX A/D (see the call in _phase2). -> (song, artist, lane) or None."""
+    if not (top and exact) or (top.get("core") or 0) < E.CORE_SAME:
+        return None
+    _tfp = top.get("fp")
+    if _tfp and float(_tfp) <= E.FP_FLOOR:
+        return None
+    _tv = top.get("vspeed_locked") or top.get("vspeed") or 1.0
+    if abs(math.log2(float(_tv))) > _TEMPO_EXACT:
+        return None
+    ck = set((E._title_key(top.get("title")) or "").split())
+
+    def words(t):
+        return {w for w in (E._title_key(t) or "").split() if len(w) >= 3}
+    pr = (fp or {}).get("posted_rival") if E.POSTED_LANE else None
+    if pr:
+        rk = words(E._vote_title_key(pr.get("title")))
+        if rk and rk <= ck:
+            core_t = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", pr.get("title") or "").strip()
+            m = E._VOTE_DASH_TAIL.search(core_t)
+            if m and E._vote_tail_strippable(m.group(1)):
+                core_t = core_t[:m.start()].strip()
+            parts = [x.strip() for x in re.split(r"\s[-\u2013|]\s", top.get("title") or "")
+                     if x.strip()]
+            art = top.get("uploader")
+            if len(parts) == 2:
+                if rk <= words(parts[1]):
+                    art = parts[0]
+                elif rk <= words(parts[0]):
+                    art = parts[1]
+            return core_t, art, "posted_rival"
+    ct = (src or {}).get("credit_title")
+    if E.MASHUP_HALVES and ct:
+        halves = E.split_mashup(ct)
+        if len(halves) >= 2:
+            songs = [E._song_part(h) for h in halves[:2]]
+            hw = [words(x) for x in songs]
+            if all(hw) and all(h <= ck for h in hw):
+                pre = halves[0][:len(halves[0]) - len(songs[0])].strip(" -\u2013\u2014")
+                return (" X ".join(songs), pre or (src or {}).get("credit_author"),
+                        "mashup_credit")
+    return None
+
+
+def _crown_fp_floor(c, source_v=None):
+    """ROOTFIX B (CRATE_FP_FLOOR_REFUSE). A crown whose raw chromaprint fp sits at the level
+    unrelated songs reach carries no fingerprint evidence of the recording, whatever `core`
+    says: core = max(norm(fp), norm(arr)) and arr saturates on low-transient audio
+    (findings/core-saturation.md). Reel DcewXUUxQcW crowned "Boom Clap (ASTR Remix)" at core
+    0.775 on arr alone with fp 0.597; the owner: "Boom Clap just slowed".
+
+    Threshold E.FP_FLOOR (0.62), derived in rootfix/FIXES.md: verify() on the 576 labelled
+    matcher pairs puts every false pair at fp <= 0.613 and every same-speed true pair at
+    >= 0.638. Two exemptions, both measured: fp 0.0 is a dead fpcalc (no evidence either
+    way, fail open), and a SOURCE crown (the clip re-pitched from a plain upload, source_v
+    set) is exempt because the same matcher set puts true pairs 15-30% off-speed at fp
+    0.553-0.711. -> reason string or None."""
+    if not E.FP_FLOOR_REFUSE or source_v is not None:
+        return None
+    fp = c.get("fp")
+    if fp is None:
+        return None
+    try:
+        fp = float(fp)
+    except Exception:
+        return None
+    if 0.0 < fp <= E.FP_FLOOR:
+        return ("its fingerprint match (fp %.3f) is at the level unrelated songs reach, so "
+                "nothing proves it is this recording" % fp)
+    return None
 
 
 def _crown_tempo_mismatch(top, measured=None, base_title=None):
@@ -3986,7 +4076,8 @@ def _phase2(ctx, on_cand=None):
                 handle=src.get("handle"), hints=search_hints,
                 shazam_reliable=shazam_reliable, creator=_creator,
                 comment_urls=_cmlinks,
-                pair=(mash or {}).get("pair"), on_cand=_emit))
+                pair=(mash or {}).get("pair"), on_cand=_emit,
+                posted_rival=(fp or {}).get("posted_rival")))   # ROOTFIX A (flag-gated)
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
             _hunt_ev(key, "k", 0)                           # PROGRESS 2026-09-29: deciding
@@ -4279,6 +4370,7 @@ def _phase2(ctx, on_cand=None):
             # always read. speed_vs_credit is that label, byte for byte.
             _gate_label = (res.get("speed") if _reup is None
                            else (res.get("reupload") or {}).get("speed_vs_credit"))
+            _fp_floor_hits = []            # ROOTFIX B: rows the fp floor refused
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
                 _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title)
@@ -4292,6 +4384,10 @@ def _phase2(ctx, on_cand=None):
                     # TASK A: the rendition test is a gate on every row now, so the walk
                     # (and the highest-figure pick below) steps past the plain original.
                     _why = _rendition_original_why(_cand, res.get("rendition"))
+                if not _why:
+                    _why = _crown_fp_floor(_cand, _sv)          # ROOTFIX B, flag-gated
+                    if _why:
+                        _fp_floor_hits.append(_cand)
                 if _why:
                     _rejects[_i] = (_why, _cand)
                     continue
@@ -4429,6 +4525,32 @@ def _phase2(ctx, on_cand=None):
                     res["crown_rejected"] = _first_reject[0]
                     res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
+                # ROOTFIX B: nothing crowned because the fp floor refused the nearest
+                # remix. When phase 1 measured a clean resample of the base song (2+
+                # agreeing, skew-corrected hits of one track), the honest answer is that
+                # song at that speed, not the nearest upload. Display data only.
+                _sae = (fp or {}).get("speed_eff") or {}
+                if (_fp_floor_hits and base_title and _sae.get("n", 0) >= 2
+                        and (_sae.get("spread") or 1.0) <= 0.01):
+                    res["source_at_speed"] = {
+                        "title": base_title, "artist": base_artist,
+                        "speed": (fp or {}).get("edit_label"), "x": _sae.get("x"),
+                        "n": _sae.get("n"),
+                        "why": "no upload at this speed passed; the original, re-pitched"}
+                    E.tlog("source_at_speed", 0.0, title=(base_title or "")[:60],
+                           speed=(fp or {}).get("edit_label"), n=_sae.get("n"))
+            try:
+                # ROOTFIX (observational, writes only under CRATE_TIMING): the raw evidence
+                # behind the crown and the pool, so fp can be read per scan.
+                def _ev(c):
+                    return [round(float(c.get("fp") or 0.0), 4), round(float(c.get("core") or 0.0), 4),
+                            round(float(c.get("arr") or 0.0), 4), c.get("vspeed"),
+                            (c.get("title") or "")[:60], (c.get("url") or "")[:120]]
+                E.tlog("crown_evidence", 0.0, crown=_ev(top) if top else None,
+                       pool=[_ev(c) for c in (verified or [])[:10]],
+                       rejected=[[(w or "")[:70]] + _ev(c) for w, c in list(_rejects.values())[:10]])
+            except Exception:
+                pass
             _gate_rows(candidates, verified, _rejects, _clean_all, measured, base_title,
                        _gate_label, mdir, _reup, res)
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
@@ -4643,6 +4765,30 @@ def _phase2(ctx, on_cand=None):
                     res["crowd_version"] = _cv
                     E.tlog("crowd_version", 0.0, agrees=_cv.get("agrees"),
                            family=",".join(_cv.get("family") or []))
+
+            # ROOTFIX A/D: THE BASE FOLLOWS A PROVEN NAME. The vote named one song, but a lane
+            # searched a DIFFERENT name the evidence carried and found an upload the audio
+            # PROVES (core >= CORE_SAME, raw fp above the random floor) at the clip's own
+            # tempo, whose title carries that name. Then that name is the song:
+            #   A  CRATE_POSTED_LANE   the as-posted 1.0x title the counter-speed vote overruled
+            #      (Ddzm7FCS-0t: xundr's track is the Welcome To My Crib beat under the "Your
+            #      next opponent is you" vocal, so the vote named the beat at the beat's speed)
+            #   D  CRATE_MASHUP_HALVES the reel's own "A X B" credit (DdrXqlANC_m: "Sounder- She
+            #      Doesn't Mind X Danza Kuduro"; the vote named "Reggae She Doesnt Mind" 0.82x)
+            # The card then names that song, as posted, instead of the vote's pick.
+            try:
+                _named = _proven_name(fp, src, top, exact)
+                if _named:
+                    res["base_from_lane"] = {"was": res.get("base_song"),
+                                             "was_artist": res.get("base_artist"),
+                                             "was_speed": res.get("speed"), "lane": _named[2]}
+                    res["base_song"], res["base_artist"] = _named[0], _named[1]
+                    res["speed"] = "as posted"
+                    E.tlog("base_from_lane", 0.0, lane=_named[2], base=(_named[0] or "")[:60],
+                           artist=(_named[1] or "")[:40],
+                           was=(res["base_from_lane"]["was"] or "")[:60])
+            except Exception as _bex:
+                E.tlog("base_from_lane", 0.0, error=type(_bex).__name__)
 
             _cleanup(edit.get("tmp"))
 

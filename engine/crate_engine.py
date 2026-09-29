@@ -251,6 +251,60 @@ SWEEP_NEED = int(os.environ.get("CRATE_SWEEP_NEED", 99))   # 99 = never exit ear
 # because the scan already covered every window.
 LATER_WINDOW = _speed_flag("CRATE_LATER_WINDOW", True)
 LATER_WINDOW_MIN_SECS = 16.0
+
+# ROOTFIX 2026-09-29: root causes of the owners' X taps (A-F), one flag per fix, every one
+# built DEFAULT OFF; the 7 that passed the prove (rootfix/PROVE.md) ship ON 2026-09-29.
+# VOTE_ALIAS, VOTE_OFFSET and NULL_FP FAILED the prove and stay OFF. Evidence per fix:
+# ~/addify-harness/rootfix/FIXES.md. With every flag off, every code path is byte-for-byte
+# today's behaviour.
+#   A  CRATE_VOTE_ALIAS      the base-song vote keys titles through a dash-suffix strip
+#                            (" - Jersey", " - Slowed") and a guarded word-prefix alias, so
+#                            one song stops splitting into two vote groups.
+#   A  CRATE_POSTED_LANE     when a counter-speed rival overrules the as-posted 1.0x hit, that
+#                            1.0x title gets its own search lane (its uploads reach the pool
+#                            and verify() decides between the two on audio).
+#   C  CRATE_VOTE_OFFSET     vote groups rank by OFFSET AGREEMENT: the most rates at which ONE
+#                            Shazam track answers at ONE track offset (same key, moff within
+#                            VOTE_MOFF_TOL s, same skew-corrected speed), before raw rate count.
+#   D  CRATE_CREDIT_WORDFIX  ORIGINAL_WORDS match a credit on a word boundary, so
+#                            "Sounder- ..." is no longer read as a bare "original sound".
+#   D  CRATE_MASHUP_HALVES   an "A X B" credit is searched verbatim plus each half, on a lane.
+#   B  CRATE_SKEW_SPEED      the speed label is the skew-corrected rate/(1+timeskew) of the
+#                            winning track's agreeing hits, not the raw sweep preset.
+#   B  CRATE_FP_FLOOR_REFUSE server.py refuses a crown whose raw fp sits at the random floor
+#                            (<= FP_FLOOR) unless it is a measured source crown; answers the
+#                            base song at its measured speed instead.
+#   D  CRATE_NULL_FP         server.py's time-reversed null compares raw fp when core
+#                            saturates at 1.000 on both sides.
+#   E  CRATE_VOTE_XWIN       phase-2 contests (2+ real songs from one window) ask the later
+#                            window at the contenders' rates, and the vote counts windows.
+VOTE_ALIAS = _speed_flag("CRATE_VOTE_ALIAS", False)
+POSTED_LANE = _speed_flag("CRATE_POSTED_LANE", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+VOTE_OFFSET = _speed_flag("CRATE_VOTE_OFFSET", False)
+CREDIT_WORDFIX = _speed_flag("CRATE_CREDIT_WORDFIX", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+MASHUP_HALVES = _speed_flag("CRATE_MASHUP_HALVES", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+SKEW_SPEED = _speed_flag("CRATE_SKEW_SPEED", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+FP_FLOOR_REFUSE = _speed_flag("CRATE_FP_FLOOR_REFUSE", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+NULL_FP = _speed_flag("CRATE_NULL_FP", False)
+VOTE_XWIN = _speed_flag("CRATE_VOTE_XWIN", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+#   F  CRATE_CORROB_RETRY    a corroboration probe that TIMED OUT is re-asked once before the
+#                            vote, so a stall is never read as "no rival": DbPVEFtykpl live
+#                            (phone probes) lost 1.20x and 0.85x to 4 s timeouts and named the
+#                            lone 1.0x "with you"; the lab's 1.12x/1.20x read Gangnam Style.
+CORROB_RETRY = _speed_flag("CRATE_CORROB_RETRY", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
+# Offset agreement tolerances. Measured on today's logged probes (tlog_xfix/xship/xref/live):
+# hits of one track at one place agree to 0.02 s in moff and 0.3% in rate/(1+timeskew)
+# (Boom Clap 1.1112/1.1113/1.1111 at 32.60 s; KILL0 1.172/1.175 at -3.16 s; Lunarelly
+# 0.8333/0.8333 at 30.53 s). Coincidences land tens of seconds apart (Sean Paul 55.8 /
+# 111.3 / 69.6 s on the same key). 0.5 s and 3.2% sit far from both.
+VOTE_MOFF_TOL = 0.5
+VOTE_EFF_TOL = 0.045            # |log2| of the skew-corrected rate ratio, about 3.2%
+# Raw chromaprint fp at or below which a crown carries no fingerprint evidence of the
+# recording. Derived in rootfix/FIXES.md from the labelled matcher set (verify() on 576
+# pairs): every false pair reads <= 0.613, every true pair at the same speed >= 0.638.
+FP_FLOOR = float(os.environ.get("CRATE_FP_FLOOR", 0.62))
+EXTRA_LANE_DL = 6               # appended downloads for the posted-rival / mashup-half lanes
+XWIN_MAX = 3                    # later-window probes a phase-2 contest may spend
 # CORRECTION 2026-09-25: ZSqgEBw8E never reaches this probe. Its 1.0x scan HIT at all
 # three windows (0/6/12, span 12; tlog_batchA, tlog_batchB, tlog_n3), so the base came
 # from the corroboration step, not Phase 2, and the second half had already been asked
@@ -521,6 +575,10 @@ ORIGINAL_WORDS = {  # "this credit is just 'original sound', it names nothing"
     "son original", "suara asli", "orijinal ses", "оригинальный звук",
     "audio original", "originalljud", "původní zvuk", "originele audio",
     "オリジナル楽曲", "オリジナル音源", "原声", "原聲", "original", "sound",
+    # German TikTok labels. With CRATE_CREDIT_WORDFIX's word-boundary test, "Originalton - x"
+    # no longer matched "original", so clip 23 searched "Originalton" (10 of 25 downloads junk,
+    # rootfix/PROVE.md). Listing them keeps them bare.
+    "originalton", "originalsound", "originaler ton",
 }
 
 # ---------------------------------------------------------------- timing log (lab)
@@ -2947,6 +3005,183 @@ def _title_key(t):
     return key
 
 
+# ROOTFIX A (CRATE_VOTE_ALIAS). Reel Ddzm7FCS-0t: Shazam's 1.0x read was "Your Next Opponent
+# Is You - Jersey (Super Slowed)" and a 0.85x read "Your next opponent is you (tiktokviral)".
+# _title_key keeps the dash segment, so they voted as "your next opponent is you jersey" and
+# "your next opponent is you", one rate each, and "welcome to my crib" won on 2 rates (live
+# tlog 2026-09-29 16:15). A trailing " - <segment>" that carries an edit word names the
+# upload's treatment, not the song, so it is dropped before keying.
+_VOTE_DASH_TAIL = re.compile(r"\s+[-\u2013\u2014]\s+([^-\u2013\u2014]+)$")
+_VOTE_TAIL_EXTRA = re.compile(r"\b(jersey|club|loop(ed)?|best part|super|ultra|extended|"
+                              r"radio|tik ?tok|viral|bass)\b", re.I)
+
+
+def _vote_tail_is_edit(s):
+    s = s or ""
+    return bool(EDIT_WORDS.search(s) or _VOTE_TAIL_EXTRA.search(s))
+
+
+def _vote_tail_strippable(tail):
+    """A dash tail names a treatment when it carries an edit word and at most ONE other word
+    ("Jersey", "Super Slowed", "Kryd Remix"). "Time Of Dying" keeps its place in the name."""
+    if not _vote_tail_is_edit(tail):
+        return False
+    rest = _VOTE_TAIL_EXTRA.sub(" ", EDIT_WORDS.sub(" ", tail or ""))
+    return len(re.findall(r"[^\W_]+", rest)) <= 1
+
+
+def _vote_title_key(t):
+    """_title_key with a trailing ' - <edit words>' segment removed (see _VOTE_DASH_TAIL)."""
+    s = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t or "").strip()
+    m = _VOTE_DASH_TAIL.search(s)
+    if m and _vote_tail_strippable(m.group(1)):
+        s = s[:m.start()]
+    return _title_key(s) or _title_key(t)
+
+
+def _vote_alias(k, known):
+    """_key_alias for the vote, GUARDED: a one-word key may only merge when every extra word
+    of the longer key is an edit word. Unguarded, "three" (Three (Slowed)) would swallow
+    "three days grace time of dying", the exact wrong crown _crown_other_song was written
+    for on kyks."""
+    kw = (k or "").split()
+    if not kw:
+        return k
+    for o in known:
+        ow = (o or "").split()
+        n = min(len(kw), len(ow))
+        if not n or kw[:n] != ow[:n]:
+            continue
+        extra = (kw if len(kw) > len(ow) else ow)[n:]
+        if not extra or n >= 2 or all(_vote_tail_is_edit(w) for w in extra):
+            return o
+    return k
+
+
+def _vk(title, known=()):
+    """THE base-song vote's title key. Exactly _title_key unless CRATE_VOTE_ALIAS is on."""
+    if not VOTE_ALIAS:
+        return _title_key(title)
+    k = _vote_title_key(title)
+    return _vote_alias(k, list(known)) if k else k
+
+
+def _eff_rate(h):
+    """ROOTFIX C/B: the probe's counter-speed corrected by Shazam's own time skew. A probe at
+    rate r whose audio Shazam still hears (1 + timeskew) off the master matched at
+    r / (1 + timeskew). Boom Clap (DcewXUUxQcW) at 1.08 / 1.12 / 1.15 reads 1.1112 / 1.1113 /
+    1.1111: the clip is 0.900x, not the 0.93x the 1.08 preset's label said. None when the
+    hit carries no skew."""
+    try:
+        r = float(h.get("rate") or 1.0)
+        ts = h.get("timeskew")
+        if ts is None:
+            return None
+        ts = float(ts)
+        if abs(ts) >= 0.2 or r <= 0:
+            return None
+        return r / (1.0 + ts)
+    except Exception:
+        return None
+
+
+def _agree_cluster(g):
+    """ROOTFIX C (CRATE_VOTE_OFFSET): the largest set of hits in `g` that are ONE Shazam track
+    answering at ONE place - same track id, track offset (offset_in_master) within
+    VOTE_MOFF_TOL, and, where both carry a skew, the same corrected rate within VOTE_EFF_TOL.
+    A probe always starts at the same clip time whatever its rate, so a real match lands on
+    the same track offset at every counter-speed; a coincidence does not. -> list of hits
+    (distinct rates only). A hit with no id or no offset is a cluster of one, so a backend
+    that reports neither reduces the vote to today's rate count exactly."""
+    best = []
+    for a in g:
+        ka, ma = a.get("key"), a.get("offset_in_master")
+        if not ka or ma is None:
+            cl = [a]
+        else:
+            cl, seen = [], set()
+            for b in g:
+                if b.get("key") != ka or b.get("offset_in_master") is None:
+                    continue
+                try:
+                    if abs(float(b["offset_in_master"]) - float(ma)) > VOTE_MOFF_TOL:
+                        continue
+                except Exception:
+                    continue
+                ea, eb = _eff_rate(a), _eff_rate(b)
+                if ea and eb and abs(float(np.log2(ea / eb))) > VOTE_EFF_TOL:
+                    continue
+                r = round(float(b.get("rate") or 1.0), 3)
+                if r in seen:
+                    continue
+                seen.add(r)
+                cl.append(b)
+        if len(cl) > len(best):
+            best = cl
+    return best
+
+
+def _agree_n(g):
+    return len(_agree_cluster(g)) if g else 0
+
+
+def _skew_speed(g):
+    """ROOTFIX B (CRATE_SKEW_SPEED): the clip's speed from the winning group's agreeing hits,
+    skew-corrected. -> (label, info) or None. None keeps the sweep's own label: no counter-
+    speed hit, no skew, or a corrected speed within 2% of as-posted (the label never flips
+    direction on a near-1.0 reading)."""
+    cl = [h for h in _agree_cluster([h for h in (g or []) if not _junk_id(h)] or g or [])
+          if float(h.get("rate") or 1.0) != 1.0]
+    effs = [e for e in (_eff_rate(h) for h in cl) if e]
+    if not effs:
+        return None
+    eff = statistics.median(effs)
+    sp = 1.0 / eff
+    if abs(sp - 1.0) < 0.02:
+        return None
+    lbl = "%s ~%.2fx" % ("slowed" if sp < 1.0 else "sped up", sp)
+    return lbl, {"x": round(sp, 4), "n": len(effs),
+                 "spread": round(max(effs) / min(effs) - 1.0, 4),
+                 "raw": cl[0].get("edit_label")}
+
+
+def _apply_skew_speed(primary, g):
+    """Rewrite primary's edit_label to the skew-corrected speed when CRATE_SKEW_SPEED is on.
+    Keeps `rate` (server reads rate != 1.0 to take the label)."""
+    if not SKEW_SPEED or not primary:
+        return primary
+    try:
+        r = _skew_speed(g)
+    except Exception:
+        r = None
+    if r:
+        primary["edit_label"] = r[0]
+        primary["speed_eff"] = r[1]
+        tlog("skew_speed", 0.0, label=r[0], x=r[1]["x"], n=r[1]["n"], spread=r[1]["spread"],
+             raw=r[1]["raw"])
+    return primary
+
+
+def _same_song(hits, pick):
+    """The hits in `hits` that carry pick's song key (the vote's own keying)."""
+    pk = _vk((pick or {}).get("title"))
+    if not pk:
+        return []
+    return [h for h in (hits or []) if _vk(h.get("title"), [pk]) == pk]
+
+
+def _posted_rival(posted_hit, win):
+    """ROOTFIX A (CRATE_POSTED_LANE): the as-posted 1.0x hit a counter-speed rival just
+    overruled, for its own search lane. None when off, junk, or the same song."""
+    if not (POSTED_LANE and posted_hit and win) or _junk_id(posted_hit):
+        return None
+    pk = _vk(posted_hit.get("title"))
+    if not pk or pk == _vk(win.get("title"), [pk]):
+        return None
+    return {"title": posted_hit.get("title"), "artist": posted_hit.get("artist"),
+            "url": posted_hit.get("url"), "rate": posted_hit.get("rate", 1.0)}
+
+
 _HINT_STOP = {"music", "song", "sound", "track", "name", "audio", "the", "and", "por",
               "feat", "remix", "slowed", "reverb", "version", "pls", "please"}
 
@@ -3199,33 +3434,43 @@ def crowd_version_claim(base_title, hints, speed_label=None):
     return best
 
 
-def _consensus_id(hits, hints=None):
-    """Pick the song several counter-speeds AGREE on. A real song shows up again and
-    again as we sweep past its true rate; junk appears once. Ties break toward a
-    non-mill hit and then the rate closest to as-posted.
-
-    A title the COMMENTS name outranks raw speed-agreement: when a clip is pitched,
-    several rates can each return a different plausible song and the vote is close, but
-    the crowd writing "Music : Blu - Arc" under the video is direct evidence."""
-    hwords = _hint_words(hints)
+def _consensus_groups(hits):
     groups = {}
     for h in hits:
-        k = _title_key(h.get("title"))
+        k = _vk(h.get("title"), groups)
         if k:
             groups.setdefault(k, []).append(h)
+    return groups
+
+
+def _consensus_score(item, hw, xwin=False, offset=True):
+    k, g = item
+    rates = {h.get("rate", 1.0) for h in g}
+    clean = [h for h in g if not _junk_id(h)]
+    rung, conf = _hint_support(k, hw)
+    # `conf` sits below rate agreement on purpose: a catalogue-confirmed comment is
+    # allowed to break a tie the audio could not break, never to overrule the audio.
+    # Above the rate-distance tie-break, which is a coin flip by comparison.
+    audio = ()
+    if xwin:
+        # ROOTFIX E: how many clip windows this song answered in (see VOTE_XWIN)
+        audio += (len({round(float(h.get("offset") or 0.0), 1) for h in g}),)
+    if VOTE_OFFSET and offset:
+        audio += (_agree_n(g),)          # ROOTFIX C: offset agreement before raw rates
+    return ((rung,) + audio + (len(rates), bool(clean), conf,
+                               -min(abs((h.get("rate") or 1.0) - 1.0) for h in g)))
+
+
+def _consensus_ranked(hits, hints=None, xwin=False, offset=True):
+    """-> (ranked [(key, group)], hints). The vote itself, shared by _consensus_id and the
+    later-window contest (ROOTFIX E)."""
+    hwords = _hint_words(hints)
+    groups = _consensus_groups(hits)
     if not groups:
-        return None
+        return [], hints
 
     def score(item, hw):
-        k, g = item
-        rates = {h.get("rate", 1.0) for h in g}
-        clean = [h for h in g if not _junk_id(h)]
-        rung, conf = _hint_support(k, hw)
-        # `conf` sits below rate agreement on purpose: a catalogue-confirmed comment is
-        # allowed to break a tie the audio could not break, never to overrule the audio.
-        # Above the rate-distance tie-break, which is a coin flip by comparison.
-        return (rung, len(rates), bool(clean), conf,
-                -min(abs((h.get("rate") or 1.0) - 1.0) for h in g))
+        return _consensus_score(item, hw, xwin, offset)
 
     ranked = sorted(groups.items(), key=lambda it: score(it, hwords), reverse=True)
     # THE CONFIRM STEP, GATED ON THE ONLY SITUATION THAT CAN USE IT. Two catalogue
@@ -3237,10 +3482,25 @@ def _consensus_id(hits, hints=None):
     # nothing the rest of the time.
     if len(ranked) > 1 and hints:
         a, b = score(ranked[0], hwords), score(ranked[1], hwords)
-        if a[:4] == b[:4] and a[3] == 0.0:
+        ci = len(a) - 2                  # `conf` sits second from the end in every layout
+        if a[:ci + 1] == b[:ci + 1] and a[ci] == 0.0:
             hints = confirmed_hints(hints, wall=1.0)
             hwords = _hint_words(hints)
             ranked = sorted(groups.items(), key=lambda it: score(it, hwords), reverse=True)
+    return ranked, hints
+
+
+def _consensus_id(hits, hints=None, xwin=False, offset=True):
+    """Pick the song several counter-speeds AGREE on. A real song shows up again and
+    again as we sweep past its true rate; junk appears once. Ties break toward a
+    non-mill hit and then the rate closest to as-posted.
+
+    A title the COMMENTS name outranks raw speed-agreement: when a clip is pitched,
+    several rates can each return a different plausible song and the vote is close, but
+    the crowd writing "Music : Blu - Arc" under the video is direct evidence."""
+    ranked, hints = _consensus_ranked(hits, hints, xwin, offset)
+    if not ranked:
+        return None
     k, g = ranked[0]
     clean = [h for h in g if not _junk_id(h)]
     pool = clean or g
@@ -3675,7 +3935,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                     if h:
                         out.append(h)
                         if not _junk_id(h):
-                            k = _title_key(h.get("title"))
+                            k = _vk(h.get("title"), agree)
                             if k:
                                 agree[k] = agree.get(k, 0) + 1
                                 if agree[k] >= need:
@@ -3693,7 +3953,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             if h:
                 out.append(h)
                 if not _junk_id(h):
-                    k = _title_key(h.get("title"))
+                    k = _vk(h.get("title"), agree)
                     if k:
                         agree[k] = agree.get(k, 0) + 1
                         if agree[k] >= need:
@@ -3705,6 +3965,19 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 return out
         tlog("sweep_full", time.time() - t_start, hits=len(out))
         return out
+
+    async def _refire_corrob(sink):
+        """ROOTFIX F (CRATE_CORROB_RETRY): re-ask, once, the corroboration probes that TIMED
+        OUT. A timeout is Shazam not answering, not Shazam saying "no rival"; on a phone scan
+        the re-ask goes to the server backend once the phone has degraded. [] when off."""
+        if not (CORROB_RETRY and sink):
+            return []
+        _rt0 = time.time()
+        got = [h for h in await asyncio.gather(
+            *[probe(o, r, l, span=sp) for (o, r, l, sp) in list(sink)]) if h]
+        tlog("corrob_retry", time.time() - _rt0, n=len(sink), rates=[x[1] for x in sink],
+             hits=[(h.get("title") or "")[:50] for h in got])
+        return got
 
     async def retry_stalled(t_sink, got_any, cap=8):
         """STALL RECOVERY. Shazam's outages arrive as bursts - measured: 4+ consecutive
@@ -3766,17 +4039,20 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 *[probe(scan[0], r, lbl) for r, lbl in CORROB[1:CORROB_N]]))) if h])
         elif _first is not None and not _junk_id(_first):
             _off0 = scan[res.index(_first)]
+            _cto = []                   # ROOTFIX F: corroboration probes that timed out
             if _spec is not None:
                 # FAST-NAME 8: window 0 hit, so _off0 is scan[0] and the speculative answer
                 # IS CORROB[0] there - same (offset, rate, span), kept in CORROB order
                 _early_extra = [h for h in (_spec + list(await asyncio.gather(
-                    *[probe(_off0, r, lbl) for r, lbl in CORROB[1:CORROB_N]]))) if h]
+                    *[probe(_off0, r, lbl, t_sink=_cto)
+                      for r, lbl in CORROB[1:CORROB_N]]))) if h]
             else:
                 _early_extra = [h for h in await asyncio.gather(
-                    *[probe(_off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
-            _pk = _title_key(_first.get("title"))
+                    *[probe(_off0, r, lbl, t_sink=_cto) for r, lbl in CORROB[:CORROB_N]]) if h]
+            _early_extra += await _refire_corrob(_cto)
+            _pk = _vk(_first.get("title"))
             _pw_task = None
-            if _pk and all(_title_key(h.get("title")) == _pk for h in _early_extra):
+            if _pk and all(_vk(h.get("title"), [_pk]) == _pk for h in _early_extra):
                 try:
                     named_fn(dict(_first))
                     if FN_EARLY_POSTED_WINS:
@@ -3807,7 +4083,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                     _hw = _hint_words(hs)
                     _g = {}
                     for _h in [_pw_first] + _pw_extra:
-                        _k = _title_key(_h.get("title"))
+                        _k = _vk(_h.get("title"), _g)
                         if _k:
                             _g.setdefault(_k, []).append(_h)
                     _riv = [k for k in _g if k != _pk]
@@ -3925,14 +4201,16 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         if _early_extra is not None and _early_extra[0] == off0:
             extra = list(_early_extra[1])
         else:
+            _cto2 = []
             extra = [h for h in await asyncio.gather(
-                *[probe(off0, r, lbl) for r, lbl in CORROB[:CORROB_N]]) if h]
+                *[probe(off0, r, lbl, t_sink=_cto2) for r, lbl in CORROB[:CORROB_N]]) if h]
+            extra += await _refire_corrob(_cto2)
         groups = {}
         for h in [x for x in hits if x.get("at") == off0] + extra:
-            k = _title_key(h.get("title"))
+            k = _vk(h.get("title"), groups)
             if k:
                 groups.setdefault(k, []).append(h)
-        posted = _title_key(hits[0].get("title"))
+        posted = _vk(hits[0].get("title"), groups)
 
         def nrates(k):
             return len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])})
@@ -3942,7 +4220,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         # posted key, and the one hook the three override returns below go through.
         # Logged either way, so a gate run shows whether it fired (the scan's titles are
         # logged nowhere else).
-        _posted_raw = [h for h in res if h and _title_key(h.get("title")) == posted]
+        _posted_raw = [h for h in res if h and _vk(h.get("title"), [posted]) == posted]
 
         def _rend(primary, rival):
             try:
@@ -3956,6 +4234,18 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             if r:
                 primary["rendition"] = r
             return primary
+
+        def _ret(primary, win, g):
+            # ROOTFIX B/A, both no-ops with their flags off: the skew-corrected speed of
+            # the winning track, and the overruled 1.0x title for its own search lane.
+            _apply_skew_speed(primary, g)
+            _pr = _posted_rival(hits[0], win)
+            if _pr:
+                primary["posted_rival"] = _pr
+                tlog("posted_rival", 0.0, title=(_pr.get("title") or "")[:80],
+                     artist=(_pr.get("artist") or "")[:60],
+                     winner=(win.get("title") or "")[:80])
+            return _rend(primary, win)
 
         def _key(k):
             # the rung is 2=exact / 1=fuzzy / 0=none, so two DIFFERENT real songs each
@@ -3981,12 +4271,12 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 win = dict(_consensus_id(groups[best], hints) or groups[best][0])
                 win["at"] = off0
                 rest = [h for h in hits
-                        if _title_key(h.get("title")) not in (posted, best)]
+                        if _vk(h.get("title"), groups) not in (posted, best)]
                 merged = [win] + rest
                 primary = dict(merged[0])
                 primary["songs"] = merged
                 primary["multi"] = len(merged) > 1
-                return _rend(primary, win)
+                return _ret(primary, win, groups[best])
             if best != posted and _key(best) == key_posted:
                 # The 3 cheap probes are GENUINELY TIED between two plausible songs -
                 # this happened between "Ark" (an actual NCS release, matching a
@@ -4015,12 +4305,12 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                     win = dict(_consensus_id(groups[best], hints) or groups[best][0])
                     win["at"] = off0
                     rest = [h for h in hits
-                            if _title_key(h.get("title")) not in (posted, best)]
+                            if _vk(h.get("title"), groups) not in (posted, best)]
                     merged = [win] + rest
                     primary = dict(merged[0])
                     primary["songs"] = merged
                     primary["multi"] = len(merged) > 1
-                    return _rend(primary, win)
+                    return _ret(primary, win, groups[best])
                 # The catalogue did not name a winner, so nothing has been decided and the
                 # sweep runs exactly as it always did. Deliberately NOT skipped when the
                 # confirmation merely favours the as-posted read: the sweep's other job is
@@ -4032,17 +4322,20 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 full = await sweep_rates(off0, FINE_SWEEP, need=3)
                 pool = full + [h for g in groups.values() for h in g]
                 clean = [h for h in pool if not _junk_id(h)]
-                pick = _consensus_id(clean or pool, hints)
-                pk = _title_key(pick.get("title")) if pick else None
+                # offset=False: this pool holds the as-posted 1.0x read, which offset
+                # agreement can never credit (see the note in _vote_key)
+                pick = _consensus_id(clean or pool, hints, offset=False)
+                pk = _vk(pick.get("title"), groups) if pick else None
                 if pick and pk and pk != posted:
                     win = dict(pick); win["at"] = off0
                     rest = [h for h in hits
-                            if _title_key(h.get("title")) not in (posted, pk)]
+                            if _vk(h.get("title"), groups) not in (posted, pk)]
                     merged = [win] + rest
                     primary = dict(merged[0])
                     primary["songs"] = merged
                     primary["multi"] = len(merged) > 1
-                    return _rend(primary, win)
+                    return _ret(primary, win, [h for h in (clean or pool)
+                                               if _vk(h.get("title"), [pk]) == pk])
 
     # A cover-mill hit is a FALSE POSITIVE, not an ID. Accepting one here is what made
     # the engine stop dead: a Rihanna hoodtrap matched "Fade To Blue (Cover)" by
@@ -4071,7 +4364,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
 
     merged, seen_t = [], set()
     for h in sorted(recovered + real, key=lambda h: h["at"]):
-        k = _title_key(h.get("title"))
+        k = _vk(h.get("title"), seen_t)
         if k and k not in seen_t:
             seen_t.add(k); merged.append(h)
     if merged:
@@ -4102,14 +4395,59 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         tlog("nomatch_second_window", 0.0, hits=len(swept2), hit=bool(pick))
         if pick:
             pick = dict(pick)
+            _apply_skew_speed(pick, _same_song(swept2, pick))     # ROOTFIX B, flag-gated
             pick["at"] = 0.0
             pick["songs"] = [dict(pick)]
             pick["multi"] = False
             pick["second_window"] = True
             return pick
+    # ROOTFIX E (CRATE_VOTE_XWIN). kyks (7648736728290790688), 8 logged runs today: one
+    # window (147.8 s), 14 rates, three songs at ONE rate each ("I DON'T WANT YOU" 1.3,
+    # "Three (Slowed)" 1.4, "Feel it" 1.5) or "I DON'T WANT YOU" at 1.3 AND 1.4. With the
+    # comment hint missing at vote time (it came from the sound page) the tie went to the
+    # rate nearest 1.0, and when 1.4 read "I DON'T WANT YOU" "Three" was never in the pool.
+    # The later window asked at 1.4 answered "Three (Slowed)" in 4 of 4 runs, and asked at
+    # 1.3 answered nothing in 4 of 4. A real song answers in more than one window, so when
+    # the sweep's window is a contest, ask the later window at the contenders' rates and
+    # let the vote count windows (above offset agreement and raw rates, below the crowd).
+    _xw_by_rate = {}
+    if pick and VOTE_XWIN and LATER_WINDOW and dur >= LATER_WINDOW_MIN_SECS:
+        _xoff = max(off0 + 8.0, dur - 12.0)
+        _xspan = min(12.0, dur - _xoff)
+        try:
+            _xrk, _ = _consensus_ranked(swept, hints)
+        except Exception:
+            _xrk = []
+        _xreal = [(k, g) for k, g in _xrk if any(not _junk_id(h) for h in g)]
+        if _xspan >= 6.0 and len(_xreal) >= 2:
+            _xr = []
+            for _k, _g in _xreal[:3]:
+                for _h in sorted(_g, key=lambda h: abs(float(h.get("rate") or 1.0) - 1.0)):
+                    _r = float(_h.get("rate") or 1.0)
+                    if _r != 1.0 and _r not in _xr:
+                        _xr.append(_r)
+            _xr = _xr[:XWIN_MAX]
+            _xlbl = dict(FINE_SWEEP)
+            _xt0 = time.time()
+            _xg = await asyncio.gather(*[probe(_xoff, r, _xlbl.get(r, ""), span=_xspan)
+                                         for r in _xr])
+            for r, h in zip(_xr, _xg):
+                _xw_by_rate[r] = h
+            _x2 = [h for h in _xg if h]
+            _p2 = _consensus_id(swept + _x2, hints, xwin=True) if _x2 else None
+            tlog("vote_xwin", time.time() - _xt0, off=round(_xoff, 1), rates=_xr,
+                 hits=[[h.get("rate"), (h.get("title") or "")[:50]] for h in _x2],
+                 before=(pick.get("title") or "")[:60],
+                 after=((_p2 or pick).get("title") or "")[:60])
+            if _p2:
+                swept = swept + _x2
+                pick = _p2
     if pick:
         pick = dict(pick)
         pick["at"] = off0
+        if _xw_by_rate and pick.get("offset") is not None:
+            pick["at"] = float(pick["offset"])       # the window the winner answered in
+        _apply_skew_speed(pick, _same_song(swept, pick))     # ROOTFIX B, flag-gated
         pick["songs"] = [dict(pick)]
         pick["multi"] = False
         # See LATER_WINDOW. One probe on the second half at the rate that matched.
@@ -4118,7 +4456,10 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             off2 = max(off0 + 8.0, dur - 12.0)
             span2 = min(12.0, dur - off2)
             if span2 >= 6.0:
-                h2 = await probe(off2, _rate, pick.get("edit_label") or "", span=span2)
+                if _rate in _xw_by_rate:
+                    h2 = _xw_by_rate[_rate]          # ROOTFIX E already asked this probe
+                else:
+                    h2 = await probe(off2, _rate, pick.get("edit_label") or "", span=span2)
                 lw = {"t0": round(off2, 1), "t1": round(off2 + span2, 1),
                       "rate": _rate, "same": None}
                 if h2 and not _junk_id(h2):
@@ -4541,6 +4882,14 @@ def _vote_key(k, groups, hw):
     ranks with the vote's own function rather than a copy: the rung is 2=exact / 1=fuzzy /
     0=none, then how many distinct rates agree, then whether any of them is a real
     (non-junk) track, then the catalogue confidence of the hint - see _key in the vote."""
+    # ROOTFIX C NOTE: CRATE_VOTE_OFFSET deliberately does NOT enter this key. Here the posted
+    # read is ONE 1.0x probe and its rivals are CORROB probes at 1.12/1.20/0.85; a CORROB hit
+    # can only agree with the 1.0x hit if Shazam reports a 12-15% time skew, and the largest
+    # of 1,119 logged hits today is 7.0%. So offset agreement here could only ever count for
+    # the counter-speed rival - measured on the X'd Ddzm7FCS-0t scan, it turned the
+    # CRATE_VOTE_ALIAS answer (the as-posted "Your Next Opponent Is You") back into "Welcome
+    # to My Crib". It ranks the phase-2 sweep instead (_consensus_score), where every hit is
+    # a counter-speed probe of one window and the comparison is fair.
     rung, conf = _hint_support(k, hw)
     return (rung, len({round(float(h.get("rate", 1.0)), 3) for h in groups.get(k, [])}),
             any(not _junk_id(h) for h in groups.get(k, [])), conf)
@@ -4671,7 +5020,26 @@ def clean_name(s):
 
 def _is_named_credit(title):
     t = (title or "").strip().lower()
+    if CREDIT_WORDFIX:
+        return t and not any(_bare_word_at_start(t, w) for w in ORIGINAL_WORDS)
     return t and not any(w == t or t.startswith(w) for w in ORIGINAL_WORDS)
+
+
+def _bare_word_at_start(t, w):
+    """ROOTFIX D (CRATE_CREDIT_WORDFIX). ORIGINAL_WORDS holds the bare word "sound", and
+    `t.startswith(w)` read the reel credit "Sounder- She Doesn't Mind X Danza Kuduro"
+    (DdrXqlANC_m, world.of.sounder) as a bare "original sound", so the credit that names
+    the mashup was never searched. An ASCII word now has to end at a word boundary
+    ("original sound - kyks", "sound" and "son original - x" still count as bare). Non-ASCII
+    entries ("原声", "оригинальный звук") keep the plain prefix test: CJK has no spaces to
+    mark the boundary with."""
+    if w == t:
+        return True
+    if not t.startswith(w):
+        return False
+    if not w.isascii():
+        return True
+    return not (t[len(w)].isalnum() or t[len(w)] == "_")
 
 
 # words that mean the credit literally NAMES an edit (not just the song title)
@@ -6747,6 +7115,88 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
     return len(todo)
 
 
+def _song_part(half):
+    """'Sounder- She Doesn't Mind' -> "She Doesn't Mind": a one-token prefix glued on with a
+    dash is the editor's or artist's name, not part of the song. Anything else is kept."""
+    m = re.match(r"^\s*(\S+)\s*[-\u2013\u2014]\s+(.+)$", half or "")
+    if m and not re.search(r"\s", m.group(1)):
+        return m.group(2).strip()
+    return (half or "").strip()
+
+
+def _extra_lane_queries(credit_title, base_title, posted_rival=None, main=()):
+    """ROOTFIX A + D. Two search lanes the main query list never asks, each behind its flag:
+
+      A  CRATE_POSTED_LANE: the as-posted 1.0x title a counter-speed rival overruled
+         (Ddzm7FCS-0t: "Your Next Opponent Is You - Jersey (Super Slowed)" lost the vote to
+         "Welcome to My Crib", all 14 queries went to the beat, and xundr's "Your Next
+         Opponent is You" - fp 0.950 against the clip - never reached the pool).
+      D  CRATE_MASHUP_HALVES: an "A X B" credit, verbatim and per half (DdrXqlANC_m: "Sounder-
+         She Doesn't Mind X Danza Kuduro"; its 15 queries were all She Doesn't Mind ones).
+
+    -> (queries, relevance): `relevance` is the word sets a row's title must carry to be
+    downloaded first. Queries already in the main list are left out (they are searched)."""
+    out, rel = [], []
+    have = {(q or "").lower() for q in (main or ())}
+
+    def add(q):
+        q = _clean(q)
+        if q and len(q) > 2 and q.lower() not in have and q.lower() not in {o.lower() for o in out}:
+            out.append(q)
+
+    if POSTED_LANE and posted_rival and posted_rival.get("title"):
+        t = posted_rival["title"]
+        core = re.sub(r"[\(\[].*?[\)\]]", " ", t).strip()
+        m = _VOTE_DASH_TAIL.search(core)
+        if m and _vote_tail_strippable(m.group(1)):
+            core = core[:m.start()].strip()
+        add(core)
+        add("%s %s" % (core, posted_rival.get("artist") or ""))
+        add(t)
+        kw = {w for w in (_title_key(core) or "").split() if len(w) >= 3}
+        if kw:
+            rel.append(kw)
+    if MASHUP_HALVES and credit_title:
+        parts = split_mashup(credit_title)
+        if len(parts) >= 2:
+            songs = [_song_part(p) for p in parts[:2]]
+            add(credit_title)
+            add(" ".join(songs))
+            for p, sp in zip(parts[:2], songs):
+                add(sp)
+                if sp != p:
+                    add(p)
+            halves = [{w for w in (_title_key(sp) or "").split() if len(w) >= 3} for sp in songs]
+            if all(halves):
+                rel.append(halves[0] | halves[1])
+    return out[:6], rel
+
+
+def _lane_rows_ordered(lanes, cands, rel, tag):
+    """Rows from the extra lanes, in download order: rows whose title carries every word of
+    a relevance set first, SoundCloud before YouTube, then each search's own order. A row
+    the main search already holds is taken as that same object (the hint-mash rule)."""
+    by_url = {c["url"]: c for c in cands}
+    rows, ids, new = [], set(), 0
+    for li, ln in enumerate(lanes):
+        g, _pend = ln.collect(max(0.0, 1.5 - (time.time() - ln.t0)))
+        for pos, c0 in enumerate(g):
+            c = by_url.get(c0["url"])
+            if c is None:
+                c = c0
+                c[tag] = True
+                cands.append(c); by_url[c["url"]] = c; new += 1
+            if id(c) in ids:
+                continue
+            ids.add(id(c))
+            tw = set((_title_key(c.get("title") or "") or "").split())
+            hit = any(r <= tw for r in rel) if rel else False
+            rows.append((0 if hit else 1, 0 if c.get("source") == "soundcloud" else 1,
+                         pos, li, c))
+    rows.sort(key=lambda r: r[:4])
+    return [r[4] for r in rows], new
+
+
 async def find_edit(*args, **kwargs):
     """APPLYALL 2026-09-29 (review finding 5): find_edit with its temp dirs accounted for
     (RETENTION). The body hands its dir back only inside the result, so an exception
@@ -6770,7 +7220,7 @@ async def find_edit(*args, **kwargs):
 async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, base_artist,
                           edit_label, known_dir=None, handle=None, max_dl=14,
                           hints=None, shazam_reliable=True, pair=None, on_cand=None,
-                          creator=None, comment_urls=None, _tmps=None):
+                          creator=None, comment_urls=None, _tmps=None, posted_rival=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -7094,6 +7544,10 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     _rx_lane = _LaneSearch(rescue_q, 8) if rescue_q else None
     _hm_q = _hint_mash_queries(hints, base_title)
     _hm_lanes = [_LaneSearch([q], 6) for q in _hm_q]
+    # ROOTFIX A/D lanes (CRATE_POSTED_LANE / CRATE_MASHUP_HALVES): nothing unless a flag is on
+    _xl_q, _xl_rel = _extra_lane_queries(credit_title, base_title, posted_rival,
+                                         main=queries)
+    _xl_lanes = [_LaneSearch([q], 6) for q in _xl_q]
     # see the note at the producer chase: a `with` block would shutdown(wait=True) and
     # undo the web deadline entirely. ex is shut down (wait=False) after the web join.
     ex = ThreadPoolExecutor(max_workers=3)
@@ -7498,6 +7952,12 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         tlog("hint_mash_lane", 0.0, nq=len(_hm_q), q=_hm_q, new=_new, rows=len(_hm_rows),
              top=[(c.get("title") or "")[:60] for c in _hm_rows[:HINT_MASH_DL]],
              ran=round(time.time() - _hm_lanes[0].t0, 3))
+    _xl_rows = []
+    if _xl_lanes:
+        _xl_rows, _xl_new = _lane_rows_ordered(_xl_lanes, cands, _xl_rel, "extra_lane")
+        tlog("extra_lane", 0.0, nq=len(_xl_q), q=_xl_q, new=_xl_new, rows=len(_xl_rows),
+             top=[(c.get("title") or "")[:60] for c in _xl_rows[:EXTRA_LANE_DL]],
+             ran=round(time.time() - _xl_lanes[0].t0, 3))
     _term_hits([c for c in cands if "title_hits" not in c])
 
     # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial
@@ -7559,8 +8019,11 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     _rx_extra = [c for c in cands if c.get("rescue_q") and not c.get("_done")][:RESCUE_DL]
     _hm_extra = [c for c in _hm_rows
                  if not c.get("_done") and id(c) not in _seen_head][:HINT_MASH_DL]
+    _hm_ids = {id(c) for c in _hm_extra}
+    _xl_extra = [c for c in _xl_rows if not c.get("_done") and id(c) not in _seen_head
+                 and id(c) not in _hm_ids][:EXTRA_LANE_DL]
     for c in (_cre_extra + _cm_extra + [c for c in cands if c.get("fast_carry")]
-              + _rx_extra + _hm_extra + _style_x):
+              + _rx_extra + _hm_extra + _style_x + _xl_extra):
         if id(c) not in _seen_head:
             _seen_head.add(id(c)); _appended.append(c)
     head = head + _appended
