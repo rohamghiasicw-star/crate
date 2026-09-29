@@ -3296,6 +3296,34 @@ def _cand_tick():
         pass
 
 
+# PROGRESS 2026-09-29: THE HUNT COUNTS ITS OWN WORK, PER SCAN (Roham: "it should build up as
+# it actually finds it"). CAND_HOOK above is one global, so two hunts at once tick each
+# other's bar. This one is set on the phase-2 thread (server.py _phase2) and read on the
+# same thread - every _download_and_score batch and the creator alignment run on the thread
+# that runs find_edit - then handed to the download workers by closure, so a count can only
+# land on the scan that did the work. Events: ("q", n) n candidates handed to a download
+# batch, ("d", 1) one download finished (ok or not), ("c", 1) one candidate checked. Plain
+# counters the engine already has; no timer, no extra network, swallowed on any error.
+_HUNT_TLS = threading.local()
+
+
+def hunt_hook_set(fn):
+    _HUNT_TLS.fn = fn
+
+
+def _hunt_hook():
+    return getattr(_HUNT_TLS, "fn", None)
+
+
+def _hunt_call(fn, ev, n=1):
+    if fn is None:
+        return
+    try:
+        fn(ev, n)
+    except Exception:
+        pass
+
+
 # ------------------------------------------- SHAZAMKIT CONCURRENCY (speed3, 2026-09-26)
 # The Semaphore(1) rule was measured on shazamio (hard-rules: a burst got the first call
 # answered and every other one stalled). It was never measured on ShazamKit until
@@ -6643,6 +6671,9 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
     exact-edit decider - where the old averaged-spectrum + raw chromaprint both sat
     at the ~0.5 noise floor and let play counts silently pick the answer."""
     todo = [c for c in cands if not c.get("_done")][:max_dl]
+    _hk = _hunt_hook()      # PROGRESS 2026-09-29: this scan's counter, read on the calling thread
+    if todo:
+        _hunt_call(_hk, "q", len(todo))
 
     def work(i_c):
         i, c = i_c
@@ -6651,6 +6682,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         got = dl_clip(c["url"], os.path.join(tmp, "c%d.wav" % (start + i)),
                       seconds=(c.get("dl_seconds") or 20))
         _dt1 = time.time()
+        _hunt_call(_hk, "d")
         if not got:
             tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
                  ok=False)
@@ -6658,10 +6690,14 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
                      score=0.0, same=False, vspeed=1.0, bass_delta=0.0, lag=0.0,
                      clip_tilt=0.0, cand_tilt=0.0)
             _cand_tick()
+            _hunt_call(_hk, "c")
             return
         v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
         tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
              ok=True, verify=round(time.time() - _dt1, 3), core=v.get("core"))
+        # PROGRESS 2026-09-29: checked the moment verify() has scored it (the spectrum kept
+        # for the fallback below is bookkeeping, and under 16 workers it lagged the count)
+        _hunt_call(_hk, "c")
         # A near-miss is a SIGNAL, not a rejection: the default 20s decode only looks at
         # the START of the candidate, so a remix with an extended intro/build-up (e.g. a
         # dubstep drop that doesn't land until 25s+) gets compared against the wrong
@@ -7744,6 +7780,10 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         and (c.get("spectral") or 0) >= 0.85][:3]
     if _align:
         _ta0 = time.time()
+        # PROGRESS 2026-09-29: each alignment is one more unit of hunt work (4-8 s of it
+        # when it runs), counted like a candidate: queued, fetched, checked
+        _hk = _hunt_hook()
+        _hunt_call(_hk, "q", len(_align))
 
         def _slide(c):
             path = c.get("path")
@@ -7763,6 +7803,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                     return None
                 longer = os.path.join(tmp, "cl_%d.wav" % (id(c) % 100000))
                 got = dl_clip(c["url"], longer, seconds=180, timeout=30)
+                c["_hunt_d"] = True
+                _hunt_call(_hk, "d")
                 if not got:
                     return None
                 path = got
@@ -7783,8 +7825,16 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 return None
             return (best, at, bv, path)
 
+        def _slide_counted(c):
+            try:
+                return _slide(c)
+            finally:
+                if not c.pop("_hunt_d", False):
+                    _hunt_call(_hk, "d")
+                _hunt_call(_hk, "c")
+
         with ThreadPoolExecutor(max_workers=min(3, len(_align))) as _aex:
-            for c, got in zip(_align, _aex.map(_slide, _align)):
+            for c, got in zip(_align, _aex.map(_slide_counted, _align)):
                 if not got:
                     continue
                 best, at, bv, path = got

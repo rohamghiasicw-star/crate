@@ -616,6 +616,80 @@ def _prog_probe(key, ceiling):
     _prog_set(key, min(ceiling, now + max(0.4, (ceiling - now) * 0.16)))
 
 
+# PROGRESS 2026-09-29: THE HUNT'S OWN COUNTS ON /progress (Roham: "the percentage thing, it
+# goes from 30 to 100. That's not how it works. It should build up as it actually finds it").
+# `pct` above is front-loaded (it passes 90 early and sits at 96), so the page could only
+# treat it as "the hunt started". This is what the engine really has, per scan:
+#   q  candidates handed to a download batch (fast lane, wave 1, main, family, evidence)
+#      plus creator-upload alignments, d downloads finished, c candidates checked
+#   b  batches queued
+#   k  decide step: 0 find_edit returned, 1 speed measured, 2 crown checked (-1 = not yet)
+#   hold  the phase-2 start hold (early_until): its start and the deadline it cannot pass
+# Counters only, bumped by the hunt's own threads (E.hunt_hook_set): no timer, no network,
+# a dict update under a lock per candidate. /progress turns it into a stage when it is read.
+_HUNT_LOCK = threading.Lock()
+
+
+def _hunt_start(key):
+    p = _PROG.get(key)
+    if p is not None:
+        p["hunt"] = {"q": 0, "d": 0, "c": 0, "b": 0, "k": -1, "hold": None}
+
+
+def _hunt_ev(key, ev, n=1):
+    p = _PROG.get(key)
+    h = p.get("hunt") if p else None
+    if h is None:
+        return
+    with _HUNT_LOCK:
+        if ev == "q":
+            h["q"] += int(n)
+            h["b"] += 1
+        elif ev == "d":
+            h["d"] = min(h["q"], h["d"] + int(n))
+        elif ev == "c":
+            h["c"] = min(h["d"], h["c"] + int(n))
+        elif ev == "k":
+            h["k"] = max(h["k"], int(n))
+    p["t"] = time.time()
+
+
+def _hunt_hold(key, t0=None, until=None):
+    """The start hold: its start and deadline when it begins, marked ended when it ends. The
+    span stays on the view afterwards so the page can size the stage it just watched."""
+    p = _PROG.get(key)
+    h = p.get("hunt") if p else None
+    if h is None:
+        return
+    if until:
+        h["hold"] = [t0, until, False]
+    elif h.get("hold"):
+        h["hold"][2] = True
+
+
+def _hunt_view(h):
+    """The /progress "hunt" object: counts plus the stage they add up to."""
+    out = {"q": h["q"], "d": h["d"], "c": h["c"], "b": h["b"], "k": max(0, h["k"])}
+    hold = h.get("hold")
+    if hold:
+        span = max(0.05, hold[1] - hold[0])
+        out["hu"] = round(span, 2)
+        out["hw"] = 1.0 if hold[2] else round(min(1.0, max(0.0, (time.time() - hold[0]) / span)), 3)
+    if h["k"] >= 0:
+        out["st"] = "decide"
+    elif hold and not hold[2]:
+        out["st"] = "hold"
+    elif not h["q"]:
+        out["st"] = "search"
+    elif h["d"] < h["q"]:
+        out["st"] = "fetch"
+    elif h["c"] < h["q"]:
+        out["st"] = "check"
+    else:
+        out["st"] = "search"        # between batches: the engine is looking for more
+    return out
+
+
 def _prog_clear(key):
     _PROG.pop(key, None)
     for k, v in list(_PROG.items()):
@@ -3719,6 +3793,8 @@ def _phase2(ctx, on_cand=None):
     # ticks it toward 96 - the number "hunt finished" is worth - so the movement tracks
     # work done rather than luck.
     _prog_set(key, 60, "Hunting the exact version")
+    _hunt_start(key)                                    # PROGRESS 2026-09-29
+    E.hunt_hook_set(lambda ev, n=1: _hunt_ev(key, ev, n))
     _prev_cand_hook = E.CAND_HOOK
     E.CAND_HOOK = lambda: _prog_probe(key, 96)
     loop = asyncio.new_event_loop()
@@ -3776,6 +3852,7 @@ def _phase2(ctx, on_cand=None):
             _eu = ctx.pop("early_until", None)
             if _eu:
                 _ew0 = time.time()
+                _hunt_hold(key, _ew0, _eu)                  # PROGRESS 2026-09-29
                 while time.time() < _eu:
                     _ch0 = ctx.get("creator_h")
                     _need_cr = (_ch0 is not None and not res.get("creator")
@@ -3788,7 +3865,8 @@ def _phase2(ctx, on_cand=None):
                     if not (_need_cr or _need_sc):
                         break
                     time.sleep(0.05)
-                E.tlog("early_hold", time.time() - _ew0)
+                _hunt_hold(key)
+                E.tlog("early_hold", time.time() - _ew0, until=round(_eu - _ew0, 3))
             try:
                 if E.fill_sound_creator(src, "hunt"):
                     for _k in ("sound_creator", "sound_is_posters"):
@@ -3911,6 +3989,7 @@ def _phase2(ctx, on_cand=None):
                 pair=(mash or {}).get("pair"), on_cand=_emit))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
+            _hunt_ev(key, "k", 0)                           # PROGRESS 2026-09-29: deciding
             # The creator block phase 1 refused to wait on. The hunt has just taken ~19s,
             # so this is free here, and /edits is the payload that carries it.
             if ctx.get("creator_h") is not None and not res.get("creator"):
@@ -4130,6 +4209,7 @@ def _phase2(ctx, on_cand=None):
                     res["speed_source"] = "pool"
                 E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured),
                        disputed=bool(_srnote))
+                _hunt_ev(key, "k", 1)                       # PROGRESS 2026-09-29
 
             # "as posted" HAS TO BE SAYABLE AS A FINDING, NOT ONLY AS A DEFAULT.
             # Until now a confident as-posted reading was thrown away (the `pass` branch
@@ -4296,6 +4376,7 @@ def _phase2(ctx, on_cand=None):
                        tried=len(_fig_info.get("tried") or []))
             except Exception as _fex:
                 E.tlog("crown_by_figure", 0.0, error=type(_fex).__name__)
+            _hunt_ev(key, "k", 2)                           # PROGRESS 2026-09-29
             # CORRECTIONS 2026-09-29 (X-TO-FIX). The owners confirmed the right upload for
             # this clip. It is NEVER crowned blind: it takes the crown only if it passed the
             # engine's own editmatch (verify() against the clip audio), the keep bar, the
@@ -4643,6 +4724,7 @@ def _phase2(ctx, on_cand=None):
         return res
     finally:
         E.CAND_HOOK = _prev_cand_hook
+        E.hunt_hook_set(None)                               # PROGRESS 2026-09-29
         # COLLECT THE REFERENCE HUNT BEFORE THE TEMP DIR IT WRITES INTO IS REMOVED.
         # This is a RETENTION guard, not tidiness: it downloads audio into src["tmp"],
         # and audio that lands there after _cleanup has run is audio this server kept.
@@ -7629,6 +7711,8 @@ class H(BaseHTTPRequestHandler):
             out = {"pct": round(float(p.get("pct") or 0), 1), "label": p.get("label") or ""}
             if p.get("named"):
                 out["named"] = p["named"]
+            if p.get("hunt"):
+                out["hunt"] = _hunt_view(p["hunt"])     # PROGRESS 2026-09-29
             return self._send(200, out)
         if u.path == "/health":
             # "service" STAYS "crate engine" until every installed build is gone: the iOS
