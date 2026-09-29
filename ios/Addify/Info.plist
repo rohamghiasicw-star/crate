@@ -49,7 +49,7 @@
 		<true/>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Addify listens to a few seconds of the song playing near you to identify it. Audio is matched and discarded, never stored.</string>
+	<string>Listen mode records about 12 seconds of the song playing near you and sends it to Addify to identify it. The recording is matched and then discarded, never stored.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
