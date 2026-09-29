@@ -590,6 +590,12 @@ def _prefetch_hunt(src, hit, hints):
                                  handle=src.get("handle"), hints=hs, shazam_reliable=True)
             hq = [q for q in (E._clean(h) for h in hs[:2]) if q and len(q) > 3]
             n = E.prefetch_search(hq, 6) + E.prefetch_search(qs, 8)
+            if E.FAST_SC_FIRST:
+                # SPEEDMAX: the SC-first "<song> tiktok" search too (the speed word is not
+                # known yet, so that query runs in the hunt). Same spec, same cache: a
+                # title phase 2 builds differently simply misses and searches then.
+                n += E.prefetch_specs([E.sc_first_spec(q) for q in
+                                       E.sc_first_queries(hit.get("title") or "", "")])
             E.tlog("prefetch_start", 0.0, n=n, nq=len(qs), nh=len(hq))
         except Exception as ex:
             E.tlog("prefetch_failed", 0.0, err=type(ex).__name__)
@@ -1920,7 +1926,13 @@ SECTION_MAX_DL = 8
 # later window is evidence on the screen and nothing else.
 LATER_WINDOW_SEED = os.environ.get("CRATE_LATER_WINDOW_SEED", "0").strip() == "1"
 # speed3: HEAD-check candidate links as they verify, not after the hunt (see _phase2).
-SPEED_DEADLINK_EARLY = E._speed_flag("CRATE_DEADLINK_EARLY", False)
+# SPEEDMAX ship 2026-09-30: default ON (speedmax/PROVE.md run 3, 49 pairs, no crown lost).
+SPEED_DEADLINK_EARLY = E._speed_flag("CRATE_DEADLINK_EARLY", True)
+# SPEEDMAX 2026-09-29 (DESIGN-2 A): the @handle lookups run WHILE the fast path searches,
+# instead of before find_edit starts. find_edit joins them right after its own search and
+# appends the rows in the serial loop's order and dedup.
+# SPEEDMAX ship 2026-09-30: default ON (speedmax/PROVE.md run 3).
+SPEED_HANDLES_OVERLAP = E._speed_flag("CRATE_HANDLES_OVERLAP", True)
 SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
 
 
@@ -2478,6 +2490,26 @@ def _url_is_dead(u):
         return e.code in (404, 410)
     except Exception:
         return False
+
+
+def _handle_rows_join(handles, futs, base_links):
+    """SPEEDMAX (HANDLES_OVERLAP): the @handle rows the serial loop in _phase2 would have
+    appended to the comment links, in the same order and with the same dedup (each handle's
+    rows against every link already in the list, the earlier handles' rows included).
+    Joins the lookups in handle order. -> the rows to append, never the base links."""
+    acc, out = list(base_links), []
+    for i, h in enumerate(handles):
+        try:
+            ht = futs[i].result() if i in futs else []
+        except Exception:
+            ht = []
+        if ht:
+            have = {(l.get("url") if isinstance(l, dict) else l) for l in acc}
+            add = [t for t in ht if t["url"] not in have]
+            acc += add
+            out += add
+            E.tlog("handle_tracks", 0.0, handle=h, n=len(ht))
+    return out
 
 
 def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
@@ -4076,7 +4108,20 @@ def _phase2(ctx, on_cand=None):
             # handle and 2.18 s with two, before find_edit had even started.
             _hl = (res.get("comment_handles") or [])[:2]
             _hfut = {}
-            if E.SPEED_HANDLES_PARALLEL and len(_hl) > 1:
+            _more_fn = None
+            if SPEED_HANDLES_OVERLAP and _hl:
+                # SPEEDMAX (HANDLES_OVERLAP): start the lookups now and let find_edit join
+                # them after its own fast search. One worker when SPEED_HANDLES_PARALLEL
+                # is off (the handles then resolve one after the other, as below).
+                _hx = ThreadPoolExecutor(max_workers=(len(_hl) if E.SPEED_HANDLES_PARALLEL
+                                                      else 1))
+                _hfut = {i: _hx.submit(E.producer_handle_tracks, _h, base_title)
+                         for i, _h in enumerate(_hl)}
+                _hx.shutdown(wait=False)
+                _more_fn = (lambda _a=list(_hl), _b=dict(_hfut), _c=list(_cmlinks):
+                            _handle_rows_join(_a, _b, _c))
+                _hl = []                    # the serial loop below has nothing left to do
+            elif E.SPEED_HANDLES_PARALLEL and len(_hl) > 1:
                 _hx = ThreadPoolExecutor(max_workers=len(_hl))
                 _hfut = {i: _hx.submit(E.producer_handle_tracks, _h, base_title)
                          for i, _h in enumerate(_hl)}
@@ -4104,7 +4149,8 @@ def _phase2(ctx, on_cand=None):
                 shazam_reliable=shazam_reliable, creator=_creator,
                 comment_urls=_cmlinks,
                 pair=(mash or {}).get("pair"), on_cand=_emit,
-                posted_rival=(fp or {}).get("posted_rival")))   # ROOTFIX A (flag-gated)
+                posted_rival=(fp or {}).get("posted_rival"),   # ROOTFIX A (flag-gated)
+                **({"comment_urls_more": _more_fn} if _more_fn is not None else {})))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
             _hunt_ev(key, "k", 0)                           # PROGRESS 2026-09-29: deciding

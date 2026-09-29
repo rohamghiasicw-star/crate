@@ -365,6 +365,38 @@ WEB_DEADLINE = 10.0
 # Comments-first fast path. FAST_EXIT_CORE is deliberately near-identity: at 1.000 the
 # audio is the same recording beyond argument, so no broad sweep can improve on it.
 FAST_POOL, FAST_EXIT_CORE = 6, 0.95
+# SPEEDMAX 2026-09-29: FAST_POOL can be set per process for a measured sweep. The default
+# is the value above, so an unset env runs the same code as live.
+try:
+    FAST_POOL = max(1, int(os.environ.get("CRATE_FAST_POOL", FAST_POOL)))
+except ValueError:
+    pass
+# ---- SPEEDMAX 2026-09-29 (~/addify-harness/speedmax/LEVERS.md). Shipped 2026-09-30 with
+# FAST_SC_FIRST and FAST_FP_LEAD default ON (speedmax/PROVE.md run 3, no crown lost). ----
+# SOUNDCLOUD FIRST, with the three changes from dial/SCFIRST-REVIEW.md:
+#   1. comment/creator-link rows go AHEAD of the SC rows, and the fast download cap grows
+#      by the SC row count, so an SC row can never push a comment row out of the batch;
+#   2. SC rows ride only a fast path that already exists (a hint, a pair or a comment /
+#      handle row). No hint, no SC-only probe: that probe exited on 1 of 14 no-hint scans
+#      and cost the other 13 a median 4.2 s;
+#   3. fp and arr are logged on every cand_dl line (no flag: logging only).
+# The SC searches are "<song> tiktok" and "<song> <slowed|sped up>", top FAST_SC_TOP rows
+# each. A row that came ONLY from them may end the scan early only with raw fp >=
+# FAST_SC_FP on top of every existing fast-exit gate (core saturates, fp does not).
+FAST_SC_FIRST = _speed_flag("CRATE_FAST_SC_FIRST", True)
+try:
+    FAST_SC_TOP = max(1, int(os.environ.get("CRATE_FAST_SC_TOP", 3)))   # rows kept per SC-first query
+except ValueError:
+    FAST_SC_TOP = 3
+FAST_SC_FP = 0.66
+# An SC-first search that has not answered FAST_SC_WAIT s after it was submitted is
+# dropped (the fast path then runs exactly as with the flag off). Measured SC search:
+# 0.7-1.9 s (SCFIRST-REVIEW), and it is prefetched at name time when the name is early.
+FAST_SC_WAIT = float(os.environ.get("CRATE_FAST_SC_WAIT", 4.0))
+# The fast exit's order among near-identity rows gets the same raw-fp lead the main
+# ranking applies (FP_LEAD): a clear fp leader goes first instead of the most played.
+# SCFIRST-REVIEW: this moved kyks to the 36/43-history crown on both runs.
+FAST_FP_LEAD = _speed_flag("CRATE_FAST_FP_LEAD", True)
 # A fast-path hit is only a SHORTCUT when the server would keep it. server.py's
 # _crown_tempo_mismatch refuses any crown whose |log2(vspeed)| exceeds _TEMPO_TOL 0.06,
 # and the fast path used to return on core alone: on the 2026-09-24 batch, #21 (Gun Lean)
@@ -1640,7 +1672,8 @@ def comment_producer_handles(comments, cap=2, ignore=None):
 
 
 # Resolve comment @handles (and each handle's permalinks) concurrently. speed3, 2026-09-26.
-SPEED_HANDLES_PARALLEL = _speed_flag("CRATE_HANDLES_PARALLEL", False)
+# SPEEDMAX ship 2026-09-30: default ON (speedmax/PROVE.md run 3, with HANDLES_OVERLAP).
+SPEED_HANDLES_PARALLEL = _speed_flag("CRATE_HANDLES_PARALLEL", True)
 
 
 def producer_handle_tracks(handle, base_title=None, cap=3):
@@ -6293,6 +6326,62 @@ def prefetch_search(queries, per):
     return n
 
 
+def prefetch_specs(specs):
+    """SPEEDMAX: prefetch_search for explicit (prefix, source, query) specs. Same cache,
+    same TTL, same consumer (_run_search). -> how many were started."""
+    global _PREFETCH_EX
+    if not SPEED_PREFETCH or not specs:
+        return 0
+    now, n = time.time(), 0
+    with _PREFETCH_LOCK:
+        if _PREFETCH_EX is None:
+            _PREFETCH_EX = ThreadPoolExecutor(max_workers=12, thread_name_prefix="prefetch")
+        for sp in specs:
+            if sp not in _PREFETCH:
+                _PREFETCH[sp] = (now, _PREFETCH_EX.submit(_run_search_raw, sp))
+                n += 1
+    return n
+
+
+def sc_first_queries(base_title, edit_label):
+    """SPEEDMAX (FAST_SC_FIRST): "<song> tiktok" and, on a slowed / sped-up clip,
+    "<song> <slowed|sped up>". The song is base_title with any (...) / [...] removed.
+    Measured (scfirst.diff header): on the 10 live crowns that are SoundCloud uploads the
+    exact upload is the FIRST result of one of these on 4 of 10, top 3 on 5 of 10."""
+    if not base_title:
+        return []
+    t = re.sub(r"[\(\[].*?[\)\]]", "", base_title).strip() or base_title
+    w = ("slowed" if "slow" in (edit_label or "") else
+         "sped up" if "sped" in (edit_label or "") else "")
+    out = []
+    for q in (_clean("%s tiktok" % t), _clean("%s %s" % (t, w)) if w else ""):
+        if q and len(q) > 3 and q.lower() not in {x.lower() for x in out}:
+            out.append(q)
+    return out
+
+
+def sc_first_spec(q):
+    return ("scsearch%d:" % (FAST_SC_TOP + 2), "soundcloud", q)
+
+
+def _fast_fp_lead(good, lead=None):
+    """SPEEDMAX (FAST_FP_LEAD): the fast exit's `good` rows (all >= FAST_EXIT_CORE, already
+    sorted core / creator link / plays) with a clear raw-fp leader moved first, the same
+    rule the main ranking applies with FP_LEAD. Needs a measured fp on every row: a lead
+    over a row never fingerprinted is not a lead. Pure: returns a new list."""
+    lead = FP_LEAD if lead is None else lead
+    good = list(good)
+    if lead <= 0 or len(good) < 2 or not all((c.get("fp") or 0) > 0 for c in good):
+        return good
+    bf = sorted(good, key=lambda c: -(c.get("fp") or 0))
+    if (bf[0].get("fp") or 0) - (bf[1].get("fp") or 0) >= lead and bf[0] is not good[0]:
+        good.remove(bf[0])
+        good.insert(0, bf[0])
+        tlog("fast_fp_lead", 0.0, to=(bf[0].get("title") or "")[:60],
+             lead=round((bf[0].get("fp") or 0) - (bf[1].get("fp") or 0), 3))
+    return good
+
+
 def _run_search(spec):
     if SPEED_PREFETCH:
         with _PREFETCH_LOCK:
@@ -7321,6 +7410,14 @@ def _editmatch_calc(core, not_other, artist_hit):
                         or (artist_hit and core >= 0.38 and not_other))
 
 
+# SPEEDMAX 2026-09-29: the per-batch download concurrency, settable per process for a
+# measured sweep. Default 16 = live.
+try:
+    DL_WORKERS = max(1, int(os.environ.get("CRATE_DL_WORKERS", 16)))
+except ValueError:
+    DL_WORKERS = 16
+
+
 def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
                         on_scored=None, wave=None):
     """Download up to max_dl candidates CONCURRENTLY and VERIFY each against the clip.
@@ -7367,7 +7464,8 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             return
         v = _verify.verify(clip_audio, got, clip_ctx=clip_ctx)
         tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
-             ok=True, verify=round(time.time() - _dt1, 3), core=v.get("core"))
+             ok=True, verify=round(time.time() - _dt1, 3), core=v.get("core"),
+             fp=v.get("fp"), arr=v.get("arr"))   # SPEEDMAX: fp/arr on every row (log only)
         # PROGRESS 2026-09-29: checked the moment verify() has scored it (the spectrum kept
         # for the fallback below is bookkeeping, and under 16 workers it lagged the count)
         _hunt_call(_hk, "c")
@@ -7436,7 +7534,7 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         return len(todo)
     if todo:
         _bt0 = time.time()
-        with ThreadPoolExecutor(max_workers=min(16, len(todo))) as ex:
+        with ThreadPoolExecutor(max_workers=min(DL_WORKERS, len(todo))) as ex:
             list(ex.map(work, enumerate(todo)))
         tlog("dl_score_batch", time.time() - _bt0, n=len(todo))
     return len(todo)
@@ -7564,7 +7662,8 @@ async def find_edit(*args, **kwargs):
 async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, base_artist,
                           edit_label, known_dir=None, handle=None, max_dl=14,
                           hints=None, shazam_reliable=True, pair=None, on_cand=None,
-                          creator=None, comment_urls=None, _tmps=None, posted_rival=None):
+                          creator=None, comment_urls=None, _tmps=None, posted_rival=None,
+                          comment_urls_more=None):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -7613,13 +7712,36 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         # the dozen places below without leaking an idle thread into a long-lived server.
         _cm_ex.shutdown(wait=False)
 
+    # SPEEDMAX (HANDLES_OVERLAP): server.py may hand the @handle rows over as a callable
+    # instead of resolving them before find_edit. They are joined right after the fast
+    # path's own search (which runs meanwhile) and APPENDED to cm_cands in exactly the
+    # order and dedup the serial loop in server._phase2 produced, before anything reads
+    # cm_cands. Their titles resolve on their own thread; _join_cm joins both.
+    _f_cm_more = []
+
     def _join_cm(budget=3.0):
-        if f_cm is None:
-            return
+        _dl = time.time() + max(0.1, budget)
+        for _f in ([f_cm] if f_cm is not None else []) + _f_cm_more:
+            try:
+                _f.result(timeout=max(0.1, _dl - time.time()))
+            except Exception:
+                pass                   # slug titles are the fallback, see _slug_title
+
+    def _join_more():
+        if comment_urls_more is None:
+            return 0
         try:
-            f_cm.result(timeout=max(0.1, budget))
+            _more = comment_urls_more() or []
         except Exception:
-            pass                       # slug titles are the fallback, see _slug_title
+            _more = []
+        # the caller already deduped against comment_urls exactly as the serial loop did
+        _new = comment_candidates(_more)
+        if _new:
+            cm_cands.extend(_new)
+            _mx = ThreadPoolExecutor(max_workers=1)
+            _f_cm_more.append(_mx.submit(_comment_meta, _new))
+            _mx.shutdown(wait=False)
+        return len(_new)
 
     # ------------------------------------------- THE BROAD SEARCH STARTS NOW
     # It never depended on the fast path. The fast path runs its own small search and
@@ -7705,7 +7827,13 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # FAST_EXIT_TEMPO). Carried into the broad pool with their scores and files, so the
     # evidence is not paid for twice and the family wave can read the family off them.
     _fast_carry, _fast_tmp = [], None
-    if hints or pair or cm_cands:
+    # SPEEDMAX (FAST_SC_FIRST): the SoundCloud-first searches start with the fast path's
+    # own search and are read after it, bounded by FAST_SC_WAIT. Only on a scan that has
+    # a fast path already (change 2): hints, a pair, comment rows or pending handle rows.
+    _sc_first_q = (sc_first_queries(base_title, edit_label)
+                   if FAST_SC_FIRST and (hints or pair or cm_cands
+                                         or comment_urls_more is not None) else [])
+    if hints or pair or cm_cands or comment_urls_more is not None:
         hq, seen_hq = [], set()
         for q in _pair_queries(pair):
             if q.lower() not in seen_hq:
@@ -7714,9 +7842,17 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             for q in (_clean(h), _clean("%s %s" % (h, edit_label or ""))):
                 if q and len(q) > 3 and q.lower() not in seen_hq:
                     seen_hq.add(q.lower()); hq.append(q)
-        if hq or cm_cands:
+        if hq or cm_cands or comment_urls_more is not None:
             _ft0 = time.time()
+            _scx, _scf = None, []
+            if _sc_first_q:
+                _scx = ThreadPoolExecutor(max_workers=len(_sc_first_q))
+                _scf = [_scx.submit(_run_search, sc_first_spec(_q)) for _q in _sc_first_q]
+                _scx.shutdown(wait=False)
             hc = (search_edits(hq, 6)[:FAST_POOL] if hq else [])
+            if comment_urls_more is not None:
+                _nm = _join_more()      # HANDLES_OVERLAP: resolved while the search ran
+                tlog("handles_join", time.time() - _ft0, n=_nm)
             # Tag, don't drop. When the hint search happens to surface the very URL the
             # creator linked - measured on this clip, where "obsessed mariah carey" finds
             # it in 2.8s - the row must still carry the provenance, or the one fact that
@@ -7735,8 +7871,27 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                     if c.get("correction"):
                         hit["correction"] = True     # CORRECTIONS 2026-09-29
             hc = hc + _fresh
-            tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc),
-                 ncomment=len(cm_cands))
+            # SC-FIRST ROWS GO LAST (change 1): after the hint rows AND the comment rows,
+            # and the download cap below grows by their count, so they add slots and
+            # never take one. Only when this scan had other fast-path evidence (change 2).
+            _scrows = []
+            if _scf and hc:
+                _have = {c["url"] for c in hc}
+                for _f in _scf:
+                    try:
+                        _rows = _f.result(timeout=max(0.05, FAST_SC_WAIT
+                                                      - (time.time() - _ft0)))[:FAST_SC_TOP]
+                    except Exception:
+                        _rows = []
+                    for _r in _rows:
+                        if _r.get("url") and _r["url"] not in _have:
+                            _have.add(_r["url"]); _r["sc_first"] = True; _scrows.append(_r)
+                hc = hc + _scrows
+                tlog("fast_sc_first", time.time() - _ft0, q=_sc_first_q, new=len(_scrows),
+                     urls=[_r["url"] for _r in _scrows])
+            if hq or cm_cands:          # (HANDLES_OVERLAP: no row at all = no fast path)
+                tlog("fast_search", time.time() - _ft0, nq=len(hq), nc=len(hc),
+                     ncomment=len(cm_cands))
             if hc:
                 ftmp = tempfile.mkdtemp()
                 if _tmps is not None:
@@ -7750,13 +7905,18 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _fast_hit = None
                 if on_cand is not None:
                     def _fast_hit(c):
-                        if (c.get("core") or 0) >= FAST_EXIT_CORE:
+                        if ((c.get("core") or 0) >= FAST_EXIT_CORE
+                                and (not c.get("sc_first")
+                                     or (c.get("fp") or 0) >= FAST_SC_FP)):
                             on_cand(c)
                 _download_and_score(hc, clip_audio, ftmp, FAST_FILE_BASE,
-                                    FAST_POOL + len(cm_cands),
+                                    FAST_POOL + len(cm_cands) + len(_scrows),
                                     clip_ctx=fctx, on_scored=_fast_hit)
                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
-                good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE]
+                # an SC-first-only row needs recording-specific evidence to END the scan
+                # (FAST_SC_FP); without it, it is carried like any other scored row
+                good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE
+                        and (not c.get("sc_first") or (c.get("fp") or 0) >= FAST_SC_FP)]
                 # THE SHORTCUT NEEDS A ROW THE SERVER WILL KEEP. core alone says "same
                 # recording"; the gate also wants the clip's tempo. #21 exited here on a
                 # 1.176x row and got "unsure" for it. Naive vspeed defaults to 1.0 when
@@ -7805,6 +7965,11 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                                              -(c.get("plays") or 0)))
                     # speed references keep the order they always had
                     _refs = [c["path"] for c in good if c.get("path")][:3]
+                    if FAST_FP_LEAD:            # SPEEDMAX: after _refs, so refs are unchanged
+                        good = _fast_fp_lead(good)
+                    if FAST_SC_FIRST or FAST_FP_LEAD:
+                        tlog("fast_exit", 0.0, top=(good[0].get("title") or "")[:60],
+                             sc_first=bool(good[0].get("sc_first")), fp=good[0].get("fp"))
                     if _demote:                 # FAST_EXIT_CLAIM: plain in-band rows last
                         _dm = {id(c) for c in _demote}
                         good = ([c for c in good if id(c) not in _dm]
