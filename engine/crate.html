@@ -2856,7 +2856,10 @@ function famSpeed(d){var r=d&&d.rendition;
       1.0 on it. A row under CORE_SAME whose speed and EQ legs are no better than the
       crown's, and whose only lead is that score, prints level with the crown instead of
       above it (clip 08: an EQ-matching at-tempo crown at 0.674 over a remix 6.6 off on
-      slope at 0.736).
+      slope at 0.736). RF2 2026-09-30: on every payload, not only a gated one. The first-20s
+      reason holds for a payload saved before gates_on_rows too, and pageCrown needs it: the
+      same clip 08 saved on 09-27 (gfull/full_g1_clip_08.json) printed that remix at 82 over
+      the at-tempo crown at 72, and would otherwise have been crowned on that score alone.
    A payload saved before gates_on_rows gets the page's own verdicts (tempo past the gate,
    official release, and on an unpitched clip the speed-edit title and the 9 dB tilt) on
    every row except the crown. The null and other-song rules cannot run here. */
@@ -2952,7 +2955,7 @@ function vmatch(c){
   if(k==='source'){ m.refused='source'; m.word=GATE_WORD.source; m.exact=false;
     if(exact) m.pct=94;
     m.why=m.word+' · clip '+offTxt; m.eq=(g&&g.why)?g.why:gateSentence(k,c,offTxt);}
-  if(GATED && CROWN_ROW && c.url!==CROWN_URL && core<CORE_SAME){
+  if(CROWN_ROW && c.url!==CROWN_URL && core<CORE_SAME){
     var cm=vmatch(CROWN_ROW);
     if(cm && cm.pct!==null && m.pct>cm.pct && legsFig(c)<=legsFig(CROWN_ROW)){
       m.pct=cm.pct; m.level=true;}}
@@ -2974,6 +2977,58 @@ function byMatch(list){
   return list.map(function(c,i){var m=vmatch(c); return {c:c,i:i,g:m?m.grp:9,k:m?m.key:-1};})
     .sort(function(a,b){return (a.g-b.g)||(b.k-a.k)||(a.i-b.i);})
     .map(function(x){return x.c;});}
+/* ---------- THE HIGHEST HONEST FIGURE IS THE MAIN RESULT, ON EVERY PAYLOAD (RF2 2026-09-30) ----------
+   The engine crowns the highest figure itself since task A2 (server _crown_by_figure, which
+   writes `fig_pitched`). A payload saved before that still reaches the phone (a cached result,
+   a saved scan) and put its walk pick on top with a higher row under it: DcQG showed HELLBLADE
+   at 50% over ФРУКТОВЫЙ 1.0 at 59% (gfull/posted_dcqg_x_dcqg_r1.json), 51 saved crowns in all.
+   This is the same move for those payloads, on the same figure the rows print (vmatch): the
+   crown goes to the row on screen with a STRICTLY higher figure that no verdict refused and
+   that is not only level with it, and only if that row is still the highest once it is the
+   crown (page-side verdicts then read the old crown, not it). Every tie keeps the engine's
+   pick. The time-reversed check cannot run here, so a row the engine refused for it carries
+   that refusal (gate) on a gated payload and never qualifies. A payload with `fig_pitched`
+   (the engine already crowned by figure), a correction crown, or a crown with no figure of
+   its own is returned as it came. Pure: the same payload in, the same crown out. */
+function pageCrown(d){
+  var ex=d&&d.exact;
+  if(!d||d.result!=='found'||!ex||!ex.url||d.edits_pending||typeof d.fig_pitched==='boolean'||
+     d.crown_by_figure||d.from_correction) return d;
+  var rows=(d.candidates||[]).filter(function(c){return c&&c.url&&c.url!==ex.url&&(c.core||0)>=SHELF_FLOOR;});
+  if(!rows.length) return d;
+  var sv=[GATED,CROWN_URL,CROWN_SRC,CROWN_ROW,CLIP_PITCHED];
+  var put=function(r,src){CROWN_URL=r.url; CROWN_SRC=src?r.url:''; CROWN_ROW=r;};
+  try{
+    GATED=!!d.gates_on_rows;
+    CLIP_PITCHED=/slow|sped|speed|nightcore|daycore/i.test(famSpeed(d));
+    put(ex,d.crown_is_source);
+    var cf=vfig(vmatch(ex));
+    if(cf<0) return d;                       // the crown prints a word: nothing to compare
+    var up=rows.map(function(c,i){return {c:c,i:i,m:vmatch(c)};})
+      .filter(function(x){return x.m&&x.m.pct!==null&&vfig(x.m)>cf&&(!x.m.refused||x.m.refused==='source');})
+      .sort(function(a,b){return (vfig(b.m)-vfig(a.m))||(a.i-b.i);});
+    for(var k=0;k<up.length;k++){
+      var c=up[k].c;
+      put(c,!!c.cut_from);
+      var mine=vfig(vmatch(c));
+      var beaten=mine<=cf||[ex].concat(rows).some(function(o){
+        return o.url!==c.url&&(o.core||0)>=SHELF_FLOOR&&vfig(vmatch(o))>mine;});
+      put(ex,d.crown_is_source);
+      if(beaten) continue;
+      var nd=Object.assign({},d);
+      nd.exact=Object.assign({},c);
+      // the old crown stays on screen as a row, at its own figure
+      if(!(d.candidates||[]).some(function(o){return o&&o.url===ex.url;}))
+        nd.candidates=(d.candidates||[]).concat([ex]);
+      // the engine's sentences about the OLD crown do not describe this one; the row's own
+      // `claim` (the same server sentence, carried per row) is what the crown card falls back to
+      delete nd.title_overclaims; delete nd.title_overclaims_kind; delete nd.crown_tempo_off;
+      nd.crown_is_source=!!c.cut_from; nd.decisive=false;
+      nd.page_crown={from:ex.title||'',from_url:ex.url,from_fig:cf,to_fig:mine};
+      return nd;}
+    return d;
+  }catch(e){ return d; }
+  finally{ GATED=sv[0]; CROWN_URL=sv[1]; CROWN_SRC=sv[2]; CROWN_ROW=sv[3]; CLIP_PITCHED=sv[4]; }}
 function vtxt(m){return !m?'':m.exact?'exact':m.pct===null?m.word.toLowerCase():m.pct+'%';}
 function vtier(m){return m.exact?3:m.pct===null?0:m.refused&&m.refused!=='source'?0:
                          m.pct>=80?2:m.pct>=CORE_KEEP*100?1:0;}
@@ -3627,6 +3682,7 @@ function endTitle(d){var r=d&&d.result;
          r==='error'?'Link not readable':'No match';}
 function setEndTitle(d){var t=document.getElementById('matchttl'); if(t) t.textContent=endTitle(d);}
 function renderResult(d,partial){
+  if(!partial) d=pageCrown(d);   // RF2: a pre-A2 payload gets its highest honest figure on top
   lastResult=d;
   backHandler=goHome;  // the top-left chevron always goes to Addify home (COMMIT-AUDIT F5)
   document.getElementById('share').hidden=!songURL(d);   // APPLYALL 2026-09-29 (build 3): no dead Share on a miss card
@@ -5479,7 +5535,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
    per scan with the final answer (finish() for a scan with no hunt, finalize() in run()
    for one with a hunt). */
 function postBridge(d){
-  try{var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
+  try{d=pageCrown(d); var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
     var _mvb=mainVersion(d);
     if(_wk) _wk.postMessage({type:'result',song:(_mvb?_mvb.title:d.base_song)||'',
       artist:(_mvb?_mvb.artist:d.base_artist)||'',speed:d.speed||'',

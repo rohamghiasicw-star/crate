@@ -10,12 +10,18 @@ A clip that matches an entry, by its link or by its TikTok sound, gets the right
 added to its candidates. It is verified against the clip like every other row, and only
 crowned when it clears the same verify gates as any crown. It is never crowned blind.
 
+The app is told "we found the exact version" (GET /fixes) only AFTER a passing verification
+of that upload for that clip (last_check ok, RF2 2026-09-30). A new entry is silent until a
+scan verifies it: the next real scan of the clip on the engine, or `verify` in a lab now.
+
   corrections.py add <url> <right_url> [--title T] [--song S] [--artist A] [--sound-id ID]
                      [--by NAME] [--evidence TEXT]
   corrections.py list                 every correction, with its last verify result
   corrections.py remove <url>         drop the correction for that clip
   corrections.py queue [--all]        X'd clips with no correction yet, oldest first
   corrections.py check <url> [--port N]   one real scan on that engine (default 8788)
+  corrections.py verify <url> --port N    one real scan on a LAB engine (never 8788); writes
+                                          the result onto this store's entry as last_check
   corrections.py alert-setup          write ~/.addify/xalert.env from the war-room bot config
   corrections.py alert-check          token answers getMe, chat id set; sends nothing
   corrections.py alert-test           sends ONE test DM: "Addify test: X alerts are wired up."
@@ -213,6 +219,20 @@ def modify(fn, path=None):
         return new
 
 
+# ------------------------------------------------------------------ verified
+def verified(e):
+    """True only after a PASSING verification of this entry's upload for this clip: the
+    engine scanned the clip with the correction in its pool and verify_pick() crowned it
+    (last_check ok), live or in a lab (`verify`). A check recorded for another upload (the
+    entry's right_url was changed after it) does not count. A check written before
+    last_check carried right_url (2026-09-29) counts for the entry as it stands."""
+    lc = (e or {}).get("last_check") or {}
+    if lc.get("ok") is not True:
+        return False
+    ru = lc.get("right_url")
+    return not ru or norm_audio_url(ru) == norm_audio_url((e or {}).get("right_url") or "")
+
+
 # ------------------------------------------------------------------ the store
 class Store(object):
     """What the engine holds: the entries, indexed by clip key and by sound id, re-read
@@ -296,9 +316,12 @@ class Store(object):
 
     def fixes_for(self, urls):
         """GET /fixes: [{url, right_title, right_url, fixed_at}] for the links that now
-        have a correction. `url` is echoed exactly as the page sent it, so the page can
-        match its own record. An entry whose last verify FAILED is left out: the banner
-        must not say "we found it" for an answer the engine then refuses to crown."""
+        have a VERIFIED correction. `url` is echoed exactly as the page sent it, so the page
+        can match its own record. Only an entry whose last verify PASSED is announced
+        (verified()): the banner must not say "we found the exact version" for an answer
+        the engine has never checked, or then refuses to crown. RF2 2026-09-30: this used
+        to leave out only a FAILED check, so a never-scanned entry was announced at once
+        (xfix2 REPORT item 4: DcQG and DdMxybKJ7jH were live that way)."""
         self.poll()
         out = []
         for u in urls:
@@ -307,7 +330,7 @@ class Store(object):
                 e = self.by_key.get(k)
                 if e is not None:
                     break
-            if e is None or (e.get("last_check") or {}).get("ok") is False:
+            if e is None or not verified(e):
                 continue
             row = {"url": u, "right_title": e.get("right_title") or "",
                    "right_url": e["right_url"], "fixed_at": e.get("added_at")}
@@ -317,29 +340,37 @@ class Store(object):
             out.append(row)
         return out
 
-    def note_check(self, entry, ok, why=None, core=None, sound_id=None, title=None):
+    def note_check(self, entry, ok, why=None, core=None, sound_id=None, title=None, via=None):
         """Write the outcome of a verify back onto the entry (last_check), and learn the
         clip's TikTok sound id when the engine proved the sound is the clip's audio, so
         every other video on that sound gets the fix too. A title `add` could only guess
-        from the URL slug is replaced by the verified upload's real one. Never raises."""
+        from the URL slug is replaced by the verified upload's real one. Never raises.
+        last_check names the upload it checked (right_url) and, for a lab verify, where
+        (via "lab:<port>"): a check only counts for the upload it was run on (verified())."""
         want_sid = sound_id if (sound_id and not entry.get("sound_id")) else None
         want_title = (title.strip()[:_STR_MAX] if (ok and title and title.strip()
                                                     and entry.get("right_title_from") == "slug")
                       else None)
+        ru = norm_audio_url(entry.get("right_url") or "")
         lc = {"ok": bool(ok), "at": int(time.time())}
+        if ru:
+            lc["right_url"] = ru
         if why:
             lc["why"] = str(why)[:200]
         if core is not None:
             lc["core"] = round(float(core), 3)
+        if via:
+            lc["via"] = str(via)[:40]
         prev = entry.get("last_check") or {}
         if (not want_sid and not want_title and prev.get("ok") == lc["ok"]
-                and prev.get("why") == lc.get("why")):
+                and prev.get("why") == lc.get("why") and verified(entry) == lc["ok"]):
             return                      # nothing new; don't rewrite the file every scan
         keys = set(entry.get("_keys") or entry_keys(entry))
 
         def fn(cur):
             for e in cur:
-                if isinstance(e, dict) and entry_keys(e) & keys:
+                if (isinstance(e, dict) and entry_keys(e) & keys
+                        and (not ru or norm_audio_url(e.get("right_url") or "") == ru)):
                     e["last_check"] = lc
                     if want_sid and not e.get("sound_id"):
                         e["sound_id"] = str(want_sid)
@@ -762,8 +793,11 @@ def cmd_list(argv):
             print("IGNORED (bad entry): %s" % json.dumps(e)[:160])
             continue
         lc = c.get("last_check") or {}
-        chk = ("never scanned" if not lc else "verified %s ago" % _age(lc.get("at")) if lc.get("ok")
-               else "FAILED verify %s ago: %s" % (_age(lc.get("at")), lc.get("why") or "?"))
+        where = (" (%s)" % lc["via"]) if lc.get("via") else ""
+        chk = ("never scanned, NOT announced until verified" if not lc
+               else "verified %s ago%s, announced" % (_age(lc.get("at")), where) if verified(c)
+               else "checked another upload %s ago, NOT announced" % _age(lc.get("at")) if lc.get("ok")
+               else "FAILED verify %s ago%s: %s" % (_age(lc.get("at")), where, lc.get("why") or "?"))
         print("%s\n   -> %s <%s>\n   added %s ago by %s%s | %s" % (
             c["url"], c.get("right_title") or "(no title)", c["right_url"], _age(c.get("added_at")),
             c.get("added_by") or "?", (" | sound %s" % c["sound_id"]) if c.get("sound_id") else "", chk))
@@ -824,6 +858,78 @@ def cmd_check(argv):
     print("from correction: %s%s" % (bool(d.get("from_correction")),
                                      "" if c.get("ok", True) else " (refused: %s)" % c.get("why")))
     return 0 if d.get("from_correction") else 2
+
+
+LIVE_PORT = 8788
+
+
+def cmd_verify(argv):
+    """Verify ONE entry now, in a lab: one real scan (nocache) on the lab engine at --port,
+    which must hold the same entry in its own corrections.json (a lab copied from live
+    does). The engine's own verify_pick() decides; this only reads its answer and writes it
+    onto the entry in THIS store (default: the corrections.json next to this file, i.e.
+    live's when run from ~/crate) as last_check {ok, why, core, right_url, via "lab:N"}.
+    Passing makes /fixes announce it; failing keeps it silent, and says how to remove it.
+    Nothing is written when the scan did not finish, the lab holds no entry for the clip
+    or checked another upload, or the upload was never scored (a download failure).
+    Exit: 0 pass, 2 refused, 1 usage/no entry, 3 scan failed, 4 lab mismatch, 5 not scored."""
+    port = _opt(argv, "--port")
+    timeout = float(_opt(argv, "--timeout", "330"))
+    if len(argv) != 1 or not port:
+        print("usage: corrections.py verify <clip url> --port N   (a lab engine, never %d)" % LIVE_PORT)
+        return 1
+    port = int(port)
+    if port == LIVE_PORT:
+        print("refused: verify runs on a lab engine (cp -R ~/crate to a lab, own port), never on live")
+        return 1
+    st = Store(poll_s=0)
+    st.poll(force=True)
+    e = st.match(argv[0])
+    if e is None:
+        print("no correction for %s in %s" % (argv[0], st.path))
+        return 1
+    q = "http://127.0.0.1:%d/find?%s" % (port, urllib.parse.urlencode({"url": e["url"], "nocache": "1"}))
+    t = time.time()
+    try:
+        with urllib.request.urlopen(q, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as x:
+        print("scan failed on port %d: %s; nothing written" % (port, type(x).__name__))
+        return 3
+    secs = time.time() - t
+    ex, c = d.get("exact") or {}, d.get("correction")
+    print("%.1fs result %s | crown: %s <%s> core %s | speed %s" % (
+        secs, d.get("result"), ex.get("title"), ex.get("url"), ex.get("core"), d.get("speed")))
+    if d.get("result") not in ("found", "no_match"):
+        print("the scan did not finish (%s); nothing written" % (d.get("error") or d.get("result")))
+        return 3
+    if not isinstance(c, dict):
+        print("the lab engine on port %d holds no correction for this clip; nothing written" % port)
+        return 4
+    if norm_audio_url(c.get("url") or "") != e["right_url"]:
+        print("the lab checked another upload (%s, entry has %s); nothing written"
+              % (c.get("url"), e["right_url"]))
+        return 4
+    why = c.get("why") or ""
+    if not c.get("ok") and why.startswith("never scored"):
+        print("not scored (%s); nothing written, run it again" % why)
+        return 5
+    ok = bool(c.get("ok") and d.get("from_correction")
+              and norm_audio_url(ex.get("url") or "") == e["right_url"])
+    if c.get("ok") and not ok:
+        why = "the correction said ok but the crown is %s" % (ex.get("url") or "none")
+    st.note_check(e, ok, why or None, ex.get("core") if ok else None, None,
+                  (c.get("title") or ex.get("title")) if ok else None, via="lab:%d" % port)
+    st.poll(force=True)
+    now = st.match(argv[0]) or {}
+    lc = now.get("last_check") or {}
+    if ok:
+        print("VERIFIED: %s -> %s | written to %s | announced: %s"
+              % (e["url"], e["right_url"], st.path, verified(now)))
+        return 0
+    print("REFUSED: %s | written to %s (not announced: %s)" % (why, st.path, not verified(now)))
+    print("remove it: python3 %s remove %s" % (os.path.abspath(__file__), e["url"]))
+    return 2 if lc.get("ok") is False else 3
 
 
 def cmd_alert_setup(argv):
@@ -901,7 +1007,7 @@ def cmd_alert_test(argv):
 
 def main(argv):
     cmds = {"add": cmd_add, "list": cmd_list, "remove": cmd_remove, "queue": cmd_queue,
-            "check": cmd_check, "alert-setup": cmd_alert_setup, "alert-check": cmd_alert_check,
+            "check": cmd_check, "verify": cmd_verify, "alert-setup": cmd_alert_setup, "alert-check": cmd_alert_check,
             "alert-test": cmd_alert_test}
     if not argv or argv[0] not in cmds:
         print(__doc__)

@@ -141,14 +141,45 @@ class Matching(unittest.TestCase):
         self.assertEqual(seen[-1], 0)
 
     def test_fixes(self):
-        f = self.st.fixes_for([IG + "?igsh=1", "https://vt.tiktok.com/ZSXWjGrqT/", "https://vt.tiktok.com/nope/"])
+        urls = [IG + "?igsh=1", "https://vt.tiktok.com/ZSXWjGrqT/", "https://vt.tiktok.com/nope/"]
+        # RF2: never scanned = never announced (xfix2 REPORT item 4)
+        self.assertEqual(self.st.fixes_for(urls), [])
+        for u in urls[:2]:
+            self.st.note_check(self.st.match(u), True, core=1.0)
+        f = self.st.fixes_for(urls)
         self.assertEqual([x["url"] for x in f], [IG + "?igsh=1", "https://vt.tiktok.com/ZSXWjGrqT/"])
         self.assertEqual(set(f[0]), {"url", "right_title", "right_url", "fixed_at"})
         self.assertEqual(f[0]["fixed_at"], 2)
         # a correction whose last verify failed is not announced
-        C.modify(lambda cur: [dict(e, last_check={"ok": False, "at": 9, "why": "x"})
-                              if isinstance(e, dict) and "instagram" in e.get("url", "") else e for e in cur])
+        self.st.note_check(self.st.match(IG), False, why="refused by the crown gates: x")
         self.assertEqual(len(self.st.fixes_for([IG])), 0)
+        self.assertEqual(len(self.st.fixes_for(["https://vt.tiktok.com/ZSXWjGrqT/"])), 1)
+
+    def test_check_counts_only_for_the_upload_it_ran_on(self):
+        self.st.note_check(self.st.match(IG), True, core=1.0)
+        raw = [x for x in C.read_entries() if isinstance(x, dict) and "instagram" in x.get("url", "")][0]
+        self.assertEqual(raw["last_check"]["right_url"], C.norm_audio_url("https://youtu.be/dQw4w9WgXcQ"))
+        self.assertEqual(len(self.st.fixes_for([IG])), 1)
+        # a hand edit points the entry at another upload: the old pass no longer counts
+        C.modify(lambda cur: [dict(e, right_url=SC_WRONG) if isinstance(e, dict)
+                              and "instagram" in e.get("url", "") else e for e in cur])
+        self.assertEqual(self.st.fixes_for([IG]), [])
+        self.assertFalse(C.verified(self.st.match(IG)))
+        # a check written before last_check carried right_url still counts (the live clip A entry)
+        C.modify(lambda cur: [dict(e, last_check={"ok": True, "at": 1790673171, "core": 1.0})
+                              if isinstance(e, dict) and "instagram" in e.get("url", "") else e for e in cur])
+        self.assertEqual(len(self.st.fixes_for([IG])), 1)
+
+    def test_replaced_mid_scan_is_not_stamped(self):
+        """`add` replaced the entry (new upload) while a scan of the old one ran: the old
+        scan's pass must not land on the new entry."""
+        old = self.st.match(IG)
+        C.modify(lambda cur: [dict(e, right_url=SC_RIGHT) if isinstance(e, dict)
+                              and "instagram" in e.get("url", "") else e for e in cur])
+        self.st.note_check(old, True, core=1.0)
+        raw = [x for x in C.read_entries() if isinstance(x, dict) and "instagram" in x.get("url", "")][0]
+        self.assertNotIn("last_check", raw)
+        self.assertEqual(self.st.fixes_for([IG]), [])
 
     def test_note_check_replaces_a_slug_title(self):
         C.modify(lambda cur: [dict(e, right_title="welcome to my crib sped up", right_title_from="slug")
@@ -240,6 +271,99 @@ class VerifyRule(unittest.TestCase):
         self.assertEqual(E._editmatch_calc(0.55, True, False), (False, False))
         self.assertEqual(E._editmatch_calc(0.70, True, False), (True, True))
         self.assertEqual(E._editmatch_calc(0.80, False, False), (True, False))   # other rendition
+
+
+class VerifyCmd(unittest.TestCase):
+    """corrections.py verify <url> --port N: one scan on a (fake) lab engine; its answer is
+    written onto the entry, and only a pass is announced."""
+    def setUp(self):
+        write([{"url": IG, "right_url": SC_RIGHT, "right_title": "Right", "added_by": "t",
+                "added_at": 5, "evidence": ""}])
+        import http.server
+        self.reply, self.seen = {}, []
+        outer = self
+
+        class Hd(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.seen.append(self.path)
+                body = json.dumps(outer.reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), Hd)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.port = str(self.srv.server_port)
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def run_verify(self, reply, url=IG):
+        self.reply = reply
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = C.main(["verify", url, "--port", self.port, "--timeout", "10"])
+        return code, buf.getvalue()
+
+    def lc(self):
+        return (C.read_entries()[0] or {}).get("last_check")
+
+    def test_pass_is_written_and_announced(self):
+        code, out = self.run_verify({"result": "found", "from_correction": True,
+                                     "exact": {"title": "Right", "url": SC_RIGHT, "core": 1.0},
+                                     "correction": {"url": SC_RIGHT, "title": "Right", "ok": True}})
+        self.assertEqual(code, 0, out)
+        self.assertIn("nocache=1", self.seen[0])
+        lc = self.lc()
+        self.assertEqual((lc["ok"], lc["via"], lc["right_url"], lc["core"]),
+                         (True, "lab:" + self.port, SC_RIGHT, 1.0))
+        self.assertEqual(len(C.Store(poll_s=0).fixes_for([IG])), 1)
+
+    def test_refused_is_written_and_stays_silent(self):
+        code, out = self.run_verify({"result": "found", "exact": {"url": SC_WRONG, "core": 0.9},
+                                     "correction": {"url": SC_RIGHT, "ok": False,
+                                                    "why": "failed the null control: reversed"}})
+        self.assertEqual(code, 2, out)
+        self.assertIn("remove", out)
+        lc = self.lc()
+        self.assertEqual((lc["ok"], lc["via"]), (False, "lab:" + self.port))
+        self.assertIn("null control", lc["why"])
+        self.assertEqual(C.Store(poll_s=0).fixes_for([IG]), [])
+
+    def test_nothing_written_when_it_proves_nothing(self):
+        cases = [({"result": "found", "exact": {"url": SC_RIGHT}}, 4),                    # lab holds no entry
+                 ({"result": "found", "correction": {"url": SC_WRONG, "ok": True}}, 4),   # other upload
+                 ({"result": "found", "correction": {"url": SC_RIGHT, "ok": False,
+                                                     "why": "never scored (download failed or not in the pool)"}}, 5),
+                 ({"result": "error", "error": "boom"}, 3),
+                 ({"result": "rate_limited"}, 3)]
+        for reply, want in cases:
+            code, out = self.run_verify(reply)
+            self.assertEqual(code, want, (reply, out))
+            self.assertIsNone(self.lc(), reply)
+        self.assertEqual(C.Store(poll_s=0).fixes_for([IG]), [])
+
+    def test_ok_without_the_crown_is_not_a_pass(self):
+        code, out = self.run_verify({"result": "found", "exact": {"url": SC_WRONG, "core": 1.0},
+                                     "correction": {"url": SC_RIGHT, "ok": True}})
+        self.assertEqual(code, 2, out)
+        self.assertFalse(self.lc()["ok"])
+
+    def test_never_on_live_and_needs_an_entry(self):
+        import io
+        import contextlib
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(C.main(["verify", IG, "--port", "8788"]), 1)
+            self.assertEqual(C.main(["verify", IG]), 1)
+            self.assertEqual(C.main(["verify", "https://www.instagram.com/reel/Nope12345/", "--port", self.port]), 1)
+        self.assertEqual(self.seen, [])
+        self.assertIsNone(self.lc())
 
 
 class FixQueue(unittest.TestCase):
