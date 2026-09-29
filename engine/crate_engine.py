@@ -286,6 +286,18 @@ MASHUP_HALVES = _speed_flag("CRATE_MASHUP_HALVES", True)   # gated 2026-09-29: r
 SKEW_SPEED = _speed_flag("CRATE_SKEW_SPEED", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
 FP_FLOOR_REFUSE = _speed_flag("CRATE_FP_FLOOR_REFUSE", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
 NULL_FP = _speed_flag("CRATE_NULL_FP", False)
+# CRATE_NULL_FP_GUARDED (2026-09-29, addify-harness/nullfp/BUILD.md). NULL_FP as written passed
+# any upload whose reversed copy read even a hair less raw fp, and crowned Love Sosa (clip 24)
+# twice on gaps of 0.062 and 0.020, which is no evidence at all. The guarded form passes a
+# saturated null only when forward fp beats the reversed copy by at least NULL_FP_GAP.
+# Derived, not fitted: over the 576 labelled matcher pairs (verify() on the first 20 s, forward
+# vs areverse, exactly as the null runs) the gap between two readings that carry no recording
+# evidence (504 wrong pairs) spans -0.064..0.052, and clip 24 read 0.062 / 0.020. The smallest
+# clear-of-noise gap of a real match in the saturated domain is 0.146 (matcher), and the real
+# crowns read 0.195 (27), 0.222 (D), 0.360 (07). 0.10 sits mid-way between 0.064 and 0.146.
+# Stricter than NULL_FP: when both flags are on, the guard decides.
+NULL_FP_GUARDED = _speed_flag("CRATE_NULL_FP_GUARDED", True)   # gated 2026-09-29: nullfp prove/PROVE.md, D/07/27/24 x2 + reg x2 + 12 clips ABAB
+NULL_FP_GAP = float(os.environ.get("CRATE_NULL_FP_GAP", 0.10))
 VOTE_XWIN = _speed_flag("CRATE_VOTE_XWIN", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
 #   F  CRATE_CORROB_RETRY    a corroboration probe that TIMED OUT is re-asked once before the
 #                            vote, so a stall is never read as "no rival": DbPVEFtykpl live

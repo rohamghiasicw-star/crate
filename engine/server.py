@@ -2527,7 +2527,8 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
         _rv = _verify.verify(clip_audio, rev, 20)
         rc = _rv.get("core") or 0.0
         if rc >= fwd_core:
-            if E.NULL_FP and fwd_core >= 0.999 and rc >= 0.999:
+            _guard = bool(getattr(E, "NULL_FP_GUARDED", False))
+            if (E.NULL_FP or _guard) and fwd_core >= 0.999 and rc >= 0.999:
                 # ROOTFIX D (CRATE_NULL_FP). Both cores pinned at 1.000 carry no comparison
                 # at all (findings/core-saturation.md), so ask the unsaturated signal: raw
                 # chromaprint fp, forward vs reversed, over the SAME downloaded 20 s. The
@@ -2537,11 +2538,24 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
                 # dead fpcalc, which reads as no evidence and refuses exactly as before.
                 _fv = _verify.verify(clip_audio, dst, 20)
                 ffp, rfp = float(_fv.get("fp") or 0.0), float(_rv.get("fp") or 0.0)
+                # CRATE_NULL_FP_GUARDED: the forward read must beat the reversed copy by
+                # NULL_FP_GAP (0.10), not by a hair. Two readings with no recording evidence
+                # differ by up to 0.064 (504 wrong matcher pairs); Love Sosa (clip 24) read
+                # 0.062 and 0.020 and was crowned by the unguarded rule. D / 07 / 27 read
+                # 0.222 / 0.360 / 0.195. Dead fpcalc (0 vs 0) is a gap of 0: refused.
+                _gap = round(ffp - rfp, 4)          # 4 dp, as logged: 0.85-0.75 is 0.100
+                _pass = (_gap >= E.NULL_FP_GAP) if _guard else (rfp < ffp)
                 E.tlog("null_fp", 0.0, url=(cand_url or "")[:120], fwd_fp=round(ffp, 4),
                        rev_fp=round(rfp, 4), fwd_core=round(float(_fv.get("core") or 0), 4),
-                       rev_core=round(rc, 4), refuse=bool(rfp >= ffp))
-                if rfp < ffp:
+                       rev_core=round(rc, 4), gap=round(_gap, 4), guarded=_guard,
+                       refuse=not _pass)
+                if _pass:
                     return None
+                if _guard and rfp < ffp:
+                    return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
+                            "%.3f, a gap of %.3f, under the %.2f that recording evidence "
+                            "needs), so the match is texture, not this recording"
+                            % (rc, rfp, ffp, _gap, E.NULL_FP_GAP))
                 return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
                         "%.3f), so the match is texture, not this recording" % (rc, rfp, ffp))
             return ("scores %.3f against a time-reversed copy of itself, so the match is "
