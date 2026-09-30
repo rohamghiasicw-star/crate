@@ -2929,6 +2929,35 @@ def _proven_name(fp, src, top, exact):
     return None
 
 
+# ---- A CORRECTION'S SONG NEVER UNDOES A PROVEN NAME (CARD30, 2026-09-30) -----------------
+# Clip #30 (vt.tiktok.com/ZSqnw1xe2) is Aven Krynn's "Set My Heart On Fire" played as posted,
+# and that upload is Ellie Goulding's "Love Me Like You Do" at 0.90x. With the correction
+# (right_url = the Aven Krynn upload, song "Love Me Like You Do") the crown was right, then
+# _proven_name set the base to the crowned title with speed "as posted", and the correction's
+# end block put "Love Me Like You Do - Ellie Goulding" back while keeping "as posted". Live
+# 53bfc16 served that: the Finds row read "Love Me Like You Do - Ellie Goulding, original"
+# and the card showed no Slowed pill, while speed_measured said 0.8993.
+# Rule: when the base came from a proven name (base_from_lane) and the entry's song is a
+# DIFFERENT song (under half of the shorter name's words shared), the proven name and its "as posted"
+# stand, the way Mist, Fa$Ter, Don't Like.1 and XO Tour are named with no correction. An
+# entry whose song IS the proven name (Ddzm7FCS-0t, DdrXqlANC_m) still applies its spelling.
+# The correction only fixed discovery on #30 (tlog correction moved: false). CRATE_CORR_KEEP_PROVEN=0 undoes it.
+CORR_KEEP_PROVEN = os.environ.get("CRATE_CORR_KEEP_PROVEN", "1").strip() == "1"
+
+
+def _corr_song_keeps_proven(res, song):
+    if not (CORR_KEEP_PROVEN and song and (res or {}).get("base_from_lane")):
+        return False
+
+    def words(t):
+        t = re.sub(r"['\u2019]", "", t or "")
+        return {w for w in (E._title_key(t) or "").split() if len(w) >= 3}
+    a, b = words(song), words(res.get("base_song"))
+    if not (a and b):
+        return False
+    return len(a & b) < 0.5 * min(len(a), len(b))      # under half shared: another song
+
+
 # ---- FP FLOOR, ALIGNED (graded regression #41, 2026-09-30) ------------------------------
 # The floor below reads the HEAD fp: verify() only ever sees an upload's first 20 s, and its
 # chromaprint slides only 20 s against the clip's 24 s. When the clip sits later in the
@@ -5247,7 +5276,14 @@ def _phase2(ctx, on_cand=None):
                                  "ok": _corr_res["ok"]}
             if _corr_res["ok"]:
                 res["from_correction"] = True
-                if _ce.get("song"):
+                if _ce.get("song") and _corr_song_keeps_proven(res, _ce["song"]):
+                    # CARD30: the base already follows the crowned upload's own title
+                    # (ROOTFIX A/D, speed "as posted" for THAT title), so the entry's song
+                    # would pair a different song with a speed measured for this one.
+                    E.tlog("correction_song", 0.0, kept=(res.get("base_song") or "")[:60],
+                           entry=(_ce["song"] or "")[:60],
+                           lane=(res.get("base_from_lane") or {}).get("lane"))
+                elif _ce.get("song"):
                     res["base_song"] = _ce["song"]
                     res["base_artist"] = _ce.get("artist") or res.get("base_artist")
             elif _corr_res["why"]:
