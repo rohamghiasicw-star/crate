@@ -389,6 +389,41 @@ POSTED_EXACT = _speed_flag("CRATE_POSTED_EXACT", True)   # gated 2026-09-30: doc
 POSTED_EXACT_MIN = 3
 POSTED_EXACT_SKEW = 0.01
 TEMPO_KEPT = _speed_flag("CRATE_TEMPO_KEPT", True)   # gated 2026-09-30: docfix/posted/POSTED.md, #17 x2 + reg x2 + no_match 44/45 ON vs OFF
+# CRATE_YT_WALL (K30 dontlike, 2026-09-30, default ON since its gate, konnor30/dontlike.md). YouTube bot-walls this Mac:
+# live /tmp/tlog.jsonl holds 643 failed YouTube candidate downloads against 5 good ones, the last
+# good one 2026-09-29 15:33. A YouTube row still takes a download slot, so on Konnor's Don't Like
+# clip (ZSbS39h2S) 18 of 33 downloads were dead YouTube fetches while the exact upload, desy's
+# "Chief Keef - I Don't Like (remix)" (#2 on the hint query "i dont like chief keef", engine
+# verify core 1.000 / fp 0.929 at 1.000x), sat 12th among SoundCloud rows behind 10 YouTube rows
+# and was never downloaded. With the flag, once the last YT_WALL_N YouTube downloads (within
+# YT_WALL_TTL s) all failed, _sc_quota keeps only YT_CANARY YouTube rows in a download head and
+# the freed slots go to the next rows in priority order. The canary keeps probing: one YouTube
+# download that lands ends the wall. Process memory only, nothing persisted.
+YT_WALL = _speed_flag("CRATE_YT_WALL", True)   # gated 2026-09-30: konnor30/dontlike.md, Don't Like + reg + bass clips x2 ON vs OFF
+YT_WALL_N, YT_WALL_TTL, YT_CANARY = 6, 1800.0, 1
+_YT_DL_LOG = []           # (t, ok) of recent YouTube candidate downloads, newest last
+_YT_DL_LOCK = threading.Lock()
+
+
+def _yt_dl_note(ok):
+    with _YT_DL_LOCK:
+        _YT_DL_LOG.append((time.time(), bool(ok)))
+        del _YT_DL_LOG[:-4 * YT_WALL_N]
+
+
+def yt_walled():
+    """CRATE_YT_WALL: the last YT_WALL_N YouTube downloads (inside YT_WALL_TTL) all failed."""
+    if not YT_WALL:
+        return False
+    now = time.time()
+    with _YT_DL_LOCK:
+        rec = [ok for t, ok in _YT_DL_LOG if now - t < YT_WALL_TTL]
+    return len(rec) >= YT_WALL_N and not any(rec[-YT_WALL_N:])
+
+
+def _is_yt_row(c):
+    u = (c or {}).get("url") or ""
+    return (c or {}).get("source") == "youtube" or "youtube.com" in u or "youtu.be" in u
 TEMPO_KEPT_RATES = [(1.25, "slowed ~0.80x"), (1.20, "slowed ~0.83x"), (1.30, "slowed ~0.77x"),
                     (1.12, "slowed ~0.89x"), (1.40, "slowed ~0.71x"), (0.85, "sped up ~1.18x"),
                     (0.80, "sped up ~1.25x")]
@@ -8395,6 +8430,20 @@ def _sc_quota(cands, max_dl, min_sc=6):
     "The Box (Live) in London", which reads as a different rendition and gets buried.
     verify() decides by AUDIO, so spending a few slots on SoundCloud costs nothing but a
     download and is the difference between finding the edit and never seeing it."""
+    if yt_walled():
+        # CRATE_YT_WALL: a walled YouTube row would only burn the slot (see the flag)
+        _kept, _ny, _drop = [], 0, 0
+        for c in cands:
+            if _is_yt_row(c):
+                if _ny >= YT_CANARY:
+                    _drop += 1
+                    continue
+                _ny += 1
+            _kept.append(c)
+        if _drop:
+            tlog("yt_wall", 0.0, dropped=_drop, max_dl=max_dl,
+                 yt_in_head=sum(1 for c in cands[:max_dl] if _is_yt_row(c)))
+        cands = _kept
     head = cands[:max_dl]
     have = sum(1 for c in head if c.get("source") == "soundcloud")
     if have >= min_sc:
@@ -8773,6 +8822,8 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             return
         _dt1 = time.time()
         _hunt_call(_hk, "d")
+        if YT_WALL and _is_yt_row(c):
+            _yt_dl_note(bool(got))          # CRATE_YT_WALL
         if not got:
             tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
                  ok=False)
