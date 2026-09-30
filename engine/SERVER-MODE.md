@@ -24,6 +24,9 @@ So the server runs plain repo HEAD, and a ship reaches it with
 | `ADDIFY_ADMIT_CPU_PSI` | server.py | a second scan starts only under this CPU pressure |
 | `ADDIFY_STARVE_MIN_KILLS`, `ADDIFY_STARVE_FRAC`, `ADDIFY_STARVE_EVIDENCE`, `ADDIFY_STARVE_HUNT_S` | server.py | starved hunts answer busy and are not cached |
 | `ADDIFY_SLOT_MAX_S` | server.py | slot watchdog, `hung` on `/health` |
+| `ADDIFY_NAME_FALLBACK=1` | server.py | a Shazam refusal in phase 1 no longer throws away a song the scan already named (5+ answers, no rival, two windows or an as-posted hit, or a credit/comment naming it); with no usable answer the platform credit, caption, hashtags or a catalogue-confirmed comment name it; busy only when none does. Never cached (`shazam_partial`). NAMING.md |
+| `ADDIFY_SCAN_RESULT_S` | server.py | a finished hunt is kept this long for the page's own `?scan=<id>`, so its `/edits` fallback replays it instead of scanning again |
+| `CRATE_PHONE_HUNT=1` | phone_probes.py, server.py | `/edits` and `/edits/stream` bind the page's `?kit=` too (`/health` phone_probes.hunt tells the page), so a hunt that must name the song again asks the phone |
 
 ## When you change engine code
 

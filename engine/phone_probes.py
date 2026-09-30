@@ -76,6 +76,11 @@ CEILING = float(os.environ.get("CRATE_PHONE_CEILING", ANSWER_TIMEOUT + 0.5))
 # miss is then a miss), which is the App Store posture once the phone path is proven.
 FALLBACK = _flag("CRATE_PHONE_FALLBACK", True)
 MAX_MISSES = max(1, int(os.environ.get("CRATE_PHONE_MAX_MISSES", "2")))
+# NAMING.md 2026-09-30. The page also sends ?kit= on /edits and /edits/stream, and the engine
+# binds it there too, so a hunt that has to redo the naming half (its /base session is gone:
+# a restart, the page's /edits fallback) asks the same phone instead of the server's Shazam,
+# which on the droplet's IP answers 5 calls a minute. Off = only /base and /find bind a kit.
+HUNT = _flag("CRATE_PHONE_HUNT", False)
 SR = 16000            # a rate SHSignatureGenerator accepts (48k/44.1k/32k/16k, SDK header)
 MAX_SECS = 12.0       # SHCatalog.maximumQuerySignatureDuration (ShazamBridge --info)
 POLL_MAX = 20.0       # longest a /probes/next holds its thread
@@ -405,7 +410,10 @@ def drop(kit):
 
 
 def health():
-    return {"on": ON, "v": PROTOCOL, "conc": CONC, "sr": SR, "max_secs": MAX_SECS}
+    out = {"on": ON, "v": PROTOCOL, "conc": CONC, "sr": SR, "max_secs": MAX_SECS}
+    if ON and HUNT:
+        out["hunt"] = True                    # NAMING.md: the page may send a kit on hunts
+    return out
 
 
 # ------------------------------------------------------------------ HTTP

@@ -4575,13 +4575,15 @@ _SLOT_DIR = os.environ.get("CRATE_SHAZAMKIT_SLOT_DIR", "/tmp/addify-shazamkit")
 SPEED_PRECUT = _speed_flag("CRATE_PRECUT", True)
 
 
-async def _shazam_probe(wav, timeout):
+async def _shazam_probe(wav, timeout, meta=None):
     """One Shazam probe. Unpaced (the Mac): the exact line every call site used to have.
     Paced (the Linux server, CRATE_SHAZAM_PACE=1): find_song.shazam_call waits for a Shazam
     slot OUTSIDE this timeout, never retries silently, and raises find_song.Throttled when
-    it cannot get through; the call sites catch that like any probe error."""
+    it cannot get through; the call sites catch that like any probe error.
+    `meta` = (offset, rate) of the probe, recorded on the scan in paced mode only (NAMING.md:
+    server._name_fallback tells two windows agreeing from one window read at two speeds)."""
     if _FSP.PACE:
-        return await _FSP.shazam_call(wav, timeout)
+        return await _FSP.shazam_call(wav, timeout, meta=meta)
     return await asyncio.wait_for(shazam(wav), timeout=timeout)
 
 
@@ -4790,7 +4792,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             _to = _find_song.probe_ceiling(timeout if timeout is not None else (
                 SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
             _pc[0] = time.time()
-            hit = await _shazam_probe(wav, _to)
+            hit = await _shazam_probe(wav, _to, meta=(off, rate))
             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                  off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
                  slot_wait=round(_sw, 3), **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
@@ -4860,7 +4862,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 # answers later, and the thing the product exists to do
                 _to = _find_song.probe_ceiling(timeout if timeout is not None else (
                     SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
-                hit = await _shazam_probe(wav, _to)
+                hit = await _shazam_probe(wav, _to, meta=(off, rate))
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                      off=off, rate=rate, span=span, hit=bool(hit),
                      **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
@@ -5705,7 +5707,7 @@ async def annotate_mashup(audio, fp, scan, dur=None):
             wav = os.path.join(tmp, "m%.2f_%d.wav" % (off, span))
             try:
                 cut(audio, wav, off, 1.0, span=span)
-                hit = await _shazam_probe(wav, MASHUP_TIMEOUT)
+                hit = await _shazam_probe(wav, MASHUP_TIMEOUT, meta=(off, 1.0))
             except Exception:
                 return None
         if hit:

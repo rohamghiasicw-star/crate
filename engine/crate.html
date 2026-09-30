@@ -2103,10 +2103,62 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
         location.reload(); return false;}
       var o=!!j; engineUp=o?true:null; return o;})
     .catch(function(){engineUp=null; return false;});}
-function call(path,url,opt){return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
+function call(path,url,opt){
+  // NAMING 2026-09-30: a scan's first call checks the app still calls THIS page's engine its
+  // own (originGuard). If not, the page moves itself onto the engine the app resolved and the
+  // scan runs there, with a phone that will answer its probes.
+  return (opt&&opt.guard?originGuard(url):Promise.resolve(false)).then(function(moved){
+  if(moved) return {result:'moved'};
+  return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
   var kit=(opt&&opt.kit)?kitStart():'';
-  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};})
-    .then(function(d){if(kit) kitStop(); return d;});});}
+  var sq=(opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'';
+  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};})
+    .then(function(d){if(kit) kitStop(); return d;});});});}
+/* THE ENGINE MOVED UNDER AN OPEN PAGE (NAMING 2026-09-30, ~/addify-harness/server/NAMING.md).
+   The app reads the engine's address from a public directory on every launch and foreground,
+   but keeps showing the page it already has. After a switch (Mac to server, or a tunnel that
+   rotated) the page still talks to the OLD engine while the app's ShazamKit handler only
+   answers the NEW one: every probe came back "not the engine page", the scan fell to the
+   server's own Shazam, and that IP's 429 made it "busy" (10:45 UTC, ZSbAD4DAH, 6 of 6 probes).
+   The handler checks the page's origin BEFORE it reads the message, so a {type:'ping'} it
+   cannot use is a free, exact test: "bad message" = same engine, "not the engine page" = the
+   app moved on. Then the page reads the same directory the app reads, checks that engine's
+   /health, and goes there with the link (/share?url=), the path the app's own share uses.
+   Only an app build with ShazamKit (the addifyKit handler) is ever moved; Safari never is. */
+var ADDIFY_DIR='https://api.github.com/gists/d63fcb85b88d9a8f12e943605dd0a078', KIT_MOVED=false;
+function originGuard(pending){
+  var N=window.ADDIFY_NATIVE, H=window.webkit&&window.webkit.messageHandlers;
+  if(!(N&&H&&H.addifyKit)) return Promise.resolve(false);
+  return new Promise(function(done){
+    var fin=false, to=setTimeout(function(){end(false);},900);
+    function end(bad){if(fin) return; fin=true; clearTimeout(to);
+      if(!bad) return done(false);
+      KIT_MOVED=true; engineMoved(pending).then(done);}
+    try{H.addifyKit.postMessage({type:'ping'}).then(function(){end(false);},function(e){
+      end(String(e&&e.message||e||'').indexOf('not the engine page')>=0);});}
+    catch(e){end(false);}
+  });}
+function dirURL(j){try{var f=(j&&j.files)||{};
+  for(var k in f){var c=String((f[k]&&f[k].content)||'').split(/\r?\n/)[0].trim();
+    if(!c) continue; if(!/^https?:\/\//.test(c)) c='https://'+c; c=c.replace(/\/+$/,'');
+    if(/^https?:\/\/[^\s\/?#]+$/.test(c)) return c;}}catch(e){} return null;}
+function engineMoved(pending){
+  var now=Date.now();
+  try{if(now-(+(sessionStorage.getItem('addify-moved-at')||0))<60000) return Promise.resolve(false);}catch(e){}
+  return fetch(ADDIFY_DIR,{cache:'no-store',headers:{'Accept':'application/vnd.github+json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(j){var u=dirURL(j);
+      if(!u||u===location.origin) return false;
+      return fetch(u+'/health',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
+        .then(function(h){
+          if(!(h&&h.ok&&/engine/i.test(String(h.service||'')))) return false;
+          try{sessionStorage.setItem('addify-moved-at',String(now));}catch(e){}
+          location.replace(u+(pending?'/share?moved=1&url='+encodeURIComponent(pending):'/'));
+          return true;});})
+    .catch(function(){return false;});}
+function rid(p){var a=new Uint8Array(16); crypto.getRandomValues(a);
+  return p+Array.prototype.map.call(a,function(b){return ('0'+b.toString(16)).slice(-2);}).join('');}
+function huntKitOK(){return !!(engineInfo&&engineInfo.phone_probes&&engineInfo.phone_probes.hunt);}
 /* ON-DEVICE SHAZAMKIT (docs/SHAZAMKIT-ON-DEVICE.md). Inside an iOS build that carries it
    (window.ADDIFY_NATIVE.shazamkit and the 'addifyKit' handler) and only when the engine
    says the path is on (/health phone_probes.on), the phone answers this scan's Shazam
@@ -2144,6 +2196,12 @@ function kitWorker(s){if(!s.on) return;
     }).then(function(line){return typeof line==='string'?JSON.parse(line):line;})
     .catch(function(e){return {matched:false,reason:'error',domain:'page',code:0,error:String(e&&e.message||e).slice(0,160)};})
     .then(function(ans){
+      if(ans&&ans.domain==='page'&&String(ans.error||'').indexOf('not the engine page')>=0){
+        // NAMING 2026-09-30: the app moved to another engine while this page stayed open
+        // (a share brings the app forward and it re-reads the directory mid-scan). Every
+        // later probe would be refused too: stop offering them so the engine gives up on
+        // this phone after one probe, and let run() move the page once /base answers.
+        KIT_MOVED=true; s.on=false;}
       if(ans&&(ans.matched||ans.reason==='no_match')) s.good=true;
       else if(ans&&ans.domain!=='page'&&++s.errs>=2&&!s.good){
         // ShazamKit itself refused twice and never once answered: this build cannot match
@@ -2171,14 +2229,23 @@ function kitWorker(s){if(!s.on) return;
 var HUNT=null;
 function endHunt(){ if(HUNT){ try{HUNT.abort();}catch(e){} HUNT=null; } }
 function huntEdits(url,onCand){
-  if(!window.EventSource) return call('/edits',url);
+  // NAMING 2026-09-30: the hunt carries this scan's random id, so the /edits fallback below
+  // gets the answer this hunt already finished (the stream only dropped before its done
+  // event) instead of a second whole scan, and, where the engine allows it (/health
+  // phone_probes.hunt), a kit, so a hunt that must name the song again asks this phone and
+  // not the server's Shazam (10:41 UTC Dd3qlQKozJp: crowned, stream lost, fallback rescan
+  // hit Shazam's 429, the card fell back to the plain song).
+  var sid=SCAN_ID||'', fb={scan:sid, kit:huntKitOK()};
+  if(!window.EventSource) return call('/edits',url,fb);
+  var hk=huntKitOK()?kitStart():'';
+  var endKit=function(){if(hk&&KIT&&KIT.id===hk) kitStop();};
   return new Promise(function(resolve){
     var es=null, settled=false, watchdog=null, aborted=false;
-    var stop=function(){if(watchdog) clearTimeout(watchdog); try{if(es) es.close();}catch(e){}};
-    var giveUp=function(){if(settled||aborted) return; settled=true; stop(); call('/edits',url).then(resolve);};
+    var stop=function(){if(watchdog) clearTimeout(watchdog); try{if(es) es.close();}catch(e){} endKit();};
+    var giveUp=function(){if(settled||aborted) return; settled=true; stop(); call('/edits',url,fb).then(resolve);};
     HUNT={url:url, abort:function(){ if(settled) return; aborted=true; settled=true; stop(); resolve({result:'aborted'}); }};
-    try{es=new EventSource(ENGINE+'/edits/stream?url='+encodeURIComponent(url));}
-    catch(e){return call('/edits',url).then(resolve);}
+    try{es=new EventSource(ENGINE+'/edits/stream?url='+encodeURIComponent(url)+(hk?'&kit='+hk:'')+(sid?'&scan='+sid:''));}
+    catch(e){endKit(); return call('/edits',url,fb).then(resolve);}
     // last-resort guard against a half-open socket that never fires onerror: the whole
     // complaint being fixed here is a progress bar that sits there forever.
     watchdog=setTimeout(giveUp,180000);
@@ -5586,7 +5653,7 @@ var curURL='';
    carries a token; goHome, a new scan and listen mode move it on, and the old scan's
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
-var scanTok=0, p1Busy=false;
+var scanTok=0, p1Busy=false, SCAN_ID='';
 function run(raw){if(busy) return; var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
@@ -5596,6 +5663,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   endHunt();                       // never two hunts at once (see HUNT)
   curURL=p.url;
   var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
+  SCAN_ID=rid('s'); KIT_MOVED=false;   // NAMING 2026-09-30: this scan's id (hunt fallback), fresh origin state
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
   showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
@@ -5614,8 +5682,15 @@ function run(raw){if(busy) return; var p=parseLink(raw);
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  call('/base',p.url,{kit:true}).then(function(d){
+  call('/base',p.url,{kit:true,guard:true}).then(function(d){
     if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
+    if(d&&d.result==='moved') return;  // NAMING 2026-09-30: the page is moving to the app's engine with this link
+    if(KIT_MOVED&&d&&(d.result==='rate_limited'||d.result==='engine_down'||d.result==='error')){
+      // NAMING 2026-09-30: the phone refused this page's probes mid-scan and the scan failed
+      // for it: run it again on the engine the app now uses (engineMoved goes there with the link)
+      return engineMoved(p.url).then(function(m){ if(!m&&tok===scanTok) onBase(d); });}
+    return onBase(d);});
+  function onBase(d){
     p1Busy=false;
     clearTimeout(phaseT); progFast=false;
     if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
@@ -5878,7 +5953,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         });
       } else finish(d);
     } else {renderResult(d,false); finish(d);}
-  });
+  }
 }
 /* NATIVE BRIDGE. Inside the iOS app (ios/) the page runs in a WKWebView that registers a
    message handler named 'addify'; the app turns this into a haptic + toast, and a local
@@ -6569,7 +6644,7 @@ function sharedLink(){
 paintHome(); renderLib(); nav('idle');
 fetchTrending();
 var _shared=sharedLink();
-var _viaSheet=!!_shared;                          // ONBOARDING v3: opened from the share sheet
+var _viaSheet=!!_shared&&!/[?&]moved=1/.test(location.search);   // ONBOARDING v3: opened from the share sheet (NAMING: not a page that moved engines)
 if(_viaSheet) onbSet('addify-sharedin','1');
 // a link parked by the stale-shell reload above resumes here, so the reload is invisible
 if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); sessionStorage.removeItem('addify-pending'); if(_pend&&parseLink(_pend).host) _shared=_pend;}catch(e){}}

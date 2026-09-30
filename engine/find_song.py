@@ -608,8 +608,9 @@ def _scan_throttled(scan, why):
         scan["why"] = scan["why"] or why
 
 
-async def shazam_call(path, timeout):
-    """ONE Shazam probe as the engine makes it. Pacing off: the old line, unchanged."""
+async def shazam_call(path, timeout, meta=None):
+    """ONE Shazam probe as the engine makes it. Pacing off: the old line, unchanged.
+    `meta` (offset, rate) is only recorded with the answer (_count_hit)."""
     if not PACE:
         return await asyncio.wait_for(shazam(path), timeout=timeout)
     scan = SCAN.get()
@@ -627,12 +628,25 @@ async def shazam_call(path, timeout):
         # to the engine, like a shazamio timeout, and is counted on the scan the same way.
         n0 = scan.get("timeouts", 0) if scan is not None else 0
         try:
-            return await ph.shazam(path, lambda p: _paced_shazamio(p, timeout, scan))
+            return _count_hit(scan, await ph.shazam(
+                path, lambda p: _paced_shazamio(p, timeout, scan)), meta)
         except asyncio.TimeoutError:
             if scan is not None and scan.get("timeouts", 0) == n0:
                 _scan_timeout(scan)
             raise
-    return await _paced_shazamio(path, timeout, scan)
+    return _count_hit(scan, await _paced_shazamio(path, timeout, scan), meta)
+
+
+def _count_hit(scan, hit, meta=None):
+    """NAMING.md 2026-09-30: every answer a probe of this scan got back, phone or shazamio (a
+    title, or "" for a real no-match), with the probe's (offset, rate), so a scan throttled
+    later can tell a song two windows agreed on from one window read at two speeds (server.py
+    _name_fallback, ADDIFY_NAME_FALLBACK). Paced mode only; errors never get here."""
+    if scan is not None and (hit is None or isinstance(hit, dict)):
+        off, rate = (meta if isinstance(meta, (tuple, list)) and len(meta) == 2 else (None, None))
+        scan.setdefault("hits", []).append(
+            {"t": str((hit or {}).get("title") or "")[:200], "off": off, "rate": rate})
+    return hit
 
 
 async def _paced_shazamio(path, timeout, scan):

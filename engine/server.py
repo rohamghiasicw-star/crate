@@ -58,6 +58,25 @@ TMP_SWEEP = os.environ.get("ADDIFY_TMP_SWEEP", "0").strip() == "1"
 # ADDIFY_SCAN_DEADLINE_S  a /base is answered within this long of arriving (queue included):
 #                 Shazam slot waits are capped by it instead of a fixed per-scan wait.
 SCAN_DEADLINE_S = float(os.environ.get("ADDIFY_SCAN_DEADLINE_S", "88") or 88)
+# ADDIFY_NAME_FALLBACK=1  NAMING NEVER FAILS ON A THROTTLE (~/addify-harness/server/NAMING.md,
+#                 2026-09-30). Off = the old rule: any Shazam refusal in phase 1 answers "busy",
+#                 even after the song was named (the droplet's IP gets 5 Shazam calls a minute,
+#                 so a scan with no phone was named at 1.6 s and still answered busy at 6.8 s).
+#                 On: a song two agreeing Shazam answers named (or one answer the platform
+#                 credit or a comment also names, with no rival answer) is kept; a scan with
+#                 no usable answer tries the evidence it already holds (the platform's music
+#                 credit, a caption or comment naming Artist - Title, the hashtags, a comment
+#                 the Apple/Deezer catalogue confirms) and answers "busy" only when none of it
+#                 names the song. Such a scan is never cached (res["shazam_partial"]).
+NAME_FALLBACK = os.environ.get("ADDIFY_NAME_FALLBACK", "0").strip() == "1"
+# ADDIFY_SCAN_RESULT_S  a finished hunt the page asked for with ?scan=<its random id> is kept
+#                 this long for that id alone. The page's /edits fallback (a stream that
+#                 dropped before its done event: the app went to the background, the tunnel
+#                 blinked) then gets that same answer instead of a second whole scan, which
+#                 without the phone ran into Shazam's 429 and replaced a crowned answer with
+#                 "busy" (Dd3qlQKozJp 10:41 UTC). Keyed by an id only that page knows, so a
+#                 phone-named answer still never reaches another user. 0 = off.
+SCAN_RESULT_S = float(os.environ.get("ADDIFY_SCAN_RESULT_S", "0") or 0)
 # ADDIFY_ADMIT_CPU_PSI  a SECOND or later heavy half is only admitted while the box's CPU
 #                 pressure (Linux PSI "some avg10", percent) is below this. 0 = off.
 ADMIT_CPU_PSI = float(os.environ.get("ADDIFY_ADMIT_CPU_PSI", "0") or 0)
@@ -177,6 +196,8 @@ def _sound_cache_put(src, res):
         return
     if _phone_unconfirmed(res):
         return
+    if res.get("shazam_partial"):        # NAMING.md: named on partial evidence, this scan only
+        return
     if (src.get("sound_match_core") is not None
             and src["sound_match_core"] < E.CORE_KEEP) or src.get("sound_mismatch"):
         return
@@ -208,6 +229,8 @@ def _cache_get(key):
 
 def _cache_put(key, res):
     if _phone_unconfirmed(res):
+        return
+    if (res or {}).get("shazam_partial"):   # NAMING.md: named on partial evidence, this scan only
         return
     if res.get("result") != "found" and _phone_nomatch(res):   # APPLYALL 2026-09-29
         return
@@ -1115,6 +1138,108 @@ def _busy_result(key, why, t0=None, detail=None):
             "secs": round(time.time() - t0, 1) if t0 else 0.0}
 
 
+_SCAN_RES = {}
+_SCAN_RES_LOCK = threading.Lock()
+_SCAN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def _scan_id_of(q):
+    """?scan=<the page's random id for this scan>, or None (ADDIFY_SCAN_RESULT_S off/bad id)."""
+    if SCAN_RESULT_S <= 0:
+        return None
+    v = ((q.get("scan") or [""])[0] or "").strip()
+    return v if _SCAN_ID_RE.match(v) else None
+
+
+def _scan_result_put(key, sid, res):
+    if not sid or SCAN_RESULT_S <= 0 or not isinstance(res, dict):
+        return
+    now = time.time()
+    with _SCAN_RES_LOCK:
+        for k in [k for k, v in _SCAN_RES.items() if now - v[0] > SCAN_RESULT_S]:
+            _SCAN_RES.pop(k, None)
+        if len(_SCAN_RES) < 512:
+            _SCAN_RES[(key, sid)] = (now, res)
+
+
+def _scan_result_get(key, sid):
+    with _SCAN_RES_LOCK:
+        v = _SCAN_RES.get((key, sid))
+    if v is None or time.time() - v[0] > SCAN_RESULT_S:
+        return None
+    out = dict(v[1])
+    out["replayed"] = True
+    return out
+
+
+def _nf_key(t):
+    """A title reduced to its words, brackets and case gone: "FLIGHTS (Slowed)" = "flights"."""
+    t = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", (t or "").lower())
+    return re.sub(r"[^0-9a-z]+", " ", t).strip()
+
+
+def _name_fallback(fp, scan, src, hint_texts):
+    """ADDIFY_NAME_FALLBACK (NAMING.md 2026-09-30). A throttled scan: may it keep its name?
+    -> {"mode": "kept"|"evidence", "agree": n, "hits": n, "answered": n}.
+    kept      no answer of this scan (phone or shazamio) named a different song, and fp's song
+              was named, in a scan that got at least 5 answers, by windows at two offsets or
+              by an as-posted (rate 1.0) probe; or by an answer the platform credit or a
+              comment/caption also names. Replayed on 476 recorded scans (101 clips) cut to
+              the droplet's 5 answers: 133 kept, 0 named differently from the full scan
+              (NAMING.md). The hunt still verifies every version by audio.
+    evidence  anything else, rivals above all (mason: "Dougie Freestyle" vs "Teach Me How to
+              Dougie" is exactly the wrong crown SERVER-VERIFY-2 B1 caught): fp is dropped and
+              the no-Shazam chain names the song or the scan answers busy."""
+    rows = []
+    for h in ((scan or {}).get("hits") or []):
+        if isinstance(h, dict):
+            rows.append((_nf_key(h.get("t")), h.get("off"), h.get("rate")))
+        else:
+            rows.append((_nf_key(h), None, None))
+    hits = [r for r in rows if r[0]]
+    out = {"mode": "evidence", "agree": 0, "hits": len(hits), "answered": len(rows)}
+    k = _nf_key((fp or {}).get("title"))
+    if not k:
+        return out
+    mine = [r for r in hits if r[0] == k]
+    out["agree"] = len(mine)
+    if not mine or len(mine) != len(hits):      # nothing agrees, or a rival song answered
+        return out
+    offs = set(r[1] for r in mine if r[1] is not None)
+    asposted = any(r[2] is not None and abs(float(r[2]) - 1.0) <= 0.021 for r in mine)
+    if len(rows) >= 5 and (len(offs) >= 2 or asposted):
+        # 5 answers = the droplet's whole Shazam minute. Fewer (a second scan took part of
+        # it) is not enough on its own: cut to 3-4 answers the replay named the first song of
+        # a two-song clip 9 times ("Set My Heart On Fire" for "Love Me Like You Do")
+        out["mode"] = "kept"
+        return out
+    if len(k) >= 4:
+        said = [(src or {}).get("credit_title") or ""] + list(hint_texts or [])
+        if any(k in _nf_key(x) for x in said):
+            out["mode"] = "kept"
+    return out
+
+
+def _confirmed_hint_name(hint_texts):
+    """The one song the comments/caption name that Apple or Deezer confirms with title AND
+    artist agreeing (hint_confirm `paired`). Two different confirmed songs = no answer.
+    -> {"title", "artist"} or None. Bounded by hint_confirm's own wall."""
+    try:
+        import hint_confirm as _HCF
+        got = _HCF.confirm_hints(list(hint_texts or []))
+    except Exception:
+        return None
+    recs = [r for r in (got or {}).values()
+            if r.get("paired") and r.get("cat_title") and r.get("cat_artist")]
+    names = {}
+    for r in recs:
+        names.setdefault(_nf_key(r["cat_title"]) + "|" + _nf_key(r["cat_artist"]), r)
+    if len(names) != 1:
+        return None
+    r = list(names.values())[0]
+    return {"title": r["cat_title"], "artist": r["cat_artist"]}
+
+
 def _phase1(url, key, t0):
     """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
@@ -1727,8 +1852,20 @@ def _phase1(url, key, t0):
                 # "No match" would be a lie and a crown could be the wrong song. Answer
                 # "busy, try again", park nothing, cache nothing, free the audio. Same for
                 # a scan that found nothing after a probe timed out (SERVER-VERIFY-1 S5).
-                _cleanup(src.get("tmp"))
-                return _busy_result(key, "shazam", t0, _scan["why"] or "timeout"), None
+                # ADDIFY_NAME_FALLBACK (NAMING.md): unless what the scan already holds names
+                # the song. "No match" is still never said here: no name = busy, as before.
+                _nfb = (_name_fallback(fp, _scan, src, hint_texts) if NAME_FALLBACK
+                        else None)
+                if _nfb is None:
+                    _cleanup(src.get("tmp"))
+                    return _busy_result(key, "shazam", t0, _scan["why"] or "timeout"), None
+                E.tlog("name_fallback", 0.0, url=key, mode=_nfb["mode"],
+                       agree=_nfb["agree"], hits=_nfb["hits"], why=_scan["why"] or "timeout",
+                       title=((fp or {}).get("title") or "")[:80])
+                res["shazam_partial"] = {"mode": _nfb["mode"], "why": _scan["why"] or "timeout",
+                                         "hits": _nfb["hits"], "agree": _nfb["agree"]}
+                if _nfb["mode"] != "kept":
+                    fp = None          # not decisive: the evidence chain below names it or nothing
         base_title = base_artist = None
         edit_label = ""
         if fp:
@@ -1931,6 +2068,24 @@ def _phase1(url, key, t0):
                 else:
                     res["lyric_guess"] = c_title    # search seed only, never the answer
                 res["speed"] = None
+        if res.get("shazam_partial") and not fp and not res.get("base_song"):
+            # NAMING.md, last tier before "busy": a comment or caption hint the Apple/Deezer
+            # catalogue confirms with title AND artist agreeing (hint_confirm, links.py's own
+            # rule). Only here: with Shazam answering, a hint only ever adds weight.
+            _hc = _confirmed_hint_name(hint_texts)
+            E.tlog("name_fallback_hint", 0.0, url=key, hit=bool(_hc),
+                   title=(_hc or {}).get("title", "")[:80])
+            if _hc:
+                base_title, base_artist = _hc["title"], _hc["artist"]
+                res["base_song"], res["base_artist"] = _hc["title"], _hc["artist"]
+                res["from_comments"] = True     # named by the comments, catalogue-checked
+                res["unverified_base"] = True
+                res["speed"] = None
+        if res.get("shazam_partial") and not res.get("base_song"):
+            # nothing we hold names it: the honest answer is still "busy, try again", never
+            # "No match" (Shazam never heard all of the clip)
+            _cleanup(src.get("tmp"))
+            return _busy_result(key, "shazam", t0, res["shazam_partial"]["why"]), None
 
         # REAL DESTINATIONS FOR THE BASE TRACK. Naming a song without a link to it is only
         # half an answer - and offering the official, licensed destination alongside the
@@ -8585,6 +8740,7 @@ class H(BaseHTTPRequestHandler):
         # server-kit (`release`: the gate slot, `job`: the gated hunt or a join of one).
         # Unset (the Mac): exactly the old stream.
         gated = release is not None or job is not None
+        _sid = getattr(self, "_scan_id", None)   # NAMING.md: ADDIFY_SCAN_RESULT_S
 
         def worker():
             if release is not None and hasattr(release, "hand"):
@@ -8593,6 +8749,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 _r = (job or (lambda oc: _edits_job(link, oc)))(
                     lambda row: q.put(("cand", row)))
+                _scan_result_put(link.split("?")[0], _sid, _r)   # before done: a fallback racing it finds it
                 q.put(("done", _r))
             except Exception as e:
                 _r = {"result": "error", "error": str(e)[:200]}
@@ -8615,7 +8772,12 @@ class H(BaseHTTPRequestHandler):
             # the client is gone the hunt still finishes and caches, as a mid-stream
             # disconnect always did, and the page's /edits fallback joins it.
             try:
-                threading.Thread(target=worker, daemon=True).start()
+                # NAMING.md: the worker runs in THIS request's context, so a phone bound to a
+                # hunt (CRATE_PHONE_HUNT) answers the probes it makes (a new thread starts with
+                # an empty context and would read FS.PHONE as unset)
+                import contextvars as _cv
+                threading.Thread(target=_cv.copy_context().run, args=(worker,),
+                                 daemon=True).start()
             except Exception:
                 if release is not None:
                     release()
@@ -8965,6 +9127,14 @@ class H(BaseHTTPRequestHandler):
         if not link:
             return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
         forced = (q.get("nocache") or [""])[0] in ("1", "true", "yes")
+        # ADDIFY_SCAN_RESULT_S (NAMING.md): the page's /edits fallback for a hunt it streamed
+        # with ?scan=<id> gets that hunt's finished answer, not a second whole scan.
+        self._scan_id = _scan_id_of(q)
+        if u.path == "/edits" and self._scan_id and not forced:
+            _rs = _scan_result_get(link.split("?")[0], self._scan_id)
+            if _rs is not None:
+                E.tlog("scan_result_reused", 0.0, url=link.split("?")[0])
+                return self._send(200, _rs)
         _tk = None
         if RL.MODE != "off":
             # APPLYALL 2026-09-29: THE LIMITER (off by default). Charged when new work is
@@ -8990,7 +9160,8 @@ class H(BaseHTTPRequestHandler):
             if not forced and "nocache" in q:
                 q = dict(q)
                 q.pop("nocache", None)
-            _ph = P.bind((q.get("kit") or [""])[0]) if u.path in ("/base", "/find") else None
+            _ph = (P.bind((q.get("kit") or [""])[0]) if (u.path in ("/base", "/find") or (
+                P.HUNT and u.path in ("/edits", "/edits/stream"))) else None)
             _tok = FS.PHONE.set(_ph) if _ph is not None else None
             try:
                 return self._scan_gated(u.path, link, q, _ph)
