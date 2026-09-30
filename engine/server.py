@@ -1910,6 +1910,18 @@ def _phase1(url, key, t0):
                "res": res, "worth": worth, "comment_links": comment_links,
                "reupload": reup}
         ctx["correction"] = _corr          # CORRECTIONS 2026-09-29 (None almost always)
+        if getattr(E, "SEEK_MOFF", False):
+            # CRATE_SEEK_MOFF: where the clip sits in each song Shazam placed it in, from the
+            # probes' own track offsets (plain numbers; the hunt reads it, nothing else does)
+            try:
+                ctx["seek_plan"] = E.seek_plan(fp, _fpstats.get("seek_hits"))
+            except Exception:
+                ctx["seek_plan"] = None
+            if ctx["seek_plan"]:
+                E.tlog("seek_plan", 0.0, entries=[
+                    ((e.get("title") or "")[:40], e["m0"], e["s"], e["n"])
+                    for e in ctx["seek_plan"]["entries"]],
+                    cut=[(t or "")[:40] for t in ctx["seek_plan"].get("cut") or []])
         # Joined last so it never delays the fingerprint. By now it has had the whole
         # Shazam sweep to finish in, so the budget is a backstop, not a wait.
         #
@@ -2060,6 +2072,11 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
 # (fp mashup / mashup_rejected, i.e. mashup tier 2 ran): 6 of the 43 last-batch clips,
 # and none of the four regression-gate clips in any logged run.
 LYRIC_LANE = os.environ.get("CRATE_LYRIC_LANE", "1").strip() == "1"
+_LN_MODE = os.environ.get("CRATE_LYRIC_NOCROWN", "after").strip().lower()
+LYRIC_NOCROWN = _LN_MODE in ("1", "after")   # graded #36, gated 2026-09-30 in "after" mode (graded/SHIP.md)
+# "after" (graded BUILD v2): also when an upload WAS crowned, if the lane never started. #36 is
+# crowned now (the Winning correction, verified 2026-09-30) and "1" only runs with no crown.
+LYRIC_AFTER = _LN_MODE == "after"
 WHISPER_BIN = os.environ.get("CRATE_WHISPER_BIN", "/opt/homebrew/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("CRATE_WHISPER_MODEL",
                                os.path.expanduser("~/.cache/whisper/ggml-base.en.bin"))
@@ -2531,7 +2548,16 @@ def _handle_rows_join(handles, futs, base_links):
     return out
 
 
-def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
+def _seek_of(c):
+    """CRATE_SEEK_MOFF: the section a row was scored on, for the null control, or None (the
+    first 20 s of both, as always)."""
+    c = c or {}
+    if c.get("seek_at") is None and c.get("seek_clip_at") is None:
+        return None
+    return {"cand_at": c.get("seek_at"), "clip_at": c.get("seek_clip_at")}
+
+
+def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
     """Manufacture a null control for the crown, out of the crown itself.
 
     A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
@@ -2578,8 +2604,21 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999):
     tmp = tempfile.mkdtemp()
     try:
         dst = os.path.join(tmp, "cand.m4a")
-        if not E.dl_clip(cand_url, dst, seconds=20, timeout=20):
+        # CRATE_SEEK_MOFF: a row scored on a later section is re-measured on THAT section
+        # (the candidate's, fetched the same way, or the clip cut where the song starts), so
+        # forward and reversed read the same audio the crown was earned on.
+        _cat = (seek or {}).get("cand_at")
+        _clat = (seek or {}).get("clip_at")
+        if _cat is not None:
+            dst = os.path.join(tmp, "cand_sec.wav")
+            if not E.dl_section(cand_url, dst, float(_cat), seconds=20, timeout=20):
+                return None
+        elif not E.dl_clip(cand_url, dst, seconds=20, timeout=20):
             return None
+        if _clat is not None:
+            _cl = os.path.join(tmp, "clip_sec.wav")
+            E.cut(clip_audio, _cl, float(_clat), 1.0, span=26)
+            clip_audio = _cl
         rev = os.path.join(tmp, "rev.wav")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", dst,
                         "-af", "areverse", "-ac", "1", "-ar", "44100", rev],
@@ -2886,6 +2925,172 @@ def _proven_name(fp, src, top, exact):
                 return (" X ".join(songs), pre or (src or {}).get("credit_author"),
                         "mashup_credit")
     return None
+
+
+# ---- FP FLOOR, ALIGNED (graded regression #41, 2026-09-30) ------------------------------
+# The floor below reads the HEAD fp: verify() only ever sees an upload's first 20 s, and its
+# chromaprint slides only 20 s against the clip's 24 s. When the clip sits later in the
+# upload, the head fp is misaligned and reads at the random level on the RIGHT upload.
+# Clip 41 (vt.tiktok.com/ZSqT2xSJy), graded right by Roham ("think so, pretty close man"):
+# Phoenixbecrazy's "BK Back Slowed Down" reads head fp 0.604-0.608 (refused since the floor
+# shipped 09-29, 3858982), while the clip slid across the whole upload lands at 33.1 s,
+# where verify() reads fp 0.874 / core 1.000 at speed 1.000 and the time-reversed window
+# reads fp 0.609 (gap 0.265). So before the floor refuses a row, locate the clip in the
+# full upload and re-verify that window, with the reversed control on the same window.
+# It only lifts a refusal (the row goes back to what the pre-floor code did with it); it
+# never touches core/fp/rank fields, so aligned scores are never compared against
+# misaligned ones (the CRATE_SEEK_MOFF failure, final/SHIP.md), and the head null control
+# still runs in the walk. Mashup / compilation titles are skipped (SEEK clip 32).
+# SoundCloud only: its full audio is a byte range; YouTube bot-walls this Mac.
+_FA_MODE = os.environ.get("CRATE_FP_FLOOR_ALIGN", "1").strip().lower()   # narrow, gated 2026-09-30 (graded/SHIP.md)
+FP_FLOOR_ALIGN = _FA_MODE in ("1", "wide")
+# "1" (narrow): lift the refusal only when the aligned window ALSO contradicts the head's own
+# speed reading (past _TEMPO_EXACT), i.e. the head verify demonstrably measured a different
+# section. On the 45-clip set that is clip 41 alone (head 0.9625, aligned 1.000); every
+# other floor-refused row reads the same speed at its aligned window, so the walk is the
+# live one there. "wide" drops that condition: it also re-crowns clips 11, 18/29, 21/37,
+# 26, 33 and 44/45 (lab scans 2026-09-30, graded/REGRESSIONS.md), which need Roham's ear.
+_FA_WIDE = _FA_MODE == "wide"
+_FA_MAX_ROWS = int(os.environ.get("CRATE_FP_FLOOR_ALIGN_ROWS", 2))
+_FA_SECS = 330                 # how much of the upload to search (covers 0-5.5 min)
+_FA_RIGHT = 0.638              # every same-speed right pair reads >= this (rootfix matcher)
+_FA_FRAME = 4096.0 / 3.0 / 11025.0      # chromaprint item hop, ~0.1238 s
+
+
+def _floor_align(clip_audio, cand, tmpdir):
+    """-> {"pass", "at", "s", "fp", "core", "speed", "rev_fp", "gap"} or None."""
+    import shutil, subprocess
+    import numpy as np
+    url = cand.get("url") or ""
+    if not (clip_audio and tmpdir and "soundcloud.com" in url):
+        return None
+    t = "%s %s" % (cand.get("title") or "", cand.get("uploader") or "")
+    if len(E.split_mashup(cand.get("title") or "")) >= 2 or re.search(
+            r"\b(mashup|megamix|compilation|playlist|full album)\b", t, re.I):
+        return None
+    t0 = time.time()
+    fd = tempfile.mkdtemp(prefix="fa_", dir=tmpdir)
+    try:
+        full = os.path.join(fd, "full.wav")
+        # the whole upload (to _FA_SECS), not the 20 s head: _range_to_wav caps at 2 MB
+        # and rejects a decode shorter than asked, so pull the byte range here.
+        media, kbps, _dur = E._sc_media_url(track_url=url)
+        want = int((kbps or 128) * 1000 / 8 * (_FA_SECS + 4))
+        want = max(400_000, min(want, 6_500_000))
+        import curl_cffi.requests as creq
+        rr = creq.get(media, headers={"Range": "bytes=0-%d" % (want - 1)},
+                      impersonate="chrome", timeout=10)
+        if rr.status_code not in (200, 206) or len(rr.content) < 20_000:
+            return None
+        part = full + ".part"
+        with open(part, "wb") as f:
+            f.write(rr.content)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-t", str(_FA_SECS), "-i", part,
+                        "-vn", "-ac", "1", "-ar", "44100", full], capture_output=True,
+                       timeout=30, check=False)
+        os.remove(part)
+        if (E.duration_of(full) or 0) < 25:
+            return None
+        import verify as V
+        cfp = V._fp_raw(clip_audio)
+        if cfp is None or not len(cfp):
+            return None
+        best = None
+        sp = [1.0]
+        v = cand.get("vspeed")
+        if v and abs(math.log2(float(v))) > 0.005:
+            sp.append(round(float(v), 4))
+        for s in sp:
+            if best is not None and best[0] >= 0.70:
+                break                   # located at 1.0x already; skip the head-speed pass
+            rs = os.path.join(fd, "rs.wav")
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", full, "-af",
+                            "asetrate=%d,aresample=44100" % int(44100 * s), rs],
+                           check=False, timeout=30)
+            b = V._fp_raw(rs, length=int(_FA_SECS / s) + 5)
+            if b is None or len(b) < len(cfp):
+                continue
+            la = len(cfp)
+            for off in range(0, len(b) - la + 1):
+                sc = 1.0 - int(np.unpackbits((cfp ^ b[off:off + la]).view(np.uint8)).sum()) \
+                    / (32.0 * la)
+                if best is None or sc > best[0]:
+                    best = (sc, off, s)
+        if best is None:
+            return None
+        at = best[1] * _FA_FRAME * best[2]
+        win = os.path.join(fd, "win.wav")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.3f" % at, "-i", full,
+                        "-t", "22", win], check=False, timeout=30)
+        w = V.verify(clip_audio, win, 20)
+        rev = os.path.join(fd, "rev.wav")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", win, "-af", "areverse",
+                        rev], check=False, timeout=30)
+        r = V.verify(clip_audio, rev, 20)
+        wf, rf = float(w.get("fp") or 0), float(r.get("fp") or 0)
+        ws = float(w.get("speed") or 1.0)
+        out = {"at": round(at, 2), "s": best[2], "slide": round(best[0], 4),
+               "fp": round(wf, 4), "core": round(float(w.get("core") or 0), 4),
+               "speed": round(ws, 4), "rev_fp": round(rf, 4), "gap": round(wf - rf, 4)}
+        hv = cand.get("vspeed_locked") or cand.get("vspeed") or 1.0
+        out["head_speed"] = round(float(hv), 4)
+        out["speed_contradicted"] = abs(math.log2(max(ws, 1e-3) / float(hv))) > _TEMPO_EXACT
+        out["pass"] = bool(wf >= _FA_RIGHT and out["core"] >= E.CORE_EDIT
+                           and wf - rf >= E.NULL_FP_GAP
+                           and abs(math.log2(max(ws, 1e-3))) <= _TEMPO_TOL
+                           and (_FA_WIDE or out["speed_contradicted"]))
+        E.tlog("floor_align", time.time() - t0, url=url[:120], **out)
+        return out
+    except Exception as ex:
+        E.tlog("floor_align", time.time() - t0, url=url[:120], error=type(ex).__name__)
+        return None
+    finally:
+        shutil.rmtree(fd, ignore_errors=True)
+
+
+# ---- GRADED #16: THE APPLE PREVIEW AS A SPEED REFERENCE (label only) ---------------------
+# Clip 16 (Side To Side) printed "slowed ~0.78x" on 09-24..09-27 off YouTube references (the
+# official video and plain rips, pool 0.8027). Since 09-29 every YouTube fetch here fails
+# "Sign in to confirm you're not a bot", so no reference exists and the card falls back to
+# phase 1's straight hit, "as posted" (Shazam's own entry for this song is a 4:32 slowed copy
+# of the 3:46 master). The Apple preview (res["preview_url"], the official master) confirms
+# (confirm_ref True) and measures 0.8012 on the clip. Caveat, measured: the high-pass speed
+# lock is a PITCH reading, so a time-reversed preview confirms too - the same holds for any
+# reference this block has ever used; the song identity comes from Shazam, not from this.
+PREVIEW_SPEED_REF = os.environ.get("CRATE_PREVIEW_SPEED", "1").strip() == "1"   # gated 2026-09-30 (graded/SHIP.md)
+
+
+def _preview_speed(src, url):
+    """-> measure_consensus dict (confident) or None. Audio in src["tmp"], removed here."""
+    import subprocess
+    t0 = time.time()
+    audio, tmp = (src or {}).get("audio"), (src or {}).get("tmp")
+    if not (audio and tmp and url and url.startswith("https://audio-ssl.itunes.apple.com/")):
+        return None
+    pv = os.path.join(tmp, "pv_speed.wav")
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-rw_timeout", "8000000",
+                        "-i", url, "-ac", "1", "-ar", "44100", pv],
+                       capture_output=True, timeout=12, check=False)
+        if not os.path.exists(pv) or os.path.getsize(pv) < 20_000:
+            E.tlog("preview_speed", time.time() - t0, ok=False, why="fetch")
+            return None
+        if not speed_from_master.confirm_ref(audio, pv):
+            E.tlog("preview_speed", time.time() - t0, ok=False, why="confirm_ref")
+            return None
+        r = speed_from_master.measure_consensus(audio, [pv])
+        ok = bool(r and r.get("confident"))
+        E.tlog("preview_speed", time.time() - t0, ok=ok, speed=(r or {}).get("speed"),
+               label=(r or {}).get("label"))
+        return r if ok else None
+    except Exception as ex:
+        E.tlog("preview_speed", time.time() - t0, ok=False, why=type(ex).__name__)
+        return None
+    finally:
+        try:
+            os.remove(pv)
+        except OSError:
+            pass
 
 
 def _crown_fp_floor(c, source_v=None):
@@ -4161,6 +4366,8 @@ def _phase2(ctx, on_cand=None):
             # hunt, on the clock its tlog row is measured from (_t, huntbudget/MEASURE.md)
             if hasattr(E, "hunt_budget_arm"):
                 E.hunt_budget_arm(_t)
+            if getattr(E, "SEEK_MOFF", False):
+                E.seek_plan_arm(ctx.get("seek_plan"))      # CRATE_SEEK_MOFF (flag-gated)
             edit = loop.run_until_complete(E.find_edit(
                 src["audio"], src.get("credit_title"), src.get("credit_author"),
                 base_title, base_artist, edit_label, known_dir=mdir,
@@ -4467,6 +4674,7 @@ def _phase2(ctx, on_cand=None):
             _gate_label = (res.get("speed") if _reup is None
                            else (res.get("reupload") or {}).get("speed_vs_credit"))
             _fp_floor_hits = []            # ROOTFIX B: rows the fp floor refused
+            _fa_n = [0]                    # FP_FLOOR_ALIGN rows looked at this scan
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
                 _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title)
@@ -4482,6 +4690,12 @@ def _phase2(ctx, on_cand=None):
                     _why = _rendition_original_why(_cand, res.get("rendition"))
                 if not _why:
                     _why = _crown_fp_floor(_cand, _sv)          # ROOTFIX B, flag-gated
+                    if (_why and FP_FLOOR_ALIGN and _fa_n[0] < _FA_MAX_ROWS
+                            and (_cand.get("core") or 0) >= E.CORE_EDIT):
+                        _fa_n[0] += 1                   # graded #41: head fp misaligned?
+                        _fa = _floor_align(src.get("audio"), _cand, src.get("tmp"))
+                        if _fa and _fa.get("pass"):
+                            _why = None
                     if _why:
                         _fp_floor_hits.append(_cand)
                 if _why:
@@ -4519,7 +4733,7 @@ def _phase2(ctx, on_cand=None):
                     _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
                                                        _tempo_d(r[1]), r[0]))
                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
-                                           _pick[1].get("core"))
+                                           _pick[1].get("core"), seek=_seek_of(_pick[1]))
                 if _why:
                     _rejects[_pick[0]] = (_why, _pick[1])
                     _clean.remove(_pick)
@@ -4540,7 +4754,7 @@ def _phase2(ctx, on_cand=None):
 
                 def _n_of(c):
                     return _time_reversed_null(src.get("audio"), c.get("url"),
-                                               c.get("core"), floor=0.0)
+                                               c.get("core"), floor=0.0, seek=_seek_of(c))
                 _walk_top = top
                 top, _source_v, _fig_info = _crown_by_figure(
                     _okrows, top, _source_v, _shown, _p_of, _n_of)
@@ -4591,7 +4805,7 @@ def _phase2(ctx, on_cand=None):
                         _corr["right_url"], verified, edit.get("ranked") or [],
                         edit.get("corr_rows") or [], E.CORE_KEEP, _cgate,
                         lambda c: _time_reversed_null(src.get("audio"), c.get("url"),
-                                                      c.get("core")),
+                                                      c.get("core"), seek=_seek_of(c)),
                         _is_dead)
                 except Exception as _cex:
                     _crow, _csv, _cwhy, _ctr = None, None, "check failed: %s" % type(_cex).__name__, True
@@ -4839,6 +5053,21 @@ def _phase2(ctx, on_cand=None):
                 res["speed"] = measured["label"]
                 res["speed_measured"] = measured.get("speed")
                 res["speed_refs"] = measured.get("agree")
+            elif (PREVIEW_SPEED_REF and not measured and _reup is None
+                  and res.get("preview_url") and res.get("speed") == "as posted"
+                  and res.get("speed_measured") is None):
+                # GRADED #16: no crown, nothing measured, and phase 1's straight hit printed
+                # "as posted". Every reference used to be a YouTube "official audio" upload,
+                # and YouTube bot-walls this Mac, so the refs come back empty. The Apple
+                # preview of the named song is the official master; measure against it with
+                # the same confirm_ref + measure_consensus the speed block uses. LABEL ONLY:
+                # it runs after every crown decision and feeds no gate.
+                _pv = _preview_speed(src, res["preview_url"])
+                if _pv and _pv.get("label") != "as posted":
+                    res["speed"] = _pv["label"]
+                    res["speed_measured"] = _pv.get("speed")
+                    res["speed_refs"] = _pv.get("agree")
+                    res["speed_source"] = "apple_preview"
 
             # THE CROWD ALREADY CALLED IT. Only when NO upload was crowned: the comments
             # (or caption, or the sound page) named the base song together with its
@@ -4900,6 +5129,27 @@ def _phase2(ctx, on_cand=None):
             res["speed"] = None
             res["note"] = ("Couldn't confidently ID this one - Shazam matched a likely-wrong "
                            "cover, and nothing in the caption or comments named the real track.")
+
+        # GRADED #36 (CRATE_LYRIC_NOCROWN, default "after" since 2026-09-30). The lane's own gate needs mashup
+        # tier 2, which only runs when the two 12 s windows name different songs. On clip
+        # 36 (Drake "Nonstop" vocals over Lord Wyse "Winning") shazamio has named "Orange
+        # Soda" on BOTH windows in every scan on disk since 09-29 (10 of 10), so the lane
+        # that names Nonstop (2 of 2 offline on today's audio) never starts. When no upload
+        # was crowned, run it now, after every crown decision: display only, same 2-window
+        # Genius vote, same LYRIC_JOIN cap below.
+        if (_lyric_fut is None and LYRIC_NOCROWN and (not exact or LYRIC_AFTER) and fp
+                and base_title
+                and not res.get("base_uncertain") and src.get("audio")
+                and os.path.exists(src["audio"]) and os.path.exists(WHISPER_BIN)
+                and os.path.exists(WHISPER_MODEL)):
+            _lyric_known = [base_title] + [s.get("title") or s.get("song") for s in
+                                           (fp.get("songs") or []) + (fp.get("sections") or [])]
+            if exact and exact.get("title"):
+                _lyric_known.append(exact["title"])      # "after": the crown's own song is known
+            _lyric_ex = ThreadPoolExecutor(max_workers=1)
+            _lyric_fut = _lyric_ex.submit(_lyric_vocals, src["audio"], _lyric_known)
+            _lyric_ex.shutdown(wait=False)
+            E.tlog("lyric_nocrown", 0.0)
 
         # VOCALS FROM THE LYRICS, collected only now: every crown decision above is final,
         # so this can add a row to the mix and nothing else. A crown whose own title

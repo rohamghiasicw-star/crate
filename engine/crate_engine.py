@@ -315,6 +315,10 @@ SOUNDPAGE_RETRY_GAPS = (0.35, 0.6, 0.9, 1.2, 1.5, 1.5)   # waits before tries 2.
 SOUNDPAGE_RETRY_FLOOR = 3              # tries made whatever the stop says (today's count)
 SOUNDPAGE_RETRY_CAP = float(os.environ.get("CRATE_SOUNDPAGE_RETRY_CAP", 6.0))
 SOUNDPAGE_HINT_TTL = float(os.environ.get("CRATE_SOUNDPAGE_HINT_TTL", 1800.0))
+# CRATE_SEEK_MOFF v2 (crate#10): read every same-song row on the section of the upload the clip was
+# cut from, aligned against aligned, with the reversed control on the adopted window (gap 0.12) and
+# the plain song preferred over a mashup. See seek_plan() and _SeekRun below.
+SEEK_MOFF = _speed_flag("CRATE_SEEK_MOFF", True)   # gated 2026-09-30: graded/SHIP.md, reg x2 + mason x6 (live page stop) + 45-clip ABAB
 VOTE_XWIN = _speed_flag("CRATE_VOTE_XWIN", True)   # gated 2026-09-29: rootfix PROVE.md, reg x2 + 45-clip ABAB + keep lane
 #   F  CRATE_CORROB_RETRY    a corroboration probe that TIMED OUT is re-asked once before the
 #                            vote, so a stall is never read as "no rival": DbPVEFtykpl live
@@ -4069,6 +4073,8 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         if hit:
             hit.update(edit_label=label, rate=rate, offset=off, span=span,
                        probes=n["i"])
+            if SEEK_MOFF and hit.get("offset_in_master") is not None:
+                _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
         return hit
 
     async def _probe_serial(off, rate, label, span=20, t_sink=None, timeout=None):
@@ -4112,6 +4118,8 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             # and it has to be the measured one, not a plausible-looking guess.
             hit.update(edit_label=label, rate=rate, offset=off, span=span,
                        probes=n["i"])
+            if SEEK_MOFF and hit.get("offset_in_master") is not None:
+                _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
         return hit
 
     async def sweep_rates(off, rates, t_sink=None, need=None, budget=SWEEP_BUDGET):
@@ -7021,8 +7029,28 @@ def _sc_client_id(timeout=12):
     raise RuntimeError("no soundcloud client_id")
 
 
+_SC_MEDIA_MEMO = {}       # CRATE_SEEK_MOFF only: track url -> (t, result), 90 s
+
+
 def _sc_media_url(track_url, timeout=12):
-    """SoundCloud api-v2 -> (progressive media url, kbps, duration_s)."""
+    """SoundCloud api-v2 -> (progressive media url, kbps, duration_s).
+
+    CRATE_SEEK_MOFF: the section fetch right after a candidate's head download reuses the
+    head's resolve (two API round trips, 0.4-1.4 s) for 90 s. SoundCloud's signed progressive
+    url outlives that; the memo is off with the flag off, so today's path never reads it."""
+    if SEEK_MOFF:
+        _m = _SC_MEDIA_MEMO.get(track_url)
+        if _m and time.time() - _m[0] < 90.0:
+            return _m[1]
+        _r = _sc_media_url_raw(track_url, timeout)
+        if len(_SC_MEDIA_MEMO) > 512:
+            _SC_MEDIA_MEMO.clear()
+        _SC_MEDIA_MEMO[track_url] = (time.time(), _r)
+        return _r
+    return _sc_media_url_raw(track_url, timeout)
+
+
+def _sc_media_url_raw(track_url, timeout=12):
     cid = _sc_client_id()
     api = ("https://api-v2.soundcloud.com/resolve?url=%s&client_id=%s"
            % (urllib.parse.quote(track_url, safe=""), cid))
@@ -7161,6 +7189,852 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
     if not os.path.exists(dst):
         return None
     return dst
+
+
+# =========================================================================== CRATE_SEEK_MOFF
+# crate#10, FINAL 2026-09-30, v2 default ON since the graded prove (graded/SHIP.md). Candidates were scored on their first 20 s only, so
+# a clip cut from 3:00 of an upload never matched it (whistle: the Flo Rida master read fp
+# 0.605 / core 0.321 on its head and fp 0.9465 / core 1.000 at 3:00, xfix2/whistle.md).
+#
+# WHY EVEN A SMALL OFFSET MATTERS. verify()'s chromaprint leg slides the candidate's 20 s over
+# the clip's 24 s, so it only aligns when the candidate's window STARTS 0-4 s after the clip's
+# start (clip shorter than 20 s: the other way round). An upload that starts earlier in the
+# song than the clip does can never align on fp, only on `arr`, whatever the gap. So:
+#   m0 = the track time at clip time 0, from Shazam's own answer: moff - off * s, with
+#        s = (1 + timeskew) / rate, the clip's speed against the catalogue entry that answered
+#        (ShazamKit reports offset_in_master; consistent to ~0.02 s across windows).
+#   m0 > SEEK_MIN_AT   the clip starts INSIDE the song: fetch one bounded section (<= 56 s) of
+#                      the candidate around P = m0 / c for c = 1 (a plain copy) and c = s (an
+#                      upload at the clip's speed), started together with the head download
+#                      (prefetch), slide the clip's chromaprint across it at each hypothesis'
+#                      speed to find where the clip sits, then verify() once on that window.
+#   m0 < -SEEK_MIN_LEAD the clip starts BEFORE the song (talking, an intro): no fetch at all,
+#                      the candidate's own head is scored against the clip cut where the song
+#                      starts (3 clip offsets, each prepared once per scan).
+# v2 (GRADED BUILD 2026-09-30, addify-harness/graded/BUILD.md). v1 failed its prove on two
+# clips (final/SHIP.md): it only re-read rows whose head MISSED, so on clip 38 a sought row's
+# aligned fp (Lu Kang 0.707) beat an unsought row's misaligned one (DOOWOP head 0.642, aligned
+# 0.829); and it crowned a mashup whose section plays the plain song (clip 32, 0.851 vs the
+# plain upload's 0.844). v2:
+#   ALIGNED AGAINST ALIGNED. Every row whose title names a placed song gets its section read,
+#     including rows whose head already matched (they use the prefetch v1 threw away).
+#     seek_settle() then refuses any section win inside a song's group while a row of that group
+#     whose head DID match (core >= CORE_EDIT, fp >= SEEK_FP_OK) has no section reading (cap,
+#     fetch, slow): those rows are compared head against head, exactly as today.
+#   THE REVERSED CONTROL ON THE SAME WINDOW. A section is found by sliding over ~56 s, which is
+#     many more chances than verify()'s own 4 s slide, so the adoption also needs the window's
+#     fp to beat the same window time-reversed by SEEK_REV_GAP (0.12; the null control and
+#     graded #41's floor align use 0.10 on reads with no such search). Measured offline
+#     (final/offline/ctl38, ctl32, ctl08): DOOWOP 0.207, Spenca 0.149 pass; Lu Kang 0.091 and
+#     clip 08's YG 0.098 (SHIP: "thin") do not.
+#   PLAIN OVER MASHUP. A mashup / compilation title never takes a section in the worker: its
+#     aligned reading is kept aside, and seek_settle() uses it only when Shazam itself heard a
+#     mashup on this clip AND it beats every plain row of that song by more than
+#     SEEK_PLAIN_NOISE. A section of a mashup that plays one song cannot tell the two apart.
+#   WAVE 1 IS NOT HELD. A prefetch is waited on for at most SEEK_WAIT_MAX after the head has
+#     verified, and a failed prefetch is not re-fetched through yt-dlp in the worker (v1: clip 30
+#     wave 1 went 3.7 -> 11.9 s, four 3.3-4.0 s waits plus one 8.6 s refetch).
+#   RESERVE. SEEK_RESERVE of the SEEK_MAX_FETCH sections are kept for rows whose head already
+#     matched and that got no prefetch, so the fairness rule above rarely has to fire.
+# A section is ADOPTED only when it is decisive: fp >= SEEK_FP_OK (every same-speed right pair
+# in the 576 labelled pairs read >= 0.638, every wrong one <= 0.613), core >= CORE_EDIT, fp beats
+# the head by SEEK_FP_GAIN, and fp beats the reversed window by SEEK_REV_GAP. Otherwise the
+# head's scores stand, exactly as today. The row then carries seek_at / seek_clip_at, and the
+# reversed-null control re-measures on that same section.
+# The reversed gap a SECTION needs is stricter than the null control's NULL_FP_GAP (0.10): the
+# section search has already taken the best forward read over ~450 offsets, the reversed read
+# gets no such choice, so a wrong upload's gap is biased upward here. Lab 2026-09-30 (v2c): the
+# adoptions split into 0.100-0.109 (clip 08 YG at the clip's cut 0.100, offline 0.098 and "thin"
+# in final/SHIP.md; clip 04 and 26 side rows 0.104 / 0.109) and >= 0.137 (every other one:
+# clips 04, 09, 11, 21/37, 26, 38, mason's freestyle row); 0.12 sits in that gap.
+SEEK_REV_GAP = float(os.environ.get("CRATE_SEEK_REV_GAP", 0.12))
+SEEK_RESERVE = int(os.environ.get("CRATE_SEEK_RESERVE", 2))
+SEEK_WAIT_MAX = float(os.environ.get("CRATE_SEEK_WAIT_MAX", 4.5))
+SEEK_PLAIN_NOISE = float(os.environ.get("CRATE_SEEK_PLAIN_NOISE", 0.03))
+# WAVE TAIL: once every head of a download batch has verified, a section still in flight gets
+# at most SEEK_TAIL more seconds, so the prefetch can use the time the heads take but cannot
+# stretch the wave much past them (lab 2026-09-30, clip 04: 8 sections landed ~4.75 s after
+# their start on a shared link, wave 1 went 1.9 -> 6.5 s under the 4.5 s wait alone).
+SEEK_TAIL = float(os.environ.get("CRATE_SEEK_TAIL", 1.0))
+SEEK_MIN_AT = float(os.environ.get("CRATE_SEEK_MIN_AT", 1.0))
+SEEK_MIN_LEAD = float(os.environ.get("CRATE_SEEK_MIN_LEAD", 2.0))
+SEEK_FP_OK = float(os.environ.get("CRATE_SEEK_FP_OK", 0.638))
+SEEK_FP_GAIN = 0.02
+SEEK_MAX_FETCH = int(os.environ.get("CRATE_SEEK_MAX", 12))
+SEEK_FETCH_TIMEOUT = float(os.environ.get("CRATE_SEEK_FETCH_TIMEOUT", 10.0))
+SEEK_SPAN = 56.0                        # seconds per section fetch at most (~900 KB at 128 kbps)
+SEEK_CLIP_WIN = (-2.0, -5.0, 1.0)       # clip offsets vs the song's start in the clip
+SEEK_EARLY_FP = 0.80                    # a window this aligned ends the section's search
+SEEK_SLIDE_MIN = 0.62                   # the section's best fp slide must at least reach this
+_FP_DT = 4096.0 / 3.0 / 11025.0         # seconds per chromaprint item (0.1238; 172 per 24 s)
+
+
+def _fp_slide(a, b):
+    """verify._fp_overlap, returning WHERE as well: (best agreement, offset of a[0] in b) in
+    chromaprint items. a is the clip, b the section; a negative offset means the section
+    starts after the clip does. (0.0, None) when either is missing."""
+    if a is None or b is None or len(a) == 0 or len(b) == 0:
+        return 0.0, None
+    sw = len(a) > len(b)
+    x, y = (b, a) if sw else (a, b)
+    lx = len(x)
+    best, at = 0.0, None
+    for o in range(0, len(y) - lx + 1):
+        bits = int(np.unpackbits((x ^ y[o:o + lx]).view(np.uint8)).sum())
+        sc = 1.0 - bits / (32.0 * lx)
+        if sc > best:
+            best, at = sc, o
+    if at is None:
+        return 0.0, None
+    return best, (-at if sw else at)
+_SEEK_STOP = {"the", "a", "an", "feat", "ft", "remix", "slowed", "reverb", "sped", "up",
+              "speed", "version", "edit", "official", "audio", "video", "lyrics", "x", "and",
+              "mix", "tiktok", "bass", "boosted", "instrumental", "super", "ultra"}
+_SEEK_TLS = threading.local()
+
+
+def seek_hit_row(hit):
+    """A probe answer, compact, for seek_plan: title and numbers only (no audio)."""
+    return {"title": (hit.get("title") or "")[:120], "sid": hit.get("key"),
+            "off": hit.get("offset"), "rate": hit.get("rate"), "ts": hit.get("timeskew"),
+            "moff": hit.get("offset_in_master"), "junk": bool(_junk_id(hit))}
+
+
+def _seek_speed(h):
+    """Clip speed against the catalogue entry that answered: (1 + timeskew) / rate."""
+    try:
+        r = float(h.get("rate") or 1.0)
+        ts = h.get("ts")
+        if ts is not None and abs(float(ts)) < 0.2:
+            return (1.0 + float(ts)) / r
+        return 1.0 / r
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _seek_words(title, strip_tags=True):
+    """Significant words of a title: brackets dropped (the entry side), apostrophes glued
+    ("Wouldn’t" -> "wouldnt", so a flip titled "wouldnt believe" still names it), 1-letter
+    tokens and edit words ignored. v2: stylised unicode is folded first (clip 41's upload is
+    titled in mathematical bold, so v1 read no words in it and never gave it a look)."""
+    t = _ascii_fold(title or "").lower()
+    if strip_tags:
+        t = re.sub(r"[\(\[].*?[\)\]]", " ", t)
+    t = re.sub(r"['\u2018\u2019`]", "", t)
+    return {w for w in re.findall(r"[a-z0-9]+", t) if len(w) > 1} - _SEEK_STOP
+
+
+SEEK_EARLY_OFF = 24.0   # only windows starting inside the scored head (+ the fp's 4 s) count
+
+
+def seek_plan(fp, hits):
+    """Where the clip sits inside each song Shazam placed it in. -> plain dict or None.
+
+    {"entries": [{"title", "tkey", "m0", "s", "n"}...], "cut": [titles]}: the named song's
+    entry first, then by support. Per title key, the largest cluster of answers that agree on
+    m0 (1.5 s) and s (|log2| 0.03), counted over distinct (off, rate) probes, so a stray answer
+    (whistle's 0.77x read at 255.8 s) loses to the three that agree (1.08x / 1.12x / 1.15x at
+    180.4-180.5 s); a tie goes to the earliest window. Only windows that start within
+    SEEK_EARLY_OFF s count: the head verify() scores is the clip's first 20 s.
+
+    A CUT CLIP GETS NO ENTRY. When two windows at the same speed place the clip's start at
+    different song times (kelthraxx: 47.2 s from windows 0/12, 60.7 s from window 18; bouch's
+    hoodtrap: four different places), the clip is not one contiguous section of that song -
+    a flip, a loop or a remix - so the source recording cannot be the exact version and a
+    section of it would only match part of the clip. Junk answers never count."""
+    if not SEEK_MOFF or not hits:
+        return None
+    by = {}
+    for h in hits:
+        if h.get("junk"):
+            continue
+        try:
+            moff, off = float(h.get("moff")), float(h.get("off") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if off > SEEK_EARLY_OFF:
+            continue
+        sp = _seek_speed(h)
+        if not sp or not (0.4 < sp < 2.5):
+            continue
+        tk = _title_key(h.get("title"))
+        if not tk:
+            continue
+        by.setdefault(tk, []).append({"m0": moff - off * sp, "s": sp, "off": off,
+                                      "title": h.get("title"),
+                                      "p": (round(off, 2), round(float(h.get("rate") or 1), 3))})
+    ents, cut_t = [], []
+    for tk, rows in by.items():
+        cut_ = any(abs(np.log2(x["s"] / y["s"])) <= 0.03 and abs(x["off"] - y["off"]) > 0.5
+                   and abs(x["m0"] - y["m0"]) > 1.5 for x in rows for y in rows)
+        if cut_:
+            cut_t.append(rows[0]["title"])
+            continue
+        best = []
+        for a in rows:
+            cl, seen = [], set()
+            for b in rows:
+                if abs(b["m0"] - a["m0"]) > 1.5 or abs(np.log2(b["s"] / a["s"])) > 0.03:
+                    continue
+                if b["p"] in seen:
+                    continue
+                seen.add(b["p"])
+                cl.append(b)
+            if (len(cl), -min(x["off"] for x in cl)) > \
+                    (len(best), -min([x["off"] for x in best] or [1e9])):
+                best = cl
+        if not best:
+            continue
+        ents.append({"title": best[0]["title"], "tkey": tk,
+                     "m0": round(float(statistics.median([b["m0"] for b in best])), 3),
+                     "s": round(float(statistics.median([b["s"] for b in best])), 4),
+                     "n": len(best)})
+    if not ents and not cut_t:
+        return None
+    named = _title_key((fp or {}).get("title"))
+    # one answer is enough for the song the scan named; any other song needs two
+    ents = [e for e in ents if e["tkey"] == named or e["n"] >= 2]
+    ents.sort(key=lambda e: (0 if e["tkey"] == named else 1, -e["n"]))
+    # v2: whether Shazam itself heard a mashup on this clip (annotate_mashup's tier 2 found a
+    # second song with support). Only then may a mashup upload's section count (seek_settle).
+    return {"entries": ents[:3], "cut": cut_t[:3], "mashup": bool((fp or {}).get("mashup"))}
+
+
+def seek_plan_arm(plan):
+    """server._phase2 arms the plan for the find_edit it is about to run (same thread)."""
+    _SEEK_TLS.plan = plan if SEEK_MOFF else None
+    _SEEK_TLS.armed_at = time.time()
+
+
+def _seek_run():
+    return getattr(_SEEK_TLS, "run", None)
+
+
+class _SectionPastEnd(RuntimeError):
+    """The upload is shorter than the section (a 30 s Go+ preview, say): no fallback either."""
+
+
+def _dl_direct_section(url, dst, start, seconds, budget):
+    """dl_section's fast path. SoundCloud progressive mp3 is a byte range at the section's
+    offset (CBR, so bytes = seconds * kbps * 125); anything else is ffmpeg seeking inside the
+    resolved media url. The decoded length is checked, as _range_to_wav does."""
+    t0 = time.time()
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    if "soundcloud.com" in url:
+        media, kbps, dur = _sc_media_url(track_url=url)
+        if dur and start + 8 > dur:
+            raise _SectionPastEnd("section past the end (%.0f s streamable)" % dur)
+        bps = int((kbps or 128) * 125)
+        b0 = int(start * bps)
+        n = int((seconds + 3) * bps)
+        import curl_cffi.requests as creq
+        left = budget - (time.time() - t0)
+        if left < 1:
+            raise RuntimeError("resolve ate the budget")
+        r = creq.get(media, headers={"Range": "bytes=%d-%d" % (b0, b0 + n - 1)},
+                     impersonate="chrome", timeout=left)
+        if r.status_code not in (200, 206) or len(r.content) < 20_000:
+            raise RuntimeError("range %s / %d bytes" % (r.status_code, len(r.content)))
+        if r.status_code == 200 and b0 > 0:
+            raise RuntimeError("server ignored the range")
+        part = dst + ".part"
+        with open(part, "wb") as f:
+            f.write(r.content)
+        try:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "mp3", "-i", part,
+                            "-t", str(seconds), "-vn", "-ac", "1", dst],
+                           capture_output=True, timeout=max(2, budget), check=True)
+        finally:
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+        want = min(seconds, (dur - start) if dur else seconds)
+    else:
+        info = _ydl_inproc(is_yt).extract_info(url, download=False)
+        fmts = [f for f in (info.get("formats") or []) if f.get("url")]
+        aud = [f for f in fmts
+               if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")]
+        pool = aud or fmts
+        if not pool:
+            raise RuntimeError("no formats")
+        pool.sort(key=lambda f: (f.get("abr") or f.get("tbr") or 0))
+        best = pool[-1]
+        if (best.get("protocol") or "").startswith("m3u8"):
+            raise RuntimeError("hls")
+        dur = float(info.get("duration") or 0)
+        if dur and start + 8 > dur:
+            raise _SectionPastEnd("section past the end (%.0f s)" % dur)
+        left = budget - (time.time() - t0)
+        if left < 2:
+            raise RuntimeError("resolve ate the budget")
+        hdr = "".join("%s: %s\r\n" % (k, v) for k, v in (best.get("http_headers") or {}).items())
+        cmd = ["ffmpeg", "-y", "-loglevel", "error"]
+        if hdr:
+            cmd += ["-headers", hdr]
+        cmd += ["-ss", "%.3f" % start, "-i", best["url"], "-t", str(seconds), "-vn", "-ac", "1",
+                dst]
+        subprocess.run(cmd, capture_output=True, timeout=left, check=True)
+        want = min(seconds, (dur - start) if dur else seconds)
+    if not os.path.exists(dst) or os.path.getsize(dst) < 20_000:
+        raise RuntimeError("decode too small")
+    got = duration_of(dst) or 0
+    if got < max(8.0, want * 0.85):
+        raise RuntimeError("short decode %.1fs" % got)
+    return dst
+
+
+def dl_section(url, dst, start, seconds=20, timeout=15, abort=None, direct_only=False):
+    """`seconds` of a candidate from `start` s in, as wav. dl_clip's twin for CRATE_SEEK_MOFF:
+    the same 6 s direct budget and the same subprocess fallback (yt-dlp --download-sections,
+    which handles HLS), the same hunt-budget kill. None on any failure. `direct_only` skips the
+    subprocess: the prefetch uses it so that no yt-dlp can outlive the hunt that asked."""
+    start = max(0.0, float(start))
+    try:
+        _got = _dl_direct_section(url, dst, start, seconds, min(6, timeout))
+        if abort is not None and abort.dead:
+            return None
+        return _got
+    except _SectionPastEnd:
+        return None                              # the same file through yt-dlp is no longer
+    except Exception:
+        pass
+    if direct_only or (abort is not None and abort.dead):
+        return None
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    args = ytdlp_for(url) + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
+                             "-o", dst.replace(".wav", ".%(ext)s"),
+                             "--download-sections", "*%.2f-%.2f" % (start, start + seconds),
+                             "--force-keyframes-at-cuts"]
+    if is_yt:
+        args += ["--extractor-args", _YT_CLIENTS]
+    if abort is not None:
+        if not abort.run(args, timeout):
+            return None
+    else:
+        try:
+            subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
+        except Exception:
+            return None
+    if not os.path.exists(dst):
+        return None
+    return dst
+
+
+class _SeekRun(object):
+    """One find_edit's use of a seek plan: the entries, the fetch cap, the clip cuts."""
+
+    def __init__(self, plan):
+        self.entries = []
+        for e in (plan or {}).get("entries") or []:
+            e = dict(e)
+            e.setdefault("tkey", _title_key(e.get("title")))   # v2: the settle group key
+            e["words"] = _seek_words(e.get("title"))
+            if e["words"]:
+                self.entries.append(e)
+        self.lock = threading.Lock()
+        self.mashup = bool((plan or {}).get("mashup"))    # v2: Shazam heard a mashup here
+        self.fetches = 0
+        self.tried = 0
+        self.adopted = 0
+        self.prefetched = 0
+        self.wasted = 0
+        self.deferred = 0           # v2: a mashup / compilation section kept aside
+        self.slow = 0               # v2: a prefetch not landed SEEK_WAIT_MAX after the head
+        self.reserve_used = 0       # v2: sections fetched from SEEK_RESERVE
+        self.rev_refused = 0        # v2: decisive but the reversed window read too close
+        self.settle = {}            # v2: seek_settle's last decisions (for seek_summary)
+        self._ctx = {}
+        self._clip_dur = None
+        self._ex = None
+        self.closed = False
+
+    def close(self):
+        """End of the hunt: no new prefetch, and one still in flight deletes its file on
+        landing (RETENTION). Never waits."""
+        with self.lock:
+            self.closed = True
+            ex, self._ex = self._ex, None
+        if ex is not None:
+            ex.shutdown(wait=False)
+
+    def section_plan(self, c, e, clip_ctx):
+        """Where to fetch, before any download: -> dict or a skip reason (str).
+
+        WHERE, from which SPEED. The candidate plays the song at an unknown speed c against
+        the catalogue entry that answered, so the clip's start sits at m0 / c in it. The head's
+        speed reading cannot be trusted for c: on a head from another part of the song it read
+        whistle's master at 1.843 (true 0.918). So two hypotheses, the ones this is for: a plain
+        copy at the entry's speed (c = 1) and an upload at the clip's own speed (c = s)."""
+        m0, s = float(e["m0"]), float(e["s"])
+        hyps = [(1.0, "copy"), (s, "clip")]
+        if abs(np.log2(s)) < 0.01:
+            hyps = [(1.0, "copy")]
+        ps = [m0 / cc for cc, _ in hyps]
+        if max(ps) - min(ps) > SEEK_SPAN - 30.0:
+            # too far apart for one section: the title says which
+            keep = "clip" if EDIT_WORDS.search(c.get("title") or "") else "copy"
+            hyps = [h for h in hyps if h[1] == keep]
+            ps = [m0 / cc for cc, _ in hyps]
+        dur = _dur_s(c)
+        if dur and dur < min(ps) + 12:
+            return "short"
+        if clip_ctx is None or clip_ctx.get("fp") is None or not len(clip_ctx["fp"]):
+            return "no clip fp"
+        st = max(0.0, min(ps) - 10.0)
+        return {"hyps": hyps, "ps": ps, "st": st, "span": min(SEEK_SPAN, max(ps) + 30.0 - st)}
+
+    def prefetch(self, c, tmp, idx, clip_ctx, bud=None):
+        """Start the section fetch at the same moment as the candidate's head download, for a
+        row that can use one (its title names a placed song, the clip starts inside it, the
+        upload is long enough, the cap allows). A far section of a cold SoundCloud object took
+        2.3-4.2 s to arrive (lab scan 2026-09-30); overlapped with the head (1-2.5 s) it costs
+        the batch about the difference instead of all of it. Direct fetch only (no yt-dlp),
+        so nothing can outlive the hunt. -> handle, or None."""
+        e = self.entry_for(c.get("title"))
+        if e is None or float(e["m0"]) < SEEK_MIN_AT or self.closed:
+            return None
+        u = c.get("url") or ""
+        if "youtube.com" in u or "youtu.be" in u:
+            # YouTube's bot wall fails most heads (lab 2026-09-30: every YouTube row); a walled
+            # row must not spend the cap. One whose head does download gets the section
+            # synchronously in rescore instead.
+            return None
+        sp = self.section_plan(c, e, clip_ctx)
+        if isinstance(sp, str) or not self._take_fetch(pre=True):
+            return None
+        pre = dict(sp, entry=e, sec=os.path.join(tmp, "sk%d.wav" % idx), t0=time.time(),
+                   used=False, dropped=False)
+        with self.lock:
+            if self.closed:
+                return None
+            if self._ex is None:
+                self._ex = ThreadPoolExecutor(max_workers=6)
+            self.prefetched += 1
+            pre["fut"] = self._ex.submit(dl_section, c["url"], pre["sec"], sp["st"], sp["span"],
+                                         SEEK_FETCH_TIMEOUT, bud, True)
+        return pre
+
+    def drop_pre(self, pre):
+        """A prefetch nobody will read (the head already matched, or the row went away):
+        its file goes as soon as it exists."""
+        if not pre or pre.get("used") or pre.get("dropped"):
+            return
+        pre["dropped"] = True
+        with self.lock:
+            self.wasted += 1
+
+        def _rm(_f=None):
+            for x in (pre["sec"], pre["sec"] + ".part"):
+                try:
+                    os.remove(x)
+                except OSError:
+                    pass
+        try:
+            pre["fut"].add_done_callback(_rm)
+        except Exception:
+            _rm()
+
+    def entry_for(self, title):
+        """The placed song this candidate's title names: every significant word of a one- or
+        two-word song title, all but one of a longer one ("Riley Reid Freestyle" does not name
+        "Dougie Freestyle"). None = a different song, no second look."""
+        words = _seek_words(title, strip_tags=False)
+        best, bs = None, 0.0
+        for e in self.entries:
+            n = len(e["words"])
+            hit = len(e["words"] & words)
+            if hit < (n if n <= 2 else n - 1):
+                continue
+            ov = hit / float(n)
+            if ov > bs:
+                best, bs = e, ov
+        return best
+
+    def _take_fetch(self, pre=False, reserve=False):
+        """v2: a prefetch (started before the head is known) may use SEEK_MAX_FETCH minus
+        SEEK_RESERVE; a row whose head already matched may also use the reserve, so its
+        section is read and the comparison stays aligned against aligned. Total never
+        exceeds SEEK_MAX_FETCH."""
+        with self.lock:
+            lim = SEEK_MAX_FETCH - (SEEK_RESERVE if (pre or not reserve) else 0)
+            if self.fetches >= max(0, lim):
+                return False
+            self.fetches += 1
+            if reserve and self.fetches > SEEK_MAX_FETCH - SEEK_RESERVE:
+                self.reserve_used += 1
+            return True
+
+    def clip_dur(self, clip_audio):
+        if self._clip_dur is None:
+            try:
+                self._clip_dur = float(duration_of(clip_audio) or 0)
+            except Exception:
+                self._clip_dur = 0.0
+        return self._clip_dur
+
+    def clip_ctx_at(self, a, clip_audio, tmp):
+        """verify's clip features for the clip cut at `a` s, prepared once per scan. The cut
+        wav is deleted the moment its features exist (RETENTION)."""
+        k = round(a, 1)
+        with self.lock:
+            if k in self._ctx:
+                return self._ctx[k]
+            p = os.path.join(tmp, "skclip_%d.wav" % int(k * 10))
+            ctx = None
+            try:
+                cut(clip_audio, p, k, 1.0, span=26)
+                ctx = _verify.prepare_clip(p, 20)
+            except Exception:
+                ctx = None
+            finally:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            self._ctx[k] = ctx
+            return ctx
+
+    def _reversed_fp(self, path, clip_audio, ctx, tmp, idx):
+        """v2: raw fp of the window, time-reversed (ffmpeg areverse, as the null control does),
+        against the same clip features. Texture, spectrum and reverb survive a reversal, the
+        recording does not. -> float or None. The reversed file is deleted here."""
+        rv = os.path.join(tmp, "sk%d_rev.wav" % idx)
+        try:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-af", "areverse",
+                            "-ac", "1", "-ar", "44100", rv], capture_output=True, timeout=15,
+                           check=True)
+            r = _verify.verify(clip_audio, rv, 20, clip_ctx=ctx)
+            return float(r.get("fp") or 0.0)
+        except Exception:
+            return None
+        finally:
+            try:
+                os.remove(rv)
+            except OSError:
+                pass
+
+    def rescore(self, c, v, head, clip_audio, clip_ctx, tmp, idx, bud=None, pre=None,
+                batch=None):
+        """-> None when the title names no placed song or the clip sits at the song's start;
+        else a dict for the worker and seek_settle:
+            entry   the placed song's title key (the comparison group)
+            meas    "section" (located and verified), "absent" (the clip is not in that part
+                    of this upload), "short" (the upload ends before it), "unmeasured" (cap,
+                    fetch, slow, fpcalc, error)
+            adopt   True: score the row on v / path, carrying row (seek_at, core_head ...)
+            alt     a decisive section of a mashup / compilation title, kept aside
+        v2: rows whose head already matched are read too (aligned against aligned); the window
+        must also beat its reversed copy by SEEK_REV_GAP. Never raises into the worker."""
+        hc, hf = float(v.get("core") or 0.0), float(v.get("fp") or 0.0)
+        head_ok = hc >= CORE_EDIT and hf >= SEEK_FP_OK
+        e = self.entry_for(c.get("title"))
+        if e is None:
+            return None
+        m0, s = float(e["m0"]), float(e["s"])
+        if -SEEK_MIN_LEAD < m0 < SEEK_MIN_AT:
+            return None
+        mix = _seek_is_mix(c)
+        out = {"entry": e["tkey"], "meas": "unmeasured", "adopt": False, "mix": mix,
+               "head_ok": head_ok, "alt": None}
+        t0 = time.time()
+        with self.lock:
+            self.tried += 1
+        info = {"url": (c.get("url") or "")[:120], "m0": round(m0, 2), "s": round(s, 4),
+                "head_core": round(hc, 4), "head_fp": round(hf, 4),
+                "head_spc": round(float(v.get("spectral") or 0.0), 4), "head_ok": head_ok}
+        if mix:
+            info["mix"] = True
+        best = None                      # (fp, core, verify dict, wav, cand_at, clip_at, ctx)
+        paths = []
+        keep = None
+        try:
+            if m0 >= SEEK_MIN_AT:
+                if pre is not None:
+                    pre["used"] = True
+                    sp = pre
+                else:
+                    sp = self.section_plan(c, e, clip_ctx)
+                if isinstance(sp, str):
+                    info["skip"] = sp
+                    if sp == "short":
+                        out["meas"] = "short"
+                    return out
+                hyps, ps, st, span = sp["hyps"], sp["ps"], sp["st"], sp["span"]
+                info.update(P=[round(x, 2) for x in ps], hyps=[h[1] for h in hyps],
+                            pre=pre is not None)
+                sec = sp["sec"] if pre is not None else os.path.join(tmp, "sk%d.wav" % idx)
+                paths.append(sec)
+                _tf = time.time()
+                got = None
+                if pre is not None:
+                    # v2: the head is scored; the section is waited on for at most
+                    # SEEK_WAIT_MAX, and no more than SEEK_TAIL after the batch's last head
+                    # verified (wave 1 is not held for it). A late one goes when it lands
+                    # (drop_pre in the worker).
+                    while True:
+                        try:
+                            got = pre["fut"].result(timeout=0.05)
+                            break
+                        except _FutTimeout:
+                            _late = time.time() - _tf >= SEEK_WAIT_MAX
+                            _da = (batch or {}).get("done_at")
+                            _tail = _da is not None and time.time() - _da >= SEEK_TAIL
+                            if _late or _tail:
+                                got = None
+                                pre["used"] = False
+                                info["slow"] = True
+                                if _tail and not _late:
+                                    info["tail"] = True
+                                with self.lock:
+                                    self.slow += 1
+                                break
+                        except Exception:
+                            got = None
+                            break
+                    info["fetch_wait"] = round(time.time() - _tf, 3)
+                    info["fetch"] = round(time.time() - pre["t0"], 3)
+                else:
+                    if not self._take_fetch(reserve=head_ok):
+                        info["skip"] = "cap"
+                        return out
+                    got = dl_section(c["url"], sec, st, span, timeout=SEEK_FETCH_TIMEOUT,
+                                     abort=bud)
+                    info["fetch"] = round(time.time() - _tf, 3)
+                if not got or (bud is not None and bud.dead):
+                    info["skip"] = "slow" if info.get("slow") else "fetch"
+                    return out
+                # LOCATE: the clip's own chromaprint slid across the section, resampled to the
+                # clip's speed under each hypothesis. One fpcalc per hypothesis, precise to
+                # one frame (0.124 s), then verify() once on the window it found.
+                xs = _verify._decode(got, span + 2)
+                loc = None                       # (slide fp, section s of clip t=0, v, tag)
+                for cc, tag in hyps:
+                    vh = s / cc                      # clip speed against this upload
+                    if not (0.5 <= vh <= 2.0):
+                        continue
+                    ys = _verify._resample_by(xs, vh)
+                    wq = os.path.join(tmp, "sk%d_%s.wav" % (idx, tag))
+                    paths.append(wq)
+                    _verify._write_wav(ys, wq)
+                    fq = _verify._fp_raw(wq, length=int(len(ys) / _verify.SR) + 2)
+                    try:
+                        os.remove(wq)
+                    except OSError:
+                        pass
+                    sc, off = _fp_slide(clip_ctx["fp"], fq)
+                    if off is None:
+                        continue
+                    if loc is None or sc > loc[0]:
+                        loc = (sc, off * _FP_DT * vh, vh, tag)
+                if loc is None:
+                    info["skip"] = "no fp"
+                    return out
+                info.update(slide_fp=round(loc[0], 4), at=round(st + loc[1], 2), hyp=loc[3])
+                if loc[0] < SEEK_SLIDE_MIN:
+                    info["skip"] = "no alignment"
+                    out["meas"] = "absent"
+                    return out
+                # where verify()'s own 4 s fp slide can take it: a window that starts inside
+                # the clip's fp by half the length difference (before it for a short clip)
+                lc = min(24.0, self.clip_dur(clip_audio) or 24.0)
+                wl = 20.0 / loc[2]
+                woff = max(0.0, loc[1] + (lc - wl) / 2.0 * loc[2])
+                w = os.path.join(tmp, "sk%d_w.wav" % idx)
+                paths.append(w)
+                cut(got, w, woff, 1.0, span=20)
+                vv = _verify.verify(clip_audio, w, 20, clip_ctx=clip_ctx)
+                best = (float(vv.get("fp") or 0), float(vv.get("core") or 0), vv, w,
+                        round(st + woff, 2), None, clip_ctx)
+            else:
+                ts = -m0 / s                     # clip time where the song's t=0 plays
+                cd = self.clip_dur(clip_audio)
+                info.update(clip_song_at=round(ts, 2))
+                for d in SEEK_CLIP_WIN:
+                    a = ts + d
+                    if a < 0.5 or a + 12 > cd:
+                        continue
+                    ctx = self.clip_ctx_at(a, clip_audio, tmp)
+                    if ctx is None:
+                        continue
+                    try:
+                        vv = _verify.verify(clip_audio, head, 20, clip_ctx=ctx)
+                    except Exception:
+                        continue
+                    k = (float(vv.get("fp") or 0), float(vv.get("core") or 0))
+                    if best is None or k > best[:2]:
+                        best = (k[0], k[1], vv, head, None, round(a, 1), ctx)
+                    if k[0] >= SEEK_EARLY_FP:
+                        break
+            if best is None:
+                info["skip"] = "no window"
+                out["meas"] = "absent"
+                return out
+            out["meas"] = "section"
+            out["sec_fp"] = best[0]
+            info.update(fp=round(best[0], 4), core=round(best[1], 4),
+                        cand_at=best[4], clip_at=best[5])
+            ok = (best[0] >= SEEK_FP_OK and best[1] >= CORE_EDIT
+                  and best[0] >= hf + SEEK_FP_GAIN)
+            if ok:
+                # v2: THE REVERSED CONTROL ON THE SAME WINDOW (only for a would-be adoption)
+                rf = self._reversed_fp(best[3], clip_audio, best[6], tmp, idx)
+                info["rev_fp"] = None if rf is None else round(rf, 4)
+                ok = rf is not None and best[0] - rf >= SEEK_REV_GAP
+                if not ok:
+                    with self.lock:
+                        self.rev_refused += 1
+            info["adopted"] = bool(ok and not mix)
+            if ok and mix:
+                info["deferred"] = True
+            if not ok:
+                return out
+            keep = best[3]
+            row = {"seek_at": best[4], "seek_clip_at": best[5], "core_head": round(hc, 4),
+                   "fp_head": round(hf, 4)}
+            payload = {"v": best[2], "path": best[3], "row": row,
+                       "fp": best[0], "core": best[1]}
+            if mix:
+                out["alt"] = payload
+                with self.lock:
+                    self.deferred += 1
+            else:
+                out.update(adopt=True, **payload)
+                with self.lock:
+                    self.adopted += 1
+            return out
+        except Exception as ex:
+            info["error"] = type(ex).__name__
+            out["meas"] = "unmeasured"
+            out["adopt"], out["alt"] = False, None
+            keep = None
+            return out
+        finally:
+            for x in paths:
+                if x != head and x != keep:
+                    try:
+                        os.remove(x)
+                    except OSError:
+                        pass
+            info["meas"] = out["meas"]
+            tlog("seek_moff", time.time() - t0, **info)
+
+
+_SEEK_MIX = re.compile(r"\b(mash ?up|megamix|medley|vs\.?|versus)\b", re.I)
+
+
+def _seek_is_mix(c):
+    """v2: an upload that LAYERS or JOINS this song with another one (a mashup, a "vs", an
+    "A x B", a medley). A section of it that plays one song matches the plain song as well
+    (clip 32), so it is kept aside. A long compilation / set / 13-minute upload is NOT kept
+    aside: its section at the song's own time is a plain copy of the song, rank_key already
+    puts a compilation below a plain upload of the same family, and its misaligned head would
+    otherwise stay in the pool as a speed reference (lab 2026-09-30, clip 26: perpetualrec's
+    790 s "Love The Way You Lie", section fp 0.919 at 223.9 s; kept aside, its head disputed the
+    speed read and the label went 0.80x -> 0.91x)."""
+    t = _ascii_fold("%s" % (c.get("title") or ""))
+    if _SEEK_MIX.search(t):
+        return True
+    try:
+        # "A x B" only in the SONG part: a producer credit "(prod. smokeasac x iivi)" or an
+        # artist collab "Metro x Future - Song" is one song (lab 2026-09-30: Lil Peep's own
+        # "save that shit (prod. smokeasac x iivi)" was kept aside as a mashup on clip 04)
+        core = re.sub(r"[\(\[].*?[\)\]]", " ", t)
+        core = re.sub(r"\b(prod|produced by|feat|ft)\b.*$", " ", core, flags=re.I)
+        song = core.split(" - ", 1)[1] if " - " in core else core
+        return len(split_mashup(song)) >= 2
+    except Exception:
+        return False
+
+
+_SEEK_V_KEYS = ("spectral", "fp", "arr", "core", "same", "bass_delta", "lag", "speed_conf",
+                "slope_delta", "clip_slope", "cand_slope", "clip_tilt", "cand_tilt")
+
+
+def _seek_apply(c, v, path):
+    """Score a row on one verify() result, the same fields the download worker writes."""
+    c["path"] = path
+    c.update(spectral=v["spectral"], fp=v["fp"], arr=v["arr"], core=v["core"],
+             vscore=v["score"], score=v["score"], same=v["same"],
+             vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
+             speed_conf=v.get("speed_conf"),
+             slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
+             cand_slope=v.get("cand_slope"),
+             clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
+    try:
+        c["_spec"] = _spec_of(path)
+    except Exception:
+        pass
+
+
+def seek_settle(rows, where=""):
+    """v2: decide, per placed song, which rows are scored on their section and which on their
+    head. Idempotent: it recomputes from what each row carries (_seek), so running it again on
+    a bigger pool (the fast path's rows joining the broad hunt) can undo an earlier choice.
+
+    1. FAIRNESS. If a row of the song whose head already matched (core >= CORE_EDIT and
+       fp >= SEEK_FP_OK) got no section reading, no row of that song is scored on a section:
+       an aligned score must never be compared against a misaligned one (clip 38).
+    2. PLAIN OVER MASHUP. A mashup / compilation row's section is used only when Shazam heard a
+       mashup on this clip, and only when it beats every plain row of the song (as scored after
+       step 1) by more than SEEK_PLAIN_NOISE (clip 32: 0.851 vs 0.844 is noise).
+    -> the number of rows whose state changed. No-op with the flag off or no seek run."""
+    run = _seek_run()
+    if run is None or not rows:
+        return 0
+    groups = {}
+    for c in rows:
+        sk = c.get("_seek")
+        if sk:
+            groups.setdefault(sk["entry"], []).append(c)
+    changed, log = 0, []
+    for ent, grp in groups.items():
+        blocked = [c for c in grp if c["_seek"]["meas"] == "unmeasured"
+                   and c["_seek"].get("head_ok")]
+        plain_best = 0.0
+        want = {}
+        for c in grp:
+            sk = c["_seek"]
+            if sk.get("mix"):
+                continue
+            use = bool(sk.get("sec")) and not blocked
+            want[id(c)] = use
+            f = (sk["sec"]["fp"] if use else float(sk["head"]["v"].get("fp") or 0.0))
+            plain_best = max(plain_best, f)
+        for c in grp:
+            sk = c["_seek"]
+            if not sk.get("mix"):
+                continue
+            want[id(c)] = bool(sk.get("sec") and not blocked and run.mashup
+                               and sk["sec"]["fp"] > plain_best + SEEK_PLAIN_NOISE)
+        for c in grp:
+            sk = c["_seek"]
+            use = want.get(id(c), False)
+            state = "section" if use else "head"
+            if sk.get("state") == state:
+                continue
+            if use:
+                _seek_apply(c, sk["sec"]["v"], sk["sec"]["path"])
+                c.update(sk["sec"]["row"])
+            else:
+                _seek_apply(c, sk["head"]["v"], sk["head"]["path"])
+                for k in ("seek_at", "seek_clip_at", "core_head", "fp_head"):
+                    c.pop(k, None)
+            if sk.get("state") is not None:
+                changed += 1
+                log.append(((c.get("title") or "")[:50], sk.get("state"), state,
+                            "blocked" if blocked else ("mix" if sk.get("mix") else "")))
+            sk["state"] = state
+        if blocked:
+            run.settle.setdefault("blocked", []).append(
+                (ent[:40], [(c.get("url") or "")[-60:] for c in blocked]))
+    if log or where:
+        tlog("seek_settle", 0.0, where=where, changed=changed, moves=log[:12],
+             blocked=[b[0] for b in run.settle.get("blocked", [])][:6],
+             mashup=run.mashup,
+             sections=sum(1 for g in groups.values() for c in g
+                          if c["_seek"].get("state") == "section"))
+    return changed
 
 
 def _log_spec(x, nbins=512, fmin=60.0, fmax=8000.0):
@@ -7618,10 +8492,42 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             wave or ("fast" if start == FAST_FILE_BASE else "batch")):
         return 0
     _hk = _hunt_hook()      # PROGRESS 2026-09-29: this scan's counter, read on the calling thread
+    _seek = _seek_run() if SEEK_MOFF else None     # CRATE_SEEK_MOFF, read on the calling thread
     if todo:
         _hunt_call(_hk, "q", len(todo))
+    # CRATE_SEEK_MOFF v2: heads of this batch still to verify (the wave tail, SEEK_TAIL)
+    _skb = ({"pending": len(todo), "done_at": None, "lock": threading.Lock()}
+            if _seek is not None else None)
+
+    def _head_done(flag):
+        if flag["done"]:
+            return
+        flag["done"] = True
+        with _skb["lock"]:
+            _skb["pending"] -= 1
+            if _skb["pending"] <= 0 and _skb["done_at"] is None:
+                _skb["done_at"] = time.time()
 
     def work(i_c):
+        # CRATE_SEEK_MOFF: the section fetch starts with the head download (prefetch); one the
+        # row never reads is dropped here whatever way _work returns. Flag off: _work as it was.
+        if _seek is None:
+            return _work(i_c, None)
+        _pre = None
+        _hf = {"done": False}
+        if not (_bud is not None and _bud.dead):
+            try:
+                _pre = _seek.prefetch(i_c[1], tmp, start + i_c[0], clip_ctx, _bud)
+            except Exception:
+                _pre = None
+        try:
+            return _work(i_c, _pre, lambda: _head_done(_hf))
+        finally:
+            _head_done(_hf)
+            if _pre is not None and not _pre.get("used"):
+                _seek.drop_pre(_pre)
+
+    def _work(i_c, _pre, _hd=None):
         i, c = i_c
         if _bud is not None and _bud.dead:      # HUNT BUDGET: the cap let it go unstarted
             return
@@ -7652,6 +8558,23 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
              ok=True, verify=round(time.time() - _dt1, 3), core=v.get("core"),
              fp=v.get("fp"), arr=v.get("arr"))   # SPEEDMAX: fp/arr on every row (log only)
+        # CRATE_SEEK_MOFF v2: every row whose title names a placed song gets one look at the
+        # section of this upload the clip was cut from, head match or not. Adopted only when
+        # decisive (a mashup / compilation is kept aside for seek_settle); else the head
+        # stands and nothing below changes.
+        _sk, _sk_head = None, None
+        if _hd is not None:
+            _hd()                           # CRATE_SEEK_MOFF v2: this head has verified
+        if _seek is not None and not (_bud is not None and _bud.dead):
+            try:
+                _sk = _seek.rescore(c, v, got, clip_audio, clip_ctx, tmp, start + i, _bud,
+                                    pre=_pre, batch=_skb)
+            except Exception:
+                _sk = None
+            if _sk is not None:
+                _sk_head = {"v": v, "path": got}
+                if _sk.get("adopt"):
+                    v, got = _sk["v"], _sk["path"]
         # PROGRESS 2026-09-29: checked the moment verify() has scored it (the spectrum kept
         # for the fallback below is bookkeeping, and under 16 workers it lagged the count)
         _hunt_call(_hk, "c")
@@ -7694,10 +8617,22 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
                          slope_delta=v.get("slope_delta"), clip_slope=v.get("clip_slope"),
                          cand_slope=v.get("cand_slope"),
                          clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"])
+                if _sk is not None:         # CRATE_SEEK_MOFF v2: both readings travel
+                    if _sk.get("adopt"):
+                        c.update(_sk["row"])
+                    c["_seek"] = {"entry": _sk["entry"], "meas": _sk["meas"],
+                                  "head_ok": _sk["head_ok"], "mix": _sk["mix"],
+                                  "head": _sk_head,
+                                  "sec": (_sk if _sk.get("adopt") else _sk.get("alt")),
+                                  "state": "section" if _sk.get("adopt") else "head"}
                 if _bud is not None:
                     _bud.note(v.get("core"), v.get("fp"))
         if _gone:                           # the cap fired while it verified: no row, no file
             _bud.drop(_dst)
+            if got != _dst:
+                _bud.drop(got)              # CRATE_SEEK_MOFF's section window
+            if _sk is not None and (_sk.get("alt") or {}).get("path"):
+                _bud.drop(_sk["alt"]["path"])   # v2: a kept-aside mashup window
             tlog("cand_abandoned", time.time() - _dt0, url=c.get("url"), at="verify",
                  core=v.get("core"))
             return
@@ -7824,6 +8759,12 @@ async def find_edit(*args, **kwargs):
             and time.time() - _armed < 5.0):
         _hb = _HuntBudget(HUNT_BUDGET, HUNT_CAP, t0=_t0, hook=_hunt_hook())
     _HB_TLS.hb = _hb
+    # CRATE_SEEK_MOFF: armed only by server._phase2 (seek_plan_arm), same thread, same 5 s rule
+    _skp, _ska = getattr(_SEEK_TLS, "plan", None), getattr(_SEEK_TLS, "armed_at", None)
+    _SEEK_TLS.plan = _SEEK_TLS.armed_at = None
+    _sk = (_SeekRun(_skp) if (SEEK_MOFF and _skp and _ska is not None
+                              and time.time() - _ska < 5.0) else None)
+    _SEEK_TLS.run = _sk if (_sk is not None and _sk.entries) else None
     try:
         res = await _find_edit_body(*args, _tmps=tmps, **kwargs)
     except BaseException:
@@ -7832,6 +8773,18 @@ async def find_edit(*args, **kwargs):
         raise
     finally:
         _HB_TLS.hb = None
+        if _SEEK_TLS.run is not None:
+            _SEEK_TLS.run.close()
+            tlog("seek_summary", 0.0, tried=_SEEK_TLS.run.tried, fetches=_SEEK_TLS.run.fetches,
+                 adopted=_SEEK_TLS.run.adopted, prefetched=_SEEK_TLS.run.prefetched,
+                 wasted=_SEEK_TLS.run.wasted, deferred=_SEEK_TLS.run.deferred,
+                 slow=_SEEK_TLS.run.slow, reserve_used=_SEEK_TLS.run.reserve_used,
+                 rev_refused=_SEEK_TLS.run.rev_refused, mashup=_SEEK_TLS.run.mashup,
+                 blocked=[b[0] for b in _SEEK_TLS.run.settle.get("blocked", [])][:6],
+                 entries=[(e.get("title") or "")[:40] + " m0=%s s=%s n=%s" % (e["m0"], e["s"],
+                                                                             e["n"])
+                          for e in _SEEK_TLS.run.entries])
+        _SEEK_TLS.run = None
     if _hb is not None and _hb.fired_at is not None and isinstance(res, dict):
         # the rule fired: say so in the result (server copies it to the payload) and the tlog,
         # so a gate can prove it only ever fired on scans that end without a crown
@@ -8099,6 +9052,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                                     FAST_POOL + len(cm_cands) + len(_scrows),
                                     clip_ctx=fctx, on_scored=_fast_hit)
                 tlog("fast_dl_score", time.time() - _ft1, n=len(hc))
+                if SEEK_MOFF:
+                    seek_settle(hc, "fast")     # CRATE_SEEK_MOFF v2: aligned against aligned
                 # an SC-first-only row needs recording-specific evidence to END the scan
                 # (FAST_SC_FP); without it, it is carried like any other scored row
                 good = [c for c in hc if (c.get("core") or 0) >= FAST_EXIT_CORE
@@ -8287,7 +9242,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         _by_fast = {c["url"]: c for c in cands}
         _carry_keys = ("_spec", "path", "spectral", "fp", "arr", "core", "vscore", "score",
                        "same", "vspeed", "bass_delta", "lag", "clip_tilt", "cand_tilt",
-                       "slope_delta", "clip_slope", "cand_slope", "_done")
+                       "slope_delta", "clip_slope", "cand_slope", "_done",
+                       # CRATE_SEEK_MOFF v2 (only ever present with the flag on)
+                       "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head")
         for fc in _fast_carry:
             hit = _by_fast.get(fc["url"])
             if hit is None:
@@ -8747,7 +9704,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             for k in ("_spec", "path", "spectral", "fp", "arr", "core", "vscore",
                       "score", "same", "vspeed", "bass_delta", "lag", "clip_tilt",
                       "cand_tilt", "clip_reverb", "cand_reverb", "reverb_delta",
-                      "clip_slope", "cand_slope", "slope_delta"):
+                      "clip_slope", "cand_slope", "slope_delta",
+                      # CRATE_SEEK_MOFF v2: a stripped row must not come back via seek_settle
+                      "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head"):
                 c.pop(k, None)
             stripped += 1
     n += n2
@@ -9049,6 +10008,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         tlog("creator_align", time.time() - _ta0, n=len(_align),
              hit=sum(1 for c in _align if c.get("aligned_at") is not None))
 
+    if SEEK_MOFF:
+        seek_settle(cands, "rank")          # CRATE_SEEK_MOFF v2: aligned against aligned
     # ---- which upload IS the exact audio in the clip ----
     # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
     # + EQ-invariant arrangement match), NOT the bass-penalised score. Platforms
