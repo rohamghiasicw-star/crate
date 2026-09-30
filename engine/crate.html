@@ -4463,8 +4463,13 @@ function renderResult(d,partial){
     // RF2 2026-09-30: no crown, so no upload row is "Our pick". The pick is the song at its
     // measured speed (ncCard), and every row, the highest figure first, sits in the fold with
     // its own figure and no crown styling (xfix2 REPORT item 9, ledger T61).
+    // Konnor 2026-09-30 17:09 (Don't Like, ZSbS39h2S): the heading still read "OUR PICK" over
+    // "Normal speed. No upload of this exact version found yet", i.e. "our pick" was that we
+    // found nothing. With no crown there is no pick, so the heading names what the card is:
+    // the song. A crowned card never reaches this branch (its heading is "The exact version
+    // playing" / "The closest version we found" / "The recording this clip was cut from").
     var _ork=byMatch(cands);
-    shelf='<div class="sect">Our pick</div>'+crowdCard+
+    shelf='<div class="sect">The song</div>'+crowdCard+
       '<div class="list">'+ncCard(d)+'</div>'+
       '<details class="othv"><summary>'+
         '<span>Other versions we checked · '+_ork.length+'</span>'+
