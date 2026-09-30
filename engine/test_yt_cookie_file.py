@@ -188,6 +188,15 @@ try:
     check("fresh file -> ready", st == "ready", st)
     check("expiry = LOGIN_INFO's (the earlier)", abs(info["expires"] - (now + 90 * 86400)) < 5, info)
     check("#HttpOnly_ rows and youtube rows counted, google rows not", info["rows"] == 4, info)
+    wk = lambda u: int((u + 11644473600) * 1e6)                    # Chrome's clock (us since 1601)
+    write_cookies(wk(now + 60 * 86400), wk(now + 400 * 86400))
+    st, sig, info = E._ytckf_state()
+    check("Chrome-clock expiry read as a real date", st == "ready" and abs(info["expires"] - (now + 60 * 86400)) < 5
+          and 59 < E.yt_cookie_health().get("days_left", 0) < 61, (st, info))
+    write_cookies(wk(now - 86400), wk(now + 400 * 86400))
+    check("Chrome-clock expiry in the past -> expired", E._ytckf_state()[0] == "expired")
+    write_cookies(int((now + 30 * 86400) * 1000), int((now + 400 * 86400) * 1000))
+    check("millisecond expiry read as a real date", abs(E._ytckf_state()[2]["expires"] - (now + 30 * 86400)) < 5)
     write_cookies(0, 0)                                             # session cookies
     check("session cookies (expiry 0) -> ready, no expiry", E._ytckf_state()[0] == "ready"
           and E._ytckf_state()[2]["expires"] is None)

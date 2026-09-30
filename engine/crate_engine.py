@@ -683,6 +683,17 @@ def _ytckf_sig():
     return (st.st_mtime, st.st_size, os.access(YT_CKF_PATH, os.R_OK))
 
 
+def _ytckf_epoch(e):
+    """A cookies.txt expiry as Unix seconds. A Chrome export through yt-dlp 2026.08.19 can carry
+    Chrome's own clock instead (microseconds since 1601: 13465595406877052 on the server's file,
+    2026-09-30), which read as seconds lands in the year 426 million."""
+    if e > 10 ** 14:
+        return int(e / 1e6 - 11644473600)
+    if e > 10 ** 11:
+        return int(e / 1000)                   # milliseconds
+    return e
+
+
 def _ytckf_info(sig):
     """Names and expiry times of the file's YouTube cookies (cached per file version). A cookie's
     value field is split off and dropped on the line it is read; nothing keeps it."""
@@ -704,8 +715,8 @@ def _ytckf_info(sig):
                         continue
                     info["rows"] += 1
                     try:
-                        e = int(float(p[4] or 0))
-                    except ValueError:
+                        e = _ytckf_epoch(int(float(p[4] or 0)))
+                    except (ValueError, OverflowError):
                         e = 0
                     if p[5] == "LOGIN_INFO":
                         login.append(e)
