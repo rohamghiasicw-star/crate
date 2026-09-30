@@ -5193,7 +5193,7 @@ var PAYWALL_ON=STORE, PRO=false;
 function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.postMessage(Object.assign({op:op},extra||{}));}
 function storeRefresh(){if(!STORE) return Promise.resolve(false);
   return storeCall('status').then(function(r){PRO=!!(r&&r.pro); paintPill(); return PRO;},function(){return PRO;});}
-function scanKey(){var d=new Date(); return 'addify-scans-'+d.getFullYear()+'-'+(d.getMonth()+1);}
+function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
 function useScan(u){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var c=countedURLs();
@@ -5207,7 +5207,7 @@ function outOfScans(){return PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS;}
 function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.getElementById('scanpill');
   if(!pill) return;
   pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
-  pill.textContent = PRO ? 'Unlimited' : left>0 ? left+' free scan'+(left===1?'':'s')+' left' : 'No free scans left';
+  pill.textContent = PRO ? 'Unlimited' : left+' scan'+(left===1?'':'s')+' left';   // Konnor: the counter reads "0 scans left"
   pill.onclick = PRO ? null : openPaywall;}
 function pwMsg(t){var m=document.getElementById('pwm'); if(m){m.textContent=t; m.hidden=!t;}}
 function openPaywall(){
@@ -5218,7 +5218,7 @@ function openPaywall(){
   ov.innerHTML='<div class="pwc" role="dialog" aria-modal="true" aria-labelledby="pwh">'+
     '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button>'+
     '<b class="pwh" id="pwh">Addify Unlimited</b>'+
-    '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans this month. ':'')+
+    '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans. ':'')+
       'Unlimited scans to find the exact version of any song.</p>'+
     '<div class="pwb" id="pwb"><span class="pwm">Loading prices...</span></div>'+
     '<span class="pwm" id="pwm" hidden></span>'+
@@ -5656,7 +5656,7 @@ function renderProf(){
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
+      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left')+'</span></div></div>'+
     (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>Unlimited scans</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>':'')+
     // APPLYALL 2026-09-29 (build 3, App Review): no "iOS app" placeholder rows. The Spotify row
