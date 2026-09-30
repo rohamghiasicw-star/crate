@@ -4746,6 +4746,11 @@ function renderResult(d,partial){
   // again in the negative reads as a failure on the one kind of clip that went perfectly,
   // and a plain song is the most common thing anyone will ever scan.
   else{shelf=''; plain=true;}
+  // KONNOR 2026-09-30 ("make sure nothing is showing before the full squiggly is done"):
+  // while the wave runs (partial render or the tracker) no version of any kind is drawn,
+  // whichever path called us (a fold before /health's features landed drew the list).
+  // The list lands with the final render when the wave reaches 100%.
+  if(hunting){ shelf='<div class="list" id="livelist" style="margin-top:11px"></div>'; plain=false; noCrown=false; }
   // The save card and `pv` are built further up now - see the hoist note next to `var ex`.
   // Preview has left this row for the cover's own corner control (layout spec item 7), so
   // what is left is the two the spec keeps: Other playlist, and Like.
