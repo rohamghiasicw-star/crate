@@ -3632,11 +3632,11 @@ function liveAdd(c){
   livePaint(c.url);}
 function livePaint(freshURL){
   var box=document.getElementById('livelist'); if(!box) return;
-  // "Best so far" is still a row presented as an answer, provisional or not, so it gets
-  // the same unmeasurable-claim sentence the final answer row gets.
-  box.innerHTML=LIVE.slice(0,6).map(function(c,i){
-    return trackRow(c,i===0,i===0?'Best so far':'',c.url===freshURL,
-      {rank:i+1,flag:i===0?(c.claim||''):''});}).join('');
+  // KONNOR 2026-09-30 ("Why is it finding the closest version before it's 100%"): no version
+  // rows while the wave is still running. His tracker spec (Telegram 09-29 14:36) shows the
+  // results only after step 3, and #livelist only exists while the hunt runs. Rows keep
+  // collecting in LIVE; every end state (done, hunt failed, budget, 90 s cap) draws them.
+  box.innerHTML='';
   var t=document.getElementById('progtxt2');
   if(t&&LIVE.length) t.textContent=LIVE.length===1?'1 version verified':LIVE.length+' versions verified';}
 function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<b>'+esc(title)+'</b><span>'+esc(body)+'</span></div></div>';}
@@ -4451,7 +4451,7 @@ function renderResult(d,partial){
   if(secs.length>1 || alt.length>1){
     var parts = secs.length>1 ? secs.map(function(s){
         return {song:s.song, artist:s.artist, at:s.start, to:s.end, ex:s.exact, sz:s.shazam,
-                voc:s.role==='vocals'};})
+                voc:s.role==='vocals'||s.via==='credit', cr:s.via==='credit'};})
       : alt.map(function(s){return {song:s.song, artist:s.artist, at:s.at, sz:s.shazam};});
     var _layered=d.mashup&&d.mashup.shape==='layered';
     mash='<div class="sect">Songs in this mix</div>'+
@@ -4459,7 +4459,8 @@ function renderResult(d,partial){
         /* VOCALS FROM THE LYRICS (server `_lyric_vocals`): no timestamp and no bar, the
            words were heard but a vocal over another beat has no fingerprint to place. */
         // "0:00 to 0:36", not "0:00 - 0:36": no spaced dash in app copy (Roham, Konnor 09-24, U2).
-        var when=p.voc?'vocals \u00B7 from the lyrics':mmss(p.at||0)+(p.to?' to '+mmss(p.to):'');
+        /* CRATE_CREDIT_PARTNER: a song the sound credit names (server `_credit_partner_attach`), no bar either */
+        var when=p.voc?(p.cr?'named in the sound credit':'vocals \u00B7 from the lyrics'):mmss(p.at||0)+(p.to?' to '+mmss(p.to):'');
         var link=songURL({exact:p.ex,shazam:p.sz,base_song:p.song,base_artist:p.artist});   // APPLYALL (finding 17)
         var art=(secs.length>1?secs[i]:alt[i])||{};
         var bar='';
@@ -4474,7 +4475,9 @@ function renderResult(d,partial){
                     : '<div class="trk">'+inner+'</div>';}).join('')+'</div>'+
       (_layered?'<p class="mixnote">Layered across the whole clip</p>':'')+
       (d.vocals&&d.vocals.heard?'<p class="mixnote">Vocals named from the lyrics: the transcript ("'+esc(d.vocals.heard)+
-        '") matches '+esc(d.vocals.song)+' on Genius in '+(d.vocals.lines||2)+' separate lines. No fingerprint can confirm a vocal over another beat, so no upload was hunted for it.</p>':'');
+        '") matches '+esc(d.vocals.song)+' on Genius in '+(d.vocals.lines||2)+' separate lines. No fingerprint can confirm a vocal over another beat, so no upload was hunted for it.</p>':'')+
+      (d.credit_partner&&d.credit_partner.song?'<p class="mixnote">'+esc(d.credit_partner.song)+' is named from the sound credit'+(d.credit_partner.credit?' ("'+esc(d.credit_partner.credit)+'")':'')+
+        ' and '+(d.credit_partner.uploads||2)+' uploads that pair it with this song. The fingerprint only hears one layer, so this part is not audio-matched.</p>':'');
   }
   /* ---------- THE VERSION SHELF ----------
      One crown was never the whole answer and the payload always knew it: up to six
