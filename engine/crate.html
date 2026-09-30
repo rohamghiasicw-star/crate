@@ -1073,6 +1073,17 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .artplay svg{width:18px;height:18px}
 .artplay.out svg{width:19px;height:19px}
 .artplay:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
+/* COVER PLAY (Roham 2026-09-30 19:30): the cover's play button plays the song here, on every
+   result screen, and is the small player itself while it plays: the triangle turns into a pause
+   button and a thin ring round its edge is the real playhead (ipRing). The rest of the cover is
+   still the link. The ring is hidden until a player opens. */
+.artplay .apgl{position:relative;z-index:1;display:grid;place-items:center;line-height:0}
+.artplay .aprg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);pointer-events:none;
+  opacity:0;transition:opacity .15s}
+.artplay .aprg circle{fill:none;stroke:currentColor;stroke-width:2.6}
+.artplay .aprgbg{opacity:.28}
+.artplay .aprgfg{stroke-linecap:round;stroke-dasharray:125.7;stroke-dashoffset:125.7;transition:stroke-dashoffset .25s linear}
+.artplay.live .aprg{opacity:1}
 /* INLINE PLAYER (Konnor's ask). Tapping the cover triangle turns it INTO a round pause
    button wrapped in a purple progress ring - the shape from his screenshot, our colour
    instead of the orange - and the YouTube video plays in the card right beside it. The
@@ -3716,7 +3727,7 @@ function ncCard(d){
              : (sp?sp.charAt(0).toUpperCase()+sp.slice(1)+'. ':'')+'No upload of this exact version found yet.';
   var pp=ncPlay(d), btn='';
   if(pp){
-    var plbl=(pp.aud?'Play a preview of ':'Play ')+ttl+(pp.orig?', at its original speed':'');
+    var plbl=ncLabel(d,pp);
     btn='<span class="pl" role="button" tabindex="0" aria-label="'+esc(plbl)+'" title="'+esc(plbl)+'"'+
       ' data-ipopen="1" data-ipid="'+esc(pp.yt||'')+'" data-ipurl="'+esc(pp.sc||pp.aud||pp.url||'')+'">'+IC.play+'</span>';}
   return '<div class="nca" role="note" aria-label="'+esc(ttl+(who?' by '+who:'')+'. '+line)+'">'+
@@ -3733,6 +3744,13 @@ function ncCard(d){
    above can point SoundCloud at one. The links and the preview are looked up for base_song, so
    with source_at_speed the button shows only when the card's title is that same song. */
 var NC_PREV=/^https:\/\/(audio-ssl\.itunes\.apple\.com|[a-z0-9-]*preview[a-z0-9-]*\.dzcdn\.net)\/[^\s"'<>]+$/i;
+/* What the play control says it plays (the song card's button, and the cover's when it plays
+   the same thing): the song's own title, "a preview of" for the 30 s preview, and the original
+   speed when the clip is not at normal speed. */
+function ncLabel(d,pp){
+  var s=(d&&d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
+  var ttl=s?s.title:String((d&&d.base_song)||'');
+  return (pp.aud?'Play a preview of ':'Play ')+ttl+(pp.orig?', at its original speed':'');}
 function ncPlay(d){
   if(!d) return null;
   var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
@@ -3768,6 +3786,14 @@ function ncBand(d){
     '<div class="ipvid" id="ipvid"></div>'+
     '<button class="iplx" id="iplx" type="button" aria-label="Close">'+IC.x+'</button>'+
   '</div>';}
+/* The cover's play button (COVER PLAY). ytid or url is what ipOpen plays. The glyph sits in its
+   own span so ipGlyph can swap play and pause, and the ring svg is the playhead (ipRing). No
+   data-play and no data-ipopen: renderResult wires it by id, so no other handler picks it up. */
+function coverPlay(lbl, ytid, url){
+  return '<span class="artplay inline" id="artplay" role="button" tabindex="0" title="'+esc(lbl)+'" aria-label="'+esc(lbl)+'"'+
+    ' data-lbl="'+esc(lbl)+'" data-ytid="'+esc(ytid||'')+'" data-url="'+esc(url||'')+'">'+
+    '<svg class="aprg" viewBox="0 0 46 46" aria-hidden="true"><circle class="aprgbg" cx="23" cy="23" r="20"/><circle class="aprgfg" cx="23" cy="23" r="20"/></svg>'+
+    '<span class="apgl">'+IC.play+'</span></span>';}
 function vfPick(d){
   // RF2: no crown, so what the card said is the song at its speed (ncSaid), never an upload
   // row. An X reports that as "said" in the fix queue, with no crown_url.
@@ -4374,8 +4400,7 @@ function renderResult(d,partial){
   if(_ytid||_scurl){
     // No data-play attribute on purpose: the global sheet handler keys off [data-play],
     // and this control opens the inline player instead (wired below by id).
-    corner='<span class="artplay inline" id="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
-      ' data-ytid="'+esc(_ytid||'')+'" data-url="'+esc(pv)+'">'+IC.play+'</span>';
+    corner=coverPlay(pvlbl, _ytid||'', pv);
     inlinePlayer='<div class="ipl" id="ipl" hidden'+(_scart?' data-art="'+esc(_scart)+'"':'')+'>'+
       '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
         '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
@@ -4388,6 +4413,14 @@ function renderResult(d,partial){
     corner='<span class="artplay" role="button" tabindex="0" title="'+esc(pvlbl)+'" aria-label="'+esc(pvlbl)+'"'+
       ' data-play="'+esc(pv)+'" data-src="'+esc(pvsrc)+'" data-title="'+esc(pvttl)+'">'+IC.play+'</span>';
   }
+  // COVER PLAY EVERYWHERE (Roham 2026-09-30 19:30: "there should also be a little play button
+  // where they can just play it inside the app"). A crown plays its own upload (above). With no
+  // playable crown (no-crown, a mashup or a plain song) the cover plays what the song card's
+  // button plays (ncPlay: an exact SoundCloud or YouTube link of the song, else its official
+  // preview), in the same ring band. No source, no button. Not on the /base card: the final
+  // card replaces it a moment later.
+  var _cpp=null;
+  if(!corner && !partial && (_cpp=ncPlay(d))) corner=coverPlay(ncLabel(d,_cpp), _cpp.yt||'', _cpp.sc||_cpp.aud||_cpp.url||'');
   // TAP THE COVER (Roham 2026-09-26: "a link should be inside the cover when it finds a
   // song"). It opens the version this card is about: the crown (the version on top), else the
   // first exact store link (an Apple Music album, a Spotify track), else the Spotify search
@@ -4764,7 +4797,15 @@ function renderResult(d,partial){
       noCrown ? 'Song identified' : 'Match found';
   // inlinePlayer is rendered inside the crown card (in `shelf`), not here, so the video
   // opens on the card the user tapped. It stays out of this concat to avoid a second copy.
-  result.innerHTML='<div class="card">'+head+clip+hero+openin+wavebar+mash+shelf+(hunting?'':verdictRow(d))+plat+quotes+actions+'</div>';   // VERDICT 2026-09-29
+  // COVER PLAY: the cover's band. A crown's band sits on the crown card and the no-crown band under
+  // the song card (both in `shelf`). Any other cover with a play button (a plain song, a mashup,
+  // no close version) gets the same band right under the title, so the button always has one.
+  var heroBand='';
+  if(corner.indexOf('artplay inline')>=0 && shelf.indexOf('id="ipl"')<0) heroBand=_cpp?ncBand(d):inlinePlayer;
+  // The old card's player dies with its markup; drop its timers and handles so the new cover
+  // starts clean (a detached <audio> or iframe has already stopped).
+  try{ipStop();}catch(e){}
+  result.innerHTML='<div class="card">'+head+clip+hero+heroBand+openin+wavebar+mash+shelf+(hunting?'':verdictRow(d))+plat+quotes+actions+'</div>';   // VERDICT 2026-09-29
   // the card was just rebuilt, so anything the hunt already verified has to be put back
   if(partial) livePaint();
   var _heroImg=result.querySelector('.hero img.art');   // the cover on screen (a crown: the version's)
@@ -4790,11 +4831,17 @@ function renderResult(d,partial){
     else { try{ renderLib(); }catch(e){} }};
   // Konnor's inline player: the cover triangle opens it, the round button pauses/plays,
   // the corner x collapses it back to the triangle.
+  // COVER PLAY (Roham 2026-09-30 19:30): the cover button is the small player. The first tap
+  // starts the song and the button turns into pause, with its ring on the real playhead; the
+  // next taps pause and resume. The page stays on the cover. The band below carries the video or
+  // widget and the close button. The rest of the cover stays the link.
   var _cin=document.getElementById('artplay');
   if(_cin && _cin.classList.contains('inline')){
-    var _openIP=function(){ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));
-      var _b=document.getElementById('ipl'); if(_b&&_b.scrollIntoView) _b.scrollIntoView({behavior:'smooth',block:'center'});};
-    _cin.onclick=_openIP;
+    var _openIP=function(){
+      var _b=document.getElementById('ipl');
+      if(_b && !_b.hidden && _cin.classList.contains('live')){ ipToggle(); return; }
+      ipOpen(_cin.getAttribute('data-ytid'), _cin.getAttribute('data-url'));};
+    _cin.onclick=function(e){if(e){e.preventDefault(); e.stopPropagation();} _openIP();};
     _cin.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault(); _openIP();}};
   }
   var _ipb=document.getElementById('iplbtn'); if(_ipb) _ipb.onclick=ipToggle;
@@ -6064,6 +6111,8 @@ function playHere(url, src, title){
   var box=document.getElementById('player');
   var frame=embedFor(url, src);
   if(!frame){ window.open(url,'_blank','noopener'); return; }   // nothing to embed, be useful
+  // one player at a time: the sheet stops the cover / card band (COVER PLAY 2026-09-30)
+  var _ib=document.getElementById('ipl'); if(_ib&&!_ib.hidden) ipClose();
   document.getElementById('playerttl').textContent=title||'Preview';
   document.getElementById('playersrc').innerHTML=src?srcChip(src):'';
   document.getElementById('playerout').href=url;
@@ -6107,14 +6156,29 @@ function withSC(cb){
 var _ipPlayer=null, _ipTimer=null, _ipSC=null, _ipGen=0;
 var _ipAud=null;   // the no-crown song card's official preview (ipOpenAud)
 var IP_C=2*Math.PI*29;   // ring circumference, matches r=29 in the .iprg svg
+var AP_C=2*Math.PI*20;   // the cover button's ring (COVER PLAY), r=20 in its .aprg svg
 function ipRing(frac){
-  var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
   frac=Math.max(0,Math.min(1,frac||0));
+  var cf=document.querySelector('#artplay .aprgfg'); if(cf) cf.style.strokeDashoffset=String(AP_C*(1-frac));
+  var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
   fg.style.strokeDashoffset=String(IP_C*(1-frac));
 }
 function ipGlyph(playing){
   var g=document.querySelector('#ipl .ipgl'); if(g) g.innerHTML=playing?IC.pause:IC.play;
   var b=document.getElementById('iplbtn'); if(b) b.setAttribute('aria-label',playing?'Pause':'Play');
+  // COVER PLAY: while the band is open the cover button shows the same state (the band always
+  // plays what the cover button plays: the crown, or the song card's source)
+  var c=document.getElementById('artplay');
+  if(c && c.classList.contains('live')){
+    var cg=c.querySelector('.apgl'); if(cg) cg.innerHTML=playing?IC.pause:IC.play;
+    var cl=playing?'Pause':(c.getAttribute('data-lbl')||'Play');
+    c.setAttribute('aria-label',cl); c.setAttribute('title',cl);}
+}
+function coverRest(){
+  var c=document.getElementById('artplay'); if(!c||!c.classList.contains('live')) return;
+  c.classList.remove('live');
+  var cg=c.querySelector('.apgl'); if(cg) cg.innerHTML=IC.play;
+  var cl=c.getAttribute('data-lbl'); if(cl){c.setAttribute('aria-label',cl); c.setAttribute('title',cl);}
 }
 function ipStop(){
   _ipGen++;                                      // a late API callback for the old frame is ignored
@@ -6132,7 +6196,7 @@ function ipStop(){
 function ipClose(){
   ipStop();
   var ipl=document.getElementById('ipl'); if(ipl) ipl.hidden=true;
-  var c=document.getElementById('artplay'); if(c) c.hidden=false;
+  coverRest();                                   // the cover button back to its triangle
   // bring back any crown-card triangle we swapped for the band
   Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=false;});
   ipRing(0);
@@ -6145,7 +6209,9 @@ function ipOpen(vid,url){
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
   if(!ipl||!slot) return;
   ipStop();                                      // one player at a time, never two playing
-  var corner=document.getElementById('artplay'); if(corner) corner.hidden=true;
+  try{closePlayer();}catch(e){}                  // the sheet player too (COVER PLAY 2026-09-30)
+  // COVER PLAY: the cover button stays and becomes the pause button with its ring (ipGlyph)
+  var corner=document.getElementById('artplay'); if(corner&&corner.classList.contains('inline')) corner.classList.add('live');
   // Both triangles turn into the band's pause button, whichever one was tapped, so a
   // play triangle never sits beside a player that is already going (ipClose restores both).
   Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=true;});
@@ -6234,7 +6300,10 @@ function ipOpenAud(url, ipl, slot){
     if(!live()) return;
     ipClose();
     Array.prototype.forEach.call(document.querySelectorAll('.nca [data-ipopen]'),function(x){
-      x.removeAttribute('data-ipopen'); x.hidden=true;});});
+      x.removeAttribute('data-ipopen'); x.hidden=true;});
+    // the cover button that plays this preview goes too: never a dead control (COVER PLAY)
+    var cv=document.getElementById('artplay');
+    if(cv && cv.getAttribute('data-url')===url && cv.parentNode) cv.parentNode.removeChild(cv);});
   slot.appendChild(a); _ipAud=a;
   try{var p=a.play(); if(p&&p.catch) p.catch(function(){if(live()) ipGlyph(false);});}catch(_){ipGlyph(false);}
 }
