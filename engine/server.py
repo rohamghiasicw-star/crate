@@ -5456,8 +5456,8 @@ def _phase2(ctx, on_cand=None):
 # start that run_batch_helpers.live_busy() read as a live user scan for 180 s. `outcome`
 # keeps speed analyses able to filter to full hunts ("hunt", logged in _phase2). A /base
 # that PARKS its session logs nothing: its hunt is still to come.
-def _log_done(key, t0, outcome):
-    E.tlog("request_done", time.time() - t0, url=key, outcome=outcome)
+def _log_done(key, t0, outcome, **extra):
+    E.tlog("request_done", time.time() - t0, url=key, outcome=outcome, **extra)
 
 
 def _p1(url, key):
@@ -5465,8 +5465,13 @@ def _p1(url, key):
     t0 = time.time()
     try:
         res, ctx = _phase1(url, key, t0)
-    except Exception:
-        _log_done(key, t0, "error")
+    except Exception as e:
+        # the exception text, so an "error" in the tlog says why (server job B: an IG
+        # "error" in 0.26 s left nothing but the outcome to go on). Never a token: these
+        # are the engine's own RuntimeError sentences (ig.py, get_source).
+        _err = ("%s: %s" % (type(e).__name__, e))[:200]
+        _log_done(key, t0, "error", err=_err)
+        print("scan error after %.2fs: %s" % (time.time() - t0, _err), flush=True)
         raise
     if not (ctx and ctx.get("worth")):
         r = res or {}

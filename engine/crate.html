@@ -3929,10 +3929,13 @@ function renderResult(d,partial){
     return;}
   if(d.result==='error'){ setEndTitle(d);
     /* most often a private or unreadable link - a dead end converted into the listen-mode teach */
-    var agegate=/age restricted/.test(d.error||''), gone=/video is unavailable/.test(d.error||'');
+    var agegate=/age restricted/.test(d.error||''), gone=/video is unavailable/.test(d.error||''),
+        photo=/photo post/.test(d.error||''), igbusy=/did not answer/.test(d.error||'');
     result.innerHTML=errCard('lock',"Couldn't read that link",
       agegate?'This account hides its posts from some viewers. The mic can still hear it.'
       :gone?'This video was deleted or made private. If it still plays for you, the mic can hear it.'
+      :photo?'Instagram only shares the song on photo posts with signed-in viewers. Play it out loud and the mic can hear it.'
+      :igbusy?'Instagram did not answer this time. Try again in a minute, or let the mic hear it.'
              :'It may be private or region locked. The mic can hear anything.',
       (micOK()?'<button class="cta mic" id="golisten">'+IC.mic+'Use listen mode instead</button>'+
         '<div class="trainnote">Play the reel out loud and we’ll catch it</div>'
