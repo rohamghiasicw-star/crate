@@ -2586,6 +2586,206 @@ def _cand_art(c):
         return None
 
 
+# ---- AUDIO PROOF PER ROW (2026-09-30) ---------------------------------------------------
+# Owner, 19:20, on an Instagram reel: "the closest other matches 90% is by La Conmigo. This is
+# completely random song." A row printed max(50, core x 100) under the 0.90 "tempo not
+# measured" cap, and core saturates at 1.000 on low-transient audio for unrelated songs
+# (findings/core-saturation.md). The live scan at 19:15 (reel Dd4mfJJud9L, base "BAILA LENTO")
+# had "BAILA CONMIGO" at core 1.000 with raw fp 0.557, inside the wrong-pair band (576
+# labelled pairs: every wrong pair <= 0.613, every same-speed right pair >= 0.638).
+# A row is AUDIO PROVEN when the fingerprint says so: fp >= 0.638 on verify()'s speed-matched
+# pair AND a time-reversed copy of the same audio reads at least NULL_FP_GAP (0.10) lower. The
+# crown is proven by the walk it passed (gates, fp floor, null), exactly as before. Only a
+# proven row prints a match figure (crate.html vmatch). Every gap comes from audio the hunt
+# already downloaded: the walk / figure / correction null, the seek window's own control, floor
+# align, or a reversed copy of the row's own downloaded file (_prove_rows). No fp: not proven.
+_PROOF_FP = 0.638              # rootfix matcher, same bar as SEEK_FP_OK and _FA_RIGHT
+# CRATE_PROVE_ROWS=0 skips the reversed read of the downloaded rows (rows then prove only
+# through the null / seek / floor-align reads the crown path already made).
+PROVE_ROWS = os.environ.get("CRATE_PROVE_ROWS", "1").strip() != "0"
+PROVE_ROWS_S = float(os.environ.get("CRATE_PROVE_ROWS_S", "6") or 6)   # wall budget, all rows
+
+
+def _row_proof(c):
+    """-> (proven, fp, gap) from what this candidate already carries. `gap` is the proving
+    read's (fp minus the reversed copy's fp), else the first read taken, else None."""
+    c = c or {}
+    fp = c.get("fp")
+    fp = float(fp) if fp is not None else None
+    reads = []
+    if c.get("seek_at") is not None and c.get("seek_rev_fp") is not None and fp is not None:
+        reads.append((fp, fp - float(c["seek_rev_fp"])))
+    if c.get("_null_rev_fp") is not None:
+        f0 = c.get("_null_fwd_fp", fp)
+        if f0 is not None:
+            reads.append((float(f0), float(f0) - float(c["_null_rev_fp"])))
+    if c.get("_rev_fp_local") is not None and fp is not None:
+        reads.append((fp, fp - float(c["_rev_fp_local"])))
+    fa = c.get("_fa_proof")
+    if fa and fa[0] is not None and fa[1] is not None:
+        reads.append((float(fa[0]), float(fa[1])))
+    ok = [r for r in reads if r[0] >= _PROOF_FP and round(r[1], 4) >= E.NULL_FP_GAP]
+    gap = (ok or reads or [(None, None)])[0][1]
+    return (bool(c.get("_crown_proof")) or bool(ok), fp,
+            round(gap, 3) if gap is not None else None)
+
+
+def _rev_fp_local(clip_audio, c):
+    """Raw fp of a time-reversed copy of the row's OWN downloaded audio against the clip, on
+    the window the row was scored on (the null control's read, without its download). None
+    when the file is gone or anything fails. Transient: its temp dir dies in `finally`."""
+    import shutil
+    import subprocess
+    import verify as _verify
+    path = (c or {}).get("path")
+    if not clip_audio or not path or not os.path.exists(path):
+        return None
+    tmp = tempfile.mkdtemp(prefix="revrow_")
+    try:
+        clip = clip_audio
+        if c.get("seek_clip_at") is not None:
+            clip = os.path.join(tmp, "clip_sec.wav")
+            E.cut(clip_audio, clip, float(c["seek_clip_at"]), 1.0, span=26)
+        rev = os.path.join(tmp, "rev.wav")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-t", "20", "-i", path,
+                        "-af", "areverse", "-ac", "1", "-ar", "44100", rev],
+                       check=True, timeout=30)
+        rf = float(_verify.verify(clip, rev, 20).get("fp") or 0.0)
+        return rf if rf > 0.0 else None          # 0.0 is a dead fpcalc, not a reading
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+_APOS = re.compile(r"['\u2018\u2019\u02bc`\u00b4.]")
+
+
+def _name_key(t):
+    """_title_key after folding, with apostrophes and dots JOINED rather than split: the lab's
+    kelthraxx base is "Wouldn\u2019t Believe" (curly, folds away) and its tiktok-version row
+    "Wouldn't Believe" (straight, keyed as a space), which read as two different songs; "G.D.F.R"
+    is GDFR."""
+    return E._title_key(E._ascii_fold(_APOS.sub("", t or ""))) or ""
+
+
+def _song_names(base_title, reup=None, res=None, crown=None):
+    """The distinctive words of each name this clip's song goes by (the base, a re-upload's
+    credit, a rendition's source, mashup sections, the crown's own title with an "A x B"
+    mashup split into its songs), keyed like _crown_other_song."""
+    names = [base_title or ""]
+    if crown and crown.get("title"):
+        _ct = re.split(r"\s[-\u2013\u2014|\uff5c]\s", crown["title"])[0]
+        _ct = re.sub(r"[\(\[].*?[\)\]]", " ", _ct)
+        try:
+            _parts = E.split_mashup(_ct)
+        except Exception:
+            _parts = []
+        names += (_parts if len(_parts) >= 2 else [_ct])
+    if reup and reup.get("title"):
+        names.append(reup["title"])
+    _rd = (res or {}).get("rendition") or {}
+    if isinstance(_rd, dict) and _rd.get("of_song"):
+        names.append(_rd["of_song"])
+    for sec in ((res or {}).get("sections") or []):
+        if isinstance(sec, dict) and sec.get("title"):
+            names.append(sec["title"])
+    out = []
+    for n in names:
+        n = re.split(r"\s[-\u2013\u2014|\uff5c]\s", n or "")[0]
+        ws = [w for w in _name_key(n).split()
+              if len(w) >= 3 and w not in _OTHER_SONG_SKIP and w not in _OTHER_SONG_COMMON]
+        if ws:
+            out.append(ws)
+    return out
+
+
+def _names_song(row, names):
+    """True when the row's title or uploader carries EVERY distinctive word of one of the
+    song's names ("Baila Conmigo" does not name "BAILA LENTO"), False when none does, None
+    when there is nothing to judge by (no song named)."""
+    if not names:
+        return None
+    t, u = (row or {}).get("title") or "", (row or {}).get("uploader") or ""
+    hay = " ".join([_name_key(t), _name_key(u), _name_key(re.sub(r"[\(\)\[\]]", " ", t))])
+    hw = set(hay.split())
+
+    def _near(w):                        # one typo on a long word: "Liif3" is "Llif3"
+        for h in hw:
+            if abs(len(h) - len(w)) <= 1 and len(h) >= 5:
+                if len(h) == len(w):
+                    if sum(1 for a, b in zip(h, w) if a != b) <= 1:
+                        return True
+                else:
+                    a, b = (h, w) if len(h) > len(w) else (w, h)
+                    if any(a[:i] + a[i + 1:] == b for i in range(len(a))):
+                        return True
+        return False
+    for ws in names:
+        if all((w in hw) if len(w) < 5 else (w in hay or _near(w)) for w in ws):
+            return True
+    return False
+
+
+def _prove_rows(candidates, verified, top, clip_audio, base_title, reup, res):
+    """Display only, after every crown decision: each row gets fp, rev_gap, audio_proven and
+    names_song. The crown is proven by its walk. A row with fp >= 0.638 and no reversed read
+    yet gets one off its own downloaded file (PROVE_ROWS, 3 at a time, PROVE_ROWS_S budget);
+    nothing is downloaded. Any failure leaves the rows unproven, which only costs a figure."""
+    t0 = time.time()
+    try:
+        if top is not None:
+            top["_crown_proof"] = True
+        by_url = {}
+        for vc in (verified or []):
+            by_url.setdefault(vc.get("url"), vc)
+        if top is not None:
+            by_url[top.get("url")] = top
+        todo = []
+        for row in candidates or []:
+            vc = by_url.get(row.get("url"))
+            if vc is None or vc.get("_rev_fp_local") is not None:
+                continue
+            _pr, _fp, _g = _row_proof(vc)
+            if not _pr and _fp is not None and _fp >= _PROOF_FP:
+                todo.append(vc)
+        got = 0
+        if PROVE_ROWS and todo and clip_audio and os.path.exists(clip_audio):
+            ex = ThreadPoolExecutor(max_workers=min(3, len(todo)))   # explicit: see hard rules
+            try:
+                futs = [(ex.submit(_rev_fp_local, clip_audio, vc), vc) for vc in todo]
+                for f, vc in futs:
+                    try:
+                        r = f.result(timeout=max(0.05, t0 + PROVE_ROWS_S - time.time()))
+                    except Exception:
+                        r = None
+                    if r is not None:
+                        vc["_rev_fp_local"] = r
+                        got += 1
+            finally:
+                ex.shutdown(wait=False)
+        names = _song_names(base_title, reup, res, crown=top)
+        n_pr = n_other = 0
+        for row in candidates or []:
+            vc = by_url.get(row.get("url"))
+            if vc is not None:
+                _pr, _fp, _g = _row_proof(vc)
+                row["fp"] = round(_fp, 3) if _fp is not None else None
+                row["rev_gap"] = _g
+                row["audio_proven"] = _pr
+            else:
+                row["audio_proven"] = bool(row.get("audio_proven"))
+            row["names_song"] = _names_song(row, names)
+            n_pr += bool(row["audio_proven"])
+            n_other += (row["names_song"] is False and not row["audio_proven"])
+        res["rows_proven"] = 1
+        E.tlog("prove_rows", time.time() - t0, rows=len(candidates or []), proven=n_pr,
+               todo=len(todo), measured=got, other_song=n_other,
+               crown=bool(top is not None))
+    except Exception as _ex:
+        E.tlog("prove_rows", time.time() - t0, error=type(_ex).__name__)
+
+
 def _cand_row(c):
     """One candidate in the shape the UI renders. Extracted so a STREAMED row and a row
     in the final payload are built by the same code and can never disagree about a
@@ -2598,6 +2798,7 @@ def _cand_row(c):
     # answer with nothing beside it. The per-row bass verdict uses THIS row's own dual
     # gate - the same two numbers the crown uses - never the family-wide `bass_boosted`
     # flag, which is true whenever any upload anywhere in the pool is bassy.
+    _proven, _fp, _gap = _row_proof(c)
     _claim, _kinds = _unverified_claims(
         c.get("title"), c.get("uploader"),
         bass_delta=c.get("bass_delta"),
@@ -2658,6 +2859,12 @@ def _cand_row(c):
             "tempo_unmeasured": (True if (c.get("vspeed_locked") is None
                                           and c.get("speed_conf") is not None
                                           and float(c["speed_conf"]) < 0.10) else None),
+            # AUDIO PROOF (_row_proof). The page prints a match figure only on a proven
+            # row; a streamed row is usually not proven yet (its reversed read runs in
+            # _prove_rows after the crown) and shows "Checking" until the final list.
+            "fp": round(_fp, 3) if _fp is not None else None,
+            "rev_gap": _gap,
+            "audio_proven": _proven,
             "claim": _claim or None,
             "claimkind": _kinds or None,
             # COVER ART. Display only - see _cand_art. Built here, in the one row builder,
@@ -2823,7 +3030,7 @@ def _seek_of(c):
     return {"cand_at": c.get("seek_at"), "clip_at": c.get("seek_clip_at")}
 
 
-def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
+def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None, rec=None):
     """Manufacture a null control for the crown, out of the crown itself.
 
     A `core` of 1.000 is supposed to mean "provably the same recording". On low-information
@@ -2849,6 +3056,10 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
 
     Returns a reason string to refuse the crown, or None. Any failure returns None: a
     control that cannot be measured must never cost the user their answer.
+
+    ROW PROOF 2026-09-30: `rec` (the candidate dict) receives the reversed copy's raw fp
+    (`_null_rev_fp`) and, when this run re-read it, the forward fp (`_null_fwd_fp`), so the
+    row the page shows carries the gap this control measured (_row_proven). Display only.
     """
     # ONLY SECOND-GUESS A CLAIM OF *PROVABLE* SAMENESS.
     # This entry used to fire from CORE_SAME (0.95) up, but all four cases the control was
@@ -2891,6 +3102,8 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
                        check=True, timeout=30)
         _rv = _verify.verify(clip_audio, rev, 20)
         rc = _rv.get("core") or 0.0
+        if rec is not None and float(_rv.get("fp") or 0.0) > 0.0:
+            rec["_null_rev_fp"] = float(_rv.get("fp") or 0.0)
         if rc >= fwd_core:
             _guard = bool(getattr(E, "NULL_FP_GUARDED", False))
             if (E.NULL_FP or _guard) and fwd_core >= 0.999 and rc >= 0.999:
@@ -2903,6 +3116,8 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
                 # dead fpcalc, which reads as no evidence and refuses exactly as before.
                 _fv = _verify.verify(clip_audio, dst, 20)
                 ffp, rfp = float(_fv.get("fp") or 0.0), float(_rv.get("fp") or 0.0)
+                if rec is not None and ffp > 0.0:
+                    rec["_null_fwd_fp"] = ffp
                 # CRATE_NULL_FP_GUARDED: the forward read must beat the reversed copy by
                 # NULL_FP_GAP (0.10), not by a hair. Two readings with no recording evidence
                 # differ by up to 0.064 (504 wrong matcher pairs); Love Sosa (clip 24) read
@@ -5032,6 +5247,9 @@ def _phase2(ctx, on_cand=None):
                             and (_cand.get("core") or 0) >= E.CORE_EDIT):
                         _fa_n[0] += 1                   # graded #41: head fp misaligned?
                         _fa = _floor_align(src.get("audio"), _cand, src.get("tmp"))
+                        if _fa:
+                            _cand["_fa_proof"] = (_fa.get("fp"), _fa.get("gap"),
+                                                  bool(_fa.get("pass")))
                         if _fa and _fa.get("pass"):
                             _why = None
                     if _why:
@@ -5071,7 +5289,8 @@ def _phase2(ctx, on_cand=None):
                     _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
                                                        _tempo_d(r[1]), r[0]))
                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
-                                           _pick[1].get("core"), seek=_seek_of(_pick[1]))
+                                           _pick[1].get("core"), seek=_seek_of(_pick[1]),
+                                           rec=_pick[1])
                 if _why:
                     _rejects[_pick[0]] = (_why, _pick[1])
                     _clean.remove(_pick)
@@ -5092,7 +5311,8 @@ def _phase2(ctx, on_cand=None):
 
                 def _n_of(c):
                     return _time_reversed_null(src.get("audio"), c.get("url"),
-                                               c.get("core"), floor=0.0, seek=_seek_of(c))
+                                               c.get("core"), floor=0.0, seek=_seek_of(c),
+                                               rec=c)
                 _walk_top = top
                 top, _source_v, _fig_info = _crown_by_figure(
                     _okrows, top, _source_v, _shown, _p_of, _n_of)
@@ -5143,7 +5363,8 @@ def _phase2(ctx, on_cand=None):
                         _corr["right_url"], verified, edit.get("ranked") or [],
                         edit.get("corr_rows") or [], E.CORE_KEEP, _cgate,
                         lambda c: _time_reversed_null(src.get("audio"), c.get("url"),
-                                                      c.get("core"), seek=_seek_of(c)),
+                                                      c.get("core"), seek=_seek_of(c),
+                                                      rec=c),
                         _is_dead)
                 except Exception as _cex:
                     _crow, _csv, _cwhy, _ctr = None, None, "check failed: %s" % type(_cex).__name__, True
@@ -5204,6 +5425,7 @@ def _phase2(ctx, on_cand=None):
                 pass
             _gate_rows(candidates, verified, _rejects, _clean_all, measured, base_title,
                        _gate_label, mdir, _reup, res)
+            _prove_rows(candidates, verified, top, src.get("audio"), base_title, _reup, res)
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.

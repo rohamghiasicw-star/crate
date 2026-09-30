@@ -3183,7 +3183,7 @@ var TEMPO_TOL=0.06, EQ_CAP=0.90, OFF_DROP=4/9, PCT_FLOOR=50, REF_CAP=45,
 var GATE_WORD={tempo:'Different edit', tilt:'Different EQ', speedclaim:'Titled a speed edit',
                official:'Official release', othersong:'Different song', 'null':'Texture only',
                rendition:'The original, not this version', source:'Source recording'};
-var G_NUM=2, G_UNC=5, G_NONE=6;
+var G_NUM=2, G_UNC=5, G_UNP=5.5, G_NONE=6;   // G_UNP: not audio proven (vmatch), under every proven row
 function gateWhy(k,c,offTxt){
   if(k==='tempo'||k==='source') return 'clip '+offTxt;
   if(k==='tilt') return 'EQ '+Math.abs(c.bass||0).toFixed(1)+' dB off';
@@ -3196,7 +3196,31 @@ function gateSentence(k,c,offTxt){
   if(k==='tilt') return 'candidate tilt is '+Math.abs(c.bass||0).toFixed(1)+" dB off the clip's own EQ";
   if(k==='source') return 'this is the recording the clip was re-pitched from';
   return 'not picked';}
+/* ---------- AUDIO PROOF ON EVERY ROW (2026-09-30) ----------
+   Owner, 19:20: "the closest other matches 90% is by La Conmigo. This is completely random
+   song." core saturates at 1.000 on low-transient audio for unrelated songs
+   (findings/core-saturation.md), so a row printed 90% on core alone, under the "tempo not
+   measured" cap. The engine now proves each row (server _row_proof: raw fp >= 0.638 on the
+   speed-matched pair AND a time-reversed copy of the same audio at least 0.10 lower, or the
+   crown's own walk). Only a proven row prints a figure. Any other row says "Not confirmed"
+   (or its gate word), sorts below every proven row, and can never be the crown, the pick or
+   the SoundCloud tile. A row that is not proven AND names a different song (server
+   `names_song` false) is not listed at all. The crown and proven rows are unchanged. A payload
+   from before this (no `audio_proven` on its rows) proves only its crown. */
+var ROWS_LIVE=false;   // livePaint: a streamed row is not proven YET, it says "Checking"
+function rowProven(c){return !!c&&(c.audio_proven===true||c.url==='#legs'||(!!CROWN_URL&&c.url===CROWN_URL));}
+function rowHidden(c){return !!c&&c.names_song===false&&!rowProven(c);}
 function vmatch(c){
+  var m=vmatch0(c);
+  if(!m||rowProven(c)) return m;
+  m.unproven=true;
+  if(m.grp===G_NONE) return m;         // "No audio match": no shelf lists it anyway
+  // No figure, no gate word, no speed gap: each of those reads as a claim about THIS recording,
+  // which is exactly what the fingerprint did not prove.
+  m.exact=false; m.level=false; m.pct=null; m.grp=G_UNP; m.key=m.core; m.refused=''; m.why='';
+  m.word=ROWS_LIVE?'Checking':'Not confirmed';
+  return m;}
+function vmatch0(c){
   var core=c?c.core:null;
   if(core===null||core===undefined) return null;
   var v=c.vspeed, sl=c.slope, tilt=Math.abs(c.bass||0);
@@ -3354,7 +3378,10 @@ function vtier(m){return m.exact?3:m.pct===null?0:m.refused&&m.refused!=='source
 function confChip(c,full){
   var m=vmatch(c); if(!m) return '';
   var tip;
-  if(m.refused && m.refused!=='source')
+  if(m.unproven && m.grp===G_UNP)
+    tip=ROWS_LIVE?'Still checking: the fingerprint has not proven this upload is the same recording yet.':
+        'Not confirmed: the fingerprint did not prove this upload is the same recording as the clip, so it gets no match figure.';
+  else if(m.refused && m.refused!=='source')
     tip='Not this version: '+m.eq+'. A version we ruled out counts half, so it never sits above one that passed.';
   else
     tip=(m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
@@ -3609,7 +3636,7 @@ function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt
       // it's ... bass boosted ... GET RID OF THE YELLOW". The match percent and the heading
       // still carry the honest ranking; opt.flag/opt.flagtag are ignored now, not rendered.
     '</span>'+
-    '<span class="op">Open'+IC.open+'</span>'+confRule(c.core)+'</a>';}
+    '<span class="op">Open'+IC.open+'</span>'+confRule(rowProven(c)?c.core:null)+'</a>';}
 /* ---------- live edit hunt ----------
    The hunt used to be one blocking request: a bar crawling to 100% with nothing under
    it, and if it was slow, died, or the server had restarted under the page (every .py
@@ -3627,16 +3654,22 @@ function liveAdd(c){
   LIVE.push(c);
   // Task A2: the same figure and the same groups as the final list. Provisional: rows
   // stream before the server's gates run, so the final payload replaces these figures.
+  ROWS_LIVE=true;
+  try{
   LIVE.sort(function(a,b){var ma=vmatch(a), mb=vmatch(b), ga=ma?ma.grp:9, gb=mb?mb.grp:9;
     return (ga-gb)||((mb?mb.key:-1)-(ma?ma.key:-1))||(b.core||0)-(a.core||0)||(b.plays||0)-(a.plays||0);});
+  }finally{ ROWS_LIVE=false; }
   livePaint(c.url);}
 function livePaint(freshURL){
   var box=document.getElementById('livelist'); if(!box) return;
   // "Best so far" is still a row presented as an answer, provisional or not, so it gets
   // the same unmeasurable-claim sentence the final answer row gets.
+  ROWS_LIVE=true;
+  try{
   box.innerHTML=LIVE.slice(0,6).map(function(c,i){
-    return trackRow(c,i===0,i===0?'Best so far':'',c.url===freshURL,
+    return trackRow(c,i===0&&rowProven(c),i===0&&rowProven(c)?'Best so far':'',c.url===freshURL,
       {rank:i+1,flag:i===0?(c.claim||''):''});}).join('');
+  }finally{ ROWS_LIVE=false; }
   var t=document.getElementById('progtxt2');
   if(t&&LIVE.length) t.textContent=LIVE.length===1?'1 version verified':LIVE.length+' versions verified';}
 function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<b>'+esc(title)+'</b><span>'+esc(body)+'</span></div></div>';}
@@ -4168,6 +4201,10 @@ function renderResult(d,partial){
   // Task A2: server verdicts on rows, and which row is the answer, before any figure is read.
   GATED=!!d.gates_on_rows;
   CROWN_URL=ex?ex.url:''; CROWN_SRC=(ex&&d.crown_is_source)?ex.url:''; CROWN_ROW=ex||null;
+  // AUDIO PROOF: a row the fingerprint did not prove that names another song is not a version
+  // of this one, so no list shows it (the "La Conmigo" row under BAILA LENTO, 2026-09-30).
+  var _hidN=0;
+  if(!partial){ _hidN=cands.length; cands=cands.filter(function(c){return !rowHidden(c);}); _hidN-=cands.length; }
   /* The job-572 promo is gone. It heroed the best row of a held list when it measured 80%
      or more, which let the page crown a row the engine had not: clip 05 (titled a speed
      edit) and clip 07 (the time-reversed check) were heroed that way. What the phone shows
@@ -4603,7 +4640,7 @@ function renderResult(d,partial){
   else if((d.unsure || !partial) && cands.length && !d.crown_rejected && !d.crowd_version
           && !cands.some(function(c){return (c.core||0) >= SHELF_FLOOR;})
           && (!famSpeed(d) || famSpeed(d)==='as posted') && !(d.reupload && !famSpeed(d))){ shelf=''; plain=true; }
-  else if((d.unsure || !partial) && cands.length){
+  else if((d.unsure || !partial) && (cands.length || _hidN)){
     // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
     // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),
     // and a gate REFUSING a crown that scored fine - a tempo mismatch, a title that
@@ -4643,7 +4680,7 @@ function renderResult(d,partial){
     var crowdCard='';
     var _kept = cands.filter(function(c){return (c.core||0) >= SHELF_FLOOR;});
     var _dropped = cands.length - _kept.length;
-    if(!_kept.length){
+    if(!_kept.length && !_hidN){
       noCrown=true;
       shelf='<div class="sect">No close version found</div>'+crowdCard+
         '<div class="trainnote">The search found '+
@@ -4686,11 +4723,12 @@ function renderResult(d,partial){
     var _ork=byMatch(cands);
     shelf='<div class="sect">The song</div>'+crowdCard+
       '<div class="list">'+ncCard(d)+'</div>'+ncBand(d)+
+      (_ork.length?   // AUDIO PROOF: every row named another song and was not proven, so no fold
       '<details class="othv"><summary>'+
         '<span>Other versions we checked · '+_ork.length+'</span>'+
         '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
         _ork.slice(0,12).map(function(c,i){
-          return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div></details>';
+          return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div></details>':'');
     }}
   // ONE SEQUENCE (Roham 2026-09-26: "the hunting the exact version and finding the exact version
   // should be one sequence"). The hunt used to show its own 0-100% bar here, then a different
