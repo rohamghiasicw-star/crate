@@ -389,7 +389,7 @@ POSTED_EXACT = _speed_flag("CRATE_POSTED_EXACT", True)   # gated 2026-09-30: doc
 POSTED_EXACT_MIN = 3
 POSTED_EXACT_SKEW = 0.01
 TEMPO_KEPT = _speed_flag("CRATE_TEMPO_KEPT", True)   # gated 2026-09-30: docfix/posted/POSTED.md, #17 x2 + reg x2 + no_match 44/45 ON vs OFF
-# CRATE_YT_WALL (K30 dontlike, 2026-09-30, default ON since its gate, konnor30/dontlike.md). YouTube bot-walls this Mac:
+# CRATE_YT_WALL (K30 dontlike, 2026-09-30; live 16:43-17:10, default OFF again: see the flag line). YouTube bot-walls this Mac:
 # live /tmp/tlog.jsonl holds 643 failed YouTube candidate downloads against 5 good ones, the last
 # good one 2026-09-29 15:33. A YouTube row still takes a download slot, so on Konnor's Don't Like
 # clip (ZSbS39h2S) 19 of 33 downloads were dead YouTube fetches while the exact upload, desy's
@@ -399,7 +399,7 @@ TEMPO_KEPT = _speed_flag("CRATE_TEMPO_KEPT", True)   # gated 2026-09-30: docfix/
 # YT_WALL_TTL s) all failed, _sc_quota keeps only YT_CANARY YouTube rows in a download head and
 # the freed slots go to the next rows in priority order. The canary keeps probing: one YouTube
 # download that lands ends the wall. Process memory only, nothing persisted.
-YT_WALL = _speed_flag("CRATE_YT_WALL", True)   # gated 2026-09-30: konnor30/dontlike.md, Don't Like + reg + bass clips x2 ON vs OFF
+YT_WALL = _speed_flag("CRATE_YT_WALL", False)   # OFF again 2026-09-30 17:10: on Gun Lean (ZSbA8QvDT) the freed slots section-read an artist-titled hoodtrap (fp 0.716) that then outranked the exact upload (fp 0.996, 1.000x) in rank_key; konnor30/dontlike.md
 YT_WALL_N, YT_WALL_TTL, YT_CANARY = 6, 1800.0, 1
 _YT_DL_LOG = []           # (t, ok) of recent YouTube candidate downloads, newest last
 _YT_DL_LOCK = threading.Lock()
