@@ -535,7 +535,7 @@ def _creator_peek(h, budget=1.0):
     return ev if (ev and ev.get("ok")) else None
 
 
-def _caption_song(src, cr_handle):
+def _caption_song(src, cr_handle, budget=1.0):
     """The uploader's hashtags, checked as an (artist, title) PAIR against Deezer.
 
     Only ever called when Shazam named nothing, no platform credit names the track and no
@@ -545,7 +545,7 @@ def _caption_song(src, cr_handle):
     creator thread has had the whole Shazam sweep to land, so the 1s peek is a backstop."""
     if CS is None:
         return None
-    ev = _creator_peek(cr_handle) or {}
+    ev = _creator_peek(cr_handle, budget) or {}
     tags = list(ev.get("caption_tags") or []) + list(ev.get("origin_tags") or [])
     tags += CS.hashtags(src.get("desc") or "")
     if not tags:
@@ -2015,7 +2015,10 @@ def _phase1(url, key, t0):
             _t = time.time()
             _cs = None
             try:
-                _cs = _caption_song(src, _cr)
+                # NAMING.md: a throttled scan reaches this seconds early, before the creator
+                # thread (the TikTok caption) has landed: give it up to 6 s instead of 1 s
+                # (droplet 11:51 UTC: Gun Lean's hashtags missed at 5.6 s, busy)
+                _cs = _caption_song(src, _cr, budget=(6.0 if res.get("shazam_partial") else 1.0))
             except Exception:
                 _cs = None
             E.tlog("caption_song", time.time() - _t, hit=bool(_cs),
