@@ -5245,7 +5245,7 @@ function openPaywall(){
   storeCall('products').then(function(ps){
     var b=document.getElementById('pwb'); if(!b) return;
     if(!ps||!ps.length){b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>'; return;}
-    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||'Addify Plus')+
+    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+('Addify Plus'+(q.period==='year'?' Yearly':q.period==='month'?' Monthly':''))+
       '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
     [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
       if(busyBuy) return; busyBuy=true; pwMsg('');
