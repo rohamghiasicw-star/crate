@@ -5194,9 +5194,19 @@ var FREE_SCANS=5;
 var STORE=!!(window.ADDIFY_NATIVE&&window.ADDIFY_NATIVE.store&&window.webkit&&
   window.webkit.messageHandlers&&window.webkit.messageHandlers.addifyStore);
 var PAYWALL_ON=STORE, PRO=false;
+/* MASTER 2026-10-01 (Roham): owners paste their code into the link box once; that phone gets
+   unlimited scans for good. Only the SHA-256 of the code is in this page. */
+var MASTER_H='bf95d3d2df2e9ea189aeaae8eb6709bb6dc125332ed9fa0d47548078d33fc8c9';
+var MASTER=(function(){try{return localStorage.getItem('addify-master')===MASTER_H;}catch(e){return false;}})();
+if(MASTER) PRO=true;
+function masterTry(code){try{crypto.subtle.digest('SHA-256',new TextEncoder().encode(code)).then(function(b){
+  var h=[].map.call(new Uint8Array(b),function(x){return ('0'+x.toString(16)).slice(-2);}).join('');
+  if(h===MASTER_H){try{localStorage.setItem('addify-master',h);}catch(e){} MASTER=true; PRO=true; paintPill();
+    try{renderProf();}catch(e){} alert('Master unlocked: unlimited scans on this phone.');}
+  else alert('That code is not valid.');});}catch(e){alert('Could not check the code.');}}
 function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.postMessage(Object.assign({op:op},extra||{}));}
 function storeRefresh(){if(!STORE) return Promise.resolve(false);
-  return storeCall('status').then(function(r){PRO=!!(r&&r.pro); paintPill(); return PRO;},function(){return PRO;});}
+  return storeCall('status').then(function(r){PRO=!!(r&&r.pro)||MASTER; paintPill(); return PRO;},function(){return PRO;});}
 function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
@@ -5794,7 +5804,7 @@ var curURL='';
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
-function run(raw){if(busy) return; if(outOfScans()){openPaywall(); return;} var p=parseLink(raw);
+function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){masterTry(String(raw).trim()); return;} if(outOfScans()){openPaywall(); return;} var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
