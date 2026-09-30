@@ -73,11 +73,38 @@ YTDLP = YTDLP_YT                  # legacy name: YouTube-capable runner
 _YT_CLIENTS = "youtube:player_client=android"
 
 
+# DAILYMOTION (docfix 2026-09-30, CRATE_DAILYMOTION, default ON since its gate, docfix/CORRECTIONS.md). A
+# correction can name a Dailymotion copy when it is the only reachable upload of the exact audio
+# (doc #08: the official explicit video mix of YG "My Hitta", fp 0.964 at 1.000x; the YouTube
+# original bot-walls this Mac). The in-process module (yt_dlp 2025.10.14) fails there with "No
+# video formats found", so the host goes to Homebrew's yt-dlp (2026.08.19). The site has no
+# audio-only format; the smallest stream (hls-380, 512x216, ~461 kbps) is asked for. Measured
+# 2026-09-30, 20 s head as wav: 19 of 19 in 5.1-6.9 s (median 6.0), same speed as hls-480; doc-08
+# saw 15 s and 44 s once each on the default format. DM_TIMEOUT (12 s) keeps two slow fetches
+# (the head, then the null control's re-fetch) inside a 60 s scan; a miss is transient (the
+# correction is retried on the next scan, nothing cached). Search never returns Dailymotion, so
+# with no correction naming one this changes nothing. CRATE_DAILYMOTION=0 turns it off.
+DM_ON = (os.environ.get("CRATE_DAILYMOTION") or "1").strip().lower() in ("1", "on", "true", "yes")
+DM_FORMAT = "hls-380/worst"
+try:
+    DM_TIMEOUT = float(os.environ.get("CRATE_DM_TIMEOUT") or 12.0)
+except ValueError:
+    DM_TIMEOUT = 12.0
+
+
+def _is_dm(u):
+    """A Dailymotion video page (only ever a correction's right_url)."""
+    u = (u or "").lower()
+    return "dailymotion.com/video/" in u or "dai.ly/" in u
+
+
 def ytdlp_for(target):
     """The yt-dlp runner for a URL or a search spec ("scsearch30:..." / "ytsearch5:...")."""
     t = (target or "").lower()
     if t.startswith("ytsearch") or "youtube.com" in t or "youtu.be" in t:
         return YTDLP_YT
+    if DM_ON and _is_dm(t):
+        return YTDLP_YT                  # DAILYMOTION: the module has no formats there
     return YTDLP_SC
 # --- exact-edit matching thresholds (see find_edit ranking) ---
 CORE_KEEP = 0.50     # min bass-independent same-recording evidence (core) to keep a cand
@@ -5740,7 +5767,8 @@ def comment_candidates(links):
             continue
         ti, up = _slug_title(u)
         out.append({"title": ti, "url": u, "uploader": up,
-                    "source": ("soundcloud" if "soundcloud.com" in u else "youtube"),
+                    "source": ("soundcloud" if "soundcloud.com" in u
+                               else "dailymotion" if (DM_ON and _is_dm(u)) else "youtube"),
                     "plays": 0, "likes": 0, "query": "comment",
                     "comment_link": True,
                     "comment_likes": int((L or {}).get("likes") or 0)
@@ -7162,6 +7190,8 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
     `abort` (HUNT BUDGET, _HuntBudget or None): when the hunt's cap lets this download go,
     the yt-dlp fallback is killed with its whole process group (its ffmpeg children too),
     no fallback starts after the cap, and a direct fetch that lands after it is removed."""
+    if DM_ON and _is_dm(url):
+        return _dl_dm(url, dst, 0.0, seconds, timeout, abort)
     try:
         if abort is None:
             return _dl_direct(url, dst, seconds, min(6, timeout))
@@ -7189,6 +7219,43 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
     if not os.path.exists(dst):
         return None
     return dst
+
+
+def _dl_dm(url, dst, start, seconds, timeout, abort=None):
+    """DAILYMOTION (see DM_ON): Homebrew yt-dlp, smallest HLS stream, one sectioned fetch, no
+    direct path (the in-process module cannot resolve the host). A short fetch gets DM_TIMEOUT
+    whatever the caller asked (15 s head, 20 s null control); a long one keeps the caller's."""
+    t = DM_TIMEOUT if seconds <= 30 else max(float(timeout), DM_TIMEOUT)
+    args = YTDLP_YT + [url, "-f", DM_FORMAT, "-x", "--audio-format", "wav",
+                       "-o", dst.replace(".wav", ".%(ext)s"),
+                       "--download-sections", "*%.2f-%.2f" % (float(start), float(start) + seconds),
+                       "--force-keyframes-at-cuts"]
+    ok = False
+    if abort is not None:
+        ok = (not abort.dead) and abort.run(args, t)
+    else:
+        # its own process group, so a timeout also stops the ffmpeg child reading the HLS
+        p = None
+        try:
+            p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            p.wait(timeout=t)
+            ok = p.returncode == 0
+        except Exception:
+            if p is not None:
+                _killpg(p)
+                try:
+                    p.wait(timeout=5)
+                except Exception:
+                    pass
+    if ok and os.path.exists(dst):
+        return dst
+    for f in _glob.glob(_glob.escape(os.path.splitext(dst)[0]) + ".*"):
+        try:                             # RETENTION: no part file outlives a failed fetch
+            os.remove(f)
+        except OSError:
+            pass
+    return None
 
 
 # =========================================================================== CRATE_SEEK_MOFF
@@ -7490,6 +7557,9 @@ def dl_section(url, dst, start, seconds=20, timeout=15, abort=None, direct_only=
     which handles HLS), the same hunt-budget kill. None on any failure. `direct_only` skips the
     subprocess: the prefetch uses it so that no yt-dlp can outlive the hunt that asked."""
     start = max(0.0, float(start))
+    if DM_ON and _is_dm(url):
+        # DAILYMOTION: no direct path exists, so a direct-only fetch cannot be served
+        return None if direct_only else _dl_dm(url, dst, start, seconds, timeout, abort)
     try:
         _got = _dl_direct_section(url, dst, start, seconds, min(6, timeout))
         if abort is not None and abort.dead:
@@ -7595,6 +7665,8 @@ class _SeekRun(object):
         if e is None or float(e["m0"]) < SEEK_MIN_AT or self.closed:
             return None
         u = c.get("url") or ""
+        if DM_ON and _is_dm(u):
+            return None          # DAILYMOTION: no direct fetch; rescore fetches it if it is read
         if "youtube.com" in u or "youtu.be" in u:
             # YouTube's bot wall fails most heads (lab 2026-09-30: every YouTube row); a walled
             # row must not spend the cap. One whose head does download gets the section

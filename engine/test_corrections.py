@@ -500,5 +500,25 @@ class Alerts(unittest.TestCase):
         self.assertNotIn(tok, str(code))
 
 
+class Dailymotion(unittest.TestCase):
+    """docfix 2026-09-30: a Dailymotion video is a right_url only while CRATE_DAILYMOTION is on."""
+
+    def test_right_url_follows_the_flag(self):
+        u = "https://www.dailymotion.com/video/x2z910m"
+        old = C.DM_ON
+        try:
+            C.DM_ON = False
+            self.assertFalse(C.audio_url_ok(u))
+            self.assertIsNone(C._clean_entry({"url": "https://vt.tiktok.com/ZSqgKQk6U/", "right_url": u}))
+            C.DM_ON = True
+            self.assertTrue(C.audio_url_ok(u))
+            self.assertTrue(C.audio_url_ok(u + "?playlist=x6hynp"))
+            self.assertEqual(C.norm_audio_url(u + "?playlist=x6hynp"), u)
+            self.assertFalse(C.audio_url_ok("https://www.dailymotion.com/playlist/x6hynp"))
+            self.assertIsNotNone(C._clean_entry({"url": "https://vt.tiktok.com/ZSqgKQk6U/", "right_url": u}))
+        finally:
+            C.DM_ON = old
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -127,10 +127,20 @@ _AUDIO_OK = re.compile(r"^https://(?:soundcloud\.com/[\w\-]+/[\w\-]+"
                        r"|www\.youtube\.com/watch\?v=[\w\-]{11})$")
 
 
+# DAILYMOTION (docfix 2026-09-30, CRATE_DAILYMOTION, the engine's flag of the same name): a
+# Dailymotion video page is a right_url too, for a clip whose exact audio is only reachable
+# there (doc #08). The engine fetches it with Homebrew's yt-dlp; with the flag off it cannot,
+# so the store neither accepts nor loads one.
+DM_ON = (os.environ.get("CRATE_DAILYMOTION") or "1").strip().lower() in ("1", "on", "true", "yes")
+_DM_OK = re.compile(r"^https://(?:www\.)?dailymotion\.com/video/[A-Za-z0-9]+$")
+
+
 def audio_url_ok(u):
     """A right_url the engine can fetch: a SoundCloud track or a YouTube video, the two
-    sources every candidate comes from (the same shapes the comment lane accepts)."""
-    return bool(_AUDIO_OK.match(norm_audio_url(u)))
+    sources every candidate comes from (the same shapes the comment lane accepts), or a
+    Dailymotion video when DM_ON."""
+    n = norm_audio_url(u)
+    return bool(_AUDIO_OK.match(n) or (DM_ON and _DM_OK.match(n)))
 
 
 def entry_keys(e):
@@ -735,7 +745,8 @@ def cmd_add(argv):
         print("not a clip link: %s" % url)
         return 65
     if not audio_url_ok(right):
-        print("right_url must be a SoundCloud track or a YouTube video: %s" % argv[1])
+        print("right_url must be a SoundCloud track or a YouTube video%s: %s"
+              % (" or a Dailymotion video" if DM_ON else "", argv[1]))
         return 65
     aliases = []
     if any(k.startswith("tts:") for k in clip_keys(url)):
