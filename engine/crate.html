@@ -5229,7 +5229,7 @@ function openPaywall(){
   var used=scansUsed()>=FREE_SCANS;
   ov.innerHTML='<div class="pwc" role="dialog" aria-modal="true" aria-labelledby="pwh">'+
     '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button>'+
-    '<b class="pwh" id="pwh">Addify Unlimited</b>'+
+    '<b class="pwh" id="pwh">Addify Plus</b>'+
     '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans. ':'')+
       'Unlimited scans to find the exact version of any song.</p>'+
     '<div class="pwb" id="pwb"><span class="pwm">Loading prices...</span></div>'+
@@ -5245,7 +5245,7 @@ function openPaywall(){
   storeCall('products').then(function(ps){
     var b=document.getElementById('pwb'); if(!b) return;
     if(!ps||!ps.length){b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>'; return;}
-    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||'Addify Unlimited')+
+    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||'Addify Plus')+
       '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
     [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
       if(busyBuy) return; busyBuy=true; pwMsg('');
@@ -5668,8 +5668,8 @@ function renderProf(){
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left')+'</span></div></div>'+
-    (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>Unlimited scans</span></div>'+
+      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Addify Plus'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left')+'</span></div></div>'+
+    (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Get Addify Plus</b><span>Unlimited scans</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>':'')+
     // APPLYALL 2026-09-29 (build 3, App Review): no "iOS app" placeholder rows. The Spotify row
     // shows with SP_SIGNIN, or for someone already signed in, who can still sign out.
