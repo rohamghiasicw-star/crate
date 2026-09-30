@@ -671,6 +671,22 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .upcard .ut{flex:1}
 .upcard b{display:block;font-size:14px;font-weight:680}
 .upcard span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.pw{position:fixed;inset:0;z-index:90;background:rgba(8,6,14,.72);display:flex;align-items:flex-end;justify-content:center}
+.pw[hidden]{display:none}
+.pwc{position:relative;width:100%;max-width:480px;background:var(--raise);color:var(--text);border-radius:22px 22px 0 0;
+  padding:26px 20px calc(20px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px}
+.pwx{position:absolute;top:12px;right:12px;width:32px;height:32px;background:none;border:0;color:var(--muted)}
+.pwx svg{width:18px;height:18px}
+.pwh{font-size:21px;font-weight:800}
+.pwp{margin:0;color:var(--muted);font-size:14px;line-height:1.45}
+.pwb{display:flex;flex-direction:column;gap:10px}
+.pwbuy{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--accent);color:#fff;border:0;
+  border-radius:14px;padding:15px 16px;font:inherit;font-size:15px;text-align:left}
+.pwbuy span{font-weight:700}
+.pwm{font-size:13px;color:var(--muted)}
+.pwr{align-self:center;background:none;border:0;color:var(--text);font:inherit;font-size:13.5px;text-decoration:underline;padding:6px}
+.pwf{margin:0;font-size:11px;line-height:1.45;color:var(--faint)}
+.pwf a{color:var(--muted)}
 .upbtn{background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;padding:8px 14px;
   border-radius:var(--r-pill)}
 .setrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 12px;
@@ -3894,6 +3910,7 @@ function vfWire(d){
     sendFeedback({kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''});
     if(v==='wrong') vfPendAdd(url,d.base_song||'');
+    if(v==='wrong') refundScan(url);             // Roham 2026-09-30: an X gives the scan back
     row.classList.add('done','is-'+v);
     var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on','pop');
     ['vfy','vfn'].forEach(function(id){var x=document.getElementById(id); if(x) x.disabled=true;});
@@ -5164,17 +5181,73 @@ function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
 var FREE_SCANS=5;
-/* PAYWALL 2026-09-29 (App Review 3.1.1): v1.0 SHIPS FREE. There is no In-App Purchase yet,
-   so every price, plan, cancel-plan, free-month and scan-counter surface is off and nothing
-   limits scans. Flip to true only once StoreKit In-App Purchase is wired (1.1). */
-var PAYWALL_ON=false;
+/* PAYWALL 2026-09-30 (launch plan 4B; Roham: "five free scans and then paid"). StoreKit 2
+   through the app's addifyStore handler (EngineWebView.swift). Prices always come from
+   StoreKit, never from this page. Only an iOS build that ships the handler turns this on,
+   so older builds and the browser stay free. A scan counts once per clip per month, and an
+   X on the result gives that scan back (Roham 2026-09-30); every X also reaches the server
+   feedback log, so X abuse can be audited. */
+var STORE=!!(window.ADDIFY_NATIVE&&window.ADDIFY_NATIVE.store&&window.webkit&&
+  window.webkit.messageHandlers&&window.webkit.messageHandlers.addifyStore);
+var PAYWALL_ON=STORE, PRO=false;
+function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.postMessage(Object.assign({op:op},extra||{}));}
+function storeRefresh(){if(!STORE) return Promise.resolve(false);
+  return storeCall('status').then(function(r){PRO=!!(r&&r.pro); paintPill(); return PRO;},function(){return PRO;});}
 function scanKey(){var d=new Date(); return 'addify-scans-'+d.getFullYear()+'-'+(d.getMonth()+1);}
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
-function useScan(){if(!PAYWALL_ON) return; try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
+function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
+function useScan(u){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var c=countedURLs();
+  if(u&&c.indexOf(u)>=0) return;                 // the same clip again is the same scan
+  c.push(u); lsSet(scanKey()+'-urls',c);
+  try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
+function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; var c=countedURLs(), i=c.indexOf(u);
+  if(i<0) return; c.splice(i,1); lsSet(scanKey()+'-urls',c);
+  try{localStorage.setItem(scanKey(),String(Math.max(0,scansUsed()-1)));}catch(e){} paintPill();}
+function outOfScans(){return PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS;}
 function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.getElementById('scanpill');
+  if(!pill) return;
   pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
-  pill.textContent = left>0 ? left+' scan'+(left===1?'':'s')+' left'
-    : 'demo · unlimited';}
+  pill.textContent = PRO ? 'Unlimited' : left>0 ? left+' free scan'+(left===1?'':'s')+' left' : 'No free scans left';
+  pill.onclick = PRO ? null : openPaywall;}
+function pwMsg(t){var m=document.getElementById('pwm'); if(m){m.textContent=t; m.hidden=!t;}}
+function openPaywall(){
+  if(!STORE) return;
+  var ov=document.getElementById('paywall');
+  if(!ov){ov=document.createElement('div'); ov.id='paywall'; ov.className='pw'; document.body.appendChild(ov);}
+  var used=scansUsed()>=FREE_SCANS;
+  ov.innerHTML='<div class="pwc" role="dialog" aria-modal="true" aria-labelledby="pwh">'+
+    '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button>'+
+    '<b class="pwh" id="pwh">Addify Unlimited</b>'+
+    '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans this month. ':'')+
+      'Unlimited scans to find the exact version of any song.</p>'+
+    '<div class="pwb" id="pwb"><span class="pwm">Loading prices...</span></div>'+
+    '<span class="pwm" id="pwm" hidden></span>'+
+    '<button class="pwr" id="pwr">Restore purchases</button>'+
+    '<p class="pwf">Auto-renewing subscription. Payment is charged to your Apple ID and renews '+
+      'at the same price unless cancelled at least 24 hours before the period ends. Manage or '+
+      'cancel in your Apple ID settings. <a href="'+legalURL('terms')+'" target="_blank">Terms of Use</a> · '+
+      '<a href="'+legalURL('privacy')+'" target="_blank">Privacy Policy</a></p></div>';
+  ov.hidden=false;
+  document.getElementById('pwx').onclick=function(){ov.hidden=true;};
+  var busyBuy=false;
+  storeCall('products').then(function(ps){
+    var b=document.getElementById('pwb'); if(!b) return;
+    if(!ps||!ps.length){b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>'; return;}
+    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||'Addify Unlimited')+
+      '</b><span>'+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
+    [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
+      if(busyBuy) return; busyBuy=true; pwMsg('');
+      storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
+        if(r&&r.pro){PRO=true; ov.hidden=true; paintPill(); try{renderProf();}catch(e){} return;}
+        var e=(r&&r.error)||''; if(e==='pending') pwMsg('Your purchase is waiting for approval.');
+        else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
+      },function(){busyBuy=false; pwMsg('The purchase did not go through. Try again.');});};});
+  },function(){var b=document.getElementById('pwb'); if(b) b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>';});
+  document.getElementById('pwr').onclick=function(){pwMsg('Checking your Apple ID...');
+    storeCall('restore').then(function(r){PRO=!!(r&&r.pro); paintPill();
+      if(PRO){ov.hidden=true; try{renderProf();}catch(e){}} else pwMsg('No active subscription found on this Apple ID.');},
+      function(){pwMsg('Could not reach the App Store. Try again.');});};}
+if(STORE) setTimeout(storeRefresh,0);
 function speedKind(sp){sp=(sp||'').toLowerCase();
   if(!sp||sp==='as posted') return 'original';
   if(sp.indexOf('slow')>=0) return 'slowed';
@@ -5558,7 +5631,7 @@ function sRun(q,mode){
 /* ---------- profile ---------- */
 /* Paid plan + cancel save offer (Konnor). Hitting Cancel plan first offers a free month;
    the offer is made once, after that Cancel plan cancels straight away. */
-function planOn(){if(!PAYWALL_ON) return false; try{return localStorage.getItem('addify-plan')==='on';}catch(e){return false;}}
+function planOn(){return PAYWALL_ON&&PRO;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
 function keepShown(h,p,yes,no){document.getElementById('keeph').textContent=h;
   document.getElementById('keepp').textContent=p;
   var y=document.getElementById('keepyes'), n=document.getElementById('keepno');
@@ -5584,7 +5657,7 @@ function renderProf(){
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
       '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Unlimited plan'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left this month')+'</span></div></div>'+
-    (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>$29.99/yr · save 50%</span></div>'+
+    (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Go unlimited</b><span>Unlimited scans</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>':'')+
     // APPLYALL 2026-09-29 (build 3, App Review): no "iOS app" placeholder rows. The Spotify row
     // shows with SP_SIGNIN, or for someone already signed in, who can still sign out.
@@ -5602,13 +5675,13 @@ function renderProf(){
       '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       (DEV?'<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>':'')+   // APPLYALL 2026-09-29 (build 3)
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
-      (planOn()?'<button class="setrow" id="pfcancel"><span class="si">'+IC.x+'</span><span class="st">Cancel plan</span><span class="go2">'+IC.rchev+'</span></button>':'')+
+      (planOn()?'<button class="setrow" id="pfcancel"><span class="si">'+IC.x+'</span><span class="st">Manage subscription</span><span class="go2">'+IC.rchev+'</span></button>':'')+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
       '<a class="setrow" id="pfpriv" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Privacy policy</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<a class="setrow" id="pfsup" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Support</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<button class="setrow danger" id="pfdel"><span class="st">Delete account</span></button></div>';
   var _upbtn=document.getElementById('upbtn');   // PAYWALL 2026-09-29: absent while PAYWALL_ON is false
-  if(_upbtn) _upbtn.onclick=function(){this.textContent='With the iOS app'; };
+  if(_upbtn) _upbtn.onclick=openPaywall;
   var _pfsp=document.getElementById('pfsp');   // APPLYALL 2026-09-29 (build 3): the row may be off
   if(_pfsp) _pfsp.onclick=function(){
     if(!SP.connected()){SP.login();} else nav('profile');};
@@ -5628,7 +5701,7 @@ function renderProf(){
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
   var pc=document.getElementById('pfcancel');
-  if(pc) pc.onclick=openKeep;
+  if(pc) pc.onclick=function(){window.open('https://apps.apple.com/account/subscriptions','_blank');};   // Apple owns cancelling
   var so=document.getElementById('pfout');
   if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
   document.getElementById('pfdel').onclick=function(){
@@ -5709,7 +5782,7 @@ var curURL='';
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
-function run(raw){if(busy) return; var p=parseLink(raw);
+function run(raw){if(busy) return; if(outOfScans()){openPaywall(); return;} var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
@@ -6039,7 +6112,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
       logUnmatched(curURL, d.handle);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
     setState('locked'); setEndTitle(d); return;}
-  if(!d.cached) useScan();
+  if(!d.cached) useScan(curURL);
   if(!held){ logScan(d); postBridge(d); }
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.

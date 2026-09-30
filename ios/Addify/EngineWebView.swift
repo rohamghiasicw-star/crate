@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import StoreKit
 
 /* ---------- the web view ----------
    This is where the app stops being a wrapper. Every delegate method below exists because
@@ -30,10 +31,12 @@ struct EngineWebView: UIViewRepresentable {
            Injected at document start so it exists before any page script runs.
            shazamkit: this build can answer the engine's Shazam probes on the phone
            (ShazamProbe.swift). The page uses it only when the engine also says so. */
-        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true,shazamkit:\(ShazamProbe.protocolVersion)};"
+        let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true,shazamkit:\(ShazamProbe.protocolVersion),store:1};"
         ucc.addUserScript(WKUserScript(source: flag, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.add(context.coordinator, name: "addify")
         ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
+        ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
+        AddifyStore.shared.start()
         cfg.userContentController = ucc
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
@@ -234,6 +237,113 @@ struct EngineWebView: UIViewRepresentable {
                 pop.permittedArrowDirections = []
             }
             _ = present(ac, over: wv)
+        }
+    }
+}
+
+
+/* PAYWALL 2026-09-30 (launch plan 4B; Roham: "five free scans and then paid"). StoreKit 2:
+   a monthly and a yearly auto-renewing subscription in one group. The page asks through the
+   addifyStore handler; prices always come from StoreKit, never from our server. */
+@MainActor
+final class AddifyStore {
+    static let shared = AddifyStore()
+    static let productIDs = ["com.addify.app.unlimited.monthly", "com.addify.app.unlimited.yearly"]
+    private var products: [Product] = []
+    private var updates: Task<Void, Never>?
+
+    /* Renewals, refunds and purchases made on another device arrive here; finishing them keeps
+       the queue clean. Entitlement is always read fresh from currentEntitlements. */
+    func start() {
+        guard updates == nil else { return }
+        updates = Task.detached {
+            for await result in Transaction.updates {
+                if case .verified(let t) = result { await t.finish() }
+            }
+        }
+    }
+
+    func load() async -> [Product] {
+        if products.isEmpty {
+            products = (try? await Product.products(for: Self.productIDs)) ?? []
+        }
+        return products.sorted { $0.price < $1.price }
+    }
+
+    func isPro() async -> Bool {
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let t) = result, Self.productIDs.contains(t.productID), t.revocationDate == nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    func buy(_ id: String) async -> String? {
+        guard let p = await load().first(where: { $0.id == id }) else { return "not available" }
+        do {
+            switch try await p.purchase() {
+            case .success(let v):
+                if case .verified(let t) = v { await t.finish(); return nil }
+                return "unverified"
+            case .userCancelled: return "cancelled"
+            case .pending: return "pending"
+            @unknown default: return "unknown"
+            }
+        } catch {
+            return "failed"
+        }
+    }
+
+    func restore() async -> Bool {
+        try? await AppStore.sync()
+        return await isPro()
+    }
+
+    static func periodName(_ p: Product.SubscriptionPeriod) -> String {
+        let unit: String
+        switch p.unit {
+        case .day: unit = "day"
+        case .week: unit = "week"
+        case .month: unit = "month"
+        case .year: unit = "year"
+        @unknown default: unit = ""
+        }
+        return p.value == 1 ? unit : "\(p.value) \(unit)s"
+    }
+}
+
+final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
+    static let name = "addifyStore"
+
+    @MainActor
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        /* Only the engine's own page may start a purchase. */
+        guard let host = message.frameInfo.request.url?.host?.lowercased(),
+              let engineHost = EngineConfig.baseURL.host?.lowercased(), host == engineHost else {
+            return (nil, "not the engine page")
+        }
+        guard let body = message.body as? [String: Any], let op = body["op"] as? String else {
+            return (nil, "bad message")
+        }
+        let store = AddifyStore.shared
+        switch op {
+        case "status":
+            return (["pro": await store.isPro()], nil)
+        case "products":
+            let list: [[String: Any]] = await store.load().map { p in
+                ["id": p.id, "name": p.displayName, "price": p.displayPrice,
+                 "period": p.subscription.map { AddifyStore.periodName($0.subscriptionPeriod) } ?? ""]
+            }
+            return (list, nil)
+        case "buy":
+            let err = await store.buy(body["id"] as? String ?? "")
+            return (["pro": await store.isPro(), "error": err ?? ""], nil)
+        case "restore":
+            return (["pro": await store.restore()], nil)
+        default:
+            return (nil, "bad op")
         }
     }
 }
