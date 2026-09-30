@@ -27,6 +27,7 @@ try:
     import ratelimit as _RL      # APPLYALL 2026-09-29: ADDIFY_STRICT_LINKS host rule (off unless set)
 except Exception:
     _RL = None
+import find_song as _FSP     # server-kit Shazam pacing; inert unless CRATE_SHAZAM_PACE=1
 import ig
 import verify as _verify   # pairwise same-master verifier (the exact-edit decider)
 import speed_from_master as _speed_master  # bass-robust speed lock (speed_exact corroboration)
@@ -47,7 +48,10 @@ SR = 22050
 # fails "Requested format is not available", so YouTube uploads silently never reached the
 # comparison. Homebrew's yt-dlp (2026.07.04, own python) fetches them fine. Prefer it; fall
 # back to the module when it is not installed.
-_BREW_YTDLP = "/opt/homebrew/bin/yt-dlp"
+# CRATE_YTDLP_BIN (server-kit): Linux has no Homebrew, so the server points this at the
+# venv's own bin/yt-dlp. Its shebang is the venv python, so _brew_python() and the long-lived
+# YouTube search worker run unchanged (HOSTING-PORTABILITY.md N1). Unset = the Mac as before.
+_BREW_YTDLP = os.environ.get("CRATE_YTDLP_BIN") or "/opt/homebrew/bin/yt-dlp"
 _MOD_YTDLP = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--quiet"]
 _HAVE_BREW_YTDLP = os.path.exists(_BREW_YTDLP)
 # ...BUT ONLY FOR YOUTUBE. The switch above moved SoundCloud onto Homebrew too, and there it
@@ -96,6 +100,172 @@ def _is_dm(u):
     """A Dailymotion video page (only ever a correction's right_url)."""
     u = (u or "").lower()
     return "dailymotion.com/video/" in u or "dai.ly/" in u
+
+
+# KILL THE WHOLE PROCESS GROUP ON A TIMEOUT (server-kit, CRATE_KILL_PGROUP=1).
+# subprocess.run(timeout=) kills yt-dlp but not the ffmpeg (or deno) it started, so a timed-out
+# download left an ffmpeg re-parented to init, writing into a temp dir already deleted (1 at
+# 100% CPU after one scan, 7 alive after three, HOSTING-DATACENTER.md 7A). Each yt-dlp call
+# gets its own session and the whole group dies on a timeout. Same arguments, same result,
+# same exceptions; unset (the Mac) = plain subprocess.run.
+KILL_PGROUP = os.environ.get("CRATE_KILL_PGROUP", "0").strip() == "1"
+# With KILL_PGROUP on (the server), every candidate download is also counted, with whether
+# it hit its time limit, so server.py can tell a hunt that was starved (so the best upload
+# may never have been compared) from a normal one (SERVER-VERIFY-1 S8). Unset (the Mac):
+# nothing is counted.
+import collections as _collections
+import contextvars as _contextvars
+_DL_LOG = _collections.deque(maxlen=4000) if KILL_PGROUP else None
+_DL_LOCK = threading.Lock()
+
+
+# PER-SCAN TALLY (server-kit, SERVER-VERIFY-2 B1). The first guard counted killed downloads
+# across the whole box over the hunt's time, so with 3 scans at once one hunt was judged on
+# the others' downloads: it passed a wrong crown (mason, 5 of 22 killed box-wide) and threw
+# away right ones (kelthraxx 10 of 19, #26 11 of 15). Now each scan half carries its own
+# tally in a ContextVar, and it follows the work into every thread pool it starts (the
+# download pools sit 2-3 pools deep under find_edit): ThreadPoolExecutor.submit copies the
+# submitter's tally into the task. Only this one variable is carried, nothing else changes
+# for the task. The tally also counts EVIDENCE LOST: a TikTok comment page tikwm refused
+# (its 1 request a second per IP is shared by every scan on the box) and a sound-page lane
+# that did not finish in time. mason's wrong crown came from exactly that: with 3 scans at
+# once its sound-page lane came back empty after 10.7 s (alone: 1 hint in 5.1-6.5 s), so the
+# hunt never searched the mashup's name and crowned a different upload at core 1.0.
+# Unset (the Mac): no tally is ever set, submit is not touched, every path is the old one.
+class ScanTally(object):
+    __slots__ = ("lock", "dl", "killed", "ev_lost", "ev_why", "t0")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.dl = 0
+        self.killed = 0
+        self.ev_lost = 0
+        self.ev_why = []
+        self.t0 = time.time()
+
+    def download(self, killed):
+        with self.lock:
+            self.dl += 1
+            if killed:
+                self.killed += 1
+
+    def lost(self, why):
+        with self.lock:
+            self.ev_lost += 1
+            if len(self.ev_why) < 8:
+                self.ev_why.append(str(why)[:60])
+
+    def snapshot(self):
+        with self.lock:
+            return {"dl": self.dl, "killed": self.killed, "ev_lost": self.ev_lost,
+                    "ev_why": list(self.ev_why)}
+
+
+SCAN_TALLY = _contextvars.ContextVar("addify_scan_tally", default=None)
+
+
+def evidence_lost(why):
+    """Record that this scan lost a piece of evidence (no-op outside a tallied scan)."""
+    t = SCAN_TALLY.get()
+    if t is not None:
+        t.lost(why)
+        tlog("evidence_lost", 0.0, why=str(why)[:60])
+
+
+if KILL_PGROUP:
+    _orig_submit = concurrent.futures.ThreadPoolExecutor.submit
+
+    def _submit_with_tally(self, fn, *args, **kwargs):
+        t = SCAN_TALLY.get()
+        if t is None:
+            return _orig_submit(self, fn, *args, **kwargs)
+
+        def _run(*a, **k):
+            tok = SCAN_TALLY.set(t)
+            try:
+                return fn(*a, **k)
+            finally:
+                SCAN_TALLY.reset(tok)
+        return _orig_submit(self, _run, *args, **kwargs)
+
+    concurrent.futures.ThreadPoolExecutor.submit = _submit_with_tally
+
+
+def dl_window(t_from, t_to=None):
+    """(downloads, downloads killed at their time limit) that ENDED in [t_from, t_to], box-wide.
+    Kept for check.sh-style reporting only; the starved-hunt guard reads the scan's own
+    ScanTally (SERVER-VERIFY-2 B1)."""
+    if _DL_LOG is None:
+        return 0, 0
+    t_to = time.time() if t_to is None else t_to
+    with _DL_LOCK:
+        rows = [k for t, k in _DL_LOG if t_from <= t <= t_to]
+    return len(rows), sum(1 for k in rows if k)
+
+
+# TIKWM SPACING (server-kit, CRATE_TIKWM_GAP_S > 0). tikwm answers 1 request a second per IP.
+# One lookup already respects that (single-flight, serial comment pages), but 3 scans at
+# once on one box do not, and a refused comment page silently costs the scan its hints.
+# With a gap set, every tikwm request on the box goes out at least that far apart (waiting at
+# most TIKWM_MAX_WAIT_S; past that it goes anyway and a refusal is counted as evidence lost).
+# Unset (the Mac): _cffi_get is untouched.
+TIKWM_GAP_S = float(os.environ.get("CRATE_TIKWM_GAP_S", "0") or 0)
+TIKWM_MAX_WAIT_S = float(os.environ.get("CRATE_TIKWM_MAX_WAIT_S", "8") or 8)
+_TIKWM_SPACE_LOCK = threading.Lock()
+_TIKWM_NEXT = [0.0]
+
+
+def _tikwm_space(url):
+    if TIKWM_GAP_S <= 0 or "tikwm.com" not in (url or ""):
+        return
+    with _TIKWM_SPACE_LOCK:
+        now = time.time()
+        at = max(now, _TIKWM_NEXT[0])
+        if at - now > TIKWM_MAX_WAIT_S:
+            at = now                       # the queue is too long: go now, a refusal is counted
+        _TIKWM_NEXT[0] = max(_TIKWM_NEXT[0], at + TIKWM_GAP_S)
+    if at > now:
+        time.sleep(at - now)
+
+
+def _run_ytdlp(args, timeout=None, check=False, kind=None, **kw):
+    if not KILL_PGROUP:
+        return subprocess.run(args, timeout=timeout, check=check, **kw)
+    import signal as _sig
+    if kw.pop("capture_output", False):
+        kw["stdout"] = subprocess.PIPE
+        kw["stderr"] = subprocess.PIPE
+    killed = False
+    try:
+        with subprocess.Popen(args, start_new_session=True, **kw) as p:
+            try:
+                out, err = p.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                killed = True
+                try:
+                    os.killpg(p.pid, _sig.SIGKILL)
+                except OSError:
+                    pass
+                p.communicate()
+                tlog("ytdlp_pgroup_killed", float(timeout or 0), kind=kind)
+                raise
+            except BaseException:
+                try:
+                    os.killpg(p.pid, _sig.SIGKILL)
+                except OSError:
+                    pass
+                raise
+    finally:
+        if kind == "dl":
+            with _DL_LOCK:
+                _DL_LOG.append((time.time(), killed))
+            _t = SCAN_TALLY.get()
+            if _t is not None:
+                _t.download(killed)
+    r = subprocess.CompletedProcess(args, p.returncode, out, err)
+    if check:
+        r.check_returncode()
+    return r
 
 
 def ytdlp_for(target):
@@ -776,6 +946,7 @@ def tlog(stage, secs, **kw):
 # a real browser's TLS so the request looks legit. oEmbed always answers and gives
 # the credit even when everything else is throttled.
 def _cffi_get(url, timeout=25, referer=None):
+    _tikwm_space(url)                  # server-kit: box-wide tikwm spacing, off on the Mac
     hdr = {"Referer": referer} if referer else {}
     if HAVE_CFFI:
         return creq.get(url, impersonate="chrome", headers=hdr, timeout=timeout)
@@ -1095,14 +1266,17 @@ def tiktok_comments(full_url, n=60, with_replies=True, with_total=False, poster=
 
     items, total = [], 0
     _ret = (lambda t: (t, total)) if with_total else (lambda t: t)
+    _answered = False                  # server-kit: did tikwm answer at all (vs refuse)?
     for attempt in range(3):
         try:
             r = _cffi_get("https://www.tikwm.com/api/comment/list/?url=%s&count=%d"
                           % (urllib.parse.quote(full_url, safe=""), n))
             d = json.loads(r.text)
         except Exception:
+            evidence_lost("tikwm comments: no answer")     # no-op outside a server scan
             return _ret([])
         if d.get("code") == 0:
+            _answered = True
             data = d.get("data") or {}
             items = data.get("comments") or []
             try:
@@ -1111,6 +1285,8 @@ def tiktok_comments(full_url, n=60, with_replies=True, with_total=False, poster=
                 total = 0
             break
         time.sleep(1.3)
+    if not _answered:
+        evidence_lost("tikwm comments: refused 3 times")   # no-op outside a server scan
     if not items:
         return _ret([])
     # TOP-LEVEL LIKES WERE BEING THROWN AWAY. The skill's last reading rule is "prefer
@@ -1816,9 +1992,9 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
         if j is None:
             # YTDLP_SC, not a bare "yt-dlp": on this server's PATH that is Homebrew's build,
             # 5-16x slower on SoundCloud search than the module (see YTDLP_SC).
-            out = subprocess.run(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
-                                             "-J", "--no-warnings"],
-                                 capture_output=True, timeout=25).stdout
+            out = _run_ytdlp(YTDLP_SC + ["scsearch10:%s" % handle, "--flat-playlist",
+                                         "-J", "--no-warnings"],
+                             capture_output=True, timeout=25).stdout
             j = json.loads(out or "{}")
     except Exception:
         return []
@@ -1846,7 +2022,7 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
             try:
                 jj = _sc_json_inproc(u, flat=False, timeout=20) if SPEED_INPROC_SEARCH else None
                 if jj is None:
-                    jj = json.loads(subprocess.run(
+                    jj = json.loads(_run_ytdlp(
                         YTDLP_SC + ["-J", "--no-warnings", u],
                         capture_output=True, timeout=20).stdout or "{}")
                 u = jj.get("webpage_url") or u
@@ -4042,6 +4218,20 @@ _SLOT_DIR = os.environ.get("CRATE_SHAZAMKIT_SLOT_DIR", "/tmp/addify-shazamkit")
 SPEED_PRECUT = _speed_flag("CRATE_PRECUT", True)
 
 
+async def _shazam_probe(wav, timeout):
+    """One Shazam probe. Unpaced (the Mac): the exact line every call site used to have.
+    Paced (the Linux server, CRATE_SHAZAM_PACE=1): find_song.shazam_call waits for a Shazam
+    slot OUTSIDE this timeout, never retries silently, and raises find_song.Throttled when
+    it cannot get through; the call sites catch that like any probe error."""
+    if _FSP.PACE:
+        return await _FSP.shazam_call(wav, timeout)
+    return await asyncio.wait_for(shazam(wav), timeout=timeout)
+
+
+def _pace_waited():
+    return _FSP.pace_waited() if _FSP.PACE else 0.0
+
+
 def _probe_conc():
     try:
         import find_song as _fs
@@ -4243,7 +4433,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             _to = _find_song.probe_ceiling(timeout if timeout is not None else (
                 SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
             _pc[0] = time.time()
-            hit = await asyncio.wait_for(shazam(wav), timeout=_to)
+            hit = await _shazam_probe(wav, _to)
             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                  off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
                  slot_wait=round(_sw, 3), **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
@@ -4313,7 +4503,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 # answers later, and the thing the product exists to do
                 _to = _find_song.probe_ceiling(timeout if timeout is not None else (
                     SHAZAM_TIMEOUT if rate == 1.00 else SWEEP_PROBE_TIMEOUT))
-                hit = await asyncio.wait_for(shazam(wav), timeout=_to)
+                hit = await _shazam_probe(wav, _to)
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                      off=off, rate=rate, span=span, hit=bool(hit),
                      **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
@@ -4373,6 +4563,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         """
         need = SWEEP_NEED if need is None else need
         t_start = time.time()
+        _w0 = _pace_waited()      # server-kit: queueing for a Shazam slot is not a stall
         out, agree = [], {}
         rates = list(rates)
         if _conc > 1:
@@ -4403,7 +4594,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                                     tlog("sweep_early_exit", time.time() - t_start,
                                          rates=len(out), title=k)
                                     return out
-                    if time.time() - t_start > budget:
+                    if time.time() - t_start - (_pace_waited() - _w0) > budget:
                         tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
                         return out
                 i += len(chunk)
@@ -4421,7 +4612,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                             tlog("sweep_early_exit", time.time() - t_start,
                                  rates=len(out), title=k)
                             return out
-            if time.time() - t_start > budget:
+            if time.time() - t_start - (_pace_waited() - _w0) > budget:
                 tlog("sweep_budget_hit", time.time() - t_start, hits=len(out))
                 return out
         tlog("sweep_full", time.time() - t_start, hits=len(out))
@@ -5157,7 +5348,7 @@ async def annotate_mashup(audio, fp, scan, dur=None):
             wav = os.path.join(tmp, "m%.2f_%d.wav" % (off, span))
             try:
                 cut(audio, wav, off, 1.0, span=span)
-                hit = await asyncio.wait_for(shazam(wav), timeout=MASHUP_TIMEOUT)
+                hit = await _shazam_probe(wav, MASHUP_TIMEOUT)
             except Exception:
                 return None
         if hit:
@@ -5180,8 +5371,9 @@ async def annotate_mashup(audio, fp, scan, dur=None):
     order_by_aim = sorted(grid, key=lambda s: abs(s + MASHUP_SPAN / 2.0 - centre))
     starts = order_by_aim[:MASHUP_BUDGET]
     t2, fired = [], 0
+    _w0 = _pace_waited()                   # server-kit: slot queueing is not probe time
     for s in starts:                       # serialised on purpose, see sem above
-        if fired and time.time() - t_start > MASHUP_MAX_S:
+        if fired and time.time() - t_start - (_pace_waited() - _w0) > MASHUP_MAX_S:
             break                          # bounded cost, see MASHUP_MAX_S
         fired += 1
         h = await probe(s, MASHUP_SPAN)
@@ -6865,9 +7057,9 @@ def _run_search_raw(spec):
             out = None
     if out is None:
         try:
-            out = subprocess.run(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
-                                                      "--print", _SEARCH_FMT],
-                                 capture_output=True, text=True, timeout=25).stdout
+            out = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                                  "--print", _SEARCH_FMT],
+                             capture_output=True, text=True, timeout=25).stdout
         except Exception:
             return []
     rows = []
@@ -7205,7 +7397,7 @@ def web_search_edits(queries, budget=None):
 def _meta(url):
     """plays + title for a single URL (web results don't carry play counts)."""
     try:
-        out = subprocess.run(ytdlp_for(url) + [url, "--skip-download", "--print",
+        out = _run_ytdlp(ytdlp_for(url) + [url, "--skip-download", "--print",
                                       "%(view_count)s\t%(title)s\t%(uploader)s\t%(thumbnail)s"],
                              capture_output=True, text=True, timeout=30).stdout.strip()
         v, t, up, th = (out.split("\t") + ["", "", "", ""])[:4]
@@ -7446,11 +7638,14 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
     if is_yt:
         args += ["--extractor-args", _YT_CLIENTS]      # see _YT_CLIENTS
     if abort is not None:
-        if not abort.run(args, timeout):
+        if not abort.run(args, timeout):     # own process group; counted for the server's tally
             return None
     else:
         try:
-            subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
+            # server-kit: _run_ytdlp kills the whole process group on a timeout and counts
+            # the download (CRATE_KILL_PGROUP=1); unset (the Mac) it is plain subprocess.run
+            _run_ytdlp(args, capture_output=True, text=True, timeout=timeout, check=True,
+                       kind="dl")
         except Exception:
             return None
     if not os.path.exists(dst):
@@ -7820,7 +8015,9 @@ def dl_section(url, dst, start, seconds=20, timeout=15, abort=None, direct_only=
             return None
     else:
         try:
-            subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
+            # server-kit: process-group kill + per-scan tally, as in dl_clip (plain run on the Mac)
+            _run_ytdlp(args, capture_output=True, text=True, timeout=timeout, check=True,
+                       kind="dl")
         except Exception:
             return None
     if not os.path.exists(dst):
@@ -8719,10 +8916,12 @@ class _HuntBudget(object):
             p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)
             self.procs.add(p)
+        _to = False
         try:
             try:
                 p.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
+                _to = True
                 _killpg(p)
                 p.wait()
                 return False
@@ -8733,6 +8932,16 @@ class _HuntBudget(object):
         finally:
             with self.lock:
                 self.procs.discard(p)
+            # server-kit (CRATE_KILL_PGROUP=1): count it like _run_ytdlp does, killed = hit its
+            # time limit. A download the budget abandoned is not counted (not starvation).
+            if _DL_LOG is not None and (_to or not self.dead):
+                with _DL_LOCK:
+                    _DL_LOG.append((time.time(), _to))
+                _t = SCAN_TALLY.get()
+                if _t is not None:
+                    _t.download(_to)
+                if _to:
+                    tlog("ytdlp_pgroup_killed", float(timeout or 0), kind="dl")
 
     def drop(self, dst):
         """RETENTION: every file an abandoned download made (yt-dlp's parts, the wav, the

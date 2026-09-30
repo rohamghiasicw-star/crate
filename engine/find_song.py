@@ -195,6 +195,11 @@ def cut(src, dst, offset, rate, span=20, kept=False):
 async def _shazam_shazamio(path):
     from shazamio import Shazam
     out = await Shazam().recognize(path)
+    return _shazamio_answer(out)
+
+
+def _shazamio_answer(out):
+    """shazamio's raw response -> the probe answer (None = not in the catalogue)."""
     tr = (out or {}).get("track")
     if not tr:
         return None
@@ -378,6 +383,315 @@ async def _shazam_server(path):
                 hit["backend"] = "shazamkit-fallback"
             return hit
     return await _shazam_shazamio(path)
+
+
+# ------------------------------------------------ SHAZAM PACING, ONE SERVER (server-kit)
+# CRATE_SHAZAM_PACE=1, shazamio only. Unset (the Mac, ShazamKit) = none of this runs and
+# shazam_call() below is exactly the old probe: asyncio.wait_for(shazam(path), timeout).
+#
+# WHAT SHAZAM ALLOWS ONE IP, measured from a datacenter box 2026-09-27 (server-kit README):
+# amp.shazam.com answered 22 calls back to back, then HTTP 429 to every call until its minute
+# was up, then took calls again. It is a count per 60 s window, not a bucket that refills
+# while you wait: a burst of 22 bought nothing more for the rest of that minute, and the
+# 429s themselves cost nothing. A kyks-type sweep makes about 21-24 probes, so a pacer that
+# lets a burst through and then fails is exactly how kyks came back "No match" on an idle
+# box (HOSTING-VERIFY). One 429 still came back at 20 a rolling 60.5 s under load, so the
+# default is 18 a rolling 61 s. So:
+#   * at most PACE_N calls in any rolling PACE_WINDOW_S, which keeps every 60 s window of
+#     Shazam's under its 22 whatever its phase;
+#   * a probe with no free slot WAITS for one, outside its own timeout, capped per probe
+#     (PACE_MAX_WAIT_S) and per scan (PACE_SCAN_WAIT_S); the oldest scan goes first, so
+#     under load scans finish one after another instead of all running late together;
+#   * one shazamio client per call with retries OFF (its default quietly retries a 429 for
+#     up to 60 s, which turned a throttle into a stall and then a "No match");
+#   * a real 429 (or 5xx) holds every probe for PACE_429_BACKOFF_S (doubling while they
+#     repeat), then that probe tries once more;
+#   * so does ANY other refusal (a 403, a 404, a body that is not JSON) and any network
+#     failure (DNS, connect, reset): a blocked or unreachable Shazam is not "not in the
+#     catalogue", so it can never read as a miss (SERVER-VERIFY-1 S5);
+#   * a probe that times out stays what it always was to the engine (a stall it may re-fire),
+#     but it is counted on the scan, and a scan that found nothing after a Shazam timeout is
+#     answered "busy", not "No match" (server.py _phase1);
+#   * what we could not get past raises Throttled and is counted on the scan
+#     (SCAN / scan_begin), and server.py answers that scan "busy, try again": never
+#     "No match", never a crown, never cached;
+#   * DEADLINE (server.py sets it per request): a scan may wait for slots as long as its
+#     probe still goes out PACE_TAIL_S before the request's deadline, instead of a fixed
+#     PACE_SCAN_WAIT_S. kyks alone needs about 55 s of waiting for its 19th-21st probes
+#     (21 probes > 18 a window), so a fixed 62 s left it 7 s of slack and any other scan in
+#     the same minute turned it into "busy" (SERVER-VERIFY-1 S6). The deadline keeps the
+#     whole /base answer under the edge's patience instead.
+import collections as _collections
+import contextvars as _contextvars
+import threading as _threading
+import time as _time
+
+PACE = (os.environ.get("CRATE_SHAZAM_PACE", "0").strip() == "1"
+        and SHAZAM_BACKEND == "shazamio")
+PACE_N = int(os.environ.get("CRATE_SHAZAM_PACE_N", 18))
+PACE_WINDOW_S = float(os.environ.get("CRATE_SHAZAM_PACE_WINDOW_S", 61))
+PACE_MAX_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_MAX_WAIT_S", 58))
+PACE_SCAN_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_SCAN_WAIT_S", 62))
+PACE_429_BACKOFF_S = float(os.environ.get("CRATE_SHAZAM_429_BACKOFF_S", 4))
+PACE_TAIL_S = float(os.environ.get("CRATE_SHAZAM_PACE_TAIL_S", 6))
+
+
+class Throttled(RuntimeError):
+    """Shazam would not take this probe (refused or unreachable twice, or no slot inside
+    the wait cap).
+    NOT a "no match". A plain RuntimeError, so the engine's probe code logs it as a probe
+    error exactly like any other; the scan record is what tells server.py."""
+
+
+class _Refused(Exception):
+    def __init__(self, status):
+        Exception.__init__(self, "shazam http %s" % status)
+        self.status = status
+
+
+# The scan this probe belongs to. server.py sets a fresh dict at the start of a scan; asyncio
+# copies it into every task the fingerprint starts (FingerprintJob's thread included), and
+# the dict is shared, so every probe of that scan counts into it. None outside a scan.
+SCAN = _contextvars.ContextVar("addify_scan", default=None)
+# When the request this scan answers must be answered by (epoch seconds), or None. server.py
+# sets it in the request's thread before the scan starts; scan_begin copies it.
+DEADLINE = _contextvars.ContextVar("addify_deadline", default=None)
+
+
+def scan_begin():
+    d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
+         "timeouts": 0, "why": None, "deadline": DEADLINE.get()}
+    SCAN.set(d)
+    return d
+
+
+def pace_waited():
+    """Seconds this scan has spent waiting for Shazam slots (0.0 when pacing is off). The
+    engine's sweep and mashup clocks subtract it: queueing is not a stall."""
+    d = SCAN.get() if PACE else None
+    return d["waited"] if d else 0.0
+
+
+class _Pacer(object):
+    def __init__(self):
+        self.lock = _threading.Lock()
+        self.sent = _collections.deque()      # when each recent call went out
+        self.hold_until = 0.0                 # 429 back-off: nobody sends before this
+        self.bad_run = 0                      # 429/5xx in a row
+        self.waiters = {}                     # ticket -> (priority, ticket)
+        self.seq = 0
+        self.stats = {"sent": 0, "waited_probes": 0, "wait_s": 0.0, "throttled": 0,
+                      "http429": 0, "http5xx": 0, "http4xx": 0, "net_err": 0,
+                      "timeouts": 0, "last_wait": 0.0, "last_429": None, "last_err": None}
+
+    def _slot_at(self, now, k):
+        """When the (k+1)-th next free slot opens (k=0: the next one)."""
+        while self.sent and self.sent[0] <= now - PACE_WINDOW_S:
+            self.sent.popleft()
+        base = max(now, self.hold_until)
+        i = len(self.sent) + k - PACE_N
+        if i < 0:
+            return base
+        if i >= len(self.sent):              # more waiters than a window holds: an estimate
+            last = self.sent[-1] if self.sent else now
+            return max(base, last + PACE_WINDOW_S * (1 + (i - len(self.sent)) // PACE_N))
+        return max(base, self.sent[i] + PACE_WINDOW_S)
+
+    async def acquire(self, scan):
+        prio = scan["t0"] if scan else _time.time()
+        with self.lock:
+            self.seq += 1
+            me = (prio, self.seq)
+            self.waiters[me] = me
+        t_in = _time.time()
+        try:
+            while True:
+                with self.lock:
+                    now = _time.time()
+                    ahead = sum(1 for w in self.waiters if w < me)
+                    at = self._slot_at(now, ahead)
+                    if ahead == 0 and at <= now:
+                        del self.waiters[me]
+                        self.sent.append(now)
+                        w = now - t_in
+                        self.stats["sent"] += 1
+                        self.stats["last_wait"] = round(w, 2)
+                        if w > 0.05:
+                            self.stats["waited_probes"] += 1
+                            self.stats["wait_s"] = round(self.stats["wait_s"] + w, 2)
+                        if scan is not None:
+                            scan["sent"] += 1
+                            scan["waited"] += w
+                        return w
+                    cap = PACE_MAX_WAIT_S
+                    if scan is not None and scan.get("deadline"):
+                        cap = min(cap, scan["deadline"] - PACE_TAIL_S - t_in)
+                    elif scan is not None:
+                        cap = min(cap, PACE_SCAN_WAIT_S - scan["waited"])
+                    if at - t_in > cap:
+                        del self.waiters[me]
+                        self.stats["throttled"] += 1
+                        raise Throttled("no Shazam slot for %.0fs (cap %.0fs)"
+                                        % (at - t_in, max(0.0, cap)))
+                    nap = min(0.25, max(0.02, at - now))
+                await asyncio.sleep(nap)
+        except BaseException:
+            with self.lock:
+                self.waiters.pop(me, None)
+            raise
+
+    def answered(self):
+        with self.lock:
+            self.bad_run = 0
+
+    def refused(self, status, scan):
+        with self.lock:
+            self.bad_run += 1
+            hold = min(30.0, PACE_429_BACKOFF_S * (2 ** (self.bad_run - 1)))
+            self.hold_until = max(self.hold_until, _time.time() + hold)
+            if status == 429:
+                self.stats["http429"] += 1
+                self.stats["last_429"] = int(_time.time())
+                if scan is not None:
+                    scan["http429"] += 1
+            elif isinstance(status, int) and status >= 500:
+                self.stats["http5xx"] += 1
+            elif isinstance(status, int):
+                self.stats["http4xx"] += 1
+            else:
+                self.stats["net_err"] += 1
+            self.stats["last_err"] = "%s at %d" % (status, int(_time.time()))
+        return hold
+
+    def snapshot(self):
+        with self.lock:
+            now = _time.time()
+            self._slot_at(now, 0)
+            out = dict(self.stats)
+            out.update(in_window=len(self.sent), waiting=len(self.waiters),
+                       limit=PACE_N, window_s=PACE_WINDOW_S,
+                       hold_s=round(max(0.0, self.hold_until - now), 1))
+            return out
+
+
+_PACER = _Pacer()
+
+
+def pace_stats():
+    return _PACER.snapshot() if PACE else None
+
+
+def _oneshot_shazam():
+    """A Shazam client whose HTTP layer makes ONE request and reports any refusal (HTTP 4xx
+    or 5xx, or a body that is not JSON) as _Refused instead of retrying it behind our back
+    (shazamio's default: 20 attempts, 60 s) or handing the engine an empty "no match"."""
+    from shazamio import Shazam
+    from shazamio.interfaces.client import HTTPClientInterface
+    import aiohttp
+
+    class _OneShot(HTTPClientInterface):
+        async def request(self, method, url, *args, **kwargs):
+            async with aiohttp.ClientSession() as s:
+                async with s.request(method.upper(), url, **kwargs) as resp:
+                    if resp.status >= 400:
+                        raise _Refused(resp.status)
+                    try:
+                        return await resp.json(content_type=None)
+                    except Exception:
+                        raise _Refused("not json")
+    return Shazam(http_client=_OneShot())
+
+
+def _scan_throttled(scan, why):
+    if scan is not None:
+        scan["throttled"] += 1
+        scan["why"] = scan["why"] or why
+
+
+async def shazam_call(path, timeout):
+    """ONE Shazam probe as the engine makes it. Pacing off: the old line, unchanged."""
+    if not PACE:
+        return await asyncio.wait_for(shazam(path), timeout=timeout)
+    scan = SCAN.get()
+    if scan is not None and scan["throttled"]:
+        # This scan already lost a probe, so it will answer "busy" whatever the rest say:
+        # spend no more of the IP's Shazam budget and no more of the user's time on it.
+        raise Throttled("scan already throttled (%s)" % scan["why"])
+    ph = PHONE.get()
+    if ph is not None:
+        # ON-DEVICE SHAZAMKIT on the server (server-kit S4). The phone that started this
+        # scan answers the probe with Apple's ShazamKit, which costs none of this IP's 18
+        # calls a minute. Only a probe the phone does not answer (unclaimed, an error, a
+        # degraded session) falls back to the paced shazamio path below, so phones without
+        # build 15+ get exactly what they got before. A phone that answered late is a stall
+        # to the engine, like a shazamio timeout, and is counted on the scan the same way.
+        n0 = scan.get("timeouts", 0) if scan is not None else 0
+        try:
+            return await ph.shazam(path, lambda p: _paced_shazamio(p, timeout, scan))
+        except asyncio.TimeoutError:
+            if scan is not None and scan.get("timeouts", 0) == n0:
+                _scan_timeout(scan)
+            raise
+    return await _paced_shazamio(path, timeout, scan)
+
+
+async def _paced_shazamio(path, timeout, scan):
+    """shazamio under the pacer: signature, a slot, one request, one retry on a refusal."""
+    import aiohttp
+    shz = _oneshot_shazam()
+    loop = asyncio.get_event_loop()
+    t0 = loop.time()
+    # The signature is local work (no request), so it runs before the slot is taken and
+    # inside the probe's own timeout, as it always did. The wait for a slot sits between
+    # the two and is not charged to the timeout.
+    rec = getattr(shz, "core_recognizer", None)
+    send = getattr(shz, "send_recognize_request_v2", None)
+    sig = None
+    if rec is not None and send is not None:
+        try:
+            sig = await asyncio.wait_for(rec.recognize_path(path), timeout=timeout)
+        except asyncio.TimeoutError:
+            _scan_timeout(scan)
+            raise
+    sig_s = loop.time() - t0
+    for attempt in (1, 2):
+        try:
+            await _PACER.acquire(scan)
+        except Throttled:
+            _scan_throttled(scan, "slot")
+            raise
+        left = max(0.5, timeout - sig_s) if attempt == 1 else timeout
+        try:
+            try:
+                if sig is not None:
+                    out = await asyncio.wait_for(send(sig=sig), timeout=left)
+                else:
+                    out = await asyncio.wait_for(shz.recognize(path), timeout=left)
+            except asyncio.TimeoutError:     # an OSError on 3.11+: must not read as "net"
+                raise
+            except (aiohttp.ClientError, OSError) as e:
+                raise _Refused("net %s" % type(e).__name__)
+        except asyncio.TimeoutError:
+            _scan_timeout(scan)          # the engine's stall path; server.py sees the count
+            raise
+        except _Refused as e:
+            _PACER.refused(e.status, scan)
+            if attempt == 2:
+                with _PACER.lock:
+                    _PACER.stats["throttled"] += 1
+                _scan_throttled(scan, "http %s" % e.status if isinstance(e.status, int)
+                                else str(e.status))
+                raise Throttled("shazam refused twice (%s)" % e.status)
+            continue                     # the retry waits out the hold in acquire()
+        _PACER.answered()
+        return _shazamio_answer(out)
+
+
+def _scan_timeout(scan):
+    with _PACER.lock:
+        _PACER.stats["timeouts"] += 1
+    if scan is not None:
+        scan["timeouts"] = scan.get("timeouts", 0) + 1
 
 
 async def identify(url):

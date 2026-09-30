@@ -31,6 +31,54 @@ import phone_probes as P     # on-device ShazamKit, off unless CRATE_PHONE_PROBE
 # unless ADDIFY_RATE_LIMIT / ADDIFY_STRICT_LINKS / ADDIFY_CLOSE_INTERNAL are set.
 import ratelimit as RL
 RL.configure(tlog=E.tlog)     # rl_seen / rl_refuse rows, only when CRATE_TIMING is set
+import find_song as _FS
+
+# ---------------------------------------------------------------- ONE-SERVER PROFILE (server-kit)
+# The Linux server (one box, one IP, a quick tunnel in front; ~/addify-harness/server-kit).
+# Each switch is read from the environment and every one is OFF when unset, which is the
+# Mac: no gate, no drain, no pacing, and every request path below runs exactly as before.
+# ADDIFY_SCAN_SLOTS  heavy scan halves at once (/base, /find, /edits, /edits/stream, /listen).
+#                    A /base that parks a hunt keeps its slot for that hunt's /edits/stream.
+#                    "auto" = one per 2.5 vCPU (8 vCPU -> 3, 1 vCPU -> 1): a starved hunt loses
+#                    its downloads to their timeouts and can crown a lesser upload, so the cap
+#                    follows the CPU (HOSTING-DATACENTER: about 110 vCPU-s per scan).
+_SLOTS_ENV = (os.environ.get("ADDIFY_SCAN_SLOTS", "0") or "0").strip().lower()
+SCAN_SLOTS = (max(1, int(round((os.cpu_count() or 1) / 2.5))) if _SLOTS_ENV == "auto"
+              else int(_SLOTS_ENV))
+SCAN_QUEUE_MAX = int(os.environ.get("ADDIFY_SCAN_QUEUE_MAX", "8") or 8)
+SCAN_QUEUE_WAIT_S = float(os.environ.get("ADDIFY_SCAN_QUEUE_WAIT_S", "20") or 20)
+EDITS_WAIT_S = float(os.environ.get("ADDIFY_EDITS_WAIT_S", "120") or 120)
+EDITS_RESERVE_S = float(os.environ.get("ADDIFY_EDITS_RESERVE_S", "45") or 45)
+BUSY_RETRY_S = int(os.environ.get("ADDIFY_BUSY_RETRY_S", "20") or 20)
+# ADDIFY_DRAIN_S  on SIGTERM: stop taking scans, let running ones (both halves) finish for up
+#                 to this long, delete their temp audio, exit. 0 = the old instant exit.
+DRAIN_S = float(os.environ.get("ADDIFY_DRAIN_S", "0") or 0)
+# ADDIFY_TMP_SWEEP=1  TMPDIR belongs to this engine alone: empty it after a drain.
+TMP_SWEEP = os.environ.get("ADDIFY_TMP_SWEEP", "0").strip() == "1"
+# ADDIFY_SCAN_DEADLINE_S  a /base is answered within this long of arriving (queue included):
+#                 Shazam slot waits are capped by it instead of a fixed per-scan wait.
+SCAN_DEADLINE_S = float(os.environ.get("ADDIFY_SCAN_DEADLINE_S", "88") or 88)
+# ADDIFY_ADMIT_CPU_PSI  a SECOND or later heavy half is only admitted while the box's CPU
+#                 pressure (Linux PSI "some avg10", percent) is below this. 0 = off.
+ADMIT_CPU_PSI = float(os.environ.get("ADDIFY_ADMIT_CPU_PSI", "0") or 0)
+# ADDIFY_STARVE_MIN_KILLS / ADDIFY_STARVE_FRAC  a scan whose OWN candidate downloads (both
+#                 halves, E.ScanTally) were killed at their time limit at least this many
+#                 times, and at least this share of them, was starved: its crown may be a
+#                 lesser upload. It answers "busy" and nothing is cached. 0 = off.
+STARVE_MIN_KILLS = int(os.environ.get("ADDIFY_STARVE_MIN_KILLS", "0") or 0)
+STARVE_FRAC = float(os.environ.get("ADDIFY_STARVE_FRAC", "0.8") or 0.8)
+# ADDIFY_STARVE_EVIDENCE  a scan that lost at least this many pieces of evidence (a comment
+#                 page tikwm refused, a sound-page lane that missed its wall) and still
+#                 crowned answers "busy" and nothing is cached; with no crown it is shown and
+#                 not cached. 0 = off. (SERVER-VERIFY-2 B1: mason's wrong crown.)
+STARVE_EVIDENCE = int(os.environ.get("ADDIFY_STARVE_EVIDENCE", "0") or 0)
+# ADDIFY_SLOT_MAX_S  a scan slot held longer than this is taken back by the gate (the thread
+#                 is logged and left running), and /health reports a thread still alive
+#                 SLOT_MAX_S after that as hung, which addify-health.sh restarts. 0 = off.
+SLOT_MAX_S = float(os.environ.get("ADDIFY_SLOT_MAX_S", "0") or 0)
+# ADDIFY_STARVE_HUNT_S  a hunt that ran longer than this and found no crown is answered as it
+#                 is but NOT cached, so the next scan of that clip hunts again. 0 = off.
+STARVE_HUNT_S = float(os.environ.get("ADDIFY_STARVE_HUNT_S", "0") or 0)
 
 # ---------------------------------------------------------------- creator evidence
 # NEW 2026-08-13. The check Roham did by hand on ZS4qqMqXq, in code: whose sound is
@@ -1058,12 +1106,23 @@ def _decided_display(src, fp):
             "speed": r.get("speed")}
 
 
+def _busy_result(key, why, t0=None, detail=None):
+    """The page's existing retryable state ("Try again soon"), never "No match": result
+    rate_limited, plus `busy` so the page can say it is Addify, not TikTok. Never cached."""
+    E.tlog("busy", 0.0, url=key, why=why, detail=str(detail or "")[:80])
+    return {"result": "rate_limited", "busy": why, "retry_after": BUSY_RETRY_S, "url": key,
+            "error": "Addify is busy right now. Try again in a minute.",
+            "secs": round(time.time() - t0, 1) if t0 else 0.0}
+
+
 def _phase1(url, key, t0):
     """NAME THE SONG - the fast half. Fetch the clip, Shazam it, read the comments.
     Deliberately stops before the SoundCloud/YouTube hunt, which is what actually costs
     30-60s: the user shouldn't wait on the edit search to learn what the song is.
     Returns (res, ctx); ctx is None when there's no edit hunt worth running."""
     E.tlog("request_start", 0.0, url=key)
+    # server-kit: every Shazam probe of this scan counts into this record (find_song.SCAN).
+    _scan = _FS.scan_begin() if _FS.PACE else None
     _prog_set(key, 6, "Reading the clip")
     (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
     _p0 = time.time()
@@ -1326,6 +1385,7 @@ def _phase1(url, key, t0):
             page, links = _page_fut.result(timeout=wall)
         except Exception:
             E.tlog("sound_page_dropped", 0.0)
+            E.evidence_lost("sound page lane missed its wall")   # server-kit; no-op on the Mac
             return
         fresh = [h for h in (page or []) if h not in hint_texts]
         if fresh:
@@ -1656,6 +1716,19 @@ def _phase1(url, key, t0):
             pass
         E.tlog("fingerprint", time.time() - _t,
                probes=(fp or {}).get("probes"), rate=(fp or {}).get("rate"))
+        if _scan is not None:
+            E.tlog("scan_shazam", 0.0, url=key, sent=_scan["sent"],
+                   waited=round(_scan["waited"], 2), throttled=_scan["throttled"],
+                   http429=_scan["http429"], timeouts=_scan.get("timeouts", 0),
+                   why=_scan["why"])
+            if _scan["throttled"] or (_scan.get("timeouts") and not fp):
+                # A THROTTLED SCAN IS NOT AN ANSWER (server-kit). Some probe never reached
+                # Shazam, so whatever the sweep decided was decided on missing evidence:
+                # "No match" would be a lie and a crown could be the wrong song. Answer
+                # "busy, try again", park nothing, cache nothing, free the audio. Same for
+                # a scan that found nothing after a probe timed out (SERVER-VERIFY-1 S5).
+                _cleanup(src.get("tmp"))
+                return _busy_result(key, "shazam", t0, _scan["why"] or "timeout"), None
         base_title = base_artist = None
         edit_label = ""
         if fp:
@@ -5538,11 +5611,16 @@ def identify_mic(blob, kind):
     try:
         with open(raw, "wb") as f:
             f.write(blob)
+        _scan = _FS.scan_begin() if _FS.PACE else None      # server-kit, see _phase1
         loop = asyncio.new_event_loop()
         try:
             fp = loop.run_until_complete(E.fingerprint(raw))
         finally:
             loop.close()
+        if _scan is not None and (_scan["throttled"] or (_scan.get("timeouts") and not fp)):
+            out = _busy_result("listen", "shazam", t0, _scan["why"] or "timeout")
+            out["listen"] = True
+            return out
         if not fp:
             return {"result": "no_match", "listen": True,
                     "secs": round(time.time() - t0, 1)}
@@ -5603,7 +5681,10 @@ def trending_sounds():
     return {"rows": rows or _TREND["rows"]}
 
 
-FEEDBACK = os.path.join(HERE, "feedback.jsonl")
+# CRATE_DATA_DIR (server-kit): where feedback and review notes are written, so they live
+# outside the code checkout. Unset = next to server.py, as before.
+DATA_DIR = os.environ.get("CRATE_DATA_DIR") or HERE
+FEEDBACK = os.path.join(DATA_DIR, "feedback.jsonl")
 
 FEEDBACK_FIELDS = ("url", "guess_song", "guess_artist", "verdict",
                    # VERDICT 2026-09-29: the result card's check / X ("right version?")
@@ -5649,6 +5730,9 @@ def record_review_note(obj):
                         ("n", "title", "url", "core", "source", "uploader")
                         if pick.get(k) is not None}
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval", "inbox.jsonl")
+    if os.environ.get("CRATE_DATA_DIR"):
+        os.makedirs(os.path.join(DATA_DIR, "eval"), exist_ok=True)
+        path = os.path.join(DATA_DIR, "eval", "inbox.jsonl")
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(note) + "\n")
     return {"ok": True, "note": note}
@@ -7101,9 +7185,9 @@ def _s_flat(prefix, src, q, timeout=8.0):
     # E.ytdlp_for, not E.YTDLP: Homebrew's yt-dlp takes 5-23s on a SoundCloud flat search
     # (module: ~1.2-1.8s, same rows), so under this 8s ceiling the Search tab's SoundCloud
     # lane would time out and read as a dead source. See crate_engine.YTDLP_SC.
-    out = subprocess.run(E.ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
-                                               "--print", E._SEARCH_FMT],
-                         capture_output=True, text=True, timeout=timeout).stdout
+    out = E._run_ytdlp(E.ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                              "--print", E._SEARCH_FMT],
+                       capture_output=True, text=True, timeout=timeout).stdout
     rows = []
     for line in out.splitlines():
         parts = line.split("\t")
@@ -8015,6 +8099,424 @@ def _probe_state(kit):
     return None if s is None else ("closed" if s.closed else "open")
 
 
+# ---------------------------------------------------------------- SCAN GATE + DRAIN (server-kit)
+# ThreadingHTTPServer starts a thread per request with no cap, so a burst of scans made every
+# scan slow at once. With ADDIFY_SCAN_SLOTS set, at most that many heavy halves run together.
+# /edits/stream is the heavy half the app actually spends its time in, so it counts: a /base
+# that parks a hunt hands its slot to that clip, and the clip's /edits/stream claims it
+# (ADDIFY_EDITS_RESERVE_S, then the slot goes back). New scans wait up to
+# ADDIFY_SCAN_QUEUE_WAIT_S in a queue of at most ADDIFY_SCAN_QUEUE_MAX; a hunt whose slot
+# lapsed waits up to ADDIFY_EDITS_WAIT_S, ahead of new scans. Past that: the busy answer
+# (_busy_result), never a thinner scan. A cache hit costs nothing. SIGTERM (systemd stop or
+# restart) stops new scans and waits for running ones, then deletes their temp audio.
+#
+# A SLOT IS A TOKEN HELD BY A LIVE THREAD, NOT A COUNTER (SERVER-VERIFY-1 B1). The first gate
+# counted busy up and down; one early return that skipped release() lost a slot for good
+# (busy 1 with nothing running for 112 s, and every restart then waited out the full drain).
+# Now busy is derived: the tokens held + the reservations. Each token names the thread doing
+# the work (a hunt's token moves to its worker thread), and a token whose thread has ended
+# is taken back on the next look (served["reaped"], tlog gate_reaped), so no path can wedge.
+def _cpu_psi():
+    """Linux CPU pressure, "some avg10" (percent of the last 10 s some task waited for a
+    CPU). 0.0 where there is no /proc/pressure (the Mac, old kernels)."""
+    try:
+        with open("/proc/pressure/cpu") as f:
+            for line in f:
+                if line.startswith("some"):
+                    return float(line.split("avg10=")[1].split()[0])
+    except Exception:
+        pass
+    return 0.0
+
+
+class _ScanGate(object):
+    def __init__(self, slots):
+        self.slots = slots
+        self.cv = threading.Condition()
+        self.holders = {}           # token -> [thread doing the work, path, clip key, since]
+        self.reserved = {}          # clip key -> time the reservation lapses
+        self.q = []                 # waiting tickets, (class, seq): hunts (0) before scans (1)
+        self.seq = 0
+        self.tok = 0
+        self.draining = False
+        self.served = {"admitted": 0, "claimed": 0, "refused": 0, "lapsed": 0, "reaped": 0,
+                       "cpu_held": 0, "stuck": 0}
+        self.stuck = []             # [thread, freed at, path, key]: slots the watchdog took back
+
+    def busy(self):
+        return len(self.holders) + len(self.reserved)
+
+    def _reap(self):
+        now = time.time()
+        for k, until in list(self.reserved.items()):
+            if until < now:
+                del self.reserved[k]
+                self.served["lapsed"] += 1
+                self.cv.notify_all()
+        for t, h in list(self.holders.items()):
+            if not h[0].is_alive():
+                del self.holders[t]
+                self.served["reaped"] += 1
+                E.tlog("gate_reaped", now - h[3], path=h[1], url=h[2])
+                self.cv.notify_all()
+            elif SLOT_MAX_S > 0 and now - h[3] > SLOT_MAX_S:
+                # SLOT WATCHDOG (SERVER-VERIFY-2 S6). A hunt that hangs (a stuck socket, a
+                # child that never returns) is alive, so the reaper above never frees it, and
+                # its slot was gone for good. Past the ceiling the slot comes back; the thread
+                # is logged and watched, and /health calls it hung if it is still alive one
+                # more ceiling later (addify-health.sh then restarts the engine).
+                del self.holders[t]
+                self.served["stuck"] += 1
+                self.stuck.append([h[0], now, h[1], h[2]])
+                E.tlog("gate_stuck_freed", now - h[3], path=h[1], url=h[2], thread=h[0].name)
+                self.cv.notify_all()
+        if self.stuck:
+            self.stuck = [x for x in self.stuck if x[0].is_alive()]
+
+    def hung(self):
+        """Threads the watchdog freed that are still alive a full SLOT_MAX_S later."""
+        now = time.time()
+        return sum(1 for x in self.stuck if now - x[1] > SLOT_MAX_S)
+
+    def _new(self, path, key):
+        self.tok += 1
+        self.holders[self.tok] = [threading.current_thread(), path, key, time.time()]
+        self.served["admitted"] += 1
+        return self.tok
+
+    def _room(self, noted):
+        b = self.busy()
+        if b >= self.slots:
+            return False
+        if b > 0 and ADMIT_CPU_PSI > 0 and _cpu_psi() >= ADMIT_CPU_PSI:
+            if not noted[0]:
+                noted[0] = True
+                self.served["cpu_held"] += 1
+            return False
+        return True
+
+    def acquire(self, hunt=False, path="", key=""):
+        """-> (token, None) with a slot held by this thread, or (None, why)."""
+        noted = [False]
+        with self.cv:
+            self._reap()
+            if self.draining:
+                self.served["refused"] += 1
+                return None, "draining"
+            if not self.q and self._room(noted):
+                return self._new(path, key), None
+            if not hunt and sum(1 for c, _ in self.q if c == 1) >= SCAN_QUEUE_MAX:
+                self.served["refused"] += 1
+                return None, "queue_full"
+            self.seq += 1
+            me = (0 if hunt else 1, self.seq)
+            self.q.append(me)
+            self.q.sort()
+            deadline = time.time() + (EDITS_WAIT_S if hunt else SCAN_QUEUE_WAIT_S)
+            try:
+                while True:
+                    self._reap()
+                    if self.draining:
+                        self.served["refused"] += 1
+                        return None, "draining"
+                    if self.q[0] == me and self._room(noted):
+                        self.q.pop(0)
+                        self.cv.notify_all()
+                        return self._new(path, key), None
+                    left = deadline - time.time()
+                    if left <= 0:
+                        self.served["refused"] += 1
+                        return None, ("cpu" if noted[0] and self.busy() < self.slots
+                                      else "queue_wait")
+                    self.cv.wait(min(left, 1.0))
+            finally:
+                if me in self.q:
+                    self.q.remove(me)
+                    self.cv.notify_all()
+
+    def release(self, token):
+        with self.cv:
+            if self.holders.pop(token, None) is not None:
+                self.cv.notify_all()
+
+    def hand(self, token, thread):
+        """The work behind `token` now runs on `thread` (a hunt's worker)."""
+        with self.cv:
+            h = self.holders.get(token)
+            if h is not None:
+                h[0] = thread
+
+    def reserve(self, token, key):
+        """The slot `token` holds now belongs to `key`'s coming /edits/stream. Never two
+        slots for one clip: a second reservation for the same clip just frees this one."""
+        with self.cv:
+            self.holders.pop(token, None)
+            self.reserved[key] = time.time() + EDITS_RESERVE_S
+            self.cv.notify_all()
+
+    def claim(self, key, path=""):
+        """-> a token for the slot `key`'s /base kept, or None."""
+        with self.cv:
+            if self.reserved.pop(key, None) is None:
+                return None
+            self.served["claimed"] += 1
+            self.served["admitted"] -= 1          # _new counts admissions; this is a claim
+            return self._new(path, key)
+
+    def drop(self, key):
+        with self.cv:
+            if self.reserved.pop(key, None) is not None:
+                self.cv.notify_all()
+
+    def snapshot(self):
+        with self.cv:
+            self._reap()
+            now = time.time()
+            return {"slots": self.slots, "busy": self.busy(), "running": len(self.holders),
+                    "reserved": len(self.reserved), "queue": len(self.q),
+                    "draining": self.draining, "served": dict(self.served),
+                    "oldest_s": round(max([now - h[3] for h in self.holders.values()] or [0]), 1),
+                    "slot_max_s": SLOT_MAX_S, "stuck_alive": len(self.stuck),
+                    "hung": self.hung(),
+                    "cpu_psi": _cpu_psi() if ADMIT_CPU_PSI > 0 else None}
+
+
+GATE = (_ScanGate(SCAN_SLOTS if SCAN_SLOTS > 0 else 10 ** 6)
+        if (SCAN_SLOTS > 0 or DRAIN_S > 0) else None)
+
+
+class _Slot(object):
+    """One held gate slot for a request. Released exactly once, whoever gets there first
+    (the request thread, the hunt worker, or an early return), and hand() moves it to the
+    thread that actually does the work so the reaper judges the right thread."""
+
+    def __init__(self, token, on_release=None):
+        self.token = token
+        self.on_release = on_release
+        self._lock = threading.Lock()
+        self._done = False
+
+    def hand(self, thread=None):
+        GATE.hand(self.token, thread or threading.current_thread())
+
+    def __call__(self):
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        GATE.release(self.token)
+        if self.on_release is not None:
+            try:
+                self.on_release()
+            except Exception:
+                pass
+
+
+# ONE SCAN PER CLIP AT A TIME (SERVER-VERIFY-1 S1). Nothing deduped in-flight scans, so three
+# people on the same new clip ran three full scans: 30 Shazam probes for one clip, the song
+# named at 8.7 / 56.3 / 60.0 s and three different crowns. Now a /base for a clip whose /base
+# is already running waits for that one and gets its answer; a /base for a clip whose hunt is
+# parked or running gets the /base answer that hunt came from; an /edits(/stream) for a clip
+# whose hunt is running waits for it (its verified rows are passed on as they land). Joining
+# costs no slot and no Shazam call. Only the gated (server) path uses this.
+class _Flight(object):
+    def __init__(self, kind, key):
+        self.kind, self.key = kind, key
+        self.ev = threading.Event()
+        self.res = None
+        self.base = None              # hunts: the /base answer this hunt came from
+        self.cands = []
+        self.joined = 0
+        self.phone_named = False      # its answer was named by one user's phone (see below)
+
+
+_FLIGHTS = {}
+_FLIGHTS_LOCK = threading.Lock()
+_PARKED_BASE = {}                     # clip key -> (time, the /base answer that parked a hunt)
+
+
+def _flight_open(kind, key):
+    """-> (flight, True) when this request owns the work, (running flight, False) to join."""
+    with _FLIGHTS_LOCK:
+        f = _FLIGHTS.get((kind, key))
+        if f is not None:
+            f.joined += 1
+            return f, False
+        f = _FLIGHTS[(kind, key)] = _Flight(kind, key)
+        return f, True
+
+
+def _flight_close(f, res=None):
+    with _FLIGHTS_LOCK:
+        if res is not None and f.res is None:
+            f.res = res
+        if _FLIGHTS.get((f.kind, f.key)) is f:
+            del _FLIGHTS[(f.kind, f.key)]
+        first = not f.ev.is_set()
+    f.ev.set()
+    if first and f.joined:
+        E.tlog("flight_joined", 0.0, kind=f.kind, url=f.key, joined=f.joined,
+               result=(f.res or {}).get("result"))
+
+
+def _phone_named(res):
+    return bool(isinstance(res, dict) and res.get("_phone_named"))
+
+
+# A PHONE-NAMED ANSWER STAYS WITH ITS OWN SCAN (0d57a5e's _phone_unconfirmed, carried into the
+# gated path). Its title, artist, link and artwork came from one user's phone, which is client
+# input, so it never enters a shared cache; a join is a share too. Another user on the same
+# clip gets "busy, try again" while that scan runs, and a scan of their own after it.
+def _flight_wait(f, timeout, key):
+    f.ev.wait(timeout)
+    if f.res is None:
+        return _busy_result(key, "joined")
+    if f.phone_named or _phone_named(f.res):
+        return _busy_result(key, "phone_scan")
+    out = dict(f.res)
+    out["joined"] = True
+    return out
+
+
+HUNT_JOIN_WAIT_S = 280.0               # a joined stream gives up just before SSE_MAX (300 s)
+
+
+def _join_job(f, key):
+    """The stream job for a request that joins a running hunt: pass on its verified rows as
+    they land, then its final answer."""
+    def job(on_cand):
+        sent, t0 = 0, time.time()
+        while not f.ev.wait(0.5):
+            while sent < len(f.cands):
+                on_cand(f.cands[sent])
+                sent += 1
+            if time.time() - t0 > HUNT_JOIN_WAIT_S:
+                return _busy_result(key, "joined")
+        while sent < len(f.cands):
+            on_cand(f.cands[sent])
+            sent += 1
+        return _flight_wait(f, 0, key)
+    return job
+
+
+def _parked_base(key):
+    pb = _PARKED_BASE.get(key)
+    if pb is None:
+        return None
+    if time.time() - pb[0] > EDITS_RESERVE_S or key not in SESSIONS:
+        _PARKED_BASE.pop(key, None)
+        return None
+    return pb[1]
+
+
+def _phone_mark(res, ph, key):
+    """The Mac path's marking (do_GET, 0d57a5e) for the gated path: when this scan's phone
+    named the song, the answer and its parked session carry _phone_named, so no cache and no
+    joiner ever gets them. Returns what the owner itself is sent (with the phone's numbers)."""
+    if ph is None or not isinstance(res, dict):
+        return res
+    if (ph.n.get("matched") or 0) > 0:
+        res["_phone_named"] = True
+        _sess = SESSIONS.get(key)
+        if _sess and isinstance(_sess.get("res"), dict):
+            _sess["res"]["_phone_named"] = True
+    return dict(res, phone=ph.report())
+
+
+def _prog_cand(key, row):
+    p = _PROG.get(key)
+    if p is None or not isinstance(row, dict):
+        return
+    cs = p.setdefault("cands", [])
+    if len(cs) < 12 and not any(c.get("url") == row.get("url") for c in cs):
+        cs.append(row)
+
+
+def _hunt_starved(hunt, base=None):
+    """(starved, why, facts) for one scan, judged ONLY on its own tallies (E.ScanTally):
+    `hunt` from its edit hunt, `base` from the /base half that parked it (None for a hunt
+    that had to redo the naming). SERVER-VERIFY-2 B1 replaced the box-wide count.
+
+    Thresholds, from SERVER-VERIFY-2's rows (1 vCPU box, the only measurements there are):
+    right crowns survived 10 of 19 (kelthraxx alone), 11 of 15 (#26 alone) and 25 of 36
+    (kelthraxx, 3 at once) killed, and the one wrong crown (mason, 3 at once) had only 5 of
+    22 killed. So a kill count cannot tell a wrong crown from a right one; the kill guard is a
+    backstop for a hunt that compared almost nothing (>= STARVE_MIN_KILLS and >= STARVE_FRAC
+    of its downloads killed), and the wrong crown is caught by the evidence it lost."""
+    h = hunt.snapshot() if hunt is not None else {"dl": 0, "killed": 0, "ev_lost": 0, "ev_why": []}
+    b = base.snapshot() if base is not None else {"dl": 0, "killed": 0, "ev_lost": 0, "ev_why": []}
+    n, k = h["dl"] + b["dl"], h["killed"] + b["killed"]
+    ev = h["ev_lost"] + b["ev_lost"]
+    facts = {"downloads": n, "killed": k, "evidence_lost": ev,
+             "evidence": (b["ev_why"] + h["ev_why"])[:6]}
+    if STARVE_MIN_KILLS > 0 and n > 0 and k >= STARVE_MIN_KILLS and k >= STARVE_FRAC * n:
+        return True, "%d of %d downloads killed" % (k, n), facts
+    if STARVE_EVIDENCE > 0 and ev >= STARVE_EVIDENCE:
+        return True, "evidence lost: %s" % "; ".join(facts["evidence"][:2]), facts
+    return False, None, facts
+
+
+def _unstore(key, res, sid=None):
+    """Take a finished answer back out of every cache (a starved hunt is not an answer)."""
+    CACHE.pop(key, None)
+    _FAIL_AT.pop(key, None)
+    _disk_put("url", key, None)
+    ex = ((res or {}).get("exact") or {}).get("url")
+    for s_, v in list(SOUND_CACHE.items()):
+        if s_ == sid or (v.get("base_song") == (res or {}).get("base_song")
+                         and ((v.get("exact") or {}).get("url") == ex)):
+            SOUND_CACHE.pop(s_, None)
+            _disk_put("sound", s_, None)
+
+
+def _sweep_tmp():
+    """After a drain: the parked hunts' audio, then (ADDIFY_TMP_SWEEP) everything left in
+    this engine's own TMPDIR. systemd's ExecStopPost sweeps again once the children are gone."""
+    for k, ctx in list(SESSIONS.items()):
+        SESSIONS.pop(k, None)
+        _cleanup((ctx.get("src") or {}).get("tmp"))
+    d = tempfile.gettempdir()
+    if TMP_SWEEP and d not in ("/tmp", "/var/tmp") and os.path.isdir(d):
+        for name in os.listdir(d):
+            pth = os.path.join(d, name)
+            if os.path.isdir(pth):
+                _cleanup(pth)
+            else:
+                try:
+                    os.remove(pth)
+                except OSError:
+                    pass
+
+
+def _on_sigterm(signum, frame):
+    if GATE is None or GATE.draining:
+        return
+    with GATE.cv:
+        GATE.draining = True
+        GATE.cv.notify_all()
+    E.tlog("drain_start", 0.0, busy=GATE.busy(), reserved=len(GATE.reserved))
+
+    def _drain():
+        t0 = time.time()
+        while time.time() - t0 < DRAIN_S:
+            with GATE.cv:
+                GATE._reap()
+                if GATE.busy() <= 0:
+                    break
+            time.sleep(0.5)
+        E.tlog("drain_end", time.time() - t0, busy=GATE.busy())
+        try:
+            _sweep_tmp()
+        finally:
+            try:
+                import sys as _sys
+                _sys.stdout.flush()
+            except Exception:
+                pass
+            os._exit(0)
+    threading.Thread(target=_drain, name="drain", daemon=True).start()
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -8073,21 +8575,46 @@ class H(BaseHTTPRequestHandler):
     SSE_PING = 5.0        # a comment line often enough that nothing calls the socket dead
     SSE_MAX = 300.0       # hard ceiling; the slowest measured hunt is well under a minute
 
-    def _sse(self, link, tk=None):
+    def _sse(self, link, tk=None, release=None, job=None):
         q = queue.Queue()
+        # server-kit (`release`: the gate slot, `job`: the gated hunt or a join of one).
+        # Unset (the Mac): exactly the old stream.
+        gated = release is not None or job is not None
 
         def worker():
+            if release is not None and hasattr(release, "hand"):
+                release.hand()           # server-kit: this thread now holds the slot, not the request's
             _r = None
             try:
-                _r = _edits_job(link, lambda row: q.put(("cand", row)))
+                _r = (job or (lambda oc: _edits_job(link, oc)))(
+                    lambda row: q.put(("cand", row)))
                 q.put(("done", _r))
             except Exception as e:
                 _r = {"result": "error", "error": str(e)[:200]}
                 q.put(("fail", _r))
             finally:
-                # APPLYALL 2026-09-29: the in-flight slot frees when the WORK ends
-                RL.settle(tk, _r)
+                try:
+                    # APPLYALL 2026-09-29: the in-flight slot frees when the WORK ends
+                    RL.settle(tk, _r)
+                finally:
+                    # server-kit: the hunt holds its gate slot until the WORK ends, even when
+                    # the page stopped listening (the job still finishes and caches).
+                    if release is not None:
+                        release()
 
+        if gated:
+            # server-kit: START THE WORK BEFORE TOUCHING THE CLIENT (SERVER-VERIFY-1 B1). The
+            # stream used to write its headers first and return on a dead socket before the
+            # worker (whose finally frees the slot) ever started, so a client that left while
+            # queued leaked its slot forever. Now the worker owns the slot from here on; if
+            # the client is gone the hunt still finishes and caches, as a mid-stream
+            # disconnect always did, and the page's /edits fallback joins it.
+            try:
+                threading.Thread(target=worker, daemon=True).start()
+            except Exception:
+                if release is not None:
+                    release()
+                return
         try:
             self.wfile.write(
                 b"HTTP/1.1 200 OK\r\n"
@@ -8107,7 +8634,8 @@ class H(BaseHTTPRequestHandler):
             RL.settle(tk, None)          # APPLYALL 2026-09-29: no worker, free its slot
             return
         self.close_connection = True
-        threading.Thread(target=worker, daemon=True).start()
+        if not gated:
+            threading.Thread(target=worker, daemon=True).start()
         t0, n = time.time(), 0
         while True:
             try:
@@ -8327,6 +8855,10 @@ class H(BaseHTTPRequestHandler):
                 out["named"] = p["named"]
             if p.get("hunt"):
                 out["hunt"] = _hunt_view(p["hunt"])     # PROGRESS 2026-09-29
+            if p.get("cands"):
+                # server-kit only (nothing else writes it): the hunt's verified rows, for a
+                # page behind a tunnel that holds the event stream back (SERVER-VERIFY-1 S4)
+                out["cands"] = p["cands"]
             return self._send(200, out)
         if u.path == "/health":
             # "service" STAYS "crate engine" until every installed build is gone: the iOS
@@ -8344,23 +8876,28 @@ class H(BaseHTTPRequestHandler):
                                              and os.path.exists(_FS.SHAZAMKIT_BRIDGE))}
             except Exception:
                 _shz = None
-            return self._send(200, {"ok": True, "service": "crate engine",
-                                    "name": "Addify engine",
-                                    "build": _page_build(),
-                                    "shazam": _shz,
-                                    # the page reads this before it offers a scan to the
-                                    # phone's ShazamKit (docs/SHAZAMKIT-ON-DEVICE.md)
-                                    "phone_probes": P.health(),
-                                    "does": ["tiktok", "instagram", "soundcloud", "youtube"],
-                                    # FAST-NAME 9 / 10: page behaviour, only when one is on
-                                    **({"features": {"fast_poll": PAGE_FAST_POLL,
-                                                     "live_rows": PAGE_LIVE_ROWS}}
-                                       if (PAGE_FAST_POLL or PAGE_LIVE_ROWS) else {}),
-                                    # APPLYALL 2026-09-29: THIS caller's tier and scans left,
-                                    # only with the limiter on. Installed builds decode only
-                                    # {ok, service, build}, so an extra key is safe.
-                                    **({"limits": RL.health(self)}
-                                       if RL.MODE != "off" else {})})
+            _hb = {"ok": True, "service": "crate engine",
+                   "name": "Addify engine",
+                   "build": _page_build(),
+                   "shazam": _shz,
+                   # the page reads this before it offers a scan to the
+                   # phone's ShazamKit (docs/SHAZAMKIT-ON-DEVICE.md)
+                   "phone_probes": P.health(),
+                   "does": ["tiktok", "instagram", "soundcloud", "youtube"]}
+            # FAST-NAME 9 / 10: page behaviour, only when one is on
+            if PAGE_FAST_POLL or PAGE_LIVE_ROWS:
+                _hb["features"] = {"fast_poll": PAGE_FAST_POLL, "live_rows": PAGE_LIVE_ROWS}
+            # APPLYALL 2026-09-29: THIS caller's tier and scans left, only with the limiter on.
+            # Installed builds decode only {ok, service, build}, so an extra key is safe.
+            if RL.MODE != "off":
+                _hb["limits"] = RL.health(self)
+            if GATE is not None or _FS.PACE:
+                # server-kit: load facts for check.sh. Old keys above stay exactly as they
+                # are: installed builds decode {ok, service, build} (EngineConfig.swift).
+                _hb["server"] = {"gate": GATE.snapshot() if GATE is not None else None,
+                                 "pace": _FS.pace_stats(),
+                                 "sessions": len(SESSIONS)}
+            return self._send(200, _hb)
         if u.path == "/probes/next":
             if RL.MODE != "off" and not RL.probe_ok(
                     self, (parse_qs(u.query).get("kit") or [""])[0].strip(),
@@ -8434,6 +8971,22 @@ class H(BaseHTTPRequestHandler):
             _tk, _refusal = RL.admit_scan(self, u.path, _paid)
             if _refusal:
                 return self._limited(u.path, _key, _refusal)
+        if GATE is not None:
+            # server-kit, see _ScanGate. On-device ShazamKit binds exactly as on the Mac path
+            # below: /base and /find with ?kit= get this scan's phone for the whole call.
+            # The limiter above may have refused ?nocache (testers only); the gate reads q.
+            if not forced and "nocache" in q:
+                q = dict(q)
+                q.pop("nocache", None)
+            _ph = P.bind((q.get("kit") or [""])[0]) if u.path in ("/base", "/find") else None
+            _tok = FS.PHONE.set(_ph) if _ph is not None else None
+            try:
+                return self._scan_gated(u.path, link, q, _ph)
+            finally:
+                if _ph is not None:
+                    FS.PHONE.reset(_tok)
+                    P.release(_ph)          # waiting polls get 410 and the page stops asking
+                RL.settle(_tk, None)        # APPLYALL 2026-09-29: no-op unless the limiter admitted it
         # /edits/stream is /edits with the answers pushed out as they verify. /edits
         # itself is untouched and stays the fallback for any client that can't stream.
         if u.path == "/edits/stream":
@@ -8478,6 +9031,207 @@ class H(BaseHTTPRequestHandler):
                 FS.PHONE.reset(_tok)
                 P.release(_ph)          # waiting polls get 410 and the page stops asking
 
+    def _send_busy(self, path, key, why):
+        body = _busy_result(key, why)
+        if path == "/edits/stream":
+            # the page resolves a stream on its `done` event and renders what it carries
+            try:
+                self.wfile.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
+                    b"Cache-Control: no-store\r\nConnection: close\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n\r\nretry: 3600000\n\n"
+                    + ("event: done\ndata: %s\n\n" % json.dumps(body)).encode())
+            except Exception:
+                pass
+            self.close_connection = True
+            return
+        b = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Retry-After", str(BUSY_RETRY_S))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _scan_gated(self, path, link, q, ph=None):
+        key = link.split("?")[0]
+        t_arr = time.time()
+        forced = (q.get("nocache") or [""])[0] in ("1", "true", "yes")
+        edits = path in ("/edits", "/edits/stream")
+        if not forced and _cache_get(key) is not None:
+            # a cache hit costs no slot and joins nothing
+            if path == "/edits/stream":
+                return self._sse(link)
+            fn = {"/base": identify_base, "/edits": identify_edits}.get(path, identify)
+            try:
+                res = fn(link)
+            except Exception as e:
+                res = {"result": "error", "error": str(e)[:200]}
+            return self._send(200, res)
+        if path == "/base":
+            with _FLIGHTS_LOCK:
+                hf = _FLIGHTS.get(("hunt", key))
+            if hf is not None and hf.base is not None:
+                if hf.phone_named or _phone_named(hf.base):
+                    return self._send_busy("/base", key, "phone_scan")
+                hf.joined += 1                    # its hunt is running: the stream joins it
+                out = dict(hf.base)
+                out["joined"] = True
+                return self._send(200, out)
+            pb = _parked_base(key)
+            if pb is not None and _phone_named(pb):
+                return self._send_busy("/base", key, "phone_scan")
+            if pb is not None:                    # its hunt is parked: same /base answer
+                out = dict(pb)
+                out["joined"] = True
+                E.tlog("flight_joined", 0.0, kind="parked", url=key, joined=1)
+                return self._send(200, out)
+            f, own = _flight_open("base", key)
+            if not own:
+                return self._send(200, _flight_wait(
+                    f, SCAN_QUEUE_WAIT_S + SCAN_DEADLINE_S + 15, key))
+            return self._base_owner(f, link, key, t_arr, forced, ph)
+        if edits:
+            f, own = _flight_open("hunt", key)
+            if not own:
+                if path == "/edits/stream":
+                    return self._sse(link, job=_join_job(f, key))
+                return self._send(200, _flight_wait(f, HUNT_JOIN_WAIT_S, key))
+            return self._hunt_owner(f, path, link, key, forced)
+        # /find: one whole scan in one call, gated, never joined
+        tok, why = GATE.acquire(path=path, key=key)
+        if tok is None:
+            return self._send_busy(path, key, why)
+        if forced:
+            _NOCACHE[key] = True
+        res = None
+        ttok = E.SCAN_TALLY.set(E.ScanTally())
+        try:
+            try:
+                res = identify(link)
+            except Exception as e:
+                res = {"result": "error", "error": str(e)[:200]}
+        finally:
+            E.SCAN_TALLY.reset(ttok)
+            GATE.release(tok)
+        self._send(200, _phone_mark(res, ph, key))
+
+    def _base_owner(self, f, link, key, t_arr, forced, ph=None):
+        res = None
+        try:
+            # SERVER-VERIFY-1 M2: /progress kept an earlier scan's song for this clip while
+            # this one waited in the queue ("named" at 0.0 s, then busy). Start it clean.
+            _PROG.pop(key, None)
+            _prog_set(key, 2, "Waiting for a free slot")
+            GATE.drop(key)                        # a rescan frees the old hunt's slot
+            tok, why = GATE.acquire(path="/base", key=key)
+            if tok is None:
+                _PROG.pop(key, None)
+                res = _busy_result(key, why)
+                return self._send_busy("/base", key, why)
+            if forced:
+                _NOCACHE[key] = True
+            dtok = _FS.DEADLINE.set(t_arr + SCAN_DEADLINE_S)
+            tally = E.ScanTally()                 # this scan's own downloads and lost evidence
+            ttok = E.SCAN_TALLY.set(tally)
+            out = None
+            try:
+                try:
+                    res = identify_base(link)
+                except Exception as e:
+                    res = {"result": "error", "error": str(e)[:200]}
+                out = _phone_mark(res, ph, key)   # before parking: joiners see the mark
+            finally:
+                E.SCAN_TALLY.reset(ttok)
+                _FS.DEADLINE.reset(dtok)
+                if key in SESSIONS and (res or {}).get("edits_pending"):
+                    # the hunt judges its crown on this half's lost evidence too
+                    SESSIONS[key]["_scan_tally"] = tally
+                    _PARKED_BASE[key] = (time.time(), res)
+                    GATE.reserve(tok, key)
+                else:
+                    GATE.release(tok)
+        finally:
+            _flight_close(f, res)
+        self._send(200, out if out is not None else res)
+
+    def _hunt_owner(self, f, path, link, key, forced):
+        pb = _PARKED_BASE.pop(key, None)
+        f.base = pb[1] if pb else None
+        tok = GATE.claim(key, path)               # the slot its /base kept for it
+        why = None
+        if tok is None:
+            tok, why = GATE.acquire(hunt=(key in SESSIONS), path=path, key=key)
+        if tok is None:
+            _flight_close(f, _busy_result(key, why))
+            return self._send_busy(path, key, why)
+        if forced and path == "/edits":
+            _NOCACHE[key] = True
+        _ctx = SESSIONS.get(key) or {}
+        sid = (_ctx.get("src") or {}).get("sound_id")
+        base_tally = _ctx.get("_scan_tally")      # the /base half's own tally, if it parked this
+        f.phone_named = _phone_named(_ctx.get("res")) or _phone_named(f.base)
+        slot = _Slot(tok, on_release=lambda: _flight_close(f))
+
+        def job(on_cand):
+            t_h0 = time.time()
+            res = None
+            tally = E.ScanTally()                 # this hunt's own downloads, nobody else's
+            ttok = E.SCAN_TALLY.set(tally)
+            try:
+                def oc(row):
+                    f.cands.append(row)
+                    _prog_cand(key, row)
+                    if on_cand is not None:
+                        on_cand(row)
+                res = _edits_job(link, oc) if path == "/edits/stream" else identify_edits(link)
+                starved, why, facts = _hunt_starved(tally, base_tally)
+                found = (res or {}).get("result") == "found"
+                crown = ((res or {}).get("exact") or {}).get("title") or ""
+                if starved and found and crown:
+                    # Not an answer: its downloads died at the wall, or it lost evidence (a
+                    # refused comment page, a late sound-page lane), so the upload it crowned
+                    # may not be the best one (SERVER-VERIFY-2 B1, mason at core 1.0).
+                    # Nothing cached, "busy, try again".
+                    E.tlog("hunt_starved", time.time() - t_h0, url=key, why=why,
+                           crown=crown[:80], **facts)
+                    _unstore(key, res, sid)
+                    res = _busy_result(key, "starved", t_h0, why)
+                elif starved and found:
+                    # no crown, and evidence was missing: shown, but not kept
+                    E.tlog("hunt_starved_uncached", time.time() - t_h0, url=key, why=why, **facts)
+                    _unstore(key, res, sid)
+                elif (STARVE_HUNT_S > 0 and time.time() - t_h0 > STARVE_HUNT_S
+                      and found and not res.get("exact")):
+                    # A hunt this slow was short of CPU or memory (kyks on the 1 GB test box:
+                    # find_edit 167 s, no crown; alone it crowned in 23 s). Its "no crown" is
+                    # not a finding, so it is not kept: the next scan of the clip hunts again.
+                    E.tlog("hunt_slow_uncached", time.time() - t_h0, url=key,
+                           downloads=facts["downloads"], killed=facts["killed"])
+                    _unstore(key, res, sid)
+                return res
+            except Exception as e:
+                res = {"result": "error", "error": str(e)[:200]}
+                raise
+            finally:
+                E.SCAN_TALLY.reset(ttok)
+                (_PROG.get(key) or {}).pop("cands", None)
+                _flight_close(f, res)
+
+        if path == "/edits/stream":
+            return self._sse(link, release=slot, job=job)
+        res = None
+        try:
+            try:
+                res = job(None)
+            except Exception as e:
+                res = {"result": "error", "error": str(e)[:200]}
+        finally:
+            slot()
+        self._send(200, res)
+
     def do_POST(self):
         u = urlparse(self.path)
         _ra = RL.over_any(self)        # APPLYALL 2026-09-29: 0 unless enforce and over
@@ -8509,10 +9263,18 @@ class H(BaseHTTPRequestHandler):
                 if _refusal:
                     return self._limited("/listen", "listen", _refusal)
                 _res = None
+                _gtok = None
                 try:
+                    if GATE is not None:
+                        _gtok, _why = GATE.acquire(path="/listen", key="listen")   # server-kit
+                        if _gtok is None:
+                            _res = {"busy": _why}
+                            return self._send_busy("/listen", "listen", _why)
                     _res = identify_mic(body, kind)
                     return self._send(200, _res)
                 finally:
+                    if _gtok is not None:
+                        GATE.release(_gtok)
                     RL.settle(_tk, _res)
             if u.path == "/review/note":
                 return self._send(200, record_review_note(RL.cap_body(json.loads(body.decode()))))
@@ -8544,4 +9306,12 @@ if __name__ == "__main__":
         print("restored %d url + %d sound answers from the per-port store" % (_pu, _ps))
     CORR.poll(force=True)   # first load; its sync drops restored answers it disagrees with
     print("corrections: %d loaded; X alerts %s" % (len(CORR.entries), XALERT.why))
+    if DRAIN_S > 0 and GATE is not None:
+        import signal as _signal
+        _signal.signal(_signal.SIGTERM, _on_sigterm)      # server-kit: drain, then exit
+
+        class _Srv(ThreadingHTTPServer):
+            daemon_threads = True
+            request_queue_size = 64                      # the stdlib default is 5
+        _Srv((HOST, PORT), H).serve_forever()
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()

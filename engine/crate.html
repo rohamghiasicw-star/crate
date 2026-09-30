@@ -2027,10 +2027,14 @@ var SP_SIGNIN=DEV;
    the server at all. From the user's side the app is dead while the server is fine, and
    only a reload fixes it. So a failure leaves the flag null and the next attempt re-checks. */
 var engineUp=null, engineInfo=null;
+// server-kit: only the one-server engine lists verified rows on /progress while a hunt runs
+// (its /health carries a "server" block). The Mac never sets this, so nothing changes there.
+var LATE_ROWS=false;
 function checkEngine(){if(engineUp===true) return Promise.resolve(true);
   return fetch(ENGINE+'/health').then(function(r){return r.ok?r.json():null;})
     .then(function(j){
       if(j) engineInfo=j;
+      if(j&&j.server) LATE_ROWS=true;
       // STALE SHELL GUARD. An installed home-screen app keeps the page it was installed
       // with, so a fixed bug keeps running on the phone until something forces a reload.
       // If the engine reports a newer build than the one this page was stamped with, park
@@ -2715,6 +2719,12 @@ function progPollOn(u){
           if(p.hunt){ pgMark('hunt'); pgHunt(p.hunt); }
           else if(p.pct>=60) pgMark('hunt');
         }
+        // server-kit: a quick tunnel holds the event stream back until the hunt ends, so the
+        // server also lists the verified rows here. Only the server sends p.cands; liveAdd
+        // never lists one twice, so rows that also arrive by the stream are not doubled.
+        if(p.cands && p.cands.length && curURL===u && typeof liveAdd==='function'){
+          p.cands.forEach(function(c){ try{ liveAdd(c); }catch(e){} });
+          say('Verified '+(LIVE.length===1?'1 version':LIVE.length+' versions')+' &middot; still checking');}
       }).catch(function(){}).then(function(){ if(guard) progBusy=false; });
   };
   var next=function(){ progT=setTimeout(function(){ tick(); if(progT!==null) next(); },
@@ -3880,6 +3890,13 @@ function renderResult(d,partial){
   if(d.result==='rate_limited'&&d.busy==='limit'){setEndTitle(d);
     var _rm=Math.max(1,Math.round((+d.retry_after||60)/60));
     result.innerHTML=errCard('sat','Scan limit reached','You started a lot of new scans in a short time.<br>Try again in about '+_rm+' min.'); return;}
+  // server-kit: the one-server engine's own scan gate or Shazam pacing answered busy (d.busy:
+  // "queue", "shazam", "starved", "draining"). It is not TikTok, so it gets its own words. Only the
+  // server sends d.busy (the limit case above is the engine's per-user scan limit).
+  if(d.result==='rate_limited'&&d.busy){setEndTitle(d); result.innerHTML=errCard('sat','Addify is busy','Lots of scans right now.<br>Try again in a minute.','<button class="cta" id="retrybtn">Try again</button>');
+    var _rbb=document.getElementById('retrybtn');
+    if(_rbb) _rbb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
+    return;}
   // APPLYALL 2026-09-29 (build 3): plain words, and a Try again button (the card was a dead end)
   if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','TikTok is limiting requests right now.<br>Wait a moment and try again.','<button class="cta" id="retrybtn">Try again</button>');
     var _rtb=document.getElementById('retrybtn');
@@ -5574,7 +5591,7 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // partial=false deletes the progress element, so pgDone() was painting into
         // nothing and the bar simply vanished somewhere in the 60s-90s. The percentage
         // has to land before the thing displaying it is taken away.
-        var settledUI=false, budgetHit=false, lateCap=null, scanURL=p.url,
+        var settledUI=false, budgetHit=false, lateCap=null, scanURL=p.url, huntBusy=false, lateRows=null,
             baseShown=false, lateFull=null, scanFinal=false, logTs=0;
         var onScan=function(){return !leftScan && curURL===scanURL;};
         /* ONE BRIDGE POST AND ONE SCAN-LOG ENTRY PER SCAN, WITH THE FINAL ANSWER (COMMIT-AUDIT
@@ -5627,7 +5644,18 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         var lands=function(x){return !!(x&&x.result&&x.result!=='engine_down'&&(x.base_song||x.base_uncertain));};
         var settle=function(full){
           if(tok!==scanTok) return;        // APPLYALL (finding 15): a later scan owns the screen
+          // server-kit: a hunt the server could not run (busy / starved) is not an answer.
+          // The song /base named stays on screen as final; it is never replaced by the busy
+          // card. Only the server sends d.busy.
+          if(full&&full.busy&&full.result==='rate_limited'){ huntBusy=true; full=null; }
           if(settledUI){
+            if(huntBusy&&budgetHit){
+              // server-kit + TRACKER 2026-09-29: a busy hunt after the budget ends like a failed
+              // hunt below: tracker off, the named song is final, and the card says so
+              clearTimeout(lateCap); huntLineOff(); finalize(null);
+              if(baseShown && onScan()){ try{renderResult(Object.assign({},d,{
+                candidates:(LIVE.length?LIVE.slice():(d.candidates||[])), edits_pending:false}),false);}catch(e){} }
+              return;}
             // THE EXACT EDIT CAN LAND AFTER THE BUDGET (2026-09-26, Roham: "the exact edit is
             // not being found anymore, just the base song"). The budget only decides when the
             // user gets a usable screen; the hunt keeps running. Hunts were taking 21-29 s
@@ -5691,9 +5719,29 @@ function run(raw){if(busy) return; var p=parseLink(raw);
               else {
               HUNT_ON=true;                      // TRACKER 2026-09-29: the card shows the tracker, not a second line
               try{renderResult(dshow,false);}catch(e){renderResult(d,false);}
+              // server-kit: the hunt came back busy (server gate / Shazam / starved) during pgDone():
+              // the named song is final, drawn without the tracker, as the 90 s cap draws it
+              if(huntBusy){ HUNT_ON=false; try{renderResult(dd,false);}catch(e){} finalize(null); return; }
               try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect');
                 if(_lrows){ var _ll=document.createElement('div'); _ll.className='list'; _ll.id='livelist';
                   _ll.style.marginTop='11px'; if(_s) _s.parentNode.insertBefore(_ll,_s); else _r.appendChild(_ll); livePaint(''); }}catch(e){}
+              // server-kit: behind a quick tunnel the stream's rows only land with the final
+              // answer (SERVER-VERIFY-1 S4), so the server also lists them on /progress. Keep
+              // folding new ones into this card until the answer (or the 90 s cap) arrives.
+              if(LATE_ROWS){ var _lastN=LIVE.length; lateRows=setInterval(function(){
+                if(scanFinal||!onScan()){ clearInterval(lateRows); return; }
+                fetch(ENGINE+'/progress?url='+encodeURIComponent(scanURL),{cache:'no-store'})
+                  .then(function(r){return r.json();}).then(function(pp){
+                    if(scanFinal||!onScan()||!pp||!pp.cands) return;
+                    pp.cands.forEach(function(c){ try{liveAdd(c);}catch(e){} });
+                    if(LIVE.length<=_lastN) return;
+                    _lastN=LIVE.length;
+                    // with live rows on, liveAdd already paints #livelist high to low
+                    if(_lrows){ try{livePaint('');}catch(e){} return; }
+                    dd.candidates=LIVE.slice();
+                    // TRACKER: HUNT_ON is still true, so the card draws the tracker itself (no latehunt line)
+                    try{renderResult(dd,false);}catch(e){}
+                  }).catch(function(){}); }, 2500); }
               lateCap=setTimeout(function(){
                 HUNT_ON=false;                   // TRACKER 2026-09-29
                 if(onScan()){ try{renderResult(dd,false);}catch(e){} }
