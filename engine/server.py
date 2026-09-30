@@ -8526,6 +8526,13 @@ def _phone_named(res):
     return bool(isinstance(res, dict) and res.get("_phone_named"))
 
 
+# PHONE JOIN 2026-10-01 (Roham: "every time I go for a scan it says Addify is busy"): the app can
+# send the same scan twice (share sheet + page, a retry), and the phone-named lock answered the
+# owner's own second request "busy". With CRATE_PHONE_JOIN on (default), a second request for a
+# clip whose scan is running joins it like any other scan. Off restores the old lock.
+PHONE_JOIN = os.environ.get("CRATE_PHONE_JOIN", "1") not in ("0", "false", "no")
+
+
 # A PHONE-NAMED ANSWER STAYS WITH ITS OWN SCAN (0d57a5e's _phone_unconfirmed, carried into the
 # gated path). Its title, artist, link and artwork came from one user's phone, which is client
 # input, so it never enters a shared cache; a join is a share too. Another user on the same
@@ -8534,7 +8541,7 @@ def _flight_wait(f, timeout, key):
     f.ev.wait(timeout)
     if f.res is None:
         return _busy_result(key, "joined")
-    if f.phone_named or _phone_named(f.res):
+    if (f.phone_named or _phone_named(f.res)) and not PHONE_JOIN:
         return _busy_result(key, "phone_scan")
     out = dict(f.res)
     out["joined"] = True
@@ -9260,14 +9267,14 @@ class H(BaseHTTPRequestHandler):
             with _FLIGHTS_LOCK:
                 hf = _FLIGHTS.get(("hunt", key))
             if hf is not None and hf.base is not None:
-                if hf.phone_named or _phone_named(hf.base):
+                if (hf.phone_named or _phone_named(hf.base)) and not PHONE_JOIN:
                     return self._send_busy("/base", key, "phone_scan")
                 hf.joined += 1                    # its hunt is running: the stream joins it
                 out = dict(hf.base)
                 out["joined"] = True
                 return self._send(200, out)
             pb = _parked_base(key)
-            if pb is not None and _phone_named(pb):
+            if pb is not None and _phone_named(pb) and not PHONE_JOIN:
                 return self._send_busy("/base", key, "phone_scan")
             if pb is not None:                    # its hunt is parked: same /base answer
                 out = dict(pb)
