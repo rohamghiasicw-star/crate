@@ -44,6 +44,8 @@ def write_cookies(exp_login, exp_sid, signed_in=True, extra=""):
         rows.append("#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t%d\t__Secure-3PSID\tFAKEVALUE-3psid" % exp_sid)
     rows.append(".youtube.com\tTRUE\t/\tFALSE\t%d\tPREF\tFAKEVALUE-pref" % (time.time() + 9e6))
     rows.append(".google.com\tTRUE\t/\tTRUE\t%d\tSID\tFAKEVALUE-google-sid" % (time.time() + 9e6))
+    rows.append("accounts.google.com\tFALSE\t/\tTRUE\t%d\tLSID\tFAKEVALUE-lsid" % (time.time() + 9e6))
+    rows.append(".notyoutube.com\tTRUE\t/\tTRUE\t%d\tLOGIN_INFO\tFAKEVALUE-spoof" % (time.time() + 9e6))
     with open(CK, "w") as f:
         f.write("\n".join(rows) + "\n" + extra)
     os.chmod(CK, 0o640)
@@ -81,8 +83,11 @@ class FakePopen(object):
         seen = {}
         if ck:
             st = os.stat(ck)
+            body = open(ck).read()
             seen = {"path": ck, "mode": stat.S_IMODE(st.st_mode),
-                    "same": open(ck).read() == open(CK).read()}
+                    "yt_rows": sum(1 for ln in body.splitlines() if "youtube.com\t" in ln),
+                    "google": "google.com" in body, "header": body.startswith("# Netscape"),
+                    "login": "LOGIN_INFO" in body}
         FakePopen.calls.append({"args": self.args, "ck": seen, "kw": kw})
         self._t = 0
 
@@ -216,7 +221,10 @@ try:
     c = FakePopen.calls[0] if FakePopen.calls else {}
     check("reserved row: today's route fails, one cookie download lands", bool(got) and len(FakePopen.calls) == 1)
     check("cookie call reads a private copy, not the file itself",
-          c.get("ck", {}).get("path") not in (None, CK) and c["ck"]["same"], c.get("ck"))
+          c.get("ck", {}).get("path") not in (None, CK), c.get("ck"))
+    check("the copy keeps every youtube.com row (#HttpOnly_ too) and the header",
+          c.get("ck", {}).get("yt_rows") == 4 and c["ck"]["header"] and c["ck"]["login"], c.get("ck"))
+    check("the copy drops the google.com session rows", c.get("ck", {}).get("google") is False, c.get("ck"))
     check("the copy is 0600", c.get("ck", {}).get("mode") == 0o600, c.get("ck"))
     check("the copy is gone afterwards", not os.path.exists(c.get("ck", {}).get("path", "/x")))
     check("no --no-warnings on the cookie call (warnings carry the verdict)",

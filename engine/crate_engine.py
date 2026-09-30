@@ -628,7 +628,9 @@ def _is_yt_row(c):
 #   * paused after YT_CKF_PAUSE_AFTER refusals in a row on the same file, until the file changes
 #     or YT_CKF_PAUSE_S passes (then it tries again), so a dead login stops asking YouTube.
 #   * the file is never written: each download reads a private 0600 copy in the scan's temp dir
-#     (yt-dlp saves its cookie jar back on exit) and the copy is removed right after.
+#     (yt-dlp saves its cookie jar back on exit) and the copy is removed right after. The copy
+#     carries the youtube.com rows only: a browser export also holds google.com session cookies
+#     (the whole Google account), and yt-dlp, which parses untrusted pages, never needs them.
 #   * no cookie value reaches a log, /health or an error text: the health check keeps only each
 #     line's name and expiry, and yt-dlp's error text is cut to one line with URLs removed.
 YT_CKF_PATH = (os.environ.get("CRATE_YT_COOKIES_FILE") or "").strip()
@@ -698,7 +700,7 @@ def _ytckf_info(sig):
                     elif line.startswith("#") or not line.strip():
                         continue
                     p = line.split("\t", 6)[:6]      # domain, flag, path, secure, expiry, name
-                    if len(p) < 6 or not p[0].lstrip(".").endswith("youtube.com"):
+                    if len(p) < 6 or not _ytckf_yt_row(line):
                         continue
                     info["rows"] += 1
                     try:
@@ -721,6 +723,16 @@ def _ytckf_info(sig):
     with _YTCKF_LOCK:
         _YTCKF["info"], _YTCKF["info_sig"] = info, sig
     return info
+
+
+def _ytckf_yt_row(line):
+    """A cookies.txt row for youtube.com (or a subdomain), #HttpOnly_ rows included."""
+    if line.startswith("#HttpOnly_"):
+        line = line[10:]
+    elif line.startswith("#"):
+        return False
+    d = line.split("\t", 1)[0].strip().lstrip(".")
+    return "\t" in line and (d == "youtube.com" or d.endswith(".youtube.com"))
 
 
 def _ytckf_state(now=None):
@@ -848,8 +860,11 @@ def _dl_yt_ckf(url, dst, seconds, abort, scan):
     ok, timed_out, err, ck, p = False, False, "", None, None
     try:
         fd, ck = tempfile.mkstemp(prefix=".ytck-", suffix=".txt", dir=os.path.dirname(dst) or None)
-        with os.fdopen(fd, "wb") as out, open(YT_CKF_PATH, "rb") as src:
-            out.write(src.read())
+        with open(YT_CKF_PATH, "r", encoding="utf-8", errors="replace") as src:
+            rows = [ln if ln.endswith("\n") else ln + "\n" for ln in src if _ytckf_yt_row(ln)]
+        with os.fdopen(fd, "w") as out:                  # youtube.com rows only (see above)
+            out.write("# Netscape HTTP Cookie File\n")
+            out.writelines(rows)
         args = [a for a in YTDLP_YT if a != "--no-warnings"] + [
             url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
             "-o", dst.replace(".wav", ".%(ext)s"),
