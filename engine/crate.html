@@ -387,111 +387,128 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
   animation:pop .3s var(--ease) both}
 .abadge svg{width:11px;height:11px}
 
-/* ---------- the dial ----------
-   DIALV3 2026-09-29: KONNOR'S SPOKE DIAL, BUILT TO HIS TABLE (addify-harness/dialv3/KONNOR-SPEC.md,
-   "Addify Scanning Dial Redesign"; Roham: "a clean dial ... make the lines skinnier and thinner and
-   going inside the circle right to the center"). Sizes are his 920-wide mock units: --u is one
-   unit, 0.437 px on a 402-wide phone and proportional on every other phone width.
-     face     circle r254, gradient #1A1626 -> #13101B, 2 u border white 6%
-     spokes   90 straight lines every 4 deg, 3.4 u thick with round ends, r140 -> r242, fading
-              30% at the centre to 100% at the rim (one radial mask on the layer)
-     colour   unscanned white 13%; scanned #7D70F2 at 62%, brightening to #C3C0FF at 100% over
-              the last 35% of the circle behind the needle (a hot layer inside each spoke)
-     needle   white, 4 u, from the centre circle's edge to r240, a dot on the tip, soft glow;
-              angle = progress x 360, clockwise from 12 o'clock
-     trail    #8478F2 wedge behind the needle, 85 deg, 20% at the needle fading to 0
-     centre   circle r132, gradient #231E33 -> #171320, 2 u border white 9%; the spokes and the
-              needle stop at its edge, and it carries the number (88 u, % 40 u, stage 22 u)
-   A spoke counts as scanned when its angle is at or behind the needle. Every change eases over
-   300 ms linear (--rl-t); .fin shortens that for the finishing run's 16 ms frames, .rs turns it
-   off for the reset. The box is 560 u but lays out in the old dial's box (--dfp), so the dial
-   sits centred where the old one sat. ONE component, rlHTML() / rlPaint(), drawn twice: #dial on the scan
-   screen (the naming dial) and .rl.sm, 45 spokes, as step 2 of the hunt tracker (the edit hunt's
-   own 0-100). At 100 it turns mint once, with one bloom. rgba() of channel tokens only, no
+/* ---------- the wave loader ----------
+   WAVE 2026-09-30: KONNOR'S WAVE LOADER (addify-harness/waveloader/KONNOR-WAVE-SPEC.md, "Addify Wave
+   Loader - Handoff for Roham's Claude"; Konnor: "change everything that it says in the link"). Both
+   loaders are the Addify logo wave drawing itself in white from 0 to 100. Only the look changed: the
+   pacing is dial v3's, unchanged (DVP / dvStep / dvFinish, the 100 ms tick), and the wave is drawn
+   from the displayed value, which follows the pacer over 300 ms linear exactly as the dial's CSS
+   easing did (wvTo / wvFrame), so the drawn length IS the number on screen.
+   Scan screen (#dial, sizes in the 920-wide mock's units, --u = 0.437 px on a 402 phone):
+     tile     380 square, radius 92, gradient 150 deg #8A81EE -> #6A5EDE 55% -> #5A4FD0, a soft white
+              highlight on the top half, a 1.5 white ring at 22%
+     glow     #7F77DD behind the tile: 60 blur at 18% at 0, 100 blur at 50% at 100 (two blurred
+              layers crossfaded, so only opacity changes per frame)
+     wave     y = 0.49 - 0.21 sin(2 pi (x - 0.163) / 0.45), x 0.163 -> 0.838 of the tile, stroke 11.6%,
+              round caps and joins; the track is the same path at white 15%, the progress is drawn by
+              length (dasharray / dashoffset) in white fading to #E2DFFF top to bottom, with a soft
+              white glow on the tip and a dot at 0
+     number   bold 96, tabular, centred under the tile; % 42 in #B4AEC8 hanging off the right
+     status   one line, 34, #B4AEC8, crossfading at 34 and 70
+   The old headings, NAMING and the bottom timeline are gone from the scan screen.
+   Tracker step 2 (.wv2, the old 64 px dial slot, S = 64): the bare white wave (x 0.17-0.83 S,
+   wavelength (x1 - x0) / 1.5, amplitude 0.125 S, midline 0.34 S, stroke 0.07 S), the track at 17%,
+   a faint purple glow that grows to rgba(112,98,235,.09), the number (0.22 S, top 0.635 S, % 0.115 S
+   at 75%). Done: the wave and number fade, a 28 px mint check takes the slot, the line to step 3
+   fills, then step 3 checks (.htrack.hdone, timed as Konnor's demo). rgba() and plain hex only, no
    color-mix() and no @property: iOS 16.0. */
 /* FIX 2026-09-29: proportional on every phone width, 375 to 430 (u = width / 920; it was capped
    at 402, so a 430 phone got the 402 size). Wider than any phone (desktop, iPad) keeps the 402
-   size. --dfp is the old dial's layout box (224 / 208 at 380 or less / 184 on short phones): the
-   dial lays out in exactly that, so its centre and every other element on the scan screen sit
-   where they did before at every width. */
-:root{--u:calc(min(100vw,430px)/920);--dfp:224px}
+   size. --dfp is the old dial's layout box (224 / 208 at 380 or less / 184 on short phones). */
+:root{--u:calc(min(100vw,430px)/920);--dfp:224px;--wvink:255,255,255;--wvmute:#B4AEC8}
 @media (max-width:380px){:root{--dfp:208px}}
 @media (min-width:431px){:root{--u:calc(402px/920)}}
 @media (max-height:690px){:root{--u:.36px;--dfp:184px}}   /* short phones: the old 184 px rule's size */
-.rl{--rl-t:300ms;--box:560;--u2:calc(2*var(--u));
-  position:relative;width:calc(var(--box)*var(--u));height:calc(var(--box)*var(--u));
-  margin:calc((var(--dfp) - var(--box)*var(--u))/2) auto;isolation:isolate;flex:none}
-.rl>*{position:absolute;pointer-events:none}
-.rl-face,.rl-cap,.rl-trail{left:50%;top:50%;border-radius:50%}
-.rl-face{width:calc(508*var(--u));height:calc(508*var(--u));margin:calc(-254*var(--u)) 0 0 calc(-254*var(--u));
-  background:linear-gradient(180deg,var(--dvface1),var(--dvface2));
-  box-shadow:inset 0 0 0 max(1px,var(--u2)) var(--dvfaceb)}
-.rl-rot{inset:0;transform:rotate(0deg);will-change:transform;transition:transform var(--rl-t) linear}
-.rl-trail{position:absolute;width:calc(484*var(--u));height:calc(484*var(--u));margin:calc(-242*var(--u)) 0 0 calc(-242*var(--u));
-  background:conic-gradient(rgba(var(--dvtrail),0) 275deg,rgba(var(--dvtrail),.2) 360deg);
-  transition:opacity var(--rl-t) linear}
-.rl.done .rl-trail{background:conic-gradient(rgba(var(--goodrgb),0) 275deg,rgba(var(--goodrgb),.2) 360deg)}
-.rl-spokes{inset:0;
-  -webkit-mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 50%,#000 86.43%);
-          mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 50%,#000 86.43%)}
-.rl-sp{position:absolute;left:50%;top:50%;width:calc(3.4*var(--u));height:calc(102*var(--u));
-  margin:calc(-51*var(--u)) 0 0 calc(-1.7*var(--u));border-radius:99px;background:var(--dvoff);overflow:hidden;
-  transform:rotate(var(--a)) translateY(calc(-191*var(--u)));transition:background-color var(--rl-t) linear}
-.rl-sp.on{background:rgba(var(--dvlit),var(--dvlita))}
-.rl-sp b{position:absolute;inset:0;border-radius:inherit;opacity:0;background:rgb(var(--dvhot));
-  transition:opacity var(--rl-t) linear}
-.rl.done .rl-sp.on{background:rgba(var(--goodrgb),var(--dvlita))}
-.rl.done .rl-sp b{background:rgb(var(--dvgoodhot))}
-.rl-cap{width:calc(264*var(--u));height:calc(264*var(--u));margin:calc(-132*var(--u)) 0 0 calc(-132*var(--u));
-  background:linear-gradient(180deg,var(--dvcap1),var(--dvcap2));
-  box-shadow:inset 0 0 0 max(1px,var(--u2)) var(--dvcapb)}
-.rl-nd{position:absolute;left:50%;top:calc(50% - 240*var(--u));width:calc(4*var(--u));height:calc(108*var(--u));
-  margin-left:calc(-2*var(--u));border-radius:99px;background:var(--dvneedle);
-  box-shadow:0 0 calc(7*var(--u)) rgba(var(--dvhot),.85),0 0 calc(18*var(--u)) rgba(var(--dvtrail),.55);
-  transition:box-shadow .32s ease}
-.rl-nd::after{content:"";position:absolute;left:50%;top:0;width:calc(11*var(--u));height:calc(11*var(--u));
-  margin:calc(-5.5*var(--u)) 0 0 calc(-5.5*var(--u));border-radius:50%;background:var(--dvneedle);
-  box-shadow:0 0 calc(9*var(--u)) rgba(var(--dvhot),.9)}
-.rl.done .rl-nd{box-shadow:0 0 calc(7*var(--u)) rgba(var(--goodrgb),.85),0 0 calc(18*var(--u)) rgba(var(--goodrgb),.5)}
-.rl.done .rl-nd::after{box-shadow:0 0 calc(9*var(--u)) rgba(var(--goodrgb),.9)}
-/* the readout sits on the centre circle and does not turn */
-.rl-read{inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(12*var(--u))}
-.rl-num{display:flex;align-items:baseline;font-size:calc(88*var(--u));font-weight:750;letter-spacing:-.03em;
-  line-height:1;font-variant-numeric:tabular-nums;color:var(--text)}
-.rl-num i{font-style:normal;font-size:calc(40*var(--u));font-weight:700;letter-spacing:0;margin-left:calc(9*var(--u));
-  color:var(--muted);transition:color .32s ease}
-.rl-num.e1 i{margin-left:calc(-14*var(--u))}  /* tabular numerals give a trailing 1 the width of a 0 */
-.rl-stage{font-size:calc(22*var(--u));font-weight:700;letter-spacing:calc(6*var(--u));margin-right:calc(-6*var(--u));
-  text-transform:uppercase;line-height:1;color:var(--text);transition:color .32s ease}   /* white, as in the mock */
-.rl.done .rl-num i,.rl.done .rl-stage{color:var(--good)}
-/* 100: one bloom off the face */
-.rl::after{content:"";position:absolute;inset:calc(26*var(--u));border-radius:50%;border:2px solid var(--good);opacity:0;pointer-events:none}
-.rl.done.land::after{animation:rlbloom 620ms var(--ease) 1 both}
-@keyframes rlbloom{from{opacity:.5;transform:scale(.96)}to{opacity:0;transform:scale(1.12)}}
-.rl.fin{--rl-t:60ms}
-.rl.rs .rl-rot,.rl.rs .rl-sp,.rl.rs .rl-sp b,.rl.rs .rl-trail{transition:none}
-/* the small copy (the tracker's step 2, 64 px): the face fills the box, 45 spokes (every 8 deg)
-   at least a pixel wide, a 1.5 px needle, and the number only (the step's label says the rest) */
-.rl.sm{--box:508;--u:calc(64px/508);margin:0}
-.rl.sm .rl-spokes{-webkit-mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 55.12%,#000 95.28%);
-                          mask-image:radial-gradient(closest-side,rgba(0,0,0,.3) 55.12%,#000 95.28%)}
-.rl.sm .rl-sp{width:1px;margin-left:-.5px}
-.rl.sm .rl-nd{width:1.5px;margin-left:-.75px;box-shadow:0 0 2px rgba(var(--dvhot),.9),0 0 4px rgba(var(--dvtrail),.5)}
-.rl.sm .rl-nd::after{width:3.5px;height:3.5px;margin:-1.75px 0 0 -1.75px;box-shadow:0 0 2px rgba(var(--dvhot),.9)}
-.rl.done.sm .rl-nd{box-shadow:0 0 2px rgba(var(--goodrgb),.9),0 0 4px rgba(var(--goodrgb),.5)}
-.rl.done.sm .rl-nd::after{box-shadow:0 0 2px rgba(var(--goodrgb),.9)}
-.rl.sm .rl-read{gap:0}
-.rl.sm .rl-num{font-size:11.5px;letter-spacing:-.02em}
-.rl.sm .rl-num i{font-size:6.5px;margin-left:1px}
-.rl.sm .rl-num.e1 i{margin-left:-2px}
-.rl.sm .rl-num.c3{font-size:10px}   /* "100" clears the spokes */
-.rl.sm::after{inset:0;border-width:1.5px}
-/* reduced motion: no sweep - no needle, no trail, just the number and the lit spokes */
-@media (prefers-reduced-motion:reduce){
-  .rl-rot{display:none}
-  .rl-rot,.rl-sp,.rl-sp b,.rl-trail{transition:none}
-  .rl.done.land::after{animation:none}
-}
+:root[data-theme="light"]{--wvink:23,20,31;--wvmute:var(--muted)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--wvink:23,20,31;--wvmute:var(--muted)}}
+.wv{position:relative;display:flex;flex-direction:column;align-items:center;flex:none;width:100%}
+.wv-stage{position:relative;width:calc(380*var(--u));height:calc(380*var(--u));flex:none}
+.wv-g{position:absolute;inset:0;border-radius:calc(92*var(--u));pointer-events:none}
+.wv-g0{box-shadow:0 0 calc(60*var(--u)) 0 #7F77DD;opacity:.18}
+.wv-g1{box-shadow:0 0 calc(100*var(--u)) calc(6*var(--u)) #7F77DD;opacity:0}
+.wv-tile{position:absolute;inset:0;border-radius:calc(92*var(--u));overflow:hidden;color:#FFFFFF;
+  background:linear-gradient(150deg,#8A81EE 0%,#6A5EDE 55%,#5A4FD0 100%);
+  box-shadow:inset 0 0 0 max(.5px,calc(1.5*var(--u))) rgba(255,255,255,.22)}
+.wv-tile::before{content:"";position:absolute;left:0;right:0;top:0;height:50%;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.04) 60%,rgba(255,255,255,0))}
+.wv-svg{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.wv-tr,.wv-pr{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.wv-tr{stroke:currentColor;stroke-opacity:.15}
+.wv-num{display:flex;justify-content:center;align-items:baseline;margin-top:calc(58*var(--u));
+  font-size:calc(96*var(--u));font-weight:700;line-height:1;letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums;color:var(--text)}
+/* FIX 2026-09-30: the % sits raised off the digits' baseline as in Konnor's demo frame (spec-3: its
+   bottom 7 units above the digits', a 9-unit gap); it was on the baseline with an 11-unit gap */
+.wv-num i{font-style:normal;width:0;overflow:visible;white-space:nowrap;position:relative;left:calc(.6*var(--u));
+  top:calc(-7.7*var(--u));font-size:calc(42*var(--u));font-weight:700;letter-spacing:0;color:var(--wvmute)}
+.wv-st{position:relative;width:100%;height:calc(46*var(--u));margin-top:calc(21*var(--u));
+  font-size:calc(34*var(--u));font-weight:500;line-height:calc(46*var(--u));color:var(--wvmute);
+  text-align:center;white-space:nowrap}
+.wv-st span{position:absolute;left:0;right:0;top:0;opacity:0;transition:opacity .3s linear}
+.wv-st span.on{opacity:1}
+/* the finish: the tile flies to the album art on the Match found screen (wlMorph). The overlay is a
+   direct child of <body>: .app carries a filled transform, which would make it the containing block */
+.wvm{position:fixed;z-index:60;pointer-events:none;will-change:transform}
+.wvm-s{position:absolute;inset:0;will-change:transform}
+.wvm .wv-tile{will-change:border-radius}
+.wvm-a{position:absolute;inset:0;opacity:0;line-height:0}
+.wvm-a>*{width:100%!important;height:100%!important;border-radius:0!important;box-shadow:none!important;
+  animation:none!important;display:block;object-fit:cover}
+.wvm-hl{position:absolute;inset:0;opacity:0;border-radius:inherit;
+  background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.04) 16%,transparent 38%);
+  box-shadow:inset 0 1px 0 var(--art-hl),inset 0 0 0 1px rgba(255,255,255,.07)}
+/* while the tile is in flight the card waits: the art slot and everything after it are held back,
+   then revealed (title, artist, chip or tracker 1.5-2.1 s after 100) */
+#result.wl-hold .hero .artwrap,#result.wl-hold .hero>*:not(.artwrap),#result.wl-hold .card>*:not(.hero):not(.clip),
+#result.wl-hold .hero::before{visibility:hidden}
+#s-match.wl-bg::before{animation:wlbgin .8s ease both}   /* the screen's cover-coloured wash comes in with it */
+@keyframes wlbgin{from{opacity:0}}
+.hero.wl-bl::before{animation-name:bloom2}
+.hero.wl-bl .artwrap::before{animation-name:artglow2}
+@keyframes bloom2{0%{opacity:0;transform:translateX(-50%) scale(.55)}
+  38%{opacity:.55}100%{opacity:.22;transform:translateX(-50%) scale(1)}}
+@keyframes artglow2{from{opacity:0;transform:scale(.8)}}
+/* a card rebuilt mid-hunt (the 4 s budget) is the same card: it does not play its entrance again */
+#result.wl-still .card,#result.wl-still .art,#result.wl-still .rtitle,#result.wl-still .rartist,
+#result.wl-still .badge,#result.wl-still .openin,#result.wl-still .hero::before,
+#result.wl-still .hero .artwrap::before,#result.wl-still .hero .artwrap::after{animation:none}
+/* tracker step 2: the small wave */
+.wv2{position:relative;width:64px;height:64px;flex:none;color:rgb(var(--wvink))}
+.wv2 .wv-tr{stroke-opacity:.17}
+.wv2-g{position:absolute;left:50%;top:50%;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;
+  opacity:0;pointer-events:none;background:radial-gradient(closest-side,rgba(112,98,235,.09),rgba(112,98,235,0))}
+.wv2-n{position:absolute;left:0;right:0;top:40.64px;display:flex;justify-content:center;align-items:baseline;
+  font-size:14.08px;font-weight:700;line-height:1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--text)}
+.wv2-n i{font-style:normal;width:0;overflow:visible;white-space:nowrap;position:relative;left:.6px;top:-3.6px;
+  font-size:7.36px;font-weight:700;letter-spacing:0;opacity:.75}   /* FIX 2026-09-30: raised as in spec-4 (0.056 S) */
+.wv2-c{position:absolute;left:18px;top:18px;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  background:var(--good);color:#0F0D15;opacity:0;transform:scale(.55)}
+.wv2-c svg{width:15px;height:15px}
+.wv2 .wv-svg,.wv2-n,.wv2-g{transition:opacity .2s linear}
+.htrack.hdone .wv2 .wv-svg,.htrack.hdone .wv2-n,.htrack.hdone .wv2-g{opacity:0!important}   /* over the glow's inline opacity */
+.htrack.hdone .wv2-c{opacity:1;transform:none;transition:opacity .2s linear .3s,transform .4s var(--ease) .3s}
+.htrack .hprog .hl{transition:color .3s ease .3s}
+.htrack.hdone .hs.hprog .hl{color:var(--muted)}   /* beats .htrack .hs.act .hl */
+.htrack .hbar.b2{position:relative;overflow:hidden}
+.htrack .hbar.b2::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--good);
+  transform:scaleX(0);transform-origin:0 50%}
+.htrack.hdone .hbar.b2::after{transform:none;transition:transform .4s cubic-bezier(.4,0,.2,1) .85s}
+.htrack .hs.s3 .hc{overflow:visible}
+.hc3{position:absolute;inset:-2px;border-radius:50%;display:grid;place-items:center;background:var(--good);
+  color:#0F0D15;opacity:0;transform:scale(.55)}
+.htrack.hdone .hs.s3 .hc3{opacity:1;transform:none;transition:opacity .2s linear 1.25s,transform .4s var(--ease) 1.25s}
+.htrack .hs.s3 .hl{transition:color .3s ease 1.25s}
+.htrack.hdone .hs.s3 .hl{color:var(--text)}
+/* FIX 2026-09-30: reduced motion lands the whole done state at once, the line included. The global
+   reduced-motion rule is `*`, which never matches a pseudo-element, so the line's ::after kept its
+   .4 s transition delayed .85 s and the crown card (300 ms later) replaced the tracker with it grey */
+@media (prefers-reduced-motion:reduce){.htrack .hbar.b2::after,.htrack.hdone .hbar.b2::after{transition:none!important}}
+/* the chip on a result the engine crowned as the exact version (vmatch().exact, the same flag the
+   heading and the play label read); every other result keeps its honest badge */
+.hchips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:13px}
+.hchips .badge{margin-top:0}
+.badge.xchip{border-color:rgba(var(--goodrgb),.45)}
+.badge.xchip svg{color:var(--good)}
 
 /* ---------- clip timeline ----------
    Real slice, not a flourish: the sweep fires short windows across the clip and exactly
@@ -1576,9 +1593,9 @@ a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:fil
 .htrack .hl{font-size:11.5px;font-weight:600;color:var(--faint);line-height:1.2;white-space:nowrap}
 .htrack .hs.done .hl{color:var(--muted)}
 .htrack .hs.act .hl{color:var(--text);font-weight:700}
-/* DIALSHIP 2026-09-29: step 2 is the small dial (64 px, .rl.sm), the scan's number carrying
-   on to 100 inside it. The two outer circles and the lines between sit on its centre line,
-   and all three labels on one line under it. */
+/* DIALSHIP 2026-09-29: step 2 is the 64 px slot (WAVE 2026-09-30: Konnor's bare wave, .wv2, was the
+   small dial). The two outer circles and the lines between sit on its centre line, and all three
+   labels on one line under it. */
 .htrack.hdial .hs>.hc{margin:18px 0}
 .htrack.hdial .hbar{margin-top:31px}
 .htrack .hs:first-child,.htrack .hs:last-child{width:84px}   /* equal outer columns: the middle circle sits dead centre */
@@ -1758,13 +1775,15 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
     </div>
     <div id="scanbox"></div>
     <div class="mid">
-      <!-- DIALV3 2026-09-29: Konnor's spoke dial. rlHTML() fills it at load (face, 90 spokes,
-           trail, centre circle, needle, number); the tracker on the result card draws a small copy -->
-      <div class="rl" id="dial"></div>
-      <div class="listening" id="listening">Finding song</div>
-      <div class="sub" id="live" aria-live="polite">Reading the clip</div>
+      <!-- WAVE 2026-09-30: Konnor's wave loader. wvHTML() fills it at load (glow, app-icon tile,
+           the logo wave, number, one status line); the tracker on the result card draws the bare
+           wave small. The old headings and the bottom timeline stay in the DOM for the code that
+           writes to them, hidden: Konnor's spec removes them from the scan screen. -->
+      <div class="wv" id="dial"></div>
+      <div class="listening" id="listening" hidden>Finding song</div>
+      <div class="sub" id="live" hidden>Reading the clip</div>
     </div>
-    <div class="tl" id="tl">
+    <div class="tl" id="tl" hidden>
       <div class="tlhead"><span id="tl0">0:00</span><span class="win" id="tlwin">reading audio</span>
         <span id="tl1">--:--</span></div>
       <canvas id="tlwave"></canvas>
@@ -2317,7 +2336,7 @@ function pgTick(){
 // 100 ms ticks; the dial's CSS eases each step over 300 ms linear, so the sweep is continuous
 function pgTickOn(){ if(pgTimer) return; pgTimer=setInterval(pgTick,100); }
 /* the tracker's dial starts when the card with the tracker takes the screen */
-function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); if(hgW) dvWrap(hgS); hgNow=0; hgPaint(); pgTickOn(); }
+function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); if(hgW) dvWrap(hgS); hgNow=0; wvJump(wvH,0); pgTickOn(); }
 /* APPLYALL 2026-09-29 (review finding 16): a hunt that ends without an answer takes its
    "still working" line off the card. finalize() cancels the 90 s re-render, the only thing
    that used to remove it, so it stayed for good. `.htrack` is the three-step tracker the
@@ -2344,100 +2363,139 @@ var HUNT_BUDGET_MS=4000;   // 2026-09-26: was 12000; the card now upgrades in pl
    its OWN timer that nothing else can clear, a lock that makes every other writer a
    no-op while it runs, and a hard deadline so the caller can never be left hanging. */
 var pgFin=null, pgFinP=null, pgLock=false, pgFinTok=0;
-/* DIALV3 2026-09-29: THE DIAL (CSS "the dial"): Konnor's spoke dial, one component drawn on the
-   scan screen (#dial, 90 spokes, the naming dial) and again, small, as step 2 of the result
-   card's hunt tracker (45 spokes, the edit hunt's dial). rlHTML(o) returns one ALREADY PAINTED at
-   o.v, so a card rebuilt mid-hunt shows the same dial with nothing sweeping in from 0;
-   rlPaint(root,v,stage) moves it, writing only the values that changed, so a dial that is not
-   moving costs nothing. o.n = spokes, o.sm = the small copy (no stage word), o.big = the scan
-   screen's (its number is the progressbar). A spoke is scanned (.on) when its angle is at or
-   behind the needle; its hot layer is 1 at the needle and 0 at 35% of the circle behind it.
-   Math.floor, never round: 99.6 reads 99, because only the finishing run may say 100, and 100 is
-   also what turns everything mint (with one bloom). */
-var RL={NB:90, NS:45, HOT:126, TRAIL:85};          // spokes big / small; 35% of 360 deg; trail width
+/* WAVE 2026-09-30: THE WAVE LOADER (CSS "the wave loader"). Konnor's logo wave replaces the spoke dial
+   in both places: #dial on the scan screen (the naming wave, inside the app-icon tile) and bare, small,
+   as step 2 of the result card's hunt tracker (the edit hunt's wave). Konnor: "Same rule as the dial
+   redesign doc. Only the look changes, not the timing logic." So the pacer is dial v3's, untouched:
+   pgNow / hgNow move on the 100 ms tick and on the finishing run's 16 ms frames (DVP, dvStep,
+   dvFinish above). What is drawn is the DISPLAYED value, which follows the pacer over 300 ms linear
+   (32 ms during the finishing run, none on a reset) the way the dial's CSS transition followed it,
+   but computed here, so the number and the wave are one value: drawn length = displayed% x path
+   length, and the number is that value floored. rlText floors, never rounds: 99.6 reads 99, because
+   only the finishing run may say 100. */
+// the steady sweep eases each 100 ms step over 300 ms linear (Konnor: "animate each update over about
+// 300ms, linear"); the finishing run is already a smooth curve painted every 16 ms, so it eases over
+// two frames only, which keeps the drawn wave within ~50 ms of it (the dial's 60 ms trailed by ~100 ms)
+var WV={ease:.3, fin:.032};
 function rlText(v){ return String(v>=100?100:Math.floor(v)); }
-function rlHot(A,a){ var d=A-a; return d<=RL.HOT?1-d/RL.HOT:0; }
-function rlHTML(o){
-  // o.vn: where to draw the needle and trail when it differs from o.v (a rebuilt card, rlShown)
-  var n=o.n, v=Math.max(0,Math.min(100,+o.v||0)), A=v*3.6, st=360/n, t=rlText(v),
-      vn=o.vn!=null?Math.max(0,Math.min(v,+o.vn)):v, tr='rotate('+(vn*3.6).toFixed(2)+'deg)', s='', i, a, on;
-  s+='<div class="rl-face" aria-hidden="true"></div>'+
-     '<div class="rl-rot rl-rtr" aria-hidden="true" style="transform:'+tr+'"><i class="rl-trail" style="opacity:'+
-       Math.min(1,vn*3.6/RL.TRAIL).toFixed(3)+'"></i></div><div class="rl-spokes" aria-hidden="true">';
-  for(i=0;i<n;i++){ a=i*st; on=v>0&&a<=A+1e-6;
-    s+='<i class="rl-sp'+(on?' on':'')+'" style="--a:'+a+'deg"><b style="opacity:'+(on?rlHot(A,a):0).toFixed(3)+'"></b></i>'; }
-  s+='</div><div class="rl-cap" aria-hidden="true"></div>'+
-     '<div class="rl-rot rl-rnd" aria-hidden="true" style="transform:'+tr+'"><i class="rl-nd"></i></div>'+
-     '<div class="rl-read"><div class="rl-num'+(/1$/.test(t)?' e1':'')+(t.length>2?' c3':'')+'"'+
-       (o.big?' id="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+t+'" aria-label="Scan progress"':' aria-hidden="true"')+
-       '><span class="rl-pct"'+(o.big?' id="dpct"':'')+'>'+t+'</span><i>%</i></div>'+
-       (o.sm?'':'<div class="rl-stage">'+esc(o.stage||'')+'</div>')+'</div>';
-  return s; }
-/* where a dial's needle is ON SCREEN: the 300 ms easing trails the value by ~0.3 s of travel.
-   A card rebuilt mid-hunt redraws the tracker from there, and the next paint eases it on to the
-   value, so the needle carries on at the same speed instead of leaping ahead and restarting from
-   rest (measured: a 1.5 point leap at the 4 s budget re-render, then a 1 s re-ramp). */
-function rlShown(root,v){
-  var r=root&&root.querySelector('.rl-rnd'), m, p, a;
-  if(!r) return v;
-  m=getComputedStyle(r).transform; if(!m||m==='none') return v;
-  p=m.match(/matrix\(([^)]+)\)/); if(!p) return v; p=p[1].split(',');
-  a=Math.atan2(parseFloat(p[1]),parseFloat(p[0]))*180/Math.PI; if(a<0) a+=360;
-  a/=3.6; if(v>=99.5||a>v) return v;
-  return a<v-10?v-10:a; }
-function rlW(el,k,v){ if(el&&el['_rl'+k]!==v){ el['_rl'+k]=v; el.style[k]=v; } }
-function rlPaint(root,v,stage){
-  if(!root) return;
-  var r=root._rl;
-  if(!r||!r.pct||!root.contains(r.pct)) r=root._rl={sp:root.querySelectorAll('.rl-sp'), hot:root.querySelectorAll('.rl-sp b'),
-    rtr:root.querySelector('.rl-rtr'), rnd:root.querySelector('.rl-rnd'), trail:root.querySelector('.rl-trail'),
-    num:root.querySelector('.rl-num'), pct:root.querySelector('.rl-pct'), stg:root.querySelector('.rl-stage')};
-  if(!r.pct) return;
+function wvReduced(){ try{ return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } }
+/* the logo sine in a 1000 x 1000 box: y = mid - A sin(2 pi (x - x0) / lambda), lambda = (x1 - x0) / 1.5,
+   as 180 straight segments (round joins, so it reads as the curve at any size), with the running
+   length at every point for the tip; L is the exact length of the path the browser draws */
+function wvGeom(x0,x1,A,mid,sw,n){
+  var lam=(x1-x0)/1.5, P=[], C=[0], L=0, i, x, y, d='';
+  for(i=0;i<=n;i++){
+    x=Math.round((x0+(x1-x0)*i/n)*100)/100; y=Math.round((mid-A*Math.sin(2*Math.PI*(x-x0)/lam))*100)/100;
+    if(i){ L+=Math.sqrt((x-P[i-1][0])*(x-P[i-1][0])+(y-P[i-1][1])*(y-P[i-1][1])); C.push(L); }
+    P.push([x,y]); d+=(i?'L':'M')+x+' '+y; }
+  return {P:P,C:C,L:L,d:d,sw:sw}; }
+var WVG={big:wvGeom(163,838,210,490,116,180),   // the tile, Konnor's Part 1 table (stroke 11.6%)
+         sm:wvGeom(170,830,125,340,70,180)};    // tracker step 2, S = the old 64 px dial slot, his Part 2 table
+function wvTip(g,f){   // the point at fraction f of the path's length
+  var s=f*g.L, lo=0, hi=g.C.length-1, m, u;
+  if(s<=0) return g.P[0];
+  if(s>=g.L) return g.P[hi];
+  while(hi-lo>1){ m=(lo+hi)>>1; if(g.C[m]<=s) lo=m; else hi=m; }
+  u=(s-g.C[lo])/Math.max(1e-6,g.C[hi]-g.C[lo]);
+  return [g.P[lo][0]+(g.P[hi][0]-g.P[lo][0])*u, g.P[lo][1]+(g.P[hi][1]-g.P[lo][1])*u]; }
+var wvN=0;
+/* one wave ALREADY DRAWN at v, so a card rebuilt mid-hunt shows the same wave with nothing sweeping
+   in: the tip's glow (under the stroke, so it reads as a halo), the track, the progress (dasharray
+   L 2L, so the gap never lets a second dash in at the far end; dashoffset L x (1 - v/100)) and the
+   tip's dot (at 0 the dot is all there is: "just a dot at the left end") */
+function wvSVG(kind,v){
+  var g=WVG[kind], id='wvp'+(++wvN), f=Math.max(0,Math.min(1,(+v||0)/100)), tp=wvTip(g,f), big=kind==='big',
+      cx=tp[0].toFixed(1), cy=tp[1].toFixed(1), L=g.L.toFixed(2), paint=big?'url(#'+id+'g)':'currentColor';
+  return '<svg class="wv-svg" viewBox="0 0 1000 1000" aria-hidden="true" focusable="false"><defs>'+
+    (big?'<linearGradient id="'+id+'g" gradientUnits="userSpaceOnUse" x1="0" y1="222" x2="0" y2="758">'+
+      '<stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E2DFFF"/></linearGradient>':'')+
+    '<radialGradient id="'+id+'t"><stop offset="0" stop-color="currentColor" stop-opacity="'+(big?'.5':'.45')+'"/>'+
+      '<stop offset="1" stop-color="currentColor" stop-opacity="0"/></radialGradient></defs>'+
+    '<circle class="wv-tg" r="'+(big?130:72)+'" cx="'+cx+'" cy="'+cy+'" fill="url(#'+id+'t)"/>'+
+    '<path class="wv-tr" d="'+g.d+'" stroke-width="'+g.sw+'"/>'+
+    '<path class="wv-pr" d="'+g.d+'" stroke-width="'+g.sw+'" stroke="'+paint+'"'+
+      ' style="stroke-dasharray:'+L+' '+(2*g.L).toFixed(2)+';stroke-dashoffset:'+(g.L*(1-f)).toFixed(2)+'px"/>'+
+    '<circle class="wv-td" r="'+(g.sw/2)+'" cx="'+cx+'" cy="'+cy+'" fill="'+paint+'"/></svg>'; }
+/* the scan screen's one status line: "Listening..." from 0, "Matching the fingerprint..." from 34,
+   "Finding the exact version..." from 70 (Konnor's table), crossfading */
+var WV_ST=['Listening…','Matching the fingerprint…','Finding the exact version…'];
+function wvStage(v){ return v>=70?2:v>=34?1:0; }
+function wvHTML(v){
+  var t=rlText(v), f=Math.max(0,Math.min(1,v/100));
+  return '<div class="wv-stage" aria-hidden="true"><i class="wv-g wv-g0" style="opacity:'+(.18*(1-f)).toFixed(3)+'"></i>'+
+      '<i class="wv-g wv-g1" style="opacity:'+(.5*f).toFixed(3)+'"></i><div class="wv-tile">'+wvSVG('big',v)+'</div></div>'+
+    '<div class="wv-num" id="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+t+'" aria-label="Scan progress">'+
+      '<span class="wv-pct" id="dpct">'+t+'</span><i aria-hidden="true">%</i></div>'+
+    '<div class="wv-st" id="dstage" aria-live="polite"><span class="on">'+WV_ST[wvStage(v)]+'</span><span aria-hidden="true"></span></div>'; }
+var HT_OK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
+function wvSmHTML(v){
+  var t=rlText(v);
+  return '<div class="wv2"><i class="wv2-g" style="opacity:'+Math.max(0,Math.min(1,v/100)).toFixed(3)+'"></i>'+wvSVG('sm',v)+
+    '<div class="wv2-n" aria-hidden="true"><span class="wv-pct">'+t+'</span><i>%</i></div>'+
+    '<span class="wv2-c" aria-hidden="true">'+HT_OK+'</span></div>'; }
+function wvW(el,k,v){ if(el&&el['_wv'+k]!==v){ el['_wv'+k]=v; if(k.charAt(0)==='@') el.setAttribute(k.slice(1),v); else el.style[k]=v; } }
+/* draw one wave at v, writing only what changed; returns the number shown */
+function wvDraw(root,kind,v){
+  if(!root) return null;
+  var r=root._wv;
+  if(!r||!r.pr||!root.contains(r.pr)) r=root._wv={pr:root.querySelector('.wv-pr'), tg:root.querySelector('.wv-tg'),
+    td:root.querySelector('.wv-td'), pct:root.querySelector('.wv-pct'), num:root.querySelector('.wv-num'),
+    g0:root.querySelector('.wv-g0'), g1:root.querySelector('.wv-g1'), g2:root.querySelector('.wv2-g')};
+  if(!r.pr) return null;
   v=Math.max(0,Math.min(100,+v||0));
-  var n=r.sp.length, A=v*3.6, st=360/n, done=v>=100, t=rlText(v), tr='rotate('+A.toFixed(2)+'deg)', i, a, on;
-  for(i=0;i<n;i++){ a=i*st; on=v>0&&a<=A+1e-6;
-    if(r.sp[i]._rlon!==on){ r.sp[i]._rlon=on; r.sp[i].classList.toggle('on',on); }
-    rlW(r.hot[i],'opacity',(on?rlHot(A,a):0).toFixed(3)); }
-  rlW(r.rtr,'transform',tr); rlW(r.rnd,'transform',tr);
-  rlW(r.trail,'opacity',Math.min(1,A/RL.TRAIL).toFixed(3));
-  if(r.pct.textContent!==t){ r.pct.textContent=t; r.num.classList.toggle('e1',/1$/.test(t)); r.num.classList.toggle('c3',t.length>2);
-    if(r.num.getAttribute('role')) r.num.setAttribute('aria-valuenow',t); }
-  if(r.stg&&stage!=null&&r.stg.textContent!==stage) r.stg.textContent=stage;
-  if(done!==root.classList.contains('done')){
-    root.classList.toggle('done',done); root.classList.remove('land');
-    if(done){ void root.offsetWidth; root.classList.add('land'); } } }
-/* the word under the scan screen's number, from the milestones the page has really seen: reading
-   the clip, naming the song (the audio is in), matching (the early name is in), ready (100).
-   Listen mode runs setProg's creep with no milestones. */
-function rlStage(v){
-  if(v>=100) return 'Ready';
-  if(!pgS||!pgStg) return v>0?'Listening':'Reading';
-  return pgStg==='tap'?'Reading':pgStg==='audio'?'Naming':'Matching'; }
-(function(){ var d=document.getElementById('dial'); if(d) d.innerHTML=rlHTML({n:RL.NB,v:0,big:true,stage:'Reading'}); })();
-/* pgPaint: the scan screen's dial (the naming dial) */
-function pgPaint(){
-  var v=Math.max(0,Math.min(100,pgNow));
-  rlPaint(document.getElementById('dial'),v,rlStage(v)); }
-/* hgPaint: the tracker's dial (the edit hunt's own 0-100). The card is re-rendered several
-   times mid-hunt, so the tracker is drawn with the dial already painted (huntTracker) and
-   repainted here. */
-function hgPaint(){ huntPctPaint(rlText(hgNow),hgNow); }
-/* right after a card rebuilt mid-hunt: move the new tracker's needle to where the old one has got
-   to while the card was being built (rlShown's reading + its speed x the build time), with no
-   easing, resolve that, then ease on to the value at once instead of leaving it parked until the
-   next tick (measured without this: a 0.1 s stop at the 4 s budget re-render, then a 1.3x catch-up) */
-var hgRb=null;
-function hgRebuilt(){
-  var el=document.querySelector('#result .htrack .rl'), r=el&&el.querySelector('.rl-rnd'), a, tr;
-  if(!r||!hgS||!hgRb) return;
-  a=Math.min(hgNow,hgRb.vn+Math.max(0,hgS.sp)*Math.max(0,pgClock()-hgRb.t)); hgRb=null;
-  tr='rotate('+(a*3.6).toFixed(2)+'deg)';
-  el.classList.add('rs');
-  [el.querySelector('.rl-rtr'),r].forEach(function(x){ if(x){ x.style.transform=tr; x._rltransform=tr; } });
-  void getComputedStyle(r).transform;
-  el.classList.remove('rs'); void getComputedStyle(r).transform;
-  hgPaint(); }
-function huntPctText(){ return rlText(Math.max(0,Math.min(100,hgNow))); }
+  var g=WVG[kind], f=v/100, tp=wvTip(g,f), t=rlText(v), cx=tp[0].toFixed(1), cy=tp[1].toFixed(1);
+  wvW(r.pr,'strokeDashoffset',(g.L*(1-f)).toFixed(2)+'px');
+  wvW(r.tg,'@cx',cx); wvW(r.tg,'@cy',cy); wvW(r.td,'@cx',cx); wvW(r.td,'@cy',cy);
+  if(r.g0){ wvW(r.g0,'opacity',(.18*(1-f)).toFixed(3)); wvW(r.g1,'opacity',(.5*f).toFixed(3)); }   // the glow grows
+  if(r.g2) wvW(r.g2,'opacity',f.toFixed(3));
+  if(r.pct&&r.pct.textContent!==t){ r.pct.textContent=t; if(r.num&&r.num.getAttribute('role')) r.num.setAttribute('aria-valuenow',t); }
+  return t; }
+function wvStatus(root,v){
+  var box=root&&root.querySelector('.wv-st'), i, sp, on;
+  if(!box) return;
+  i=wvStage(v); if(box._wvi===i) return;
+  sp=box.children; on=sp[0].classList.contains('on')?0:1;
+  if(box._wvi==null){ box._wvi=i; sp[on].textContent=WV_ST[i]; return; }
+  box._wvi=i; sp[1-on].textContent=WV_ST[i]; sp[1-on].classList.add('on'); sp[1-on].removeAttribute('aria-hidden');
+  sp[on].classList.remove('on'); sp[on].setAttribute('aria-hidden','true'); }
+/* the displayed values: e = {a (from), b (to), t0, T}, a linear run from a to b over T seconds,
+   retargeted from wherever it is on every new value, the way a CSS transition is */
+function wvE(){ return {a:0,b:0,t0:0,T:0}; }
+var wvS=wvE(), wvH=wvE(), wvRaf=0;
+function wvAt(e,now){ var u=e.T>0?Math.min(1,(now-e.t0)/e.T):1; return e.a+(e.b-e.a)*u; }
+function wvTo(e,v,T){
+  var now=pgClock(), c=wvAt(e,now);
+  v=Math.max(0,Math.min(100,+v||0));
+  if(v<c) v=c;                                  // never backwards on screen
+  if(v===e.b) return;
+  e.a=c; e.b=v; e.t0=now; e.T=wvReduced()?0:T; wvKick(); }
+function wvJump(e,v){ e.a=e.b=Math.max(0,Math.min(100,+v||0)); e.T=0; e.t0=pgClock(); wvKick(); }   // a reset: no sweep back
+function wvKick(){ if(!wvRaf) wvRaf=requestAnimationFrame(wvFrame); }
+function wvFrame(){
+  wvRaf=0;
+  var now=pgClock(), a=wvAt(wvS,now), b=wvAt(wvH,now);
+  wvPaintScan(a); wvPaintHunt(b);
+  if(a<wvS.b||b<wvH.b) wvKick(); }
+function wvPaintScan(v){ var d=document.getElementById('dial'); wvDraw(d,'big',v); wvStatus(d,v); }
+function wvPaintHunt(v){
+  var els=document.querySelectorAll('#result .htrack .hprog'), t=rlText(v), i, el, tr;
+  for(i=0;i<els.length;i++){ el=els[i];
+    wvDraw(el.querySelector('.wv2'),'sm',v);
+    if(el.getAttribute('aria-valuenow')!==t){ el.setAttribute('aria-valuenow',t); el.setAttribute('aria-valuetext',huntPctVT(t)); }
+    // 100 is only ever the answer's finishing run: the tracker finishes (mint check, line, step 3)
+    tr=el.parentNode; if(v>=100&&hgShown&&tr&&!tr.classList.contains('hdone')){ tr.classList.add('hdone'); tr.setAttribute('aria-label','Song identified. Edit matched. Ready to save.'); } } }
+/* resolves once the displayed value is at 100 (or 700 ms on, if frames are not running) */
+function wvReach(e){ return new Promise(function(r){ var t0=Date.now();
+  (function k(){ if(wvAt(e,pgClock())>=100||Date.now()-t0>700) return r(); setTimeout(k,16); })(); }); }
+function wlSleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+function wvScanReset(){ wvJump(wvS,0); var d=document.getElementById('dial'); if(d) d.innerHTML=wvHTML(0); }
+(function(){ var d=document.getElementById('dial'); if(d) d.innerHTML=wvHTML(0); })();
+/* pgPaint: the scan screen's wave (the naming wave). hgPaint: the tracker's wave (the edit hunt's own
+   0-100); the card is re-rendered several times mid-hunt, so the tracker is built with the wave
+   already drawn at the displayed value (huntTracker) and carries on from there. */
+function pgPaint(){ wvTo(wvS,Math.max(0,Math.min(100,pgNow)),pgLock?WV.fin:WV.ease); }
+function hgPaint(){ wvTo(wvH,Math.max(0,Math.min(100,hgNow)),hgFinP?WV.fin:WV.ease); }
+function huntPctText(){ return rlText(wvAt(wvH,pgClock())); }
 function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   if(h&&h.st==='hold') x+=', getting the clip details';
   else if(h&&h.st==='decide') x+=', picking the exact version';
@@ -2445,14 +2503,110 @@ function huntPctVT(t){ var h=pgHuntNow, x=t+'%';
   else if(h&&h.q) x+=', checked '+h.c+' of '+h.q+' versions';
   else x+=', searching for edits';
   return x; }
-function huntPctPaint(t,v){
-  var els=document.querySelectorAll('#result .htrack .hprog'); if(!els.length) return;
-  if(v==null) v=Math.max(0,Math.min(100,hgNow));
-  t=t||rlText(v);
-  Array.prototype.forEach.call(els,function(el){
-    rlPaint(el.querySelector('.rl'),v);
-    if(el.getAttribute('aria-valuenow')===t) return;
-    el.setAttribute('aria-valuenow',t); el.setAttribute('aria-valuetext',huntPctVT(t)); }); }
+function huntPctPaint(){ hgPaint(); }
+/* WAVE 2026-09-30: THE FINISH, PART 1 (Konnor: "the wave fades out, the tile turns into the album art
+   (corner radius softens, tile scales up slightly), and the song title, artist and a 'Matched - exact
+   version' chip fade in below. It should feel like one continuous motion"; his table: radius 92 to
+   about 62, scale up 8%, the text about 1.5 to 2.1 s after 100). A shared element: a copy of the tile
+   (.wvm, on <body>) grows 8% in place while the wave, number and status fade and the cover crossfades
+   in, then glides into the Match found screen's album-art slot, where the real cover takes over on
+   the same pixels; the rest of the card is held back and revealed after it. It starts only once the
+   drawn wave is at 100. Seconds after that: */
+var WLT={fade:.3, out:.45, grow:.7, artIn:.25, artDur:.5, swap:.55, glide:.6, land:1.4, text:1.5, textDur:.55, rest:1.6, restDur:.6};
+var wlTok=0, wlM=null;
+function wlCancel(){
+  wlTok++; var m=wlM; wlM=null;
+  document.getElementById('s-match').classList.remove('wl-bg');
+  if(!m) return;
+  m.timers.forEach(clearTimeout);
+  m.anims.forEach(function(a){ try{ a.cancel(); }catch(e){} });
+  if(m.ov&&m.ov.parentNode) m.ov.parentNode.removeChild(m.ov);
+  if(m.stage) m.stage.style.visibility='';
+  result.classList.remove('wl-hold'); }
+/* the Match found screen's own entrance animations, finished at once: the flight replaces them, and
+   the art slot is then measured where it will really sit (no entrance transform) */
+function wlSettle(root){
+  if(!document.getAnimations) return;
+  document.getAnimations().forEach(function(a){ try{
+    var t=a.effect&&a.effect.target, ct=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;
+    if(t&&t.nodeType===1&&root.contains(t)&&ct&&isFinite(ct.endTime)) a.finish(); }catch(e){} }); }
+function wlMorph(){
+  wlCancel();
+  var my=wlTok, M=wlM={anims:[],timers:[],scan:[],ov:null,stage:null};
+  var live=function(){ return my===wlTok; };
+  var at=function(s,fn){ M.timers.push(setTimeout(function(){ if(live()) fn(); },s*1000)); };
+  var wait=function(s){ return new Promise(function(r){ M.timers.push(setTimeout(r,s*1000)); }); };
+  var an=function(el,kf,o,scan){ if(!el||!el.animate) return null; try{ var a=el.animate(kf,o); M.anims.push(a); if(scan) M.scan.push(a); return a; }catch(e){ return null; } };
+  var ms=function(s){ return Math.round(s*1000); };
+  return wvReach(wvS).then(function(){
+    if(!live()) return false;
+    var dial=document.getElementById('dial'), stage=dial&&dial.querySelector('.wv-stage'), tile=stage&&stage.querySelector('.wv-tile'),
+        art=result.querySelector('.hero .art'), R0=tile&&tile.getBoundingClientRect();
+    if(wvReduced()||!art||!R0||!R0.width||!document.body.animate){
+      // reduced motion, or no cover slot to land in: no flight; the screen hands over after a beat
+      return wait(wvReduced()?.3:.36).then(function(){ if(!live()) return false; setState('locked'); return true; });
+    }
+    var acs=getComputedStyle(art), aw=parseFloat(acs.width)||150, arad=parseFloat(acs.borderTopLeftRadius)||20,
+        u=R0.width/380, s1=aw/R0.width, r0=92*u, r1=62*u/1.08, r2=arad/s1,
+        E1='cubic-bezier(.22,.61,.36,1)', E2='cubic-bezier(.45,0,.2,1)', k1=WLT.grow/WLT.land;
+    var ov=document.createElement('div');
+    ov.className='wvm'; ov.setAttribute('aria-hidden','true');
+    ov.style.left=R0.left+'px'; ov.style.top=R0.top+'px'; ov.style.width=R0.width+'px'; ov.style.height=R0.height+'px';
+    ov.innerHTML='<div class="wvm-s"><i class="wv-g wv-g0" style="opacity:0"></i><i class="wv-g wv-g1" style="opacity:.5"></i>'+
+      '<div class="wv-tile">'+wvSVG('big',100)+'<div class="wvm-a"></div><i class="wvm-hl"></i></div></div>';
+    ov.querySelector('.wvm-a').appendChild(art.cloneNode(true));
+    document.body.appendChild(ov); M.ov=ov; M.stage=stage;
+    stage.style.visibility='hidden';            // the copy sits on the same pixels
+    var sEl=ov.querySelector('.wvm-s'), tEl=ov.querySelector('.wv-tile'), g1=ov.querySelector('.wv-g1'),
+        rad=[{borderRadius:r0+'px',easing:E1},{borderRadius:r1+'px',offset:k1,easing:E2},{borderRadius:r2+'px'}],
+        sc=document.getElementById('s-scan');
+    // the wave, the number and the status line fade; the rest of the scan screen goes with them
+    an(ov.querySelector('.wv-svg'),[{opacity:1},{opacity:0}],{duration:ms(WLT.fade),easing:'linear',fill:'forwards'});
+    [dial.querySelector('.wv-num'),dial.querySelector('.wv-st')].forEach(function(el){
+      an(el,[{opacity:1},{opacity:0}],{duration:ms(WLT.fade),easing:'linear',fill:'forwards'},1); });
+    [sc.querySelector('.hd'),document.getElementById('scanbox'),sc.querySelector('.tip'),sc.querySelector('.cancelhint')].forEach(function(el){
+      an(el,[{opacity:1},{opacity:0}],{duration:ms(WLT.out),easing:'ease',fill:'forwards'},1); });
+    // the tile: up 8% in place with the corners softening (92 -> 62), then down into the art slot
+    an(sEl,[{transform:'scale(1)',easing:E1},{transform:'scale(1.08)',offset:k1,easing:E2},{transform:'scale('+s1.toFixed(4)+')'}],
+       {duration:ms(WLT.land),fill:'forwards'});
+    [tEl].concat([].slice.call(ov.querySelectorAll('.wv-g'))).forEach(function(el){ an(el,rad,{duration:ms(WLT.land),fill:'forwards'}); });
+    an(ov.querySelector('.wvm-a'),[{opacity:0},{opacity:1}],{delay:ms(WLT.artIn),duration:ms(WLT.artDur),easing:'ease',fill:'both'});
+    an(g1,[{opacity:.5},{opacity:0}],{delay:ms(WLT.grow),duration:600,easing:'ease',fill:'both'});
+    an(ov.querySelector('.wvm-hl'),[{opacity:0},{opacity:1}],{delay:900,duration:500,easing:'ease',fill:'both'});
+    at(WLT.swap,function(){
+      setState('locked');
+      var sm=document.getElementById('s-match'), a2=result.querySelector('.hero .art'), R1, dx, dy;
+      result.classList.add('wl-hold');
+      void sm.offsetWidth; wlSettle(sm);
+      sm.classList.add('wl-bg');
+      R1=a2&&a2.getBoundingClientRect();
+      if(R1&&R1.width){
+        dx=(R1.left+R1.width/2)-(R0.left+R0.width/2); dy=(R1.top+R1.height/2)-(R0.top+R0.height/2);
+        an(ov,[{transform:'translate(0px,0px)'},{transform:'translate('+dx.toFixed(2)+'px,'+dy.toFixed(2)+'px)'}],
+           {delay:ms(WLT.glide-WLT.swap),duration:ms(WLT.land-WLT.glide),easing:'cubic-bezier(.45,0,.15,1)',fill:'both'});
+      } else an(ov,[{opacity:1},{opacity:0}],{duration:ms(WLT.land-WLT.swap),fill:'forwards'});
+      // the header and the clip pill come in while the tile travels
+      [sm.querySelector('.hd'),result.querySelector('.card>.clip')].forEach(function(el){
+        an(el,[{opacity:0},{opacity:1}],{duration:400,easing:'ease',fill:'backwards'}); }); });
+    at(WLT.land,function(){
+      var hero=result.querySelector('.hero'), d0=ms(WLT.text-WLT.land), i=0, up=[{opacity:0,transform:'translateY(9px)'},{opacity:1,transform:'none'}];
+      result.classList.remove('wl-hold');
+      if(ov.parentNode) ov.parentNode.removeChild(ov);
+      if(hero){ hero.classList.add('wl-bl');
+        // title, artist and the chip (or the tracker) 1.5 to 2.1 s after 100
+        [].slice.call(hero.children).forEach(function(el){
+          if(el.classList.contains('artwrap')) el=el.querySelector('.artplay');
+          if(el) an(el,up,{delay:d0+30*(i++),duration:ms(WLT.textDur),easing:'cubic-bezier(.16,1,.3,1)',fill:'backwards'}); }); }
+      [].slice.call(result.querySelectorAll('.card>*')).forEach(function(el){
+        if(el===hero||el.classList.contains('clip')) return;
+        an(el,[{opacity:0},{opacity:1}],{delay:ms(WLT.rest-WLT.land),duration:ms(WLT.restDur),easing:'ease',fill:'backwards'}); }); });
+    return wait(WLT.text).then(function(){
+      if(!live()) return false;
+      // the scan screen is hidden now: put it back the way it was for the next scan
+      M.scan.forEach(function(a){ try{ a.cancel(); }catch(e){} }); M.scan=[];
+      stage.style.visibility='';
+      return true; });
+  }); }
 /* Listen mode keeps its cap-and-creep (sendListen); the link scan uses pgMark. */
 function setProg(pct, cap, label){
   if(pgLock) return;                 // a finishing run is in flight; it owns the number
@@ -2461,16 +2615,15 @@ function setProg(pct, cap, label){
 }
 function pgReset(){clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval(pgFin); if(hgFin) clearInterval(hgFin);
   pgS=null; pgStg=''; pgLabel='';
-  // back to 0 with no sweep (.rs): the easing would otherwise unwind the last scan's needle
-  // backwards in front of the user
-  var _dl=document.getElementById('dial'); if(_dl) _dl.classList.add('rs');
   // Retire the finishing runs BY TOKEN, not just by clearing their timers: a pending backstop
   // must never touch a dial it no longer owns (measured live 2026-09-26: an old deadline slammed
   // the next phase's bar to 100 while the hunt was still going).
   pgFinTok++; pgFin=null; pgFinP=null; pgLock=false; pgNow=0; pgCap=0;
   hgFinTok++; hgFin=null; hgFinP=null; hgS=null; hgE=0; hgNow=0; hgHandP=null; hgW=0;
-  pgPaint();
-  if(_dl){ void _dl.offsetWidth; _dl.classList.remove('rs','fin','land'); }}
+  hgShown=true; hgShowQ=[];   // FIX 2026-09-30: the old scan's done-state waiters are dropped
+  // WAVE 2026-09-30: both waves back to 0 with no sweep (a jump, never an ease backwards), a fresh
+  // loader on the scan screen, and a finish still in flight is called off
+  wlCancel(); wvJump(wvH,0); wvScanReset(); }
 /* ASK THE ENGINE WHAT IT IS DOING, instead of guessing.
    Naming the song is one awaited call, so between "reading the clip" and "song
    identified" the page had no event to move on: the bar parked at 30% for the whole
@@ -2491,9 +2644,23 @@ function huntEnd(){ huntPollU=''; progPollOff(); }
    landed in the same frame as 100, so 99 was the last number anyone saw) */
 function pgLand(){ return pgDone().then(function(){ return new Promise(function(r){ setTimeout(r,300); }); }); }
 /* DIALV3 2026-09-29: the hunt's answer runs the TRACKER's dial to 100 (its own 0-100), after the
-   naming dial has handed the screen over (hgHandP), then leaves 100 up for the same beat */
-var hgFin=null, hgFinP=null, hgFinTok=0;
-function hgLand(){ return (hgHandP||Promise.resolve()).then(hgDone).then(function(){ return new Promise(function(r){ setTimeout(r,300); }); }); }
+   naming dial has handed the screen over (hgHandP), then leaves 100 up for the same beat.
+   WAVE 2026-09-30: THE FINISH, PART 2. Once the drawn wave is at 100 the tracker finishes the way
+   Konnor's demo times it (.htrack.hdone, from 100: the wave and number fade, the mint check at 0.3 s,
+   the line to step 3 fills 0.85-1.25 s, step 3 checks at 1.25 s), and the crown card replaces it
+   after that (WL_HOLD; reduced motion: everything lands at once, so the old 300 ms beat) */
+var hgFin=null, hgFinP=null, hgFinTok=0, WL_HOLD=1.85;
+/* FIX 2026-09-30: hgShown is false from the naming wave's 100 until the finish reveals the tracker
+   (1.5 s after 100; at once under reduced motion). The tracker's wave runs through it on live's clock;
+   its done state (.hdone) waits for it, so a wave that reached 100 before the tracker showed finishes
+   in view. A reset drops the waiters, so nothing from an old scan carries on. */
+var hgShown=true, hgShowQ=[];
+function hgHide(){ hgShown=false; hgShowQ=[]; }
+function hgShow(){ var q=hgShowQ; hgShown=true; hgShowQ=[]; wvPaintHunt(wvAt(wvH,pgClock())); q.forEach(function(r){ r(); }); }
+function hgShowWait(){ return hgShown?Promise.resolve():new Promise(function(r){ hgShowQ.push(r); }); }
+function hgLand(){ return (hgHandP||Promise.resolve()).then(hgDone).then(function(){
+  if(!hgS) return;
+  return wvReach(wvH).then(hgShowWait).then(function(){ return wlSleep(wvReduced()?300:WL_HOLD*1000); }); }); }
 /* the hunt's counts only ever speed the tracker's dial up (dvAhead), kept until it starts */
 function pgHunt(h){ pgHuntNow=h; var E=dvHuntE(h); if(E>hgE) hgE=E; if(hgS) dvAhead(hgS,hgE);
   if(h&&h.wr){ hgW=1; if(hgS) dvWrap(hgS); } }   // HUNT BUDGET: the engine is wrapping up
@@ -2560,13 +2727,12 @@ function progPollOff(){clearInterval(progT); clearTimeout(progT); progT=null; pr
    ms, leaving at the dial's own speed and landing softly, so there is no kink where the
    steady sweep ends. It paints at 16 ms frames on ITS OWN timer, which nothing else can clear,
    under a lock that makes every other writer a no-op, with a backstop so the caller is never
-   left hanging (a throttled tab clamps timers). .fin shortens the dial's easing to 60 ms so the
-   needle follows the frames instead of trailing 300 ms behind. Returns a promise that resolves
+   left hanging (a throttled tab clamps timers). WAVE 2026-09-30: while it runs (pgLock) the drawn wave
+   eases over 32 ms instead of 300, so it follows the frames instead of trailing behind. Returns a promise that resolves
    when the dial has ARRIVED at 100, so the caller can hand over only then. */
 function pgDone(){
   if(pgFinP) return pgFinP;                 // already finishing - never start a second run
   pgLock=true;
-  var _fd=document.getElementById('dial'); if(_fd) _fd.classList.add('fin');
   var tok=++pgFinTok, now=pgClock(), guard=null, f;
   if(pgS) dvStep(pgS,now);
   else { pgS=dvNew(DVP.scan,now); pgS.val=pgNow; }   // listen mode: finish from its creep
@@ -2596,7 +2762,6 @@ function pgDone(){
 function hgDone(){
   if(hgFinP) return hgFinP;
   if(!hgS){ hgFinP=Promise.resolve(); return hgFinP; }   // no tracker dial running (a scan that moved on)
-  Array.prototype.forEach.call(document.querySelectorAll('#result .htrack .rl'),function(e){e.classList.add('fin');});
   var tok=++hgFinTok, now=pgClock(), guard=null, f;
   dvStep(hgS,now); if(hgS.val>hgNow) hgNow=hgS.val;
   if(100-hgNow<0.05){ hgNow=100; hgPaint(); hgFinP=Promise.resolve(); return hgFinP; }
@@ -3365,22 +3530,19 @@ function sendFeedback(obj){
    never the verdict row. */
 var HUNT_ON=false;
 function huntTracker(){
-  var ok='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
-  // DIALV3: the edit hunt's own 0-100; a card rebuilt mid-hunt draws the needle where it is
-  // on screen (rlShown), so it carries on instead of leaping ahead
-  var v=Math.max(0,Math.min(100,hgNow)), vn=rlShown(document.querySelector('#result .htrack .rl'),v), t=rlText(v);
-  if(vn<v){ hgRb={vn:vn,t:pgClock()}; setTimeout(hgRebuilt,0); }
-  return '<div class="htrack hdial" role="status" aria-live="polite" aria-label="Song identified. Matching the edit.">'+
-    '<div class="hs done"><span class="hc">'+ok+'</span><span class="hl">Song ID’d</span></div>'+
+  // WAVE 2026-09-30: step 2 is Konnor's bare wave (the old 64 px dial slot), drawn at the value on
+  // screen now, so a card rebuilt mid-hunt carries on from where the wave is; a tracker rebuilt after
+  // the answer is built finished (hdone, nothing replays)
+  var v=wvAt(wvH,pgClock()), t=rlText(v), done=v>=100&&hgShown;   // FIX 2026-09-30: done only once shown
+  return '<div class="htrack hdial'+(done?' hdone':'')+'" role="status" aria-live="polite" aria-label="'+
+      (done?'Song identified. Edit matched. Ready to save.':'Song identified. Matching the edit.')+'">'+
+    '<div class="hs done"><span class="hc">'+HT_OK+'</span><span class="hl">Song ID’d</span></div>'+
     '<span class="hbar done"></span>'+
-    // DIALV3 2026-09-29: step 2's circle is the spoke dial, small (45 spokes), running its own
-    // steady 0-100 for the edit hunt from the moment the card takes the screen
     '<div class="hs act hprog" role="progressbar" aria-label="Matching the edit" aria-valuemin="0" aria-valuemax="100"'+
-      ' aria-valuenow="'+t+'" aria-valuetext="'+esc(huntPctVT(t))+'">'+
-      '<div class="rl sm'+(v>=100?' done':'')+(hgFinP?' fin':'')+'">'+rlHTML({n:RL.NS,v:v,vn:vn,sm:true})+'</div>'+
+      ' aria-valuenow="'+t+'" aria-valuetext="'+esc(huntPctVT(t))+'">'+wvSmHTML(v)+
       '<span class="hl">Matching the edit</span></div>'+
-    '<span class="hbar"></span>'+
-    '<div class="hs"><span class="hc">3</span><span class="hl">Ready to save</span></div></div>';}
+    '<span class="hbar b2"></span>'+
+    '<div class="hs s3"><span class="hc">3<i class="hc3" aria-hidden="true">'+HT_OK+'</i></span><span class="hl">Ready to save</span></div></div>';}
 /* VERDICT 2026-09-29: right / wrong on the final answer. One vote per clip, remembered on
    the phone so a revisit shows the choice; sent through /feedback (erasable, like the rest).
    v2 (Roham, testing: "when I press the X ... store that data and go and fix it and find the
@@ -3699,6 +3861,10 @@ function setEndTitle(d){var t=document.getElementById('matchttl'); if(t) t.textC
 function renderResult(d,partial){
   if(!partial) d=pageCrown(d);   // RF2: a pre-A2 payload gets its highest honest figure on top
   lastResult=d;
+  // WAVE 2026-09-30: the card the 4 s budget rebuilds mid-hunt, over the one on screen, is the same card:
+  // it does not play its entrance again (the whole card used to fade in a second time right after the finish)
+  result.classList.toggle('wl-still', !!(HUNT_ON && !partial && document.getElementById('app').getAttribute('data-state')==='locked' &&
+    result.querySelector('.hero')));
   backHandler=goHome;  // the top-left chevron always goes to Addify home (COMMIT-AUDIT F5)
   document.getElementById('share').hidden=!songURL(d);   // APPLYALL 2026-09-29 (build 3): no dead Share on a miss card
   // Read before any row is built (vmatch reads it). The final payload can carry a speed
@@ -3979,6 +4145,10 @@ function renderResult(d,partial){
   if(!partial) badge=badge.replace(/^<span class="badge( orig)?">/, function(m){return m+IC.tick;});
   var _mparts=(d.sections&&d.sections.length>1)?d.sections:((d.songs&&d.songs.length>1)?d.songs:null);
   if(!hunting && _mparts) badge='<span class="badge mash">'+IC.layers+'Mashup · '+_mparts.length+' songs</span>';
+  /* WAVE 2026-09-30: Konnor's "Matched - exact version" chip, ONLY when the crown is one this page
+     itself calls exact (exExact: the crown's own figure reads Exact, the same flag the heading, the
+     save line and the play label read). Every other result keeps the honest badge it had. */
+  if(!hunting && !partial && exExact) badge='<div class="hchips"><span class="badge xchip">'+IC.tick+'Matched - exact version</span>'+badge+'</div>';
   /* ---------- PREVIEW ON THE COVER (layout spec item 7) ----------
      Two honesty guards, both of them real failure modes:
      1. WHAT IS PLAYING. The sleeve is the BASE song's cover while the thing this button
@@ -5280,7 +5450,7 @@ urlEl.addEventListener('input', syncFormAction);
 urlEl.addEventListener('change', syncFormAction);
 syncFormAction();
 var phaseT=null, finishT=null;
-function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff();
+function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff(); wlCancel();   // WAVE 2026-09-30
   WIN=null; clipSecs=0;
   document.getElementById('dial').classList.remove('done','land');   // APPLYALL 2026-09-29
   live.classList.remove('ok');
@@ -5374,9 +5544,21 @@ function run(raw){if(busy) return; var p=parseLink(raw);
         // is 460-650 ms from wherever the steady sweep had reached, then 100 holds for 300 ms, then
         // the card, whose tracker starts the edit hunt's own dial from 0. The hunt itself is asked
         // for right now, below, so the engine loses no time to the landing.
-        hgHandP=pgLand().then(function(){
+        // WAVE 2026-09-30: once the wave is drawn to 100, the finish (wlMorph): the tile becomes the
+        // album art, and the card with the tracker fades in 1.5 s after 100
+        // FIX 2026-09-30: the tracker's wave STARTS on live's clock, 300 ms after 100 (dial v3's
+        // handover, pgLand), while the card is still held back; only its done state waits for the
+        // tracker to be on screen (hgShow, when the finish reveals it). Starting it at the reveal
+        // put 1.2 s between the two, and a hunt answering inside it waited for a tracker that had
+        // not started (live:16: answer to 100 in 1002 ms, live 745).
+        hgHide();
+        var _p100=pgDone();
+        hgHandP=_p100.then(function(){ return wlSleep(300); }).then(function(){
           if(tok!==scanTok||leftScan) return;
-          setState('locked'); say('Locking in the exact version'); hgStart(); });
+          hgStart(); });
+        _p100.then(wlMorph).then(function(ok){
+          if(!ok||tok!==scanTok||leftScan) return;
+          say('Locking in the exact version'); hgShow(); });
         // PROGRESS 2026-09-29: the poll keeps reading the hunt's counts after /base.
         // DIALV3 2026-09-29: they feed the tracker dial's catch-up (pgHunt); the tracker's
         // number is the hunt's own steady 0-100 from the handover (hgStart), not this one.
@@ -5599,11 +5781,8 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   // to cover, a blind timer can cut the number off before it arrives - the exact
   // failure being fixed. Landing first, then handing over, is the whole point.
   if(handed){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas(); return;}
-  pgDone().then(function(){
-    // APPLYALL 2026-09-29 (DIAL): the landing - mint ring, one bloom, mint status line - then hand over
-    var _dl=document.getElementById('dial'); _dl.classList.remove('fin'); _dl.classList.add('done','land');
-    live.classList.add('ok');
-    finishT=setTimeout(function(){scanAnimOff(); setState('locked'); hideChip(); paintRecCanvas();},360);});}
+  // WAVE 2026-09-30: the wave lands on 100, then the finish: the tile becomes the album art (wlMorph)
+  pgDone().then(wlMorph).then(function(ok){ if(!ok||leftScan) return; scanAnimOff(); hideChip(); paintRecCanvas(); });}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
