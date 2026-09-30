@@ -606,6 +606,337 @@ def yt_walled():
 def _is_yt_row(c):
     u = (c or {}).get("url") or ""
     return (c or {}).get("source") == "youtube" or "youtube.com" in u or "youtu.be" in u
+
+
+# YOUTUBE COOKIE FILE (server, 2026-09-30; ~/addify-harness/server/YOUTUBE.md). OFF unless
+# CRATE_YT_COOKIES_FILE names a file (the server's engine.env: /etc/addify/yt-cookies.txt).
+# YouTube walls the droplet's IP the way it walls the Mac: every player client answers "Sign in
+# to confirm you're not a bot" (server-kit INSTALL-0930.md: 4 of 4 candidate ids on android, the
+# default clients, ios and tv; search still works). yt-dlp's own answer is a signed-in session.
+# This route reads a Netscape cookies.txt of a THROWAWAY Google login that Roham exports himself
+# (never his own account, never a copy of the Mac's Chrome). While the file is missing it does
+# nothing; the first scan after the file lands uses it, and deleting it stops it (no restart).
+#   * live only: server.py serving port 8788. A lab port, a test suite or a script never uses it.
+#   * fallback only: a YouTube head download runs today's route first (direct, then the android
+#     subprocess); only a failure there asks for a cookie download.
+#   * which rows: the first YT_CKF_PER_SCAN YouTube rows in the scan's own download order (hint
+#     rows first), reserved when their batch starts, each once per scan. First-to-fail would be a
+#     race among the walled rows.
+#   * capped: 2 per scan (one find_edit call) and 60 per rolling hour for the process, counted on
+#     the attempt. Env can lower both, never raise them. Past a cap the row fails as it does
+#     without the file.
+#   * paused after YT_CKF_PAUSE_AFTER refusals in a row on the same file, until the file changes
+#     or YT_CKF_PAUSE_S passes (then it tries again), so a dead login stops asking YouTube.
+#   * the file is never written: each download reads a private 0600 copy in the scan's temp dir
+#     (yt-dlp saves its cookie jar back on exit) and the copy is removed right after.
+#   * no cookie value reaches a log, /health or an error text: the health check keeps only each
+#     line's name and expiry, and yt-dlp's error text is cut to one line with URLs removed.
+YT_CKF_PATH = (os.environ.get("CRATE_YT_COOKIES_FILE") or "").strip()
+
+
+def _ytckf_int(name, default, top):
+    try:
+        return max(0, min(top, int(os.environ.get(name) or default)))
+    except ValueError:
+        return default
+
+
+YT_CKF_PER_SCAN = _ytckf_int("CRATE_YT_CK_PER_SCAN", 2, 2)
+YT_CKF_PER_HOUR = _ytckf_int("CRATE_YT_CK_PER_HOUR", 60, 60)
+YT_CKF_TIMEOUT = 15.0            # dl_clip's own subprocess ceiling
+YT_CKF_PAUSE_AFTER = 3
+YT_CKF_PAUSE_S = 1800.0
+# Player clients for a cookie download. "" = yt-dlp's own pick for a signed-in session (2026.08.19:
+# web_embedded, tv_downgraded, web; they need its JS runtime, deno, which the venv has). Never
+# `android`: it ignores cookies. CRATE_YT_COOKIES_CLIENTS=tv,web_safari (say) overrides.
+YT_CKF_CLIENTS = re.sub(r"[^a-z0-9_,]", "", (os.environ.get("CRATE_YT_COOKIES_CLIENTS") or "").lower())
+# yt-dlp's own signed-in test (youtube/_base.py _has_auth_cookies): LOGIN_INFO plus one of these
+_YTCKF_SID = ("SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID")
+# "Sign in to confirm your age" is a row's problem (the throwaway is not age-verified), not a refusal
+_YTCKF_REFUSED = re.compile(r"not a bot|cookies are no longer valid|login_required|"
+                            r"http error 429|too many requests", re.I)
+_YTCKF_TLS = threading.local()   # this scan's budget, set by find_edit on the scan thread
+_YTCKF_LOCK = threading.Lock()
+_YTCKF = {"hour": [], "counts": {}, "streak": 0, "streak_sig": None, "verdict": None,
+          "verdict_sig": None, "last_ok": None, "last_try": None, "last_kind": None,
+          "info": None, "info_sig": None}
+
+
+def _ytckf_live():
+    """True only inside server.py serving port 8788 (the engine the phones use)."""
+    m = sys.modules.get("__main__")
+    if os.path.basename(getattr(m, "__file__", "") or "") != "server.py":
+        return False
+    return getattr(m, "PORT", None) == 8788
+
+
+def _ytckf_sig():
+    """(mtime, size, readable) of the cookie file, or None when there is none."""
+    if not YT_CKF_PATH:
+        return None
+    try:
+        st = os.stat(YT_CKF_PATH)
+    except OSError:
+        return None
+    return (st.st_mtime, st.st_size, os.access(YT_CKF_PATH, os.R_OK))
+
+
+def _ytckf_info(sig):
+    """Names and expiry times of the file's YouTube cookies (cached per file version). A cookie's
+    value field is split off and dropped on the line it is read; nothing keeps it."""
+    with _YTCKF_LOCK:
+        if _YTCKF["info_sig"] == sig and _YTCKF["info"] is not None:
+            return _YTCKF["info"]
+    info = {"readable": bool(sig and sig[2]), "rows": 0, "signed_in": False, "expires": None}
+    if info["readable"]:
+        login, sid = [], []
+        try:
+            with open(YT_CKF_PATH, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.startswith("#HttpOnly_"):
+                        line = line[10:]
+                    elif line.startswith("#") or not line.strip():
+                        continue
+                    p = line.split("\t", 6)[:6]      # domain, flag, path, secure, expiry, name
+                    if len(p) < 6 or not p[0].lstrip(".").endswith("youtube.com"):
+                        continue
+                    info["rows"] += 1
+                    try:
+                        e = int(float(p[4] or 0))
+                    except ValueError:
+                        e = 0
+                    if p[5] == "LOGIN_INFO":
+                        login.append(e)
+                    elif p[5] in _YTCKF_SID:
+                        sid.append(e)
+        except (OSError, UnicodeError):
+            info["readable"] = False
+        if login and sid:
+            info["signed_in"] = True
+            # 0 = a session cookie (no expiry). Signed in lasts while LOGIN_INFO AND at least one
+            # SID cookie are unexpired: the earlier of the two latest expiries.
+            inf = float("inf")
+            end = min(max((e or inf) for e in login), max((e or inf) for e in sid))
+            info["expires"] = None if end == inf else int(end)
+    with _YTCKF_LOCK:
+        _YTCKF["info"], _YTCKF["info_sig"] = info, sig
+    return info
+
+
+def _ytckf_state(now=None):
+    """-> (state, sig, info). off: no file configured. idle: configured, no file yet. unreadable.
+    not_signed_in: no LOGIN_INFO + SID cookie for youtube.com in it. expired: their expiry passed.
+    paused: YouTube refused this file YT_CKF_PAUSE_AFTER times in a row (for YT_CKF_PAUSE_S).
+    ready: usable, not tried yet. ok / refused: what YouTube said to the last try with this file."""
+    if not YT_CKF_PATH:
+        return "off", None, None
+    sig = _ytckf_sig()
+    if sig is None:
+        return "idle", None, None
+    info = _ytckf_info(sig)
+    if not info["readable"]:
+        return "unreadable", sig, info
+    if not info["signed_in"]:
+        return "not_signed_in", sig, info
+    now = time.time() if now is None else now
+    if info["expires"] is not None and info["expires"] <= now:
+        return "expired", sig, info
+    with _YTCKF_LOCK:
+        if (_YTCKF["streak_sig"] == sig and _YTCKF["streak"] >= YT_CKF_PAUSE_AFTER
+                and now - (_YTCKF["last_try"] or 0.0) < YT_CKF_PAUSE_S):
+            return "paused", sig, info
+        v = _YTCKF["verdict"] if _YTCKF["verdict_sig"] == sig else None
+    return (v or "ready"), sig, info
+
+
+_YTCKF_USABLE = ("ready", "ok", "refused")
+
+
+class _YtCkfScan(object):
+    """One per find_edit call: cookie downloads spent, the rows reserved for one, the urls
+    already tried and which wavs a cookie download made."""
+
+    def __init__(self):
+        self.n = 0
+        self.picked = []          # urls, in reservation order (at most YT_CKF_PER_SCAN)
+        self.tried = set()
+        self.paths = set()
+
+    def reserve(self, rows):
+        """Reserve the scan's cookie slots for the first YouTube rows of `rows` (one batch, in its
+        download order). -> the urls newly reserved."""
+        new = []
+        with _YTCKF_LOCK:
+            for c in rows:
+                if len(self.picked) >= YT_CKF_PER_SCAN:
+                    break
+                u = (c or {}).get("url") or ""
+                if u and _is_yt_row(c) and u not in self.picked:
+                    self.picked.append(u)
+                    new.append(u)
+        return new
+
+
+def _ytckf_arm():
+    """find_edit: a fresh budget for this scan, or None (route off, not live, file not usable)."""
+    if not YT_CKF_PATH or YT_CKF_PER_SCAN <= 0 or not _ytckf_live():
+        return None
+    try:
+        return _YtCkfScan() if _ytckf_state()[0] in _YTCKF_USABLE else None
+    except Exception:                          # never let the route stop a scan
+        return None
+
+
+def _ytckf_scan():
+    return getattr(_YTCKF_TLS, "scan", None)
+
+
+def _ytckf_take(scan, url):
+    """Spend one cookie download on `url` if it holds one of the scan's reserved slots, was not
+    tried yet, the file is usable and both caps allow it. -> the file's sig, or None."""
+    if scan is None or not _ytckf_live():
+        return None
+    state, sig, _info = _ytckf_state()
+    if state not in _YTCKF_USABLE:
+        return None
+    now = time.time()
+    with _YTCKF_LOCK:
+        if scan.n >= YT_CKF_PER_SCAN or url not in scan.picked or url in scan.tried:
+            return None
+        _YTCKF["hour"][:] = [t for t in _YTCKF["hour"] if now - t < 3600.0]
+        if len(_YTCKF["hour"]) >= YT_CKF_PER_HOUR:
+            return None
+        scan.n += 1
+        scan.tried.add(url)
+        _YTCKF["hour"].append(now)
+        _YTCKF["last_try"] = now
+    return sig
+
+
+def _ytckf_err(err):
+    """One line of yt-dlp's complaint for the tlog: the ERROR line (else a WARNING), URLs cut."""
+    lines = (err or "").splitlines()
+    for key in ("ERROR", "WARNING", "Error"):
+        for ln in lines:
+            if key in ln:
+                return re.sub(r"https?://\S+", "<url>", ln).strip()[:160]
+    return None
+
+
+def _ytckf_kind(err, timed_out):
+    if timed_out:
+        return "timeout"
+    return "refused" if _YTCKF_REFUSED.search(err or "") else "failed"
+
+
+def _dl_yt_ckf(url, dst, seconds, abort, scan):
+    """The cookie-file fallback for one YouTube head download (dl_clip, after today's route
+    failed): None unless the row holds a reserved slot, the caps allow it and a wav lands. Same
+    sectioned command as dl_clip's subprocess plus --cookies <private copy>; killable by the hunt
+    budget like abort.run (own process group, registered under its lock)."""
+    if abort is not None and abort.dead:
+        return None
+    sig = _ytckf_take(scan, url)
+    if sig is None:
+        return None
+    for f in _glob.glob(_glob.escape(os.path.splitext(dst)[0]) + ".*"):
+        try:
+            os.remove(f)                       # the failed try's parts
+        except OSError:
+            pass
+    t0 = time.time()
+    ok, timed_out, err, ck, p = False, False, "", None, None
+    try:
+        fd, ck = tempfile.mkstemp(prefix=".ytck-", suffix=".txt", dir=os.path.dirname(dst) or None)
+        with os.fdopen(fd, "wb") as out, open(YT_CKF_PATH, "rb") as src:
+            out.write(src.read())
+        args = [a for a in YTDLP_YT if a != "--no-warnings"] + [
+            url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
+            "-o", dst.replace(".wav", ".%(ext)s"),
+            "--download-sections", "*0-%d" % seconds, "--force-keyframes-at-cuts",
+            "--cookies", ck]                   # warnings kept: the "no longer valid" one is a verdict
+        if YT_CKF_CLIENTS:
+            args += ["--extractor-args", "youtube:player_client=" + YT_CKF_CLIENTS]
+        if abort is not None:
+            with abort.lock:
+                if not abort.dead:
+                    p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                         start_new_session=True)
+                    abort.procs.add(p)
+        else:
+            p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                 start_new_session=True)
+        if p is not None:
+            try:
+                _o, e = p.communicate(timeout=YT_CKF_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _killpg(p)
+                _o, e = p.communicate()
+            finally:
+                if abort is not None:
+                    with abort.lock:
+                        abort.procs.discard(p)
+            err = (e or b"").decode("utf-8", "replace")
+            ok = p.returncode == 0 and os.path.exists(dst)
+    except Exception as ex:                    # the copy or the spawn failed: a failed row
+        err = "ERROR %s" % type(ex).__name__
+        if p is not None:
+            _killpg(p)
+    finally:
+        if ck:
+            try:
+                os.remove(ck)
+            except OSError:
+                pass
+    if abort is not None and abort.dead:
+        ok, kind = False, "abandoned"
+    else:
+        kind = "ok" if ok else _ytckf_kind(err, timed_out)
+    now = time.time()
+    with _YTCKF_LOCK:
+        _YTCKF["counts"][kind] = _YTCKF["counts"].get(kind, 0) + 1
+        _YTCKF["last_kind"] = kind
+        if kind == "ok":
+            _YTCKF["last_ok"] = now
+            _YTCKF["verdict"], _YTCKF["verdict_sig"] = "ok", sig
+            _YTCKF["streak"], _YTCKF["streak_sig"] = 0, sig
+        elif kind == "refused":
+            _YTCKF["streak"] = (_YTCKF["streak"] + 1) if _YTCKF["streak_sig"] == sig else 1
+            _YTCKF["streak_sig"] = sig
+            _YTCKF["verdict"], _YTCKF["verdict_sig"] = "refused", sig
+        hour = len(_YTCKF["hour"])
+    tlog("yt_ck", now - t0, url=url, ok=ok, kind=kind, scan_n=scan.n, hour_n=hour,
+         **({} if ok else {"err": _ytckf_err(err)}))
+    if not ok:
+        return None
+    scan.paths.add(dst)
+    return dst
+
+
+def yt_cookie_health():
+    """/health's `yt_cookies` block: state, caps, counts and times. Never a cookie value."""
+    now = time.time()
+    state, sig, info = _ytckf_state(now)
+    h = {"state": state, "cap_scan": YT_CKF_PER_SCAN, "cap_hour": YT_CKF_PER_HOUR}
+    if sig is not None:
+        h["file_age_h"] = round(max(0.0, now - sig[0]) / 3600.0, 1)
+    if info and info.get("readable"):
+        h["signed_in"] = info["signed_in"]
+        if info.get("expires"):
+            h["auth_expires"] = time.strftime("%Y-%m-%d", time.gmtime(info["expires"]))
+            h["days_left"] = round((info["expires"] - now) / 86400.0, 1)
+    with _YTCKF_LOCK:
+        h["used_hour"] = sum(1 for t in _YTCKF["hour"] if now - t < 3600.0)
+        h["counts"] = dict(_YTCKF["counts"])
+        if _YTCKF["last_kind"]:
+            h["last_kind"] = _YTCKF["last_kind"]
+        for k in ("last_ok", "last_try"):
+            if _YTCKF[k]:
+                h[k + "_ago_s"] = int(now - _YTCKF[k])
+    return h
+
+
 TEMPO_KEPT_RATES = [(1.25, "slowed ~0.80x"), (1.20, "slowed ~0.83x"), (1.30, "slowed ~0.77x"),
                     (1.12, "slowed ~0.89x"), (1.40, "slowed ~0.71x"), (0.85, "sped up ~1.18x"),
                     (0.80, "sped up ~1.25x")]
@@ -7581,7 +7912,7 @@ def _dl_direct(url, dst, seconds, budget):
     return _range_to_wav(media, dst, kbps, seconds, left)
 
 
-def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
+def dl_clip(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
     """Grab ~`seconds` of a candidate as wav. SoundCloud needs the android player client
     exemption; YouTube needs it too (web formats want a PO token now).
 
@@ -7618,7 +7949,11 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
 
     `abort` (HUNT BUDGET, _HuntBudget or None): when the hunt's cap lets this download go,
     the yt-dlp fallback is killed with its whole process group (its ffmpeg children too),
-    no fallback starts after the cap, and a direct fetch that lands after it is removed."""
+    no fallback starts after the cap, and a direct fetch that lands after it is removed.
+
+    `ytck` (YOUTUBE COOKIE FILE, a _YtCkfScan or None): a YouTube row whose download failed on
+    today's route may take one capped download with the cookie file (_dl_yt_ckf). None (every
+    caller but _download_and_score, and every scan while the file is missing) = today's path."""
     if DM_ON and _is_dm(url):
         return _dl_dm(url, dst, 0.0, seconds, timeout, abort)
     try:
@@ -7637,9 +7972,10 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
                              "--force-keyframes-at-cuts"]
     if is_yt:
         args += ["--extractor-args", _YT_CLIENTS]      # see _YT_CLIENTS
+    _ck = is_yt and ytck is not None          # YOUTUBE COOKIE FILE: a failure may retry once with it
     if abort is not None:
         if not abort.run(args, timeout):     # own process group; counted for the server's tally
-            return None
+            return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
     else:
         try:
             # server-kit: _run_ytdlp kills the whole process group on a timeout and counts
@@ -7647,9 +7983,9 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None):
             _run_ytdlp(args, capture_output=True, text=True, timeout=timeout, check=True,
                        kind="dl")
         except Exception:
-            return None
+            return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
     if not os.path.exists(dst):
-        return None
+        return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
     return dst
 
 
@@ -9024,6 +9360,12 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
             wave or ("fast" if start == FAST_FILE_BASE else "batch")):
         return 0
     _hk = _hunt_hook()      # PROGRESS 2026-09-29: this scan's counter, read on the calling thread
+    _ck = _ytckf_scan()     # YOUTUBE COOKIE FILE: this scan's budget (None = off), same thread
+    if _ck is not None and todo:
+        _ckn = _ck.reserve(todo)        # slots go in download order, not to the first to fail
+        if _ckn:
+            tlog("yt_ck_plan", 0.0, urls=_ckn,
+                 wave=wave or ("fast" if start == FAST_FILE_BASE else "batch"))
     _seek = _seek_run() if SEEK_MOFF else None     # CRATE_SEEK_MOFF, read on the calling thread
     if todo:
         _hunt_call(_hk, "q", len(todo))
@@ -9066,8 +9408,9 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         c["_done"] = True
         _dt0 = time.time()
         _dst = os.path.join(tmp, "c%d.wav" % (start + i))
-        got = (dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20)) if _bud is None
-               else dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20), abort=_bud))
+        _ckw = {"ytck": _ck} if _ck is not None else {}     # no cookie file: today's exact call
+        got = (dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20), **_ckw) if _bud is None
+               else dl_clip(c["url"], _dst, seconds=(c.get("dl_seconds") or 20), abort=_bud, **_ckw))
         if _bud is not None and _bud.dead:      # abandoned mid-download: no row, no file
             _bud.drop(_dst)
             tlog("cand_abandoned", time.time() - _dt0, url=c.get("url"), at="download")
@@ -9075,7 +9418,8 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
         _dt1 = time.time()
         _hunt_call(_hk, "d")
         if YT_WALL and _is_yt_row(c):
-            _yt_dl_note(bool(got))          # CRATE_YT_WALL
+            # CRATE_YT_WALL reads today's route: a cookie-file download does not end the wall
+            _yt_dl_note(bool(got) and not (_ck is not None and got in _ck.paths))
         if not got:
             tlog("cand_dl", _dt1 - _dt0, url=c.get("url"), source=c.get("source"),
                  ok=False)
@@ -9301,6 +9645,8 @@ async def find_edit(*args, **kwargs):
             and time.time() - _armed < 5.0):
         _hb = _HuntBudget(HUNT_BUDGET, HUNT_CAP, t0=_t0, hook=_hunt_hook())
     _HB_TLS.hb = _hb
+    # YOUTUBE COOKIE FILE: a fresh per-scan budget, read by _download_and_score (None = off)
+    _YTCKF_TLS.scan = _ytckf_arm()
     # CRATE_SEEK_MOFF: armed only by server._phase2 (seek_plan_arm), same thread, same 5 s rule
     _skp, _ska = getattr(_SEEK_TLS, "plan", None), getattr(_SEEK_TLS, "armed_at", None)
     _SEEK_TLS.plan = _SEEK_TLS.armed_at = None
@@ -9315,6 +9661,7 @@ async def find_edit(*args, **kwargs):
         raise
     finally:
         _HB_TLS.hb = None
+        _YTCKF_TLS.scan = None
         if _SEEK_TLS.run is not None:
             _SEEK_TLS.run.close()
             tlog("seek_summary", 0.0, tried=_SEEK_TLS.run.tried, fetches=_SEEK_TLS.run.fetches,

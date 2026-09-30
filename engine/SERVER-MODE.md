@@ -17,6 +17,7 @@ So the server runs plain repo HEAD, and a ship reaches it with
 | `CRATE_KILL_PGROUP=1` | crate_engine.py | a timed-out yt-dlp takes its ffmpeg with it; per-scan download tally (`ScanTally`) |
 | `CRATE_TIKWM_GAP_S`, `CRATE_TIKWM_MAX_WAIT_S` | crate_engine.py | box-wide spacing of tikwm requests |
 | `CRATE_YTDLP_BIN` | crate_engine.py | which yt-dlp binary (no Homebrew on Linux) |
+| `CRATE_YT_COOKIES_FILE` (+ `CRATE_YT_CK_PER_SCAN`, `CRATE_YT_CK_PER_HOUR`, `CRATE_YT_COOKIES_CLIENTS`) | crate_engine.py, server.py | a YouTube candidate whose normal download failed gets one retry with a throwaway login's cookies.txt (first 2 YouTube rows per scan, 60 an hour, env can only lower them); idle while the file is missing; `yt_cookies` on `/health`. `test_yt_cookie_file.py` |
 | `CRATE_DATA_DIR` | server.py | feedback and review notes outside the code folder |
 | `ADDIFY_SCAN_SLOTS` (+ `_QUEUE_MAX`, `_QUEUE_WAIT_S`, `ADDIFY_EDITS_WAIT_S`, `ADDIFY_EDITS_RESERVE_S`, `ADDIFY_BUSY_RETRY_S`, `ADDIFY_SCAN_DEADLINE_S`) | server.py | the scan gate, one scan per clip (joins), the busy answer |
 | `ADDIFY_DRAIN_S`, `ADDIFY_TMP_SWEEP` | server.py | SIGTERM drains running scans, then sweeps temp audio |

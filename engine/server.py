@@ -8892,6 +8892,13 @@ class H(BaseHTTPRequestHandler):
             # FAST-NAME 9 / 10: page behaviour, only when one is on
             if PAGE_FAST_POLL or PAGE_LIVE_ROWS:
                 _hb["features"] = {"fast_poll": PAGE_FAST_POLL, "live_rows": PAGE_LIVE_ROWS}
+            # YOUTUBE COOKIE FILE (crate_engine YT_CKF_*): only when CRATE_YT_COOKIES_FILE is set
+            # (the server). State, caps, counts and times; never a cookie value.
+            if E.YT_CKF_PATH:
+                try:
+                    _hb["yt_cookies"] = E.yt_cookie_health()
+                except Exception as _e:
+                    _hb["yt_cookies"] = {"state": "error", "err": type(_e).__name__}
             # APPLYALL 2026-09-29: THIS caller's tier and scans left, only with the limiter on.
             # Installed builds decode only {ok, service, build}, so an extra key is safe.
             if RL.MODE != "off":
