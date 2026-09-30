@@ -192,9 +192,26 @@ def cut(src, dst, offset, rate, span=20, kept=False):
                     "-t", str(span)] + af + ["-ac", "1", "-ar", "44100", dst], check=True)
 
 
+# SHAZAM RELAYS 2026-10-01 (Roham: "find a way to avoid rate limit"). Shazam throttles each data-
+# centre IP to about 5 lookups a minute. CRATE_SHAZAM_PROXIES lists HTTP relays (small droplets
+# running tinyproxy, open to this server's IP only); lookups go round-robin across the server's
+# own IP plus every relay, so each IP stays inside its own budget. Unset = direct only, as before.
+# The pacer's CRATE_SHAZAM_PACE_N is set to 5 x (relays + 1) alongside it.
+import itertools as _it, threading as _shz_thr
+_SHZ_ROUTES = [""] + [u.strip() for u in (os.environ.get("CRATE_SHAZAM_PROXIES") or "").split(",") if u.strip()]
+_SHZ_CYCLE = _it.cycle(_SHZ_ROUTES)
+_SHZ_LOCK = _shz_thr.Lock()
+
+
+def _shazam_route():
+    with _SHZ_LOCK:
+        return next(_SHZ_CYCLE)
+
+
 async def _shazam_shazamio(path):
     from shazamio import Shazam
-    out = await Shazam().recognize(path)
+    route = _shazam_route()
+    out = await (Shazam().recognize(path, proxy=route) if route else Shazam().recognize(path))
     return _shazamio_answer(out)
 
 
