@@ -392,7 +392,7 @@ TEMPO_KEPT = _speed_flag("CRATE_TEMPO_KEPT", True)   # gated 2026-09-30: docfix/
 # CRATE_YT_WALL (K30 dontlike, 2026-09-30, default ON since its gate, konnor30/dontlike.md). YouTube bot-walls this Mac:
 # live /tmp/tlog.jsonl holds 643 failed YouTube candidate downloads against 5 good ones, the last
 # good one 2026-09-29 15:33. A YouTube row still takes a download slot, so on Konnor's Don't Like
-# clip (ZSbS39h2S) 18 of 33 downloads were dead YouTube fetches while the exact upload, desy's
+# clip (ZSbS39h2S) 19 of 33 downloads were dead YouTube fetches while the exact upload, desy's
 # "Chief Keef - I Don't Like (remix)" (#2 on the hint query "i dont like chief keef", engine
 # verify core 1.000 / fp 0.929 at 1.000x), sat 12th among SoundCloud rows behind 10 YouTube rows
 # and was never downloaded. With the flag, once the last YT_WALL_N YouTube downloads (within
