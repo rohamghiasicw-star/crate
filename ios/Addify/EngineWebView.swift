@@ -332,9 +332,17 @@ final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
         case "status":
             return (["pro": await store.isPro()], nil)
         case "products":
-            let list: [[String: Any]] = await store.load().map { p in
-                ["id": p.id, "name": p.displayName, "price": p.displayPrice,
-                 "period": p.subscription.map { AddifyStore.periodName($0.subscriptionPeriod) } ?? ""]
+            var list: [[String: Any]] = []
+            for p in await store.load() {
+                var row: [String: Any] = ["id": p.id, "name": p.displayName, "price": p.displayPrice,
+                    "period": p.subscription.map { AddifyStore.periodName($0.subscriptionPeriod) } ?? ""]
+                /* Konnor's paywall rules: a 3-day free trial on yearly. Shown only when App Store
+                   Connect has the offer AND this Apple ID is still eligible for it. */
+                if let sub = p.subscription, let intro = sub.introductoryOffer, intro.paymentMode == .freeTrial,
+                   await sub.isEligibleForIntroOffer {
+                    row["trial"] = AddifyStore.periodName(intro.period) + " free"
+                }
+                list.append(row)
             }
             return (list, nil)
         case "buy":

@@ -671,6 +671,10 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .upcard .ut{flex:1}
 .upcard b{display:block;font-size:14px;font-weight:680}
 .upcard span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.scannote{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 12px);transform:translate(-50%,-8px);background:var(--raise2);color:var(--text);
+  font-size:13px;font-weight:700;padding:8px 15px;border-radius:999px;opacity:0;transition:opacity .25s,transform .25s;z-index:85;pointer-events:none}
+.scannote.on{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){.scannote{transition:none}}
 .pw{position:fixed;inset:0;z-index:90;background:rgba(8,6,14,.72);display:flex;align-items:flex-end;justify-content:center}
 .pw[hidden]{display:none}
 .pwc{position:relative;width:100%;max-width:480px;background:var(--raise);color:var(--text);border-radius:22px 22px 0 0;
@@ -5199,7 +5203,15 @@ function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
 function useScan(u){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var c=countedURLs();
   if(u&&c.indexOf(u)>=0) return;                 // the same clip again is the same scan
   c.push(u); lsSet(scanKey()+'-urls',c);
-  try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();}
+  try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();
+  scanNote();                                    // Konnor rule 1: show the count right after each result
+  if(scansUsed()>=FREE_SCANS) PW_DUE=true;}      // Konnor: the paywall pops once they are back home
+var PW_DUE=false;
+function scanNote(){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_SCANS-scansUsed());
+  var n=document.getElementById('scannote');
+  if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status'); document.body.appendChild(n);}
+  n.textContent=left+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');
+  clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}
 function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; var c=countedURLs(), i=c.indexOf(u);
   if(i<0) return; c.splice(i,1); lsSet(scanKey()+'-urls',c);
   try{localStorage.setItem(scanKey(),String(Math.max(0,scansUsed()-1)));}catch(e){} paintPill();}
@@ -5225,7 +5237,7 @@ function openPaywall(){
     '<button class="pwr" id="pwr">Restore purchases</button>'+
     '<p class="pwf">Auto-renewing subscription. Payment is charged to your Apple ID and renews '+
       'at the same price unless cancelled at least 24 hours before the period ends. Manage or '+
-      'cancel in your Apple ID settings. <a href="'+legalURL('terms')+'" target="_blank">Terms of Use</a> · '+
+      'cancel in your Apple ID settings. A free trial becomes a paid subscription unless cancelled at least 24 hours before it ends. <a href="'+legalURL('terms')+'" target="_blank">Terms of Use</a> · '+
       '<a href="'+legalURL('privacy')+'" target="_blank">Privacy Policy</a></p></div>';
   ov.hidden=false;
   document.getElementById('pwx').onclick=function(){ov.hidden=true;};
@@ -5234,7 +5246,7 @@ function openPaywall(){
     var b=document.getElementById('pwb'); if(!b) return;
     if(!ps||!ps.length){b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>'; return;}
     b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||'Addify Unlimited')+
-      '</b><span>'+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
+      '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
     [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
       if(busyBuy) return; busyBuy=true; pwMsg('');
       storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
@@ -6464,7 +6476,7 @@ document.getElementById('spbtn').onclick=function(){
   if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
-function goHome(){nav('idle'); endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
+function goHome(){nav('idle'); try{if(PW_DUE&&outOfScans()){PW_DUE=false; setTimeout(openPaywall,450);}}catch(e){} endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
   leftScan=true;                 // a still-running hunt must not finish() us back onto the result
   // APPLYALL 2026-09-29 (review finding 15): Back while the clip is still being read cancels
   // the scan. Its /base answer is ignored (the token moved on) and the next link can start.
