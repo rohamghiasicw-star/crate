@@ -8761,10 +8761,7 @@ class _SeekRun(object):
                 return out
             keep = best[3]
             row = {"seek_at": best[4], "seek_clip_at": best[5], "core_head": round(hc, 4),
-                   "fp_head": round(hf, 4),
-                   # ROW PROOF 2026-09-30: the reversed control this window just passed, so
-                   # the row the page shows carries its gap (server _row_proven)
-                   "seek_rev_fp": info.get("rev_fp")}
+                   "fp_head": round(hf, 4)}
             payload = {"v": best[2], "path": best[3], "row": row,
                        "fp": best[0], "core": best[1]}
             if mix:
@@ -8891,7 +8888,7 @@ def seek_settle(rows, where=""):
                 c.update(sk["sec"]["row"])
             else:
                 _seek_apply(c, sk["head"]["v"], sk["head"]["path"])
-                for k in ("seek_at", "seek_clip_at", "core_head", "fp_head", "seek_rev_fp"):
+                for k in ("seek_at", "seek_clip_at", "core_head", "fp_head"):
                     c.pop(k, None)
             if sk.get("state") is not None:
                 changed += 1
@@ -10164,7 +10161,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                        "same", "vspeed", "bass_delta", "lag", "clip_tilt", "cand_tilt",
                        "slope_delta", "clip_slope", "cand_slope", "_done",
                        # CRATE_SEEK_MOFF v2 (only ever present with the flag on)
-                       "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head", "seek_rev_fp")
+                       "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head")
         for fc in _fast_carry:
             hit = _by_fast.get(fc["url"])
             if hit is None:
@@ -10630,7 +10627,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                       "cand_tilt", "clip_reverb", "cand_reverb", "reverb_delta",
                       "clip_slope", "cand_slope", "slope_delta",
                       # CRATE_SEEK_MOFF v2: a stripped row must not come back via seek_settle
-                      "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head", "seek_rev_fp"):
+                      "_seek", "seek_at", "seek_clip_at", "core_head", "fp_head"):
                 c.pop(k, None)
             stripped += 1
     n += n2
