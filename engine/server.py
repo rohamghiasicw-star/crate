@@ -1642,6 +1642,8 @@ def _phase1(url, key, t0):
                 res["later_window"] = fp["later_window"]
             if fp.get("second_window"):
                 res["second_window"] = True
+            if getattr(E, "TEMPO_KEPT", False) and fp.get("pitch_kept"):
+                res["pitch_kept"] = True          # CRATE_TEMPO_KEPT: named by a key-kept probe
             # ONE DISSENTING WINDOW IS NOT A SECOND SONG.
             # `multi` is set in _fingerprint_core purely by de-duping the phase-1 scan hits
             # on title, with NO support requirement - one window out of six naming
@@ -3121,7 +3123,40 @@ def _crown_fp_floor(c, source_v=None):
     return None
 
 
-def _crown_tempo_mismatch(top, measured=None, base_title=None):
+def _kept_key_verdict(top, res):
+    """CRATE_TEMPO_KEPT. The clip was named by a key-kept (atempo) probe, so it plays the song
+    at a changed TEMPO in the song's own KEY. verify()'s vspeed is a PITCH ratio
+    (findings/pitch-kept-phase2.md), so here it answers "same key or not", never "same tempo":
+      - another key: a resample edit of the same song, not the clip's version -> refused;
+      - same key, a title in the clip's direction ("slowed" on a slowed clip): may be the
+        exact key-kept edit, tempo unmeasured -> admitted (every other gate still runs);
+      - same key, any other title: plays at the song's tempo -> refused.
+    Returns the refusal sentence or None."""
+    v = top.get("vspeed_locked")
+    if v is None:
+        v = top.get("vspeed")
+    try:
+        v = float(v) if v else None
+    except (TypeError, ValueError):
+        v = None
+    lbl = res.get("speed") or ""
+    m = re.search(r"~\s*([0-9.]+)x", lbl)
+    t = float(m.group(1)) if m else None
+    slow = "slow" in lbl
+    if not v or v <= 0:
+        return "the clip keeps the song's key at a changed tempo, and this upload's key could not be read"
+    if abs(math.log2(v)) > _TEMPO_TOL:
+        return ("this upload is in another key (pitch %.2fx); the clip keeps the song's key at "
+                "a changed tempo" % v)
+    title = ("%s %s" % (top.get("title") or "", top.get("uploader") or "")).lower()
+    if (slow and re.search(r"\bslow", title)) or (
+            not slow and re.search(r"\b(sped|speed ?up|fast)", title)):
+        return None
+    return ("clip plays about %.0f%% %s than this upload, in the same key"
+            % (abs(1.0 - (t or 1.0)) * 100.0, "slower" if slow else "faster"))
+
+
+def _crown_tempo_mismatch(top, measured=None, base_title=None, res=None):
     """The crowned upload is the same recording but not at the speed that played.
 
     Distinct from `_crown_contradicts`, which reads TITLES. This reads the measurement, so
@@ -3135,6 +3170,8 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None):
     Uses the locked speed where the bass-robust consensus produced one, because a heavily
     boosted or reverbed clip skews the naive reading.
     """
+    if res is not None and getattr(E, "TEMPO_KEPT", False) and res.get("pitch_kept"):
+        return _kept_key_verdict(top, res), None      # CRATE_TEMPO_KEPT: see there
     v = top.get("vspeed_locked")
     if v is None:
         v = top.get("vspeed")
@@ -3407,7 +3444,7 @@ def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
         for row, vc in zip(candidates, verified or []):
             url = row.get("url")
             if not pooled and (vc.get("core") or 0) >= E.CORE_KEEP and url not in ann:
-                _why, _sv = _crown_tempo_mismatch(vc, measured, base_title)
+                _why, _sv = _crown_tempo_mismatch(vc, measured, base_title, res=res)
                 if not _why:
                     _why = _crown_contradicts(vc, gate_label, mdir, measured=measured,
                                               tilt_readable=(_sv is None))
@@ -4599,6 +4636,14 @@ def _phase2(ctx, on_cand=None):
                             if _wnote:
                                 _srnote = _wnote
                                 res["speed_disputed"] = _wnote
+                if getattr(E, "TEMPO_KEPT", False) and res.get("pitch_kept"):
+                    # CRATE_TEMPO_KEPT: every reading above is a PITCH ratio, and a key-kept
+                    # clip's pitch is the song's own (1.0) whatever its tempo. Kept as
+                    # pitch_measured; it measures no speed and disputes none.
+                    if measured:
+                        res["pitch_measured"] = measured.get("speed")
+                    measured, _srnote = None, None
+                    res.pop("speed_disputed", None)
                 if measured and measured.get("source") == "pool":
                     res["speed_source"] = "pool"
                 E.tlog("speed_measure", time.time() - _tsm, measured=bool(measured),
@@ -4677,7 +4722,7 @@ def _phase2(ctx, on_cand=None):
             _fa_n = [0]                    # FP_FLOOR_ALIGN rows looked at this scan
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
-                _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title)
+                _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title, res=res)
                 if not _why:
                     _why = _crown_contradicts(_cand, _gate_label, mdir,
                                               measured=measured,
@@ -4791,7 +4836,7 @@ def _phase2(ctx, on_cand=None):
             # it, the reason is logged and the engine's own pick stands.
             if _corr is not None:
                 def _cgate(c):
-                    _w, _s = _crown_tempo_mismatch(c, measured, base_title)
+                    _w, _s = _crown_tempo_mismatch(c, measured, base_title, res=res)
                     if not _w:
                         _w = _crown_contradicts(c, _gate_label, mdir, measured=measured,
                                                 tilt_readable=(_s is None))
@@ -4846,7 +4891,10 @@ def _phase2(ctx, on_cand=None):
                         "title": base_title, "artist": base_artist,
                         "speed": (fp or {}).get("edit_label"), "x": _sae.get("x"),
                         "n": _sae.get("n"),
-                        "why": "no upload at this speed passed; the original, re-pitched"}
+                        "why": ("no upload at this tempo and key passed; the original, "
+                                "with its tempo changed and its key kept")
+                        if res.get("pitch_kept") else
+                        "no upload at this speed passed; the original, re-pitched"}
                     E.tlog("source_at_speed", 0.0, title=(base_title or "")[:60],
                            speed=(fp or {}).get("edit_label"), n=_sae.get("n"))
             try:
@@ -5180,6 +5228,9 @@ def _phase2(ctx, on_cand=None):
         else:
             res["result"] = "no_match"
         _rendition_final_speed(res)
+        if (getattr(E, "TEMPO_KEPT", False) and res.get("pitch_kept") and res.get("speed")
+                and "pitch kept" not in res["speed"]):
+            res["speed"] = res["speed"] + ", pitch kept"       # CRATE_TEMPO_KEPT: display
         _write_figs(res)
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)

@@ -364,6 +364,36 @@ VOTE_EFF_TOL = 0.045            # |log2| of the skew-corrected rate ratio, about
 # pairs): every false pair reads <= 0.613, every true pair at the same speed >= 0.638.
 FP_FLOOR = float(os.environ.get("CRATE_FP_FLOOR", 0.62))
 EXTRA_LANE_DL = 6               # appended downloads for the posted-rival / mashup-half lanes
+# DOCFIX JOB B 2026-09-30 (~/addify-harness/docfix/POSTED.md). Both built DEFAULT OFF, ON since
+# their prove (ON vs OFF, 0 crowns lost, reg identical). CRATE_POSTED_EXACT=0 / CRATE_TEMPO_KEPT=0 undo.
+#   CRATE_POSTED_EXACT  #30 (vt.tiktok.com/ZSqnw1xe2): Shazam named "Set My Heart On Fire" by
+#                       Aven Krynn on 4 as-posted windows, skew ~0.0002, each at its own
+#                       window offset + 0.03 s, i.e. the clip IS that catalogue entry as
+#                       posted. The posted lane searched it, but _lane_rows_ordered keeps a
+#                       row at its FIRST sighting: the upload sat at SoundCloud position 6 of
+#                       the bare-title lane (position 0 of the title + artist lane) and landed
+#                       7th, one past EXTRA_LANE_DL. When >= POSTED_EXACT_MIN as-posted windows
+#                       agree on the rival's track (same Shazam id, |timeskew| <=
+#                       POSTED_EXACT_SKEW, track offset minus window offset within
+#                       VOTE_MOFF_TOL of their median), a SoundCloud row whose title carries
+#                       the rival's words and whose uploader IS the rival's artist is
+#                       downloaded first. It then competes under every normal gate.
+#   CRATE_TEMPO_KEPT    #17 (vt.tiktok.com/ZSqgEGsBP): New Opp slowed ~0.80x with the key KEPT
+#                       (atempo). Every counter-speed probe is a resample (asetrate), which
+#                       restores the tempo but moves the key ~3.9 semitones, so all 24 probes
+#                       came back empty and the card said "No song here". Only when EVERY
+#                       probe of the scan came back empty: a short sweep of key-kept
+#                       (atempo) counter-speed probes; a song needs TEMPO_KEPT_NEED agreeing
+#                       answers. A named scan never reaches it.
+POSTED_EXACT = _speed_flag("CRATE_POSTED_EXACT", True)   # gated 2026-09-30: docfix/posted/POSTED.md, #30 x2 + reg x2 + 13 posted-rival clips ON vs OFF
+POSTED_EXACT_MIN = 3
+POSTED_EXACT_SKEW = 0.01
+TEMPO_KEPT = _speed_flag("CRATE_TEMPO_KEPT", True)   # gated 2026-09-30: docfix/posted/POSTED.md, #17 x2 + reg x2 + no_match 44/45 ON vs OFF
+TEMPO_KEPT_RATES = [(1.25, "slowed ~0.80x"), (1.20, "slowed ~0.83x"), (1.30, "slowed ~0.77x"),
+                    (1.12, "slowed ~0.89x"), (1.40, "slowed ~0.71x"), (0.85, "sped up ~1.18x"),
+                    (0.80, "sped up ~1.25x")]
+TEMPO_KEPT_NEED = 2
+TEMPO_KEPT_BUDGET = 10.0
 XWIN_MAX = 3                    # later-window probes a phase-2 contest may spend
 # CORRECTION 2026-09-25: ZSqgEBw8E never reaches this probe. Its 1.0x scan HIT at all
 # three windows (0/6/12, span 12; tlog_batchA, tlog_batchB, tlog_n3), so the base came
@@ -3432,16 +3462,86 @@ def _same_song(hits, pick):
     return [h for h in (hits or []) if _vk(h.get("title"), [pk]) == pk]
 
 
-def _posted_rival(posted_hit, win):
+def _posted_rival(posted_hit, win, raw=None):
     """ROOTFIX A (CRATE_POSTED_LANE): the as-posted 1.0x hit a counter-speed rival just
-    overruled, for its own search lane. None when off, junk, or the same song."""
+    overruled, for its own search lane. None when off, junk, or the same song.
+    CRATE_POSTED_EXACT: `raw` is every as-posted window's hit; "exact" is set when enough of
+    them answer the rival's own track at one place (see _posted_agree)."""
     if not (POSTED_LANE and posted_hit and win) or _junk_id(posted_hit):
         return None
     pk = _vk(posted_hit.get("title"))
     if not pk or pk == _vk(win.get("title"), [pk]):
         return None
-    return {"title": posted_hit.get("title"), "artist": posted_hit.get("artist"),
-            "url": posted_hit.get("url"), "rate": posted_hit.get("rate", 1.0)}
+    out = {"title": posted_hit.get("title"), "artist": posted_hit.get("artist"),
+           "url": posted_hit.get("url"), "rate": posted_hit.get("rate", 1.0)}
+    if POSTED_EXACT:
+        ag = _posted_agree(posted_hit, raw)
+        if ag and ag["n"] >= POSTED_EXACT_MIN:
+            out["exact"] = ag
+    return out
+
+
+def _posted_agree(posted_hit, raw):
+    """CRATE_POSTED_EXACT. How many as-posted windows answered posted_hit's own Shazam track
+    at ~zero skew and at ONE place in it (track offset minus window offset within
+    VOTE_MOFF_TOL of their median). -> {"n", "m0"} or None."""
+    try:
+        sid = posted_hit.get("key")
+        d = []
+        for h in raw or []:
+            if not h or h.get("key") != sid or sid is None or float(h.get("rate") or 1.0) != 1.0:
+                continue
+            ts, mo, off = h.get("timeskew"), h.get("offset_in_master"), h.get("offset")
+            if ts is None or mo is None or off is None or abs(float(ts)) > POSTED_EXACT_SKEW:
+                continue
+            d.append(float(mo) - float(off))
+        if not d:
+            return None
+        d.sort()
+        med = d[len(d) // 2] if len(d) % 2 else (d[len(d) // 2 - 1] + d[len(d) // 2]) / 2.0
+        return {"n": sum(1 for x in d if abs(x - med) <= VOTE_MOFF_TOL), "m0": round(med, 2)}
+    except (TypeError, ValueError):
+        return None
+
+
+def _norm_name(s):
+    return re.sub(r"[^a-z0-9]", "", _ascii_fold(s or "").lower())
+
+
+def _posted_core(t):
+    """The rival title the posted lane searches: brackets and a strippable dash tail off."""
+    core = re.sub(r"[\(\[].*?[\)\]]", " ", t or "").strip()
+    m = _VOTE_DASH_TAIL.search(core)
+    if m and _vote_tail_strippable(m.group(1)):
+        core = core[:m.start()].strip()
+    return core
+
+
+def _posted_kw(pr):
+    return {w for w in (_title_key(_posted_core((pr or {}).get("title"))) or "").split()
+            if len(w) >= 3}
+
+
+def _posted_exact_row(c, pr):
+    """CRATE_POSTED_EXACT: a SoundCloud row that carries the rival's title words and whose
+    uploader (or its URL's account name) IS one of the rival's credited artists."""
+    if not (pr and pr.get("exact")) or c.get("source") != "soundcloud":
+        return False
+    kw = _posted_kw(pr)
+    tw = set((_title_key(c.get("title") or "") or "").split())
+    if not (kw and kw <= tw):
+        return False
+    names = {_norm_name(a) for a in re.split(r",|&|\bfeat\.?|\bft\.?|\bx\b|\band\b",
+                                             pr.get("artist") or "")}
+    names.discard("")
+    if not names:
+        return False
+    up = _norm_name(c.get("uploader"))
+    try:
+        acct = _norm_name((c.get("url") or "").split("/")[3])
+    except IndexError:
+        acct = ""
+    return bool((up and up in names) or (acct and acct in names))
 
 
 _HINT_STOP = {"music", "song", "sound", "track", "name", "audio", "the", "and", "por",
@@ -4012,35 +4112,42 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     _st.setdefault("psum", 0.0); _st.setdefault("busy", 0.0)
     _st.setdefault("_in", 0); _st.setdefault("_b0", 0.0)
 
-    def _cut_task(off, rate, span):
+    def _cut_task(off, rate, span, kept=False):
         """The probe's WAV, rendered OFF the Shazam lock (SPEED-DESIGN-1 C0): same ffmpeg
         call, same bytes, it just no longer holds up the probe in flight. One task per
-        (off, rate, span), so a re-fired probe reuses its cut exactly like re-cutting it."""
-        k = (off, rate, span)
+        (off, rate, span), so a re-fired probe reuses its cut exactly like re-cutting it.
+        kept=True (CRATE_TEMPO_KEPT): a key-kept (atempo) cut, keyed and named apart."""
+        k = (off, rate, span) if not kept else (off, rate, span, "k")
         t = _precut.get(k)
         if t is None:
-            wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
+            wav = os.path.join(tmp, "w%s_%s_%s%s.wav" % (off, rate, span, "k" if kept else ""))
 
             def _do():
                 _c0 = time.time()
-                cut(audio, wav, off, rate, span=span)
+                if kept:
+                    cut(audio, wav, off, rate, span=span, kept=True)
+                else:
+                    cut(audio, wav, off, rate, span=span)
                 return wav, time.time() - _c0
             t = asyncio.ensure_future(asyncio.get_event_loop().run_in_executor(None, _do))
             _precut[k] = t
         return t
 
-    async def probe(off, rate, label, span=20, t_sink=None, timeout=None, psum_out=None):
+    async def probe(off, rate, label, span=20, t_sink=None, timeout=None, psum_out=None,
+                    kept=False):
         if _conc <= 1 and not SPEED_PRECUT:
-            return await _probe_serial(off, rate, label, span, t_sink, timeout)
-        _ct = _cut_task(off, rate, span)
+            return await _probe_serial(off, rate, label, span, t_sink, timeout, kept=kept)
+        _ct = _cut_task(off, rate, span, kept=kept)
         async with sem:
             if _one_at_a_time() and _conc > 1:
                 async with _serial:
                     return await _probe_one(off, rate, label, span, t_sink, timeout, _ct,
-                                            psum_out)
-            return await _probe_one(off, rate, label, span, t_sink, timeout, _ct, psum_out)
+                                            psum_out, kept=kept)
+            return await _probe_one(off, rate, label, span, t_sink, timeout, _ct, psum_out,
+                                    kept=kept)
 
-    async def _probe_one(off, rate, label, span, t_sink, timeout, ct, psum_out=None):
+    async def _probe_one(off, rate, label, span, t_sink, timeout, ct, psum_out=None,
+                         kept=False):
         _pt0 = time.time()
         _slot = None
         _sw = 0.0
@@ -4061,10 +4168,12 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             hit = await asyncio.wait_for(shazam(wav), timeout=_to)
             tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                  off=off, rate=rate, span=span, hit=bool(hit), conc=_conc,
-                 slot_wait=round(_sw, 3), **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}))
+                 slot_wait=round(_sw, 3), **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
+                 **({"kept": True} if kept else {}))
         except asyncio.TimeoutError:
             tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
                  span=span, hit=False, timeout=True, conc=_conc,
+                 **({"kept": True} if kept else {}),
                  **(_probe_log_fields(wav, None) if FN_PROBE_LOG else {}))
             if _conc > 1 and not _degraded["on"]:
                 _degraded["on"] = True
@@ -4100,16 +4209,21 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
         if hit:
             hit.update(edit_label=label, rate=rate, offset=off, span=span,
                        probes=n["i"])
-            if SEEK_MOFF and hit.get("offset_in_master") is not None:
+            if kept:
+                hit["pitch_kept"] = True        # CRATE_TEMPO_KEPT: never a seek entry
+            elif SEEK_MOFF and hit.get("offset_in_master") is not None:
                 _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
         return hit
 
-    async def _probe_serial(off, rate, label, span=20, t_sink=None, timeout=None):
+    async def _probe_serial(off, rate, label, span=20, t_sink=None, timeout=None, kept=False):
         async with sem:
             _pt0 = time.time()
-            wav = os.path.join(tmp, "w%s_%s_%s.wav" % (off, rate, span))
+            wav = os.path.join(tmp, "w%s_%s_%s%s.wav" % (off, rate, span, "k" if kept else ""))
             try:
-                cut(audio, wav, off, rate, span=span)
+                if kept:
+                    cut(audio, wav, off, rate, span=span, kept=True)
+                else:
+                    cut(audio, wav, off, rate, span=span)
                 _pt1 = time.time()
                 # HARD TIMEOUT. shazamio had none, so a single stalled recognise call
                 # hung the ENTIRE request forever: measured get_source 3.8s then
@@ -4124,10 +4238,11 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 hit = await asyncio.wait_for(shazam(wav), timeout=_to)
                 tlog("shazam_probe", time.time() - _pt0, cut=round(_pt1 - _pt0, 3),
                      off=off, rate=rate, span=span, hit=bool(hit),
-                     **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}))
+                     **(_probe_log_fields(wav, hit) if FN_PROBE_LOG else {}),
+                     **({"kept": True} if kept else {}))
             except asyncio.TimeoutError:
                 tlog("shazam_probe", time.time() - _pt0, off=off, rate=rate,
-                     span=span, hit=False, timeout=True)
+                     span=span, hit=False, timeout=True, **({"kept": True} if kept else {}))
                 # a timeout is a STALL, not a "no match" - remember it so the caller
                 # can re-fire exactly these probes if the whole pass came back empty.
                 if t_sink is not None:
@@ -4145,7 +4260,9 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             # and it has to be the measured one, not a plausible-looking guess.
             hit.update(edit_label=label, rate=rate, offset=off, span=span,
                        probes=n["i"])
-            if SEEK_MOFF and hit.get("offset_in_master") is not None:
+            if kept:
+                hit["pitch_kept"] = True        # CRATE_TEMPO_KEPT: never a seek entry
+            elif SEEK_MOFF and hit.get("offset_in_master") is not None:
                 _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
         return hit
 
@@ -4505,12 +4622,13 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             # ROOTFIX B/A, both no-ops with their flags off: the skew-corrected speed of
             # the winning track, and the overruled 1.0x title for its own search lane.
             _apply_skew_speed(primary, g)
-            _pr = _posted_rival(hits[0], win)
+            _pr = _posted_rival(hits[0], win, raw=_posted_raw)
             if _pr:
                 primary["posted_rival"] = _pr
                 tlog("posted_rival", 0.0, title=(_pr.get("title") or "")[:80],
                      artist=(_pr.get("artist") or "")[:60],
-                     winner=(win.get("title") or "")[:80])
+                     winner=(win.get("title") or "")[:80],
+                     **({"exact": _pr.get("exact")} if POSTED_EXACT else {}))
             return _rend(primary, win)
 
         def _key(k):
@@ -4651,12 +4769,14 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
     # tighter now: the sweep itself already spent its budget getting here.
     swept += await retry_stalled(_to, bool(swept), cap=4)
     pick = _consensus_id(swept, hints)
+    _nm_any = bool(hits) or bool(swept)          # CRATE_TEMPO_KEPT: did ANY probe answer?
     if not pick and NOMATCH_SECOND_WINDOW and dur >= NOMATCH_MIN_SECS and off0 >= 8.0:
         # Nothing at the tail window at 14 rates, and the head of the clip was only
         # ever asked at 1.0x. See NOMATCH_SECOND_WINDOW. Four presets at offset 0.
         _to2 = []
         swept2 = await sweep_rates(0.0, NOMATCH_SECOND_RATES, t_sink=_to2,
                                    budget=NOMATCH_SECOND_BUDGET)
+        _nm_any = _nm_any or bool(swept2)
         pick = _consensus_id([h for h in swept2 if not _junk_id(h)] or swept2, hints)
         tlog("nomatch_second_window", 0.0, hits=len(swept2), hit=bool(pick))
         if pick:
@@ -4666,6 +4786,45 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
             pick["songs"] = [dict(pick)]
             pick["multi"] = False
             pick["second_window"] = True
+            return pick
+    # CRATE_TEMPO_KEPT (default OFF): every probe of the scan came back empty, resample
+    # counter-speeds included. Ask the same windows with the key KEPT (atempo), so an edit
+    # slowed or sped without moving its key can be heard. See TEMPO_KEPT above.
+    if not pick and TEMPO_KEPT and not _nm_any:
+        _kt0 = time.time()
+        _koffs = [0.0] + ([off0] if off0 >= 8.0 else [])
+        _kgot, _kagree = [], {}
+
+        def _kdone():
+            return bool(_kagree) and max(_kagree.values()) >= TEMPO_KEPT_NEED
+        for _koff in _koffs:
+            _ki = 0
+            while _ki < len(TEMPO_KEPT_RATES) and not _kdone():
+                if time.time() - _kt0 > TEMPO_KEPT_BUDGET:
+                    break
+                _kn = 1 if (_conc <= 1 or _one_at_a_time()) else _conc
+                _kch = TEMPO_KEPT_RATES[_ki:_ki + _kn]
+                for _kh in await asyncio.gather(*[probe(_koff, r, l, kept=True)
+                                                  for r, l in _kch]):
+                    if _kh and not _junk_id(_kh):
+                        _kgot.append(_kh)
+                        _kk = _vk(_kh.get("title"), _kagree)
+                        if _kk:
+                            _kagree[_kk] = _kagree.get(_kk, 0) + 1
+                _ki += len(_kch)
+            if _kdone():
+                break
+        _kbest = max(_kagree.items(), key=lambda kv: kv[1]) if _kagree else None
+        tlog("tempo_kept", time.time() - _kt0, hits=len(_kgot),
+             agree=[[k[:50], v] for k, v in _kagree.items()][:4], hit=_kdone())
+        if _kdone():
+            _ksame = [h for h in _kgot if _vk(h.get("title"), [_kbest[0]]) == _kbest[0]]
+            pick = dict(_consensus_id(_ksame, hints) or _ksame[0])
+            _apply_skew_speed(pick, _ksame)                        # ROOTFIX B, flag-gated
+            pick["pitch_kept"] = True
+            pick["at"] = float(pick.get("offset") or 0.0)
+            pick["songs"] = [dict(pick)]
+            pick["multi"] = False
             return pick
     # ROOTFIX E (CRATE_VOTE_XWIN). kyks (7648736728290790688), 8 logged runs today: one
     # window (147.8 s), 14 rates, three songs at ONE rate each ("I DON'T WANT YOU" 1.3,
@@ -8790,10 +8949,13 @@ def _extra_lane_queries(credit_title, base_title, posted_rival=None, main=()):
     return out[:6], rel
 
 
-def _lane_rows_ordered(lanes, cands, rel, tag):
+def _lane_rows_ordered(lanes, cands, rel, tag, posted_rival=None):
     """Rows from the extra lanes, in download order: rows whose title carries every word of
     a relevance set first, SoundCloud before YouTube, then each search's own order. A row
-    the main search already holds is taken as that same object (the hint-mash rule)."""
+    the main search already holds is taken as that same object (the hint-mash rule).
+    CRATE_POSTED_EXACT: with an "exact" posted rival, its own artist's SoundCloud upload of
+    that title goes ahead of everything (a no-op tier for every other row)."""
+    _px = bool(POSTED_EXACT and posted_rival and posted_rival.get("exact"))
     by_url = {c["url"]: c for c in cands}
     rows, ids, new = [], set(), 0
     for li, ln in enumerate(lanes):
@@ -8809,10 +8971,15 @@ def _lane_rows_ordered(lanes, cands, rel, tag):
             ids.add(id(c))
             tw = set((_title_key(c.get("title") or "") or "").split())
             hit = any(r <= tw for r in rel) if rel else False
+            if _px:
+                rows.append((0 if _posted_exact_row(c, posted_rival) else 1,
+                             0 if hit else 1, 0 if c.get("source") == "soundcloud" else 1,
+                             pos, li, c))
+                continue
             rows.append((0 if hit else 1, 0 if c.get("source") == "soundcloud" else 1,
                          pos, li, c))
-    rows.sort(key=lambda r: r[:4])
-    return [r[4] for r in rows], new
+    rows.sort(key=lambda r: r[:-1])
+    return [r[-1] for r in rows], new
 
 
 async def find_edit(*args, **kwargs):
@@ -9690,10 +9857,14 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
              ran=round(time.time() - _hm_lanes[0].t0, 3))
     _xl_rows = []
     if _xl_lanes:
-        _xl_rows, _xl_new = _lane_rows_ordered(_xl_lanes, cands, _xl_rel, "extra_lane")
+        _xl_rows, _xl_new = _lane_rows_ordered(_xl_lanes, cands, _xl_rel, "extra_lane",
+                                               posted_rival=posted_rival)
         tlog("extra_lane", 0.0, nq=len(_xl_q), q=_xl_q, new=_xl_new, rows=len(_xl_rows),
              top=[(c.get("title") or "")[:60] for c in _xl_rows[:EXTRA_LANE_DL]],
-             ran=round(time.time() - _xl_lanes[0].t0, 3))
+             ran=round(time.time() - _xl_lanes[0].t0, 3),
+             **({"posted_exact": [c.get("url") for c in _xl_rows
+                                  if _posted_exact_row(c, posted_rival)][:3]}
+                if (POSTED_EXACT and posted_rival and posted_rival.get("exact")) else {}))
     _term_hits([c for c in cands if "title_hits" not in c])
 
     # ---- WAVE 2 + PARITY. The final scored pool must be EXACTLY the pool the serial

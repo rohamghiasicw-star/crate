@@ -178,9 +178,16 @@ def windows_for(dur, span=20):
     return offs[:6]
 
 
-def cut(src, dst, offset, rate, span=20):
-    """Re-pitch (speed and pitch together, like a nightcore edit) so we can undo one."""
-    af = [] if rate == 1.0 else ["-af", "asetrate=44100*%f,aresample=44100" % rate]
+def cut(src, dst, offset, rate, span=20, kept=False):
+    """Re-pitch (speed and pitch together, like a nightcore edit) so we can undo one.
+    kept=True (CRATE_TEMPO_KEPT): change the TEMPO only (atempo), to undo an edit that was
+    slowed or sped with its key kept, which a resample probe can never undo."""
+    if rate == 1.0:
+        af = []
+    elif kept:
+        af = ["-af", "atempo=%f" % rate]
+    else:
+        af = ["-af", "asetrate=44100*%f,aresample=44100" % rate]
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(offset), "-i", src,
                     "-t", str(span)] + af + ["-ac", "1", "-ar", "44100", dst], check=True)
 
