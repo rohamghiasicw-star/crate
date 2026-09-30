@@ -851,79 +851,97 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .spmark svg{width:44px;height:44px}
 .spname{font-size:19px;font-weight:750;letter-spacing:-.01em;animation:fade .5s .15s var(--ease) both}
 
-/* ---------- onboarding ---------- */
+/* ---------- onboarding ----------
+   ONBOARDING v3 2026-09-30 (Konnor's redesign, addify-harness/onboarding3/KONNOR-ONBOARDING-SPEC.md):
+   three screens on ONE fixed card, 832 x 1065 in his 920 x 2000 mock, so nothing jumps between
+   screens. Every size below is written in --k, one px of a 364 px wide card (his card on a
+   402 px phone). --k shrinks with the viewport, width first, then height, so a 375 x 667 phone
+   gets the same card at 0.93 scale instead of a card that scrolls. */
 .onb{position:fixed;inset:0;z-index:80;background:rgba(6,5,10,.65);backdrop-filter:blur(4px);
-  display:grid;place-items:center;padding:18px}
+  -webkit-backdrop-filter:blur(4px);display:grid;place-items:center;padding:0;
+  --ob-a:#6A5EDE; --ob-b:#7466EA;          /* Konnor's button purple, top to bottom */
+  --k:min(1px, calc((100vw - 36px) / 364), calc((100vh - 36px) / 465))}
 .onb[hidden]{display:none}
-.onbcard{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);
-  border-radius:28px;padding:18px 20px 22px;box-shadow:var(--shadow);animation:pop .35s var(--ease) both;
-  max-height:92vh;overflow-y:auto;scrollbar-width:none}
-.onbcard::-webkit-scrollbar{display:none}
-.dots{display:flex;gap:6px;justify-content:center;margin-bottom:16px}
-.dots i{width:6px;height:6px;border-radius:99px;background:var(--raise2);transition:.25s}
-.dots i.on{width:20px;background:var(--accent2)}
-.onbbody{display:flex;flex-direction:column;animation:fade .3s var(--ease) both}
-.obmark{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;color:#fff;margin:26px auto 22px;
+.onbcard{width:calc(364 * var(--k));height:calc(465 * var(--k));box-sizing:border-box;
+  display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);
+  border-radius:calc(26 * var(--k));padding:calc(21 * var(--k)) calc(22.5 * var(--k)) calc(14 * var(--k));
+  box-shadow:var(--shadow);animation:pop .35s var(--ease) both;overflow:hidden}
+.dots{display:flex;gap:calc(5 * var(--k));justify-content:center;height:calc(6 * var(--k));flex:none}
+.dots i{width:calc(6 * var(--k));height:calc(6 * var(--k));border-radius:99px;background:var(--raise2);transition:.25s}
+.dots i.on{width:calc(20 * var(--k));background:var(--accent2)}
+.onbbody{flex:1;min-height:0;display:flex;flex-direction:column;align-items:stretch;text-align:center;
+  animation:fade .3s var(--ease) both}
+.obmark{width:calc(65.6 * var(--k));height:calc(65.6 * var(--k));border-radius:calc(17 * var(--k));
+  display:grid;place-items:center;color:#fff;margin:calc(26 * var(--k)) auto 0;flex:none;
   background:linear-gradient(150deg,var(--accent2),var(--accent));
-  /* Onboarding mark. Same call as the orb: on a dark ground a coloured drop is a glow,
-     and black is what makes it sit on the page. */
-  box-shadow:0 14px 34px rgba(0,0,0,.46)}
-.obmark svg{width:38px;height:38px}
-.obh{font-size:22px;font-weight:750;letter-spacing:-.02em;text-align:center;line-height:1.25;text-wrap:balance}
-.obs{font-size:13.5px;color:var(--muted);text-align:center;line-height:1.5;margin:10px auto 0;max-width:260px}
-.obcta{display:block;width:100%;margin-top:24px;padding:14px 0;border-radius:14px;text-align:center;
-  background:var(--accent);color:#fff;font-size:14.5px;font-weight:700;transition:filter .15s}
-.oblater{display:block;width:100%;text-align:center;font-size:12.5px;color:var(--faint);margin-top:12px}
-/* connect rows */
-.obrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 13px;
-  border-radius:14px;background:var(--raise);border:1px solid transparent;font-size:13.5px;font-weight:650;
-  transition:border-color .15s,filter .15s}
-.obrow+.obrow{margin-top:8px}
-.obrow.done{border-color:color-mix(in oklab,var(--good) 55%,transparent)}
-.obrow .oi{width:24px;display:grid;place-items:center;flex:none}
-.obrow .ov{margin-left:auto;font-size:12px;color:var(--faint);font-weight:600;flex:none}
-.obrow .ov.ok{color:var(--good)}
-.obrow[disabled]{opacity:.55;pointer-events:none}
-.locknote{display:flex;gap:9px;align-items:flex-start;background:var(--raise);border-radius:12px;
-  padding:11px 12px;font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:12px}
-/* three-taps demo steps */
-.tstep{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:14px;background:var(--raise);
-  border:1px solid transparent;opacity:.42;transition:opacity .4s,border-color .4s,background .4s}
-.tstep.on{opacity:1;border-color:var(--accent2);
-  background:linear-gradient(120deg,color-mix(in oklab,var(--accent) 24%,var(--raise)),var(--raise))}
-.tstep.done{opacity:1;border-color:color-mix(in oklab,var(--good) 45%,transparent)}
-.tstep .tn{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none;color:#fff}
-.tstep b{display:block;font-size:13.5px;font-weight:650}
-.tstep span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
-.tstep .tchk{margin-left:auto;color:var(--good);flex:none;opacity:0;transition:opacity .3s}
-.tstep.done .tchk{opacity:1}
-.tsteps{display:flex;flex-direction:column;gap:9px;margin-top:20px}
-/* pin tutorial share-row mock */
-.pinmock{display:flex;gap:10px;justify-content:center;background:var(--raise);border-radius:14px;
-  padding:14px 12px;margin-top:18px}
-.pinmock .pic2{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
-.pinmock .ap{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;color:#fff;position:relative}
-/* iOS share sheet "More" tile: a plain grey square with three dots. */
-.pinmock .ap.more{background:linear-gradient(180deg,#5B5B62,#3C3C42);color:#fff}
-.pinmock .ap.addify{background:linear-gradient(150deg,var(--accent2),var(--accent));
-  /* The 2px ring stays, it is an outline and carries meaning. The coloured drop behind
-     it does not: on dark it is a glow, so it is black now. */
-  box-shadow:0 0 0 2px var(--accent2),0 6px 18px rgba(0,0,0,.45)}
-.pinmock .ap .n1{position:absolute;top:-6px;right:-6px;background:var(--accent2);color:#fff;
-  font-size:9px;font-weight:800;width:16px;height:16px;border-radius:50%;display:grid;place-items:center}
-.pinsteps{display:flex;flex-direction:column;gap:8px;margin-top:16px}
-.pinsteps .ps{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--muted);line-height:1.4}
-.pinsteps .ps i{width:18px;height:18px;border-radius:50%;background:var(--raise2);color:var(--text);
-  font-size:10.5px;font-weight:750;font-style:normal;display:grid;place-items:center;flex:none;margin-top:1px}
-/* momentum finish */
-.okring{width:74px;height:74px;border-radius:50%;margin:24px auto 20px;display:grid;place-items:center;
-  border:2.5px solid var(--good);color:var(--good);
-  /* The green border already carries the success colour. A 40px halo of the same hue
-     behind it was the colour saying it twice, as light. */
-  box-shadow:0 8px 22px rgba(0,0,0,.4);animation:pop .4s var(--ease) both}
-.okring svg{width:30px;height:30px}
-.obtag{margin:16px auto 0;font-size:11.5px;color:var(--good);font-weight:650;text-align:center;
-  background:color-mix(in oklab,var(--good) 12%,transparent);border-radius:99px;padding:7px 14px;width:fit-content}
+  /* Same call as the orb: on a dark ground a coloured drop is a glow, black makes it sit. */
+  box-shadow:0 calc(10 * var(--k)) calc(26 * var(--k)) rgba(0,0,0,.42)}
+.obmark svg{width:100%;height:100%}
+.obh{font-size:calc(23 * var(--k));font-weight:750;letter-spacing:-.02em;line-height:calc(28 * var(--k));
+  text-align:center;color:var(--text);margin:0}
+.obs{font-size:calc(13.2 * var(--k));color:var(--muted);text-align:center;line-height:calc(18.8 * var(--k));margin:0 auto}
+.obcta{display:block;width:100%;flex:none;height:calc(49 * var(--k));border-radius:calc(14 * var(--k));text-align:center;
+  background:linear-gradient(180deg,var(--ob-b),var(--ob-a));color:#fff;font-size:calc(15 * var(--k));font-weight:700;
+  box-shadow:0 calc(6 * var(--k)) calc(16 * var(--k)) rgba(0,0,0,.34);transition:filter .15s}
+.obcta:active{filter:brightness(.92)}
+.oblater{display:block;margin:0 auto;font-size:calc(11.5 * var(--k));line-height:calc(15 * var(--k));color:var(--faint);flex:none}
+.obfoot{font-size:calc(11.5 * var(--k));line-height:calc(15 * var(--k));color:var(--faint);text-align:center;flex:none}
+/* screen 1: share -> Addify -> song, one row */
+.obflow{display:grid;grid-template-columns:1fr calc(26 * var(--k)) 1fr calc(26 * var(--k)) 1fr;align-items:start;
+  margin-top:calc(36 * var(--k));flex:none}
+.obflow .fs{display:flex;flex-direction:column;align-items:center}
+.obflow .ft{width:calc(47 * var(--k));height:calc(47 * var(--k));border-radius:calc(13 * var(--k));display:grid;place-items:center;
+  background:var(--raise);border:1px solid var(--line);color:var(--text)}
+.obflow .ft.ad{background:linear-gradient(150deg,var(--accent2),var(--accent));border-color:transparent;color:#fff;
+  box-shadow:0 calc(6 * var(--k)) calc(16 * var(--k)) rgba(0,0,0,.4)}
+.obflow .ft.nt{color:var(--good)}
+.obflow .ft svg{width:calc(19 * var(--k));height:calc(19 * var(--k))}
+.obflow .ft.nt svg{width:calc(14 * var(--k));height:calc(14 * var(--k))}
+.obflow .ft.ad svg{width:100%;height:100%}
+.obflow .fl{margin-top:calc(8 * var(--k));font-size:calc(11.4 * var(--k));line-height:calc(15 * var(--k));font-weight:700;color:var(--text)}
+.obflow .fa{height:calc(47 * var(--k));display:grid;place-items:center;
+  color:color-mix(in oklab,var(--faint) 50%,var(--card))}
+.obflow .fa svg{width:calc(20 * var(--k));height:calc(12 * var(--k))}
+/* screen 2: three numbered step rows. .obshot is the slot for Konnor's real iPhone
+   screenshots (ONB_SHOTS below): empty today, the icon shows until a file is named there. */
+.obsteps{display:flex;flex-direction:column;gap:calc(11 * var(--k));margin-top:calc(18 * var(--k));flex:none}
+.obstep{display:flex;align-items:center;gap:calc(13 * var(--k));min-height:calc(50 * var(--k));box-sizing:border-box;
+  padding:calc(8 * var(--k)) calc(12.5 * var(--k));border-radius:calc(12 * var(--k));background:var(--raise);text-align:left}
+.obstep .sn{width:calc(19 * var(--k));height:calc(19 * var(--k));border-radius:50%;flex:none;display:grid;place-items:center;
+  background:var(--raise2);color:var(--text);font-size:calc(10.5 * var(--k));font-weight:750}
+.obstep .sx{flex:1;min-width:0;font-size:calc(12.4 * var(--k));line-height:calc(17 * var(--k));color:var(--text)}
+.obstep .sx b{font-weight:700}
+.obstep .si2{width:calc(31 * var(--k));height:calc(31 * var(--k));border-radius:calc(8 * var(--k));flex:none;display:grid;place-items:center;
+  background:var(--raise2);color:var(--text);overflow:hidden}
+.obstep .si2 svg{width:calc(17 * var(--k));height:calc(17 * var(--k))}
+.obstep .si2.ad{background:linear-gradient(150deg,var(--accent2),var(--accent));color:#fff}
+.obstep .si2.ad svg{width:100%;height:100%}
+.obstep .si2 img{width:100%;height:100%;object-fit:cover}
+/* screen 3: the result ring. Green only once a share really arrived; the not-yet card is purple. */
+.okring{width:calc(79 * var(--k));height:calc(79 * var(--k));border-radius:50%;margin:calc(76 * var(--k)) auto 0;flex:none;
+  display:grid;place-items:center;box-sizing:border-box;
+  border:calc(2 * var(--k)) solid color-mix(in oklab,var(--good) 72%,transparent);color:var(--good);
+  background:color-mix(in oklab,var(--good) 11%,transparent);animation:pop .4s var(--ease) both}
+.okring svg{width:calc(30 * var(--k));height:calc(30 * var(--k))}
+.okring.soft{border-color:color-mix(in oklab,var(--accent2) 60%,transparent);color:var(--accent2);
+  background:color-mix(in oklab,var(--accent) 12%,transparent)}
+.okring.soft svg{width:calc(28 * var(--k));height:calc(28 * var(--k))}
+/* Per-screen spacing, measured off Konnor's three-screens picture (card-top offsets in --k:
+   screen 1 icon 53, title 144, diagram 283, button 384; screen 2 title 57, rows 173, button 372;
+   screen 3 ring 103, title 210, button 337). The line breaks in the titles are his too. */
+.ob1 .obh{margin-top:calc(25 * var(--k))}
+.ob1 .obs{margin-top:calc(9.3 * var(--k));max-width:calc(262 * var(--k))}
+.ob1 .obcta{margin-top:calc(16.3 * var(--k))}
+.ob1 .obfoot{margin-top:calc(6.5 * var(--k))}
+.ob2 .obh{margin-top:calc(30 * var(--k));line-height:calc(26.3 * var(--k))}
+.ob2 .obs{margin-top:calc(7.5 * var(--k));max-width:calc(295 * var(--k))}
+.ob2 .obcta{margin-top:calc(24 * var(--k))}
+.ob2 .oblater{margin-top:calc(12.5 * var(--k))}
+.ob3 .obh{margin-top:calc(28 * var(--k))}
+.ob3 .obs{margin-top:calc(14 * var(--k));max-width:calc(306 * var(--k))}
+.ob3 .obcta{margin-top:calc(46 * var(--k))}
+.ob3 .obfoot{margin-top:calc(14.5 * var(--k));line-height:calc(17 * var(--k))}
+.ob3 .oblater{margin-top:calc(14.5 * var(--k))}
 
 /* ---------- listen mode ---------- */
 #s-listen .ttl{text-transform:uppercase;letter-spacing:.17em;font-size:11px;font-weight:750;color:var(--faint)}
@@ -1871,7 +1889,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
   <div class="spname">Addify</div>
 </div>
 
-<!-- Onboarding - four screens, only the first is mandatory. -->
+<!-- Onboarding v3 (2026-09-30, Konnor): three screens on one fixed card. -->
 <div class="onb" id="onb" hidden>
   <div class="onbcard" role="dialog" aria-modal="true" aria-label="Welcome to Addify">
     <div class="dots" id="onbdots"></div>
@@ -5372,6 +5390,8 @@ function renderProf(){
       '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
         '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected<span class="itick">'+IC.tick+'</span>':'Connect')+'</button></div></div>':'')+
     '<div class="sect">Scanning</div><div class="setlist">'+
+      // ONBOARDING v3 2026-09-30 (Konnor): the way back to the share sheet steps, screen 2 replayed
+      '<button class="setrow" id="pfhowto"><span class="st">How to add Addify</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<div class="setrow"><span class="st">Auto-save to playlist</span><button class="sw'+(autoOn()?' on':'')+'" id="pfauto" role="switch" aria-checked="'+autoOn()+'" aria-label="Auto-save to playlist"></button></div>'+
       // REVIEW 2026-09-29 (App Review 2.1): Monthly playlists only names Spotify playlists, so it shows with Spotify
       ((SP_SIGNIN||SP.connected())?'<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>':'')+
@@ -5397,6 +5417,7 @@ function renderProf(){
     try{localStorage.setItem('addify-monthly', monthlyOn()?'off':'on');}catch(e){}
     SP.forgetPlaylist(); renderProf();};
   document.getElementById('pfexp').onclick=exportFinds;
+  var _pfh=document.getElementById('pfhowto'); if(_pfh) _pfh.onclick=function(){openOnb(1,'replay');};   // ONBOARDING v3
   var _pfdev=document.getElementById('pfdev'); if(_pfdev) _pfdev.onclick=openSheet;   // APPLYALL 2026-09-29 (build 3)
   document.getElementById('pfclear').onclick=function(){
     if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
@@ -5487,6 +5508,7 @@ var curURL='';
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false;
 function run(raw){if(busy) return; var p=parseLink(raw);
+  onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
@@ -6274,93 +6296,137 @@ function openPicker(d){
 document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
 
 /* ============================================================
-   SPLASH + ONBOARDING - four screens, only the pitch is mandatory
+   SPLASH + ONBOARDING v3 - Konnor's three screens (2026-09-30)
    ============================================================ */
 function splash(){
   var el=document.getElementById('splash');
   el.hidden=false;
   setTimeout(function(){el.classList.add('bye');},900);
   setTimeout(function(){el.hidden=true;},1400);}
-var onbStep=0;
-function onbSeen(){try{return localStorage.getItem('addify-onboarded')==='1';}catch(e){return false;}}
-function onbDone(){try{localStorage.setItem('addify-onboarded','1');}catch(e){}
-  document.getElementById('onb').hidden=true; paintHome();}
-function openOnb(step){onbStep=step||0; document.getElementById('onb').hidden=false; paintOnb();}
+/* ONBOARDING v3 2026-09-30 (addify-harness/onboarding3/KONNOR-ONBOARDING-SPEC.md). Three
+   screens on one fixed card: what it does, pin Addify to the share sheet (the one that
+   matters), and the result. The green "You're all set" only shows once Addify has really been
+   opened from the share sheet (addify-sharedin, see onbNoteRun); until then screen 3 is the
+   softer "Not set up yet?" card, which never claims they are set. Settings > How to add
+   Addify (the You tab) replays screen 2: openOnb(1,'replay').
+   Storage: addify-onboarded (done, never auto-opens again) · addify-onb-at (the first-run
+   screen to resume on: the share sheet round trip can reload the page) · addify-onb3 (this
+   person started the v3 flow) · addify-onb3-ok (the green card has been shown) ·
+   addify-sharedin (a scan has arrived from the share sheet at least once). */
+var onbStep=0, onbMode='first', onbAway=0, onbQuiet=false, onbTapAt=0;
+/* NOT MATCHED YET: Konnor wants a real iPhone screenshot (or a short screen recording) of
+   each step in the final version. Name the files here, served next to crate.html (e.g.
+   'onb-step1.jpg'), and they replace the icons on the three rows of screen 2. */
+var ONB_SHOTS=['','',''];
+var OBI={
+  fwd:'<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.6 4.6v3.9C8 9.1 4.7 12.7 4 18.9c2-3.1 5.1-4.6 9.6-4.7v3.9l7.2-6.75z"/></svg>',
+  ring:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8.7"/><circle cx="8.2" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.8" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>',
+  arrow:'<svg viewBox="0 0 20 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 6h16M13 1.8 17.5 6 13 10.2"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 12.6l4.3 4.2L18.6 7.6"/></svg>'};
+/* The app icon's own wave (WVG.big, Konnor's logo sine: 1.5 periods, stroke 11.6% of the tile),
+   drawn over the whole tile, so every Addify tile on these cards is the real icon. */
+function onbLogo(){
+  if(typeof WVG==='undefined'||!WVG.big) return waveGlyph(38);
+  return '<svg viewBox="0 0 1000 1000" fill="none" stroke="currentColor" stroke-width="'+WVG.big.sw+'" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+WVG.big.d+'"/></svg>';}
+function onbFlag(k){try{return localStorage.getItem(k)==='1';}catch(e){return false;}}
+function onbSet(k,v){try{if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,String(v));}catch(e){}}
+function onbSeen(){return onbFlag('addify-onboarded');}
+function onbAt(){var n=0; try{n=parseInt(localStorage.getItem('addify-onb-at'),10)||0;}catch(e){} return Math.max(0,Math.min(2,n));}
+function onbOpen(){var o=document.getElementById('onb'); return !!o&&!o.hidden;}
+function onbClose(){document.getElementById('onb').hidden=true; onbMode='first'; onbAway=0;}
+function onbDone(){onbSet('addify-onboarded','1'); onbSet('addify-onb-at',null); onbClose(); paintHome();}
+function openOnb(step,mode){onbMode=mode||'first'; onbStep=Math.max(0,Math.min(2,+step||0));
+  if(onbMode==='first'){onbSet('addify-onb3','1'); onbSet('addify-onb-at',onbStep);}
+  document.getElementById('onb').hidden=false; paintOnb();}
+function onbGo(step){onbStep=step; if(onbMode==='first') onbSet('addify-onb-at',step); paintOnb();}
+/* "Try it on a reel": TikTok, unless this person's own finds are mostly Instagram. Both are
+   https links the apps claim as universal links (tiktok.com "/" and instagram.com "/*" in
+   their apple-app-site-association files, read 2026-09-30), handed to iOS by openExternal,
+   the same target=_blank bridge the result card's clip pill uses. No app installed = the site. */
+function onbReelURL(){var s=''; try{s=localStorage.getItem('crate-saved')||'';}catch(e){}
+  var ig=(s.match(/instagram\.com/g)||[]).length, tt=(s.match(/tiktok\.com/g)||[]).length;
+  return ig>tt?'https://www.instagram.com/reels/':'https://www.tiktok.com/';}
+function onbTryReel(){onbAway=Date.now(); openExternal(onbReelURL());}
+/* The visible fallback for anyone who cannot find Addify in the share sheet: close, and put
+   them in the paste field on Home. */
+function onbPasteInstead(){onbDone(); nav('idle');
+  var u=document.getElementById('url'); if(!u) return;
+  try{u.scrollIntoView({block:'center'});}catch(e){} u.focus();}
 function paintOnb(){
-  var dots=document.getElementById('onbdots');
-  // APPLYALL 2026-09-29 (build 3, App Review): with the Spotify sign-in off for launch the
-  // connect card (step 2) has nothing left to connect, so it is skipped and the dots count 4.
-  var _steps=[0,1,2,3,4].filter(function(i){return i!==2||SP_SIGNIN||SP.connected();});
-  if(_steps.indexOf(onbStep)<0) onbStep++;
-  dots.innerHTML=_steps.map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
+  document.getElementById('onbdots').innerHTML=[0,1,2].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
   var b=document.getElementById('onbbody'), h='';
-  if(onbStep===0){                                     /* 1 · the pitch - seven words */
-    h='<div class="obmark">'+waveGlyph(36)+'</div>'+
-      '<div class="obh">Heard it on a reel?<br>Keep it forever.</div>'+
-      '<div class="obs">Slowed, sped up, bass boosted, reverb, remixed. We find the real song and save it straight to your playlist.</div>'+
-      '<button class="obcta" id="ob-next">Continue</button>';
-  } else if(onbStep===1){                              /* 1.5 · three taps demo */
-    h='<div class="obh" style="margin-top:14px">Three taps. That\'s it.</div>'+
-      '<div class="obs">Watch how it works</div>'+
-      '<div class="tsteps">'+
-        '<div class="tstep" id="ts0"><span class="tn" style="background:linear-gradient(140deg,#F9407B,#B043E8)">'+IC.ig+'</span><div><b>Share the reel</b><span>Hit share → tap Addify</span></div><span class="tchk">'+IC.tick+'</span></div>'+
-        '<div class="tstep" id="ts1"><span class="tn" style="background:linear-gradient(150deg,var(--accent2),var(--accent))">'+waveGlyph(18)+'</span><div><b>We find the exact version</b><span>Slowed · sped up · bass boosted · reverb · remix</span></div><span class="tchk">'+IC.tick+'</span></div>'+
-        '<div class="tstep" id="ts2"><span class="tn" style="background:color-mix(in oklab,var(--good) 30%,var(--raise2))">'+IC.savefill+'</span><div><b>Saved to your playlist</b><span>Automatically, in your '+(SP_SIGNIN?'Spotify':'Finds')+'</span></div><span class="tchk">'+IC.tick+'</span></div>'+
+  if(onbStep===0){                                     /* 1 · what it does */
+    h='<div class="obmark">'+onbLogo()+'</div>'+
+      '<h2 class="obh">Find the exact song<br>from any reel</h2>'+
+      '<p class="obs">Slowed, sped up, remixed. Share a reel to Addify and we find the exact version.</p>'+
+      '<div class="obflow" aria-hidden="true">'+
+        '<div class="fs"><span class="ft">'+OBI.fwd+'</span><span class="fl">Share<br>a reel</span></div>'+
+        '<span class="fa">'+OBI.arrow+'</span>'+
+        '<div class="fs"><span class="ft ad">'+onbLogo()+'</span><span class="fl">Tap<br>Addify</span></div>'+
+        '<span class="fa">'+OBI.arrow+'</span>'+
+        '<div class="fs"><span class="ft nt">'+IC.note+'</span><span class="fl">Get the<br>exact song</span></div>'+
       '</div>'+
-      '<button class="obcta" id="ob-next">Let\'s set it up</button>';
-  } else if(onbStep===2){                              /* 2 · connect - the highest-stakes screen */
-    var on=SP.connected();
-    h='<div class="obh" style="margin-top:14px">Where does your music live?</div>'+
-      '<div class="obs">We\'ll create your <b>Found with Addify</b> playlist there. Every scan saves automatically.</div>'+
-      '<div style="margin-top:18px">'+
-        '<button class="obrow'+(on?' done':'')+'" id="ob-sp"><span class="oi">'+IC.spotify+'</span>Connect Spotify'+
-          '<span class="ov'+(on?' ok':'')+'">'+(on?'Connected<span class="itick">'+IC.tick+'</span>':'›')+'</span></button>'+
-        // APPLYALL 2026-09-29 (build 3): the "Apple Music / iOS app" and "SoundCloud / soon" rows are gone
+      '<button class="obcta" id="ob-next">Set it up</button>'+
+      '<div class="obfoot">Takes about 20 seconds</div>';
+  } else if(onbStep===1){                              /* 2 · pin it - the screen that matters */
+    var row=function(n,txt,ic,cls){var shot=ONB_SHOTS[n-1];
+      return '<div class="obstep"><span class="sn">'+n+'</span><span class="sx">'+txt+'</span>'+
+        '<span class="si2'+(shot?'':cls)+'">'+(shot?'<img src="'+esc(shot)+'" alt="">':ic)+'</span></div>';};
+    h='<h2 class="obh">Pin Addify to your<br>share sheet</h2>'+
+      '<p class="obs">It shows up on its own. Pin it once and it\'s one tap on every reel.</p>'+
+      '<div class="obsteps">'+
+        row(1,'Tap <b>Share</b>, then <b>More</b>, on any reel',OBI.fwd,'')+
+        row(2,'Find <b>Addify</b> at the end of the app row',onbLogo(),' ad')+
+        row(3,'Tap <b>More</b> &rsaquo; <b>Edit</b>, drag Addify to the front',OBI.ring,'')+
       '</div>'+
-      '<div class="locknote">'+IC.lock+'<span>Addify can only create playlists and add songs. We never see your password or change anything else.</span></div>'+
-      '<button class="obcta" id="ob-next">Continue</button>'+
-      '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
-  } else if(onbStep===3){                              /* 3 · the pin - prize first, then steps */
-    h='<div class="obh" style="margin-top:14px">Put Addify one tap away</div>'+
-      '<div class="obs">Pin it in your share sheet once and it\'s the first icon every time you share a reel.</div>'+
-      '<div class="pinmock">'+
-        '<span class="pic2"><span class="ap addify">'+waveGlyph(22)+'<span class="n1">1</span></span>Addify</span>'+
-        /* Tile gradients sampled from Konnor's photos of the real Messages (225) and
-           Mail (219) icons so the mock reads as the actual iOS share sheet. */
-        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#5FEC75,#22BE3A)">'+IC.bubble+'</span>Messages</span>'+
-        '<span class="pic2"><span class="ap" style="background:linear-gradient(180deg,#5DC0F9,#1A68F7)">'+IC.mail+'</span>Mail</span>'+
-        /* The real share sheet ends in a grey More button, and step 2 below says "Tap More",
-           so show it here too. */
-        '<span class="pic2"><span class="ap more">'+IC.more+'</span>More</span>'+
-      '</div>'+
-      '<div class="pinsteps">'+
-        '<div class="ps"><i>1</i>Share any reel → scroll the app row to the end</div>'+
-        '<div class="ps"><i>2</i>Tap More → Edit → add Addify to Favorites</div>'+
-        '<div class="ps"><i>3</i>Drag it to the front. Done forever</div>'+
-      '</div>'+
-      '<button class="obcta" id="ob-next">Got it</button>'+
-      '<button class="oblater" id="ob-skip">I\'ll do it later</button>';
-  } else {                                             /* 4 · momentum - the gift, not a limit */
-    var left=Math.max(0,FREE_SCANS-scansUsed());
-    h='<div class="okring">'+IC.tick+'</div>'+
-      '<div class="obh">You\'re set.</div>'+
-      '<div class="obs">'+(PAYWALL_ON?left+' free scans on us.<br>':'')+'Go find that song.</div>'+
-      (SP.connected()?'<div class="obtag"><span class="itick">'+IC.tick+'</span>Spotify connected · playlist ready</div>':'')+
-      '<button class="obcta" id="ob-next">Start scanning</button>';
+      '<button class="obcta" id="ob-try">Try it on a reel</button>'+
+      '<button class="oblater" id="ob-later">I\'ll do this later</button>';
+  } else if(onbFlag('addify-sharedin')){               /* 3 · set - only after a real share */
+    onbSet('addify-onb3-ok','1');
+    h='<div class="okring">'+OBI.check+'</div>'+
+      '<h2 class="obh">You\'re all set</h2>'+
+      '<p class="obs">Share any reel to Addify and we\'ll find the exact version.</p>'+
+      '<button class="obcta" id="ob-done">Find my first song</button>'+
+      '<div class="obfoot">Can\'t find Addify later?<br>Settings &rsaquo; How to add Addify</div>';
+  } else {                                             /* 3 · not yet - never claim they're set */
+    h='<div class="okring soft">'+OBI.fwd+'</div>'+
+      '<h2 class="obh">Not set up yet?</h2>'+
+      '<p class="obs">Share a reel to Addify once and we\'ll find the exact version.</p>'+
+      '<button class="obcta" id="ob-try">Try it on a reel</button>'+
+      '<button class="oblater" id="ob-paste">Paste a link instead</button>';
   }
+  b.className='onbbody ob'+(onbStep+1);
   b.innerHTML=h;
-  document.getElementById('ob-next').onclick=function(){
-    if(onbStep>=4){onbDone(); return;}
-    onbStep++; paintOnb();};
-  var sk=document.getElementById('ob-skip');
-  if(sk) sk.onclick=function(){onbStep++; paintOnb();};
-  var sp=document.getElementById('ob-sp');
-  if(sp) sp.onclick=function(){if(!SP.connected()){try{localStorage.setItem('addify-onb-return','2');}catch(e){} SP.login();}};
-  if(onbStep===1){ /* animate the three steps in sequence, skippable by the button */
-    [0,1,2].forEach(function(i){
-      setTimeout(function(){var el=document.getElementById('ts'+i); if(el) el.classList.add('on');},400+i*900);
-      setTimeout(function(){var el=document.getElementById('ts'+i); if(el){el.classList.remove('on'); el.classList.add('done');}},1150+i*900);});}
+  b.style.animation='none'; void b.offsetWidth; b.style.animation='';   // replay the fade per screen
+  var on=function(id,f){var el=document.getElementById(id); if(el) el.onclick=f;};
+  on('ob-next',function(){onbGo(1);});
+  on('ob-try',onbTryReel);
+  on('ob-later',function(){if(onbMode==='replay'){onbClose(); return;} onbGo(2);});
+  on('ob-done',onbDone);
+  on('ob-paste',onbPasteInstead);
 }
+/* WHICH SCANS CAME IN THROUGH THE SHARE SHEET. A share reaches the page one of two ways
+   (ios/Addify/EngineBridge.swift deliver()): /share?url=... while the page loads (sharedLink()
+   at boot), or the app calling run(link) straight into a page that is already up. Every
+   in-page run() starts from a tap (or the boot resume/queue, which set onbQuiet), so inside
+   the app a run() with no tap in the last 1.5 s is the share extension. */
+['pointerdown','touchstart','keydown','click','submit'].forEach(function(t){
+  document.addEventListener(t,function(){onbTapAt=Date.now();},true);});
+function onbNoteRun(){
+  if(onbQuiet) return;
+  var nat=!!(window.ADDIFY_NATIVE||/Addify-iOS\//.test(navigator.userAgent));
+  if(nat && !window.event && Date.now()-onbTapAt>1500) onbSharedIn();}
+function onbSharedIn(){
+  onbSet('addify-sharedin','1');
+  if(onbOpen()){onbStep=2; paintOnb(); return;}         // mid-onboarding: the green card
+  if(!onbSeen() || (onbFlag('addify-onb3') && !onbFlag('addify-onb3-ok'))) openOnb(2);}
+/* Back from "Try it on a reel" without sharing: screen 2 moves on to the not-yet card. The
+   wait lets a share that arrives with the app switch land first and paint the green one. */
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden||!onbAway) return;
+  var t0=onbAway;
+  setTimeout(function(){if(onbAway!==t0) return; onbAway=0;
+    if(onbOpen()&&onbMode==='first'&&onbStep===1) onbGo(2);},1200);});
 
 /* ---------- shared-in link ----------
    Every share path lands here: Android's Web Share Target posts to /share, an iOS
@@ -6381,26 +6447,29 @@ function sharedLink(){
 paintHome(); renderLib(); nav('idle');
 fetchTrending();
 var _shared=sharedLink();
+var _viaSheet=!!_shared;                          // ONBOARDING v3: opened from the share sheet
+if(_viaSheet) onbSet('addify-sharedin','1');
 // a link parked by the stale-shell reload above resumes here, so the reload is invisible
 if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); sessionStorage.removeItem('addify-pending'); if(_pend&&parseLink(_pend).host) _shared=_pend;}catch(e){}}
 if(_shared){
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
   urlEl.value=_shared;
-  setTimeout(function(){run(_shared);},350);      // let the splash start first
+  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
 } else splash();
 SP.finishLogin().then(function(ok){
   if(ok) SP.fetchWho().then(function(){paintHome();});
-  var back=null; try{back=localStorage.getItem('addify-onb-return'); localStorage.removeItem('addify-onb-return');}catch(e){}
-  if(ok&&back!=null){openOnb(+back); return;}          // finish onboarding where they left
+  onbSet('addify-onb-return',null);                   // ONBOARDING v3: the Spotify step is gone
   if(ok){nav('profile'); return;}                      // connected outside onboarding → show it stuck
-  if(!onbSeen()){openOnb(0);}
+  if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: green card if onboarding is owed
+  if(!onbSeen()){openOnb(onbAt());}                    // resume where the share sheet round trip left them
 });
 document.getElementById('onb').addEventListener('click',function(e){
-  if(e.target.id==='onb'&&onbStep>=4) onbDone();});
+  if(e.target.id!=='onb') return;
+  if(onbStep===2) onbDone(); else if(onbMode==='replay') onbClose();});
 (function(){var q=lsGet('addify-queue','[]');          // offline queue: run the second we're back
   if(!q.length) return;
   checkEngine().then(function(up){if(!up) return;
-    lsSet('addify-queue',[]); run(q[0]);});})();
+    lsSet('addify-queue',[]); onbQuiet=true; run(q[0]); onbQuiet=false;});})();
 window.addEventListener('keydown',function(e){if(e.key==='Escape'){
   var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
   var ipl=document.getElementById('ipl'); if(ipl&&!ipl.hidden){ipClose(); return;}
