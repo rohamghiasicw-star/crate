@@ -109,6 +109,12 @@ def _decrypt_v10(enc, key):
 
 
 def ig_cookies():
+    # On the server there is no Chrome: the owner's exported login lives in a file
+    # (IG_COOKIE_FILE, mode 0640 root:addify, values never logged). Owner decision 2026-09-30.
+    path = os.environ.get("IG_COOKIE_FILE")
+    if path and os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
     key = _keychain_key()
     tmp = tempfile.mktemp(); shutil.copy(CHROME_DIR, tmp)
     con = sqlite3.connect(tmp); cur = con.cursor()
