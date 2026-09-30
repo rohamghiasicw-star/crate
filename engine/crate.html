@@ -1327,9 +1327,9 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .shelfnote b{color:var(--muted);font-weight:700}
 /* NO CROWN, SO THE ANSWER IS THE SONG AT ITS MEASURED SPEED (RF2 2026-09-30). The pick card
    when the engine crowned no upload. A plain raised card, NOT the crown's accent gradient,
-   no play button, no Open arrow and no percent, because no upload was matched. It is a note,
-   not a link: the Open in row above already opens the song. Same look as the NULLFP
-   source-at-speed card. */
+   no Open arrow and no percent, because no upload was matched. It is a note, not a link: the
+   Open in row above already opens the song. Its one control plays the song itself (below).
+   Same look as the NULLFP source-at-speed card. */
 .nca{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:16px;
   background:var(--raise);border:1px solid var(--line2);min-width:0}
 .nca .tart{width:52px;height:52px;border-radius:12px;flex:none}
@@ -1339,6 +1339,34 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .nca .nm{font-size:15px;font-weight:700;letter-spacing:-.01em;line-height:1.3;overflow-wrap:anywhere}
 .nca .by{font-size:12.5px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 .nca .ncl{font-size:12.5px;line-height:1.4;color:var(--text);margin-top:7px}
+/* NO-CROWN PLAY (Roham 2026-09-30 18:34, MONTAGEM COMA: "I should be able to play this in the
+   app, like the song one ... inline"). The crowned card's 46px accent button, on the right of
+   the song card. It plays THE SONG (its official preview or official upload), never one of the
+   uploads the hunt refused, and opens the same #ipl ring band the crown opens. While the band
+   plays the button keeps its box (visibility, not display), so the card never reflows. */
+.nca .pl{position:relative;width:46px;height:46px;flex:none;border-radius:50%;background:var(--accent);
+  color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 5px 14px rgba(0,0,0,.42);
+  transition:transform .14s}
+.nca .pl svg{width:17px;height:17px}
+.nca .pl[hidden]{display:grid!important;visibility:hidden}   /* beats the global [hidden]{display:none!important} */
+.nca .pl:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
+@media (hover:hover) and (pointer:fine){.nca .pl:hover{transform:scale(1.06)}}
+/* The band's box for an official audio preview: no video to show, so the song's own art on a
+   blurred copy of itself, and a line that says what is playing and where it comes from. */
+.ipaud-bg{position:absolute;inset:-24px;background-size:cover;background-position:center;
+  filter:blur(18px) saturate(1.15);opacity:.5}
+.ipaud{position:absolute;inset:0;display:flex;align-items:center;gap:10px;padding:10px 24px 10px 12px;min-width:0;
+  background:linear-gradient(90deg,transparent 35%,rgba(8,6,14,.5))}
+.ipaud .tart{height:76%;width:auto;aspect-ratio:1/1;flex:none;border-radius:9px;object-fit:cover;
+  box-shadow:0 6px 18px rgba(0,0,0,.42)}
+.ipaud .tart.ph svg{width:30px;height:30px}
+.ipaud-tt{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px;color:#fff;
+  text-shadow:0 1px 6px rgba(0,0,0,.45)}
+.ipaud-tt b{font-size:13px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.ipaud-tt span{font-size:11.5px;line-height:1.3;color:rgba(255,255,255,.82)}
+.ipaud-src{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ipaud-src svg{width:14px;height:14px;flex:none}
 /* OTHER VERSIONS, COLLAPSED BY DEFAULT (layout spec item 6). CROWNED RESULTS ONLY. On a
    shelf with no crown the list IS the answer and it never collapses; the live hunt list is
    the progress indicator and it never collapses either.
@@ -3619,11 +3647,60 @@ function ncCard(d){
   var ttl=s?s.title:String(d.base_song||''), who=s?(s.artist||''):String(d.base_artist||'');
   var line=s ? 'The original'+(sp?', '+sp:', re-pitched')+'. No upload at this exact speed yet.'
              : (sp?sp.charAt(0).toUpperCase()+sp.slice(1)+'. ':'')+'No upload of this exact version found yet.';
+  var pp=ncPlay(d), btn='';
+  if(pp){
+    var plbl=(pp.aud?'Play a preview of ':'Play ')+ttl+(pp.orig?', at its original speed':'');
+    btn='<span class="pl" role="button" tabindex="0" aria-label="'+esc(plbl)+'" title="'+esc(plbl)+'"'+
+      ' data-ipopen="1" data-ipid="'+esc(pp.yt||'')+'" data-ipurl="'+esc(pp.sc||pp.aud||pp.url||'')+'">'+IC.play+'</span>';}
   return '<div class="nca" role="note" aria-label="'+esc(ttl+(who?' by '+who:'')+'. '+line)+'">'+
     rowThumb({art:d.art||'', title:ttl, uploader:who})+
     '<span class="tt"><div class="nm">'+esc(ttl)+'</div>'+
     (who?'<div class="by">'+esc(who)+'</div>':'')+
-    '<div class="ncl">'+esc(line)+'</div></span></div>';}
+    '<div class="ncl">'+esc(line)+'</div></span>'+btn+'</div>';}
+/* NO-CROWN PLAY (Roham 2026-09-30 18:34, MONTAGEM COMA). What the song card's play button
+   plays, or null for no button (never a dead one). It plays THE SONG the card names: an exact
+   SoundCloud track or YouTube video from the engine's own d.links, else the 30 s official preview
+   the links lookup returned (d.preview_url: Apple's, or Deezer's), streamed by the phone straight
+   from Apple's or Deezer's CDN, the same way the SoundCloud widget streams from SoundCloud. Never
+   an upload row: the card says no upload of this exact version was found, and the tile override
+   above can point SoundCloud at one. The links and the preview are looked up for base_song, so
+   with source_at_speed the button shows only when the card's title is that same song. */
+var NC_PREV=/^https:\/\/(audio-ssl\.itunes\.apple\.com|[a-z0-9-]*preview[a-z0-9-]*\.dzcdn\.net)\/[^\s"'<>]+$/i;
+function ncPlay(d){
+  if(!d) return null;
+  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
+  var nrm=function(x){return String(x||'').toLowerCase().replace(/\s+/g,' ').trim();};
+  if(s && nrm(s.title)!==nrm(d.base_song)) return null;
+  var sp=ncSpeed(d), orig=!!(sp && sp!=='normal speed');
+  var lk=d.links||[], i, l, u, m;
+  for(i=0;i<lk.length;i++){l=lk[i]||{}; u=String(l.url||'');
+    if(l.exact && l.kind==='soundcloud' && /^https:\/\/(m\.)?soundcloud\.com\/[^\/?#\s"'<>]+\/[^\/?#\s"'<>]+/i.test(u) &&
+       !/^https:\/\/(m\.)?soundcloud\.com\/(search|discover|charts|stations)([\/?#]|$)/i.test(u) &&
+       !/^https:\/\/(m\.)?soundcloud\.com\/[^\/]+\/(sets|tracks|albums|likes|reposts|popular-tracks|followers|following)([\/?#]|$)/i.test(u))
+      return {sc:u, orig:orig};}
+  for(i=0;i<lk.length;i++){l=lk[i]||{}; u=String(l.url||'');
+    if(l.exact && l.kind==='youtube' && /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(u) &&
+       (m=u.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/|\/live\/)([A-Za-z0-9_-]{11})/)))
+      return {yt:m[1], url:u, orig:orig};}
+  u=String(d.preview_url||'');
+  if(NC_PREV.test(u)) return {aud:u, from:/itunes\.apple\.com/i.test(u)?'Apple Music':'Deezer', orig:orig};
+  return null;}
+/* The ring band under the song card: the same #ipl markup the crown's band uses (renderResult
+   wires #iplbtn / #iplx by id), plus what an audio preview needs to draw its box. */
+function ncBand(d){
+  var pp=ncPlay(d); if(!pp) return '';
+  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
+  var art=String(d.art||''); if(!/^https:\/\//i.test(art)) art='';
+  return '<div class="ipl" id="ipl" hidden'+(art?' data-art="'+esc(art)+'"':'')+
+      (pp.aud?' data-atitle="'+esc(s?s.title:(d.base_song||''))+'" data-awho="'+esc(s?(s.artist||''):(d.base_artist||''))+'"'+
+        ' data-afrom="'+esc(pp.from)+'"'+(pp.orig?' data-aorig="1"':''):'')+'>'+
+    '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
+      '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
+      '<span class="ipgl">'+IC.pause+'</span>'+
+    '</button>'+
+    '<div class="ipvid" id="ipvid"></div>'+
+    '<button class="iplx" id="iplx" type="button" aria-label="Close">'+IC.x+'</button>'+
+  '</div>';}
 function vfPick(d){
   // RF2: no crown, so what the card said is the song at its speed (ncSaid), never an upload
   // row. An X reports that as "said" in the fix queue, with no crown_url.
@@ -4508,7 +4585,7 @@ function renderResult(d,partial){
     // playing" / "The closest version we found" / "The recording this clip was cut from").
     var _ork=byMatch(cands);
     shelf='<div class="sect">The song</div>'+crowdCard+
-      '<div class="list">'+ncCard(d)+'</div>'+
+      '<div class="list">'+ncCard(d)+'</div>'+ncBand(d)+
       '<details class="othv"><summary>'+
         '<span>Other versions we checked · '+_ork.length+'</span>'+
         '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
@@ -5953,6 +6030,7 @@ function withSC(cb){
   (document.head||document.body).appendChild(s);
 }
 var _ipPlayer=null, _ipTimer=null, _ipSC=null, _ipGen=0;
+var _ipAud=null;   // the no-crown song card's official preview (ipOpenAud)
 var IP_C=2*Math.PI*29;   // ring circumference, matches r=29 in the .iprg svg
 function ipRing(frac){
   var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
@@ -5971,7 +6049,10 @@ function ipStop(){
   try{if(_ipSC&&window.SC&&SC.Widget){var E=SC.Widget.Events;
     [E.READY,E.PLAY,E.PAUSE,E.FINISH,E.PLAY_PROGRESS].forEach(function(ev){_ipSC.unbind(ev);});}}catch(e){}
   _ipSC=null;
-  var v=document.getElementById('ipvid'); if(v) v.innerHTML='';   // kill the iframe so audio stops
+  // A detached <audio> is paused by the browser, but say so outright and drop the stream.
+  try{if(_ipAud){_ipAud.pause(); _ipAud.removeAttribute('src'); _ipAud.load();}}catch(e){}
+  _ipAud=null;
+  var v=document.getElementById('ipvid'); if(v){v.innerHTML=''; v.classList.remove('aud');}   // kill the iframe so audio stops
 }
 function ipClose(){
   ipStop();
@@ -5984,7 +6065,8 @@ function ipClose(){
 function ipOpen(vid,url){
   var isYT=/^[A-Za-z0-9_-]{11}$/.test(String(vid||''));
   var isSC=!isYT && /^https:\/\/([a-z0-9-]+\.)?soundcloud\.com\/[^\s"'<>]+$/i.test(String(url||''));
-  if(!isYT&&!isSC) return;
+  var isAud=!isYT && !isSC && NC_PREV.test(String(url||''));   // the no-crown song card's official preview
+  if(!isYT&&!isSC&&!isAud) return;
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
   if(!ipl||!slot) return;
   ipStop();                                      // one player at a time, never two playing
@@ -5994,6 +6076,7 @@ function ipOpen(vid,url){
   Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=true;});
   ipl.hidden=false; ipGlyph(true); ipRing(0); slot.classList.remove('playing');
   if(isSC){ ipOpenSC(url, ipl, slot); return; }
+  if(isAud){ ipOpenAud(url, ipl, slot); return; }
   var origin=encodeURIComponent(location.origin);
   // Poster first (a real YouTube frame the instant the box appears), the autoplay iframe
   // behind it. maxresdefault is not guaranteed to exist, hqdefault always is; fall back.
@@ -6050,7 +6133,43 @@ function ipOpenSC(url, ipl, slot){
     }catch(_){}
   });
 }
+/* The audio half (NO-CROWN PLAY, Roham 2026-09-30 18:34). The song card has no upload to embed,
+   so the band plays the song's 30 s official preview in a plain <audio>, straight from Apple's
+   (or Deezer's) CDN to the phone: nothing passes through or is kept by the engine. The ring is
+   the element's real playhead. play() runs inside the tap, so iOS lets it start. If the preview
+   will not load, the band closes and the button goes, rather than leave a dead control. */
+function ipOpenAud(url, ipl, slot){
+  var art=ipl.getAttribute('data-art')||'', ttl=ipl.getAttribute('data-atitle')||'',
+      who=ipl.getAttribute('data-awho')||'',
+      from=ipl.getAttribute('data-afrom')||'', orig=ipl.getAttribute('data-aorig')==='1';
+  slot.classList.add('aud');
+  slot.innerHTML=(art?'<span class="ipaud-bg" style="background-image:url(&quot;'+esc(art)+'&quot;)"></span>':'')+
+    '<div class="ipaud">'+(art?'<img class="tart" alt="" src="'+esc(art)+'" data-ph="'+esc(phVars(ttl+'|'+who))+'">':_phSpan(phVars(ttl+'|'+who)))+
+      '<span class="ipaud-tt">'+(ttl?'<b>'+esc(ttl)+'</b>':'')+
+        (from?'<span class="ipaud-src">'+(from==='Apple Music'?IC.apple:'')+esc(from)+'</span>':'')+
+        '<span>'+(orig?'Preview, original speed':'Preview')+'</span></span></div>';
+  var a=document.createElement('audio'), gen=_ipGen;
+  a.preload='auto'; a.setAttribute('playsinline',''); a.src=url;
+  var live=function(){return gen===_ipGen && _ipAud===a;};
+  a.addEventListener('playing',function(){if(live()){ipGlyph(true); slot.classList.add('playing');}});
+  a.addEventListener('pause',function(){if(live()) ipGlyph(false);});
+  a.addEventListener('ended',function(){if(live()){ipGlyph(false); ipRing(1);}});
+  a.addEventListener('timeupdate',function(){if(live()&&a.duration>0) ipRing(a.currentTime/a.duration);});
+  a.addEventListener('error',function(){
+    if(!live()) return;
+    ipClose();
+    Array.prototype.forEach.call(document.querySelectorAll('.nca [data-ipopen]'),function(x){
+      x.removeAttribute('data-ipopen'); x.hidden=true;});});
+  slot.appendChild(a); _ipAud=a;
+  try{var p=a.play(); if(p&&p.catch) p.catch(function(){if(live()) ipGlyph(false);});}catch(_){ipGlyph(false);}
+}
 function ipToggle(){
+  if(_ipAud){
+    var au=_ipAud;
+    try{if(au.paused){var pr=au.play(); ipGlyph(true); if(pr&&pr.catch) pr.catch(function(){ipGlyph(false);});}
+        else{au.pause(); ipGlyph(false);}}catch(_){}
+    return;
+  }
   if(_ipSC){
     var w=_ipSC;
     try{w.isPaused(function(p){try{if(p){w.play(); ipGlyph(true);}else{w.pause(); ipGlyph(false);}}catch(_){}});}catch(_){}
