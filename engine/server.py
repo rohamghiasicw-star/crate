@@ -1151,6 +1151,7 @@ def _phase1(url, key, t0):
     # CRATE_SOUNDPAGE_RETRY: set the moment the fingerprint returns. The sound page's extra
     # tries run only while it is unset, so they never hold the scan (E._sound_page_retry).
     _fp_done_ev = threading.Event()
+    _page_t0 = [None]                   # CRATE_SOUNDPAGE_GRACE: when the page thread started
     _is_tt = src["platform"] == "tiktok"
     if _is_tt:
         def _fetch_hints():
@@ -1214,6 +1215,7 @@ def _phase1(url, key, t0):
         # already run and it has almost certainly finished for free.
         def _fetch_page():
             _t = time.time()
+            _page_t0[0] = _t                # CRATE_SOUNDPAGE_GRACE: the join's own clock
             page_pool = []
             # CRATE_SOUNDPAGE_RETRY: hints a scan of this same sound got in the last
             # SOUNDPAGE_HINT_TTL s are reused as they are, with no TikTok or tikwm request.
@@ -1280,6 +1282,34 @@ def _phase1(url, key, t0):
         # Caption leads: the uploader outranks the crowd. Deduped, order preserved.
         hint_texts = caption_hints + [g for g in got if g not in caption_hints]
         return hint_texts
+
+    def _page_grace_wall(wall):
+        """CRATE_SOUNDPAGE_GRACE (default ON since 2026-09-30): the page join's wall. With the flag off, the
+        page thread already finished, or the page already in hand (slow comment reads keep
+        today's wall), it is `wall` exactly (today). With it on and the page still missing when
+        the fingerprint returned (every try failed so far; the engine is retrying in its grace),
+        the join may wait until SOUNDPAGE_GRACE_JOIN s after the thread started, never less
+        than `wall`, so a page that lands in the grace still gets its comments read and joined.
+        Measured cost and gain: graded/v2 (replay_grace.py, off_grace.jsonl)."""
+        if (not getattr(E, "SOUNDPAGE_GRACE", False) or _page_fut is None or _page_fut.done()
+                or _page_t0[0] is None):
+            return wall
+        # only when the PAGE itself has failed so far: a page in hand whose comment reads are
+        # slow keeps today's wall (the brief: grace only when the page has failed)
+        _gmid = E._TT_MUSIC_ID.get(url) or src.get("sound_id")
+        if not _gmid or E.sound_page_peek(_gmid):
+            return wall
+        if SOUNDPAGE_GRACE_JOIN <= 0:
+            # background-only grace: phase 1 does not wait for a thread that is only retrying
+            # (today the failed thread returns at the stop and the join is instant); a page it
+            # lands later fills the 30 min hint memo for the next scan of this sound
+            E.tlog("sound_page_grace_join", 0.0, wall=round(wall, 3), grace_wall=0.0,
+                   since_page=round(time.time() - _page_t0[0], 3), background=True)
+            return 0.0
+        _gw = max(wall, _page_t0[0] + SOUNDPAGE_GRACE_JOIN - time.time())
+        E.tlog("sound_page_grace_join", 0.0, wall=round(wall, 3), grace_wall=round(_gw, 3),
+               since_page=round(time.time() - _page_t0[0], 3))
+        return _gw
 
     def _join_page(wall):
         """Collect the sound-page chase, having already had the whole sweep to run.
@@ -1602,11 +1632,11 @@ def _phase1(url, key, t0):
             # the serial engine got here _shift later: same walls, same instants
             _pd = _fp_end + _shift
             _join_hints(max(0.0, _pd + 3.0 - time.time()))
-            _join_page(max(0.0, max(time.time(), _pd) + 4.0 - time.time()))
+            _join_page(_page_grace_wall(max(0.0, max(time.time(), _pd) + 4.0 - time.time())))
             E.tlog("serial_shift", _shift, overlap=round(_overlap(), 3))
         else:
             _join_hints(3.0)
-            _join_page(4.0)
+            _join_page(_page_grace_wall(4.0))
         if _hints_ex is not None:
             _hints_ex.shutdown(wait=False)
         # WHAT THE CONFIRM STEP FOUND, if it ran. Memo read only, no network: the engine
@@ -2079,6 +2109,9 @@ LYRIC_NOCROWN = _LN_MODE in ("1", "after")   # graded #36, gated 2026-09-30 in "
 # "after" (graded BUILD v2): also when an upload WAS crowned, if the lane never started. #36 is
 # crowned now (the Winning correction, verified 2026-09-30) and "1" only runs with no crown.
 LYRIC_AFTER = _LN_MODE == "after"
+# CRATE_SOUNDPAGE_GRACE's page join (engine flag, graded BUILD 2026-09-30): seconds after the page
+# thread started that phase 1 may wait for it when the thread is still out at the normal wall.
+SOUNDPAGE_GRACE_JOIN = float(os.environ.get("CRATE_SOUNDPAGE_GRACE_JOIN", 10.5))
 WHISPER_BIN = os.environ.get("CRATE_WHISPER_BIN", "/opt/homebrew/bin/whisper-cli")
 WHISPER_MODEL = os.environ.get("CRATE_WHISPER_MODEL",
                                os.path.expanduser("~/.cache/whisper/ggml-base.en.bin"))

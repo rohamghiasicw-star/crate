@@ -342,6 +342,18 @@ SOUNDPAGE_RETRY_GAPS = (0.35, 0.6, 0.9, 1.2, 1.5, 1.5)   # waits before tries 2.
 SOUNDPAGE_RETRY_FLOOR = 3              # tries made whatever the stop says (today's count)
 SOUNDPAGE_RETRY_CAP = float(os.environ.get("CRATE_SOUNDPAGE_RETRY_CAP", 6.0))
 SOUNDPAGE_HINT_TTL = float(os.environ.get("CRATE_SOUNDPAGE_HINT_TTL", 1800.0))
+# GRADED BUILD 2026-09-30 (addify-harness/graded/BUILD.md), proven graded/prove + comments/SHIP.md.
+#   CRATE_SOUNDPAGE_GRACE  live's fingerprint ends at ~3.8 s (phone probes), so the extra page
+#                          tries above stop about twice as early as in a lab: the live check
+#                          after 0dacb6b lost mason to 4 x 503 in 2.9 s (final/SHIP.md, ship 5).
+#                          With the flag, a page that has FAILED every try so far keeps trying
+#                          after the fingerprint returns, until SOUNDPAGE_GRACE_S from its own
+#                          first try (the same 0.9-1.5 s backoff, the memo re-read before every
+#                          try, so the m. host or creator_check landing it counts too). It never
+#                          starts once a page is in hand, and it adds no new wall: server.py's
+#                          page join keeps its 4 s ceiling after the fingerprint.
+SOUNDPAGE_GRACE = _speed_flag("CRATE_SOUNDPAGE_GRACE", True)   # gated 2026-09-30: comments/SHIP.md (mason x4 sim + reg x2, ON vs OFF)
+SOUNDPAGE_GRACE_S = float(os.environ.get("CRATE_SOUNDPAGE_GRACE_S", 6.5))
 # CRATE_SEEK_MOFF v2 (crate#10): read every same-song row on the section of the upload the clip was
 # cut from, aligned against aligned, with the reversed control on the adopted window (gap 0.12) and
 # the plain song preferred over a mashup. See seek_plan() and _SeekRun below.
@@ -2609,16 +2621,25 @@ def _sound_page_retry(mid, stop=None):
     while `stop` is unset and inside SOUNDPAGE_RETRY_CAP, so the wait lives inside the
     fingerprint the scan is running anyway. Before every try the memo is re-read, because the
     m. host (started after try 1) or creator_check may have landed the page meanwhile. A first
-    try that works returns exactly as today: same URL, same timeout, no extra request."""
+    try that works returns exactly as today: same URL, same timeout, no extra request.
+
+    CRATE_SOUNDPAGE_GRACE (default ON since 2026-09-30): once tries 1-3 have failed, the loop runs on past the
+    stop until SOUNDPAGE_GRACE_S after the first try, with the same backoff. It only ever runs
+    on a page that has failed so far, and server.py's page join keeps its own ceiling."""
     k = str(mid)
     t0 = time.time()
     tries, sts, via, node = 0, [], None, {}
     waited = 0.0
+    _grace = bool(SOUNDPAGE_GRACE and stop is not None)     # CRATE_SOUNDPAGE_GRACE
+    _grace_lim = max(SOUNDPAGE_RETRY_CAP, SOUNDPAGE_GRACE_S)
+    _after = 0                              # tries that ran after the stop (grace only)
     while True:
         hit = sound_page_peek(k)
         if hit:
             node, via = hit, "memo"
             break
+        if _grace and stop.is_set():
+            _after += 1
         tries += 1
         try:
             r = _cffi_get(_SOUNDPAGE_WWW % k, timeout=(20 if tries == 1 else 6))
@@ -2640,6 +2661,19 @@ def _sound_page_retry(mid, stop=None):
             time.sleep(gap)
             waited += gap
             continue
+        if _grace:
+            # CRATE_SOUNDPAGE_GRACE: every try so far failed. The stop no longer ends the
+            # loop by itself; SOUNDPAGE_GRACE_S from the first try does. A stop that lands
+            # mid-wait lets the wait finish, then the memo is re-read and the next try runs.
+            if max(time.time() - t0, waited) + gap > _grace_lim:
+                break
+            waited += gap
+            _tw = time.time()
+            if stop.wait(gap):
+                _rem = gap - (time.time() - _tw)
+                if _rem > 0:
+                    time.sleep(_rem)
+            continue
         if stop is not None and stop.is_set():
             break
         if max(time.time() - t0, waited) + gap > SOUNDPAGE_RETRY_CAP:
@@ -2652,8 +2686,17 @@ def _sound_page_retry(mid, stop=None):
             break
         if stop is None:
             time.sleep(gap)
-    tlog("sound_page_fetch", time.time() - t0, tries=tries, ok=bool(node.get("videoList")),
-         via=via, st=sts[:8])
+    if _grace and not node.get("videoList"):
+        hit = sound_page_peek(k)                   # the m. host may have landed in the last wait
+        if hit:
+            node, via = hit, "memo"
+    if _grace:
+        tlog("sound_page_fetch", time.time() - t0, tries=tries, ok=bool(node.get("videoList")),
+             via=via, st=sts[:8], grace=True, after_stop=_after,
+             stop_set=bool(stop.is_set()))
+    else:
+        tlog("sound_page_fetch", time.time() - t0, tries=tries, ok=bool(node.get("videoList")),
+             via=via, st=sts[:8])
     if not node.get("videoList"):
         return {}                                  # failures are never memoised
     sound_page_offer(k, node)
