@@ -6823,7 +6823,9 @@ if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); sessionStor
 if(_shared){
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
   urlEl.value=_shared;
-  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
+  // Roham 2026-10-01: a shared reel flashed the home screen for 350 ms first (the wait was for a
+  // splash that a share never shows). Start the scan in this same task, before the first paint.
+  onbQuiet=true; try{ run(_shared); }catch(e){} onbQuiet=false;
 } else splash();
 SP.finishLogin().then(function(ok){
   if(ok) SP.fetchWho().then(function(){paintHome();});
