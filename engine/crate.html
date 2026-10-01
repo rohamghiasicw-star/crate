@@ -6825,7 +6825,7 @@ if(_shared){
   urlEl.value=_shared;
   // Roham 2026-10-01: a shared reel flashed the home screen for 350 ms first (the wait was for a
   // splash that a share never shows). Start the scan in this same task, before the first paint.
-  onbQuiet=true; try{ run(_shared); }catch(e){} onbQuiet=false;
+  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},0);   // after the rest of boot runs (it did at 350 ms; the wait itself only showed home)
 } else splash();
 SP.finishLogin().then(function(ok){
   if(ok) SP.fetchWho().then(function(){paintHome();});
