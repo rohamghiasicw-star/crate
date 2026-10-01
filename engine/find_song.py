@@ -608,6 +608,11 @@ def _oneshot_shazam():
 
     class _OneShot(HTTPClientInterface):
         async def request(self, method, url, *args, **kwargs):
+            # SHAZAM RELAYS: the paced probes come through here, so the round-robin route is
+            # picked per request (this server's IP, then each CRATE_SHAZAM_PROXIES relay).
+            route = _shazam_route()
+            if route:
+                kwargs["proxy"] = route
             async with aiohttp.ClientSession() as s:
                 async with s.request(method.upper(), url, **kwargs) as resp:
                     if resp.status >= 400:
