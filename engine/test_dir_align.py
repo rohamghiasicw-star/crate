@@ -33,6 +33,20 @@ Round 4 (the re-review):
     at-tempo row is crowned over a lane row 5-11% off even when its figure null refuses it, a lane
     row never takes the crown by figure from a nearer first-20s pick, and a lane row on top never
     pulls a lower-core row into the crown (controls show round 3 and the review's band failing).
+Round 5 (the re-review's 2 confirmed defects and 3 low findings):
+9. (extended) a join after an unbracketed ft./feat. credit, or inside brackets, is still a mix
+   (clip 32's failure through a credit); credit brackets and treatment brackets stay plain; only
+   ever stricter than round 4 (a control shows round 4 admitting all 8 shapes).
+13. the join past the hunt budget's T: a row the lane started during the waves is joined (its
+   reading kept, the budget not fired, so the scan stays cacheable); only a NEW ranking-pass pull
+   is skipped and recorded; the cap still bounds the wait (control: round 4's gate fires).
+14. YouTube rows never enter the lane (SoundCloud and other sources do); retire() kills a retired
+   job's yt-dlp fallback and its own thread reads the lane as dead, so its worker is freed at once
+   (control: round 4's retire left the fallback running).
+15. server: a lane row that is not the crown never prints above it (_cand_row carries dir_align,
+   _level_with judges it on the legs, _row_figure caps it), and the page's vmatch / pageCrown do
+   the same, number for number with the server (run through node when it is installed).
+16. server: the per-section hunt never takes a lane row as a section's version.
 """
 import asyncio, os, random, shutil, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -301,6 +315,200 @@ def server_tests(tmp):
           and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, L)] == ["L", "X"]
           and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, None)] == ["L", "X"])
 
+    # 15. ROUND 5 (review, low): a lane row that is not the crown never prints above it
+    L975 = dict(L, vspeed=0.975, url="L975")
+    LE = dict(L, vspeed=0.999, slope_delta=0.1, bass_delta=0.5, url="LE")
+    rx, rl, re_ = S._cand_row(X), S._cand_row(L975), S._cand_row(LE)
+    check("fig5: _cand_row carries dir_align on a lane row only",
+          rl.get("dir_align") is True and re_.get("dir_align") is True and rx.get("dir_align") is None)
+    fx = S._row_figure(rx, True, crown=rx)
+    own_l = S._version_figure(rl, True)[0]
+    check("fig5 control: round 4 printed the review's L (v 0.975) above the crown X",
+          S._row_figure(dict(rl, dir_align=None), True, crown=rx) == own_l > fx,
+          "L %s X %s" % (own_l, fx))
+    check("fig5: the review's L prints level with the crown X, not above it",
+          S._row_figure(rl, True, crown=rx) == fx, "L %s X %s" % (S._row_figure(rl, True, crown=rx), fx))
+    check("fig5: an Exact lane row under a lower crown prints level with it",
+          S._version_figure(re_, True) == (100, True) and S._row_figure(re_, True, crown=rx) == fx,
+          str(S._row_figure(re_, True, crown=rx)))
+    rxh = S._cand_row(dict(X, core=1.0, slope_delta=0.1, bass_delta=0.5, url="Xh"))
+    check("fig5: a lane row under a higher crown keeps its own figure, and a lane crown its own",
+          S._row_figure(rl, True, crown=rxh) == own_l and S._row_figure(rl, True, crown=rl) == own_l)
+    check("fig5: _level_with judges a lane row on its legs, whatever its aligned core",
+          S._level_with(rl, rx, True) is True
+          and S._level_with(S._cand_row(dict(L, vspeed=1.002, slope_delta=0.1, bass_delta=0.0)),
+                            S._cand_row(dict(X, slope_delta=0.7)), True) is False
+          and S._level_with(rl, S._cand_row(dict(LE, url="LE2")), True) is False)
+    resf = {"gates_on_rows": True, "fig_pitched": True, "exact": rx, "candidates": [rx, rl, re_]}
+    S._write_figs(resf)
+    check("fig5: _write_figs never puts a lane row's fig above the crown's",
+          all(r["fig"] <= rx["fig"] for r in resf["candidates"]),
+          str([(r["url"], r["fig"]) for r in resf["candidates"]]))
+    # the figure step: a lane row ahead only on its aligned score no longer takes an exact
+    # first-20s pick's crown; one with measurably better legs still can
+    X2 = dict(X, core=0.80, slope_delta=0.1, bass_delta=0.5, url="X2")
+    Lb = dict(L, vspeed=1.002, slope_delta=0.1, bass_delta=0.0, url="Lb")
+
+    def lw4(row, crown_, pitched):
+        if crown_ is None or row is crown_ or row.get("url") == crown_.get("url"):
+            return False
+        core = row.get("core")
+        if core is None or core >= E.CORE_SAME:
+            return False
+        rl_, cl_ = S._legs_figure(row, pitched), S._legs_figure(crown_, pitched)
+        return rl_ is not None and cl_ is not None and rl_ <= cl_
+    real_lw = S._level_with
+    S._level_with = lw4
+    try:
+        ctl = crown([Lb, X2], m80, "slowed ~0.80x")
+    finally:
+        S._level_with = real_lw
+    check("fig5 control: round 4's figure step moved an exact first-20s pick's crown to a lane row "
+          "ahead only on its aligned score", ctl == ("X2", "Lb"), str(ctl))
+    check("fig5: ... now the walk's pick keeps it", crown([Lb, X2], m80, "slowed ~0.80x") == ("X2", "X2"))
+    X2q = dict(X2, slope_delta=0.7, url="X2q")
+    check("fig5: a lane row with measurably better legs (the pick's EQ off) can still take it",
+          crown([Lb, X2q], m80, "slowed ~0.80x") == ("X2q", "Lb"))
+    page_tests([rx, rl, re_, rxh], S)
+
+    # 16. ROUND 5 (review, low): the per-section hunt never takes a lane row as a section's version
+    lane_r = dict(L, editmatch=True, final=0.9)
+    plain_r = {"title": "Usher - Yeah! (slowed)", "uploader": "p", "url": "P", "editmatch": True,
+               "core": 0.97, "final": 0.7, "plays": 3}
+    check("sec5: _cands_of leaves lane rows out",
+          [c["url"] for c in S._cands_of({"ranked": [lane_r, plain_r]})] == ["P"])
+    real_fe, real_cut = E.find_edit, E.cut
+    box = {}
+
+    async def fake_fe(*a, **k):
+        return {"ranked": list(box["ranked"]), "decisive": True, "tmp": None}
+    E.find_edit = fake_fe
+    E.cut = lambda *a, **k: None
+    sctx = {"src": {"audio": "/nonexistent.wav"}, "edit_label": "slowed ~0.80x", "mdir": "slowed",
+            "shazam_reliable": True,
+            "fp": {"sections": [{"start": 0.0, "end": 20.0, "song": "Yeah!", "artist": "Usher"}]}}
+    loop = asyncio.new_event_loop()
+    try:
+        box["ranked"] = [lane_r, plain_r]
+        sec = S._hunt_sections(loop, sctx, None, [])[0]
+        box["ranked"] = [dict(lane_r, dir_align=None), plain_r]
+        sec_c = S._hunt_sections(loop, sctx, None, [])[0]
+    finally:
+        E.find_edit, E.cut = real_fe, real_cut
+        loop.close()
+    check("sec5 control: unmarked, that row would have been the section's version (no crown gate there)",
+          (sec_c.get("exact") or {}).get("url") == "L" and sec_c.get("decisive") is True)
+    check("sec5: a lane row is never a section's version, and its decisive is not carried",
+          (sec.get("exact") or {}).get("url") == "P" and sec.get("decisive") is False
+          and [c["url"] for c in sec.get("candidates") or []] == ["P"], str(sec))
+
+
+def page_tests(rows, S):
+    """15 (page half): crate.html's own vmatch / pageCrown on the server's rows, through node.
+    rows[0] is the crown X (75), rows[1] the review's lane row L (81 on its own), rows[2] an Exact
+    lane row, rows[3] a higher crown. Skipped (not failed) where node is not installed (the box)."""
+    import json as _json
+    node = shutil.which("node")
+    if not node:
+        print("SKIP page5: node not installed, crate.html's vmatch not run here")
+        return
+    html = open(os.path.join(HERE, "crate.html"), encoding="utf-8").read()
+    block = html[html.index("var CORE_KEEP=0.50"):html.index("function vtxt(")]
+    i = html.index("var RX_SPEEDCLAIM=")
+    j = html.index("TILT_MAX=9.0, BASS_GAP=6.0;") + len("TILT_MAX=9.0, BASS_GAP=6.0;")
+    harness = html[i:j] + "\n" + block + "\n" + r"""
+var inp=JSON.parse(require('fs').readFileSync(0,'utf8')), out={};
+function figs(crown, rows){GATED=true; CLIP_PITCHED=true; CROWN_URL=crown.url; CROWN_SRC=''; CROWN_ROW=crown;
+  return rows.map(function(r){var m=vmatch(r); return {url:r.url, pct:m.pct, exact:m.exact, level:m.level||false};});}
+out.under_x=figs(inp.rows[0], inp.rows);
+out.under_xh=figs(inp.rows[3], inp.rows);
+out.under_l=figs(inp.rows[1], inp.rows);
+GATED=false; CROWN_URL=''; CROWN_ROW=null;
+var d={result:'found', exact:inp.rows[0], candidates:inp.rows.slice(1,3), gates_on_rows:true, speed:'slowed ~0.80x'};
+out.page_crown=(pageCrown(d).exact||{}).url;
+var dc=JSON.parse(JSON.stringify(d)); dc.candidates.forEach(function(r){delete r.dir_align;});
+out.page_crown_control=(pageCrown(dc).exact||{}).url;
+process.stdout.write(JSON.stringify(out));
+"""
+    hp = os.path.join(tempfile.mkdtemp(), "page5.js")
+    try:
+        with open(hp, "w", encoding="utf-8") as f:
+            f.write(harness)
+        pr = subprocess.run([node, hp], input=_json.dumps({"rows": rows}), capture_output=True,
+                            text=True, timeout=30)
+    finally:
+        shutil.rmtree(os.path.dirname(hp), ignore_errors=True)
+    try:
+        out = _json.loads(pr.stdout)
+    except Exception:
+        check("page5: crate.html's vmatch ran under node", False, (pr.stderr or pr.stdout)[-300:])
+        return
+    ux = {r["url"]: r for r in out["under_x"]}
+    check("page5: under the crown X, the page prints the lane rows level with it, never Exact",
+          ux["L975"]["pct"] == ux["X"]["pct"] and ux["LE"]["pct"] == ux["X"]["pct"]
+          and not ux["LE"]["exact"] and ux["L975"]["level"] == "lane", str(out["under_x"]))
+    same = all(r["pct"] == S._row_figure(dict(next(x for x in rows if x["url"] == r["url"])), True,
+                                         crown=crn)
+               for key, crn in (("under_x", rows[0]), ("under_xh", rows[3]), ("under_l", rows[1]))
+               for r in out[key])
+    check("page5: page and server print the same figure on every row, under three crowns", same,
+          str({k: [(r["url"], r["pct"]) for r in out[k]] for k in ("under_x", "under_xh", "under_l")}))
+    check("page5: pageCrown never moves the crown to a lane row (control: unmarked, it moved to the "
+          "Exact lane row)", out["page_crown"] == "X" and out["page_crown_control"] == "LE",
+          "%s / control %s" % (out["page_crown"], out["page_crown_control"]))
+
+
+# ROUND 5 (review finding 1): the shapes round 4 still let into the lane, and the credit /
+# treatment brackets that must stay plain (the reviewer's verified set)
+R5_MIXES = ["Usher - Yeah! ft. Lil Jon, Ludacris x Love In This Club (Slowed + Reverb)",
+            "Usher ft. Lil Jon & Ludacris - Yeah! x Love In This Club (Slowed + Reverb)",
+            "Usher ft. Lil Jon - Yeah! x Get Low (slowed)",
+            "Usher feat Lil Jon & Ludacris - Yeah! x Lovers & Friends (Slowed)",
+            "Usher - Yeah! featuring Lil Jon x OMG (slowed)",
+            "Usher - Yeah! (x Love In This Club) (slowed)",
+            "Usher - Yeah! (w/ Love In This Club) (slowed)",
+            "Usher [Love In This Club x Yeah] (slowed)"]
+R5_PLAINS = ["Usher - Yeah! (w/ Lil Jon & Ludacris) (slowed)",
+             "Usher - Yeah! (with Lil Jon & Ludacris) (slowed)",
+             "Usher feat. Lil Jon & Ludacris - Yeah! (slowed)",
+             "Usher - Yeah! ft. Lil Jon, Ludacris (slowed + reverb)",
+             "Usher - Yeah! (feat. Lil Jon & Ludacris) (slowed)",
+             "Usher - Yeah! (slowed) (with Reverb)",
+             "Usher - Yeah! (Slowed & Reverbed)"]
+
+
+def _mixed_r4(c, base_title, artist_toks):
+    """Round 4's _dir_align_mixed, verbatim (the control): brackets dropped whole, and a credit
+    stripped to the END of the title."""
+    import re
+    t = c.get("title") or ""
+    ft = E._ascii_fold(t)
+    if E._SEEK_MIX.search(ft) or E._DA_MIX_WORDS.search(ft):
+        return True
+
+    def words(s):
+        return set(re.findall(r"[a-z0-9]+", E._ascii_fold("%s" % (s or "")).lower()))
+    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
+    sw = {w for w in words(E._clean(name)) if w not in E.ORIGINAL_WORDS and not E.EDIT_WORDS.search(w)}
+    sw = {w for w in sw if len(w) >= 3} or sw
+    if not sw:
+        return False
+    known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
+    raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
+    raw = re.sub(r"\b(prod|produced by|feat|ft)\b.*$", " ", raw, flags=re.I)
+    for side in E._DA_SIDE.split(raw):
+        parts = [p for p in E._DA_JOIN.split(side) if p.strip()]
+        if len(parts) < 2 or not sw <= words(side):
+            continue
+        for p in parts:
+            pw = words(p)
+            if sw <= pw:
+                continue
+            if any(len(w) >= 3 and not w.isdigit() and w not in known and not E._DA_TAG.match(w)
+                   for w in pw):
+                return True
+    return False
+
 
 def main():
     tmp = tempfile.mkdtemp()
@@ -437,6 +645,9 @@ def main():
                       "Usher - Yeah! | Slowed and Reverb", "Usher x Lil Jon x Ludacris - Yeah! (slowed)",
                       "Yeah! - Usher & Lil Jon (slowed)", "Usher - Yeah! ft. Lil Jon & Ludacris (slowed + reverb)",
                       "Usher - Yeah! (slowed) [prod. a x b]", "Yeah! (slowed) - Usher"]
+            # ROUND 5 (review finding): a join after an unbracketed credit, or inside brackets
+            mixes += R5_MIXES
+            plains += R5_PLAINS
             bad_mix = [t for t in mixes if ok4(t)]
             bad_plain = [t for t in plains if not ok4(t)]
             check("mix4 (%d artist toks): %d mashup shapes excluded" % (len(arts), len(mixes)),
@@ -445,10 +656,21 @@ def main():
                   not bad_plain, str(bad_plain))
         tok4 = lambda c: (E._dir_align_words_ok(c, bt, ["usher"])
                           and not E._dir_align_mixed(c, bt, ["usher"]))
-        every = mixes + plains + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers"]
+        every = mixes + plains + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers",
+                                  "Usher - Yeah! ft. Lil Jon x Ludacris (slowed)",
+                                  "Yeah! x Ludacris - Stand Up (slowed)", "Usher - Yeah! (Remastered 2004) slowed"]
         check("mix4: only ever stricter (eligible now => eligible in round 3)",
               all(ok(t) for t in every
                   if E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)))
+        for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
+            r4miss = [t for t in R5_MIXES if "featuring" not in t]
+            r4 = [t for t in r4miss if not _mixed_r4({"title": t, "uploader": "someone"}, bt, arts)]
+            check("mix5 control (%d artist toks): round 4's _dir_align_mixed read these %d shapes as plain"
+                  % (len(arts), len(r4miss)), r4 == r4miss, str(set(r4miss) - set(r4)))
+            looser = [t for t in every if not E._dir_align_mixed({"title": t, "uploader": "someone"}, bt, arts)
+                      and _mixed_r4({"title": t, "uploader": "someone"}, bt, arts)]
+            check("mix5 (%d artist toks): only ever stricter than round 4 (%d titles)" % (len(arts), len(every)),
+                  not looser, str(looser))
         check("words: a substring song hit is not a title claim",
               not ok("Usher - Yeahright (slowed)"))
         check("words: a substring artist hit is not a title claim",
@@ -576,6 +798,152 @@ def main():
         check("close: kills the lane's yt-dlp and joins its job",
               procs and all(p.poll() is not None for p in procs) and time.time() - t0 < 5,
               "%d procs, %.2f s" % (len(procs), time.time() - t0))
+
+        # 13. ROUND 5 (review finding 2): the join past the hunt budget's T. The lane's target case
+        # has no evidence (Ttraamat's head read 0.298 / 0.601), so past T may_start says no.
+        reading = {"at": 84.0, "v": {"core": 1.0}, "path": None, "verdict": "closest",
+                   "why": "rev", "lock": None, "rev": [0.08, 0.2]}
+        hbj = E._HuntBudget(25, 35, t0=time.time() - 26)
+        hbj.note(0.298, 0.601)
+        lnj = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hbj)
+        lnj._one = lambda c, inf, key=None: dict(reading)
+        JA = mk(path=a, duration=130, url="file://ja")
+        JB = mk(path=a, duration=130, url="file://jb")
+        lnj.offer(JA)
+        t1 = time.time() + 3
+        while time.time() < t1 and not (id(JA) in lnj.jobs and lnj.jobs[id(JA)][1].done()):
+            time.sleep(0.02)
+        hbc = E._HuntBudget(25, 35, t0=time.time() - 26)
+        hbc.note(0.298, 0.601)
+        check("join5 control: round 4's gate refuses the join past T and fires the budget",
+              E._hb_go(hbc, "dir_align") is False and hbc.fired_at is not None)
+        rows_j = E._dir_align_join_rows([JA], lnj, hbj)
+        got_j = hbj.map_bounded("dir_align", lnj.result, rows_j, 1) if rows_j else []
+        check("join5: a row started during the waves is joined past T, its reading kept",
+              rows_j == [JA] and got_j and got_j[0] == reading, str(got_j))
+        check("join5: ... and the budget does not fire (the scan stays cacheable)",
+              hbj.fired_at is None and hbj.skipped == [] and not hbj.dead,
+              "fired %s skipped %s" % (hbj.fired_at, hbj.skipped))
+        rows_j2 = E._dir_align_join_rows([JA, JB], lnj, hbj)
+        check("join5: a NEW ranking-pass pull past T is left out, and only that skip fires the budget",
+              rows_j2 == [JA] and hbj.skipped == ["dir_align"] and hbj.fired_at is not None,
+              "rows %d skipped %s fired %s" % (len(rows_j2), hbj.skipped, hbj.fired_at))
+        hbe = E._HuntBudget(25, 35, t0=time.time() - 26)
+        hbe.note(0.70, 0.40)
+        hbt = E._HuntBudget(25, 35, t0=time.time() - 10)
+        check("join5: before T, or with evidence, or with no budget, every row is joined",
+              E._dir_align_join_rows([JA, JB], lnj, hbt) == [JA, JB] and hbt.fired_at is None
+              and E._dir_align_join_rows([JA, JB], lnj, hbe) == [JA, JB] and hbe.fired_at is None
+              and E._dir_align_join_rows([JA, JB], lnj, None) == [JA, JB])
+        lnj.close(wait=True)
+        # a started row still running at the cap: map_bounded lets it go (the wait stays bounded)
+        hbk = E._HuntBudget(25, 35, t0=time.time() - 34.2)
+        hbk.note(0.298, 0.601)
+        lnk = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hbk)
+
+        def slow_read(c, inf, key=None):
+            t9 = time.time() + 6
+            while time.time() < t9 and not lnk.dead:
+                time.sleep(0.02)
+            return dict(reading)
+        lnk._one = slow_read
+        lnk.offer(JA)
+        time.sleep(0.1)
+        t0 = time.time()
+        got_k = hbk.map_bounded("dir_align", lnk.result, E._dir_align_join_rows([JA], lnk, hbk), 1)
+        check("join5: a started row still running at the cap is let go there (bounded wait)",
+              got_k == [None] and time.time() - t0 < 3 and hbk.dead,
+              "%.2f s %s" % (time.time() - t0, got_k))
+        lnk.close(wait=True)
+
+        # 14. ROUND 5 (review, low): YouTube rows never enter the lane; retire() frees a worker
+        # whose job sits in a fallback fetch
+        yt1 = mk(source="youtube", url="https://www.youtube.com/watch?v=abc")
+        yt2 = mk(source="ddg", url="https://youtu.be/abc")
+        sc1 = mk(source="soundcloud", url="https://soundcloud.com/x/y")
+        am1 = mk(source="audiomack", url="https://audiomack.com/x/song/y")
+        okr = lambda c: bool(E._dir_align_row_ok(c, "slowed", "Yeah!", art))
+        check("yt5: a YouTube row (by source or by url) never enters the lane",
+              not okr(yt1) and not okr(yt2))
+        check("yt5: SoundCloud and other sources still do (control: the same row off YouTube)",
+              okr(sc1) and okr(am1) and okr(dict(yt1, source="soundcloud", url="https://soundcloud.com/a/b")))
+        check("yt5: _dir_align_rows picks no YouTube row, even with nothing else",
+              E._dir_align_rows([yt1, yt2], "slowed", "slowed ~0.84x", "Yeah!", art) == [])
+        lny = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        lny._one = lambda c, inf, key=None: None
+        lny.offer(yt1)
+        lny.offer(yt2)
+        check("yt5: offer() starts no YouTube row", len(lny.jobs) == 0)
+        lny.close(wait=True)
+
+        def fallback_lane():
+            lnf = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+            ends = {}
+
+            def stuck(c, inf, key=None):
+                t5 = time.time()
+                ok_ = lnf.run(["sleep", "30"], 60)      # dl_clip's yt-dlp fallback
+                ends[c["url"]] = (ok_, round(time.time() - t5, 2))
+                return None
+            lnf._one = stuck
+            fa = mk(path=a, duration=130, url="file://fa")
+            fb = mk(path=a, duration=130, url="file://fb")
+            lnf.offer(fa)
+            lnf.offer(fb)
+            t5 = time.time() + 3
+            while time.time() < t5 and len(lnf.procs) < 2:
+                time.sleep(0.02)
+            return lnf, ends, fa, fb
+        lnf, ends, fa, fb = fallback_lane()
+        pa, pb = list(lnf.kprocs.get(id(fa), ())), list(lnf.kprocs.get(id(fb), ()))
+        t0 = time.time()
+        lnf.retire([fb])
+        try:
+            lnf.jobs[id(fa)][1].result(timeout=3)
+        except Exception:
+            pass
+        freed = time.time() - t0
+        check("retire5: a retired job's yt-dlp fallback is killed and its worker freed at once",
+              pa and all(p.poll() is not None for p in pa) and lnf.jobs[id(fa)][1].done()
+              and freed < 2 and ends.get("file://fa", (True,))[0] is False,
+              "freed in %.2f s, ends %s" % (freed, ends))
+        check("retire5: the wanted row's fallback keeps running",
+              pb and all(p.poll() is None for p in pb) and not lnf.jobs[id(fb)][1].done())
+        lnf.close(wait=True)
+        # control: round 4's retire (mark + cancel only) leaves the fallback running
+        lnf, ends, fa, fb = fallback_lane()
+        pa = list(lnf.kprocs.get(id(fa), ()))
+        with lnf.lock:
+            lnf.retired.add(id(fa))
+            lnf.jobs[id(fa)][1].cancel()
+        time.sleep(1.0)
+        check("retire5 control: round 4's retire left the retired job's fallback running",
+              pa and all(p.poll() is None for p in pa) and not lnf.jobs[id(fa)][1].done())
+        lnf.close(wait=True)
+        # a retired job inside its direct fetch: its own thread reads the lane as dead, so dl_clip
+        # drops what lands and never starts a fallback; other threads do not
+        lnd = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        seen_d = {}
+
+        def direct(c, inf, key=None):
+            t6 = time.time() + 3
+            while time.time() < t6 and key not in lnd.retired:
+                time.sleep(0.02)                    # the direct fetch in flight
+            seen_d["dead"] = lnd.dead
+            t7 = time.time()
+            seen_d["run"] = lnd.run(["sleep", "5"], 10)
+            seen_d["run_s"] = time.time() - t7
+            return None
+        lnd._one = direct
+        da_ = mk(path=a, duration=130, url="file://da")
+        lnd.offer(da_)
+        time.sleep(0.1)
+        lnd.retire([])
+        lnd.jobs[id(da_)][1].result(timeout=5)
+        check("retire5: a retired job's own thread reads the lane dead and starts no fallback",
+              seen_d.get("dead") is True and seen_d.get("run") is False and seen_d.get("run_s", 9) < 0.5
+              and not lnd.dead and not lnd.procs, str(seen_d))
+        lnd.close(wait=True)
 
         # 7. exception unwind through find_edit's wrapper
         head = os.path.join(tmp, "head.wav")

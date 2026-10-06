@@ -9856,8 +9856,34 @@ def _dir_align_mixed(c, base_title, artist_toks):
     if not sw:
         return False
     known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
+    # ROUND 5 (review finding): a join INSIDE brackets is a mix too ("Yeah! (x Love In This
+    # Club)", "(w/ Love In This Club)", "[Love In This Club x Yeah]"). A bracket that opens with a
+    # join, or holds every song word, is read like a side; a credit bracket ("(prod. a x b)",
+    # "(feat. ...)") names people, and so do the song's own credited artists in base_title.
+    kb = known | words(base_title)
+    for inner in re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t):
+        if re.match(r"\s*(?:prod|produced by|feat|ft|featuring)\b", inner, re.I):
+            continue
+        lead = re.match(u"\\s*(?:(?:x|\u00d7|with)\\s|w/)", inner, re.I)
+        body = inner[lead.end():] if lead else inner
+        if not lead and not sw <= words(body):
+            continue
+        for p in _DA_JOIN.split(body):
+            pw = words(p)
+            if sw <= pw:
+                continue
+            if any(len(w) >= 3 and not w.isdigit() and w not in kb and not _DA_TAG.match(w)
+                   for w in pw):
+                return True
     raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
-    raw = re.sub(r"\b(prod|produced by|feat|ft)\b.*$", " ", raw, flags=re.I)
+    # ROUND 5 (review finding, clip 32's failure through a credit): a credit runs to the end of
+    # ITS side, and a feat credit also stops at an " x " join, not at the end of the title. The
+    # old strip ran to the end, so "Usher feat Lil Jon & Ludacris - Yeah! x Lovers & Friends" kept
+    # no song side and "Yeah! ft. Lil Jon, Ludacris x Love In This Club" no second song. It only
+    # ever keeps more of the title, so it is only ever stricter.
+    raw = re.sub(u"\\b(?:feat|ft|featuring)\\b.*?(?=\\s+(?:x|\u00d7)\\s+|\\s[-\u2013\u2014~]\\s|$)",
+                 " ", raw, flags=re.I)
+    raw = re.sub(u"\\b(?:prod|produced by)\\b.*?(?=\\s[-\u2013\u2014~]\\s|$)", " ", raw, flags=re.I)
     for side in _DA_SIDE.split(raw):
         parts = [p for p in _DA_JOIN.split(side) if p.strip()]
         if len(parts) < 2 or not sw <= words(side):
@@ -9875,9 +9901,14 @@ def _dir_align_mixed(c, base_title, artist_toks):
 def _dir_align_row_ok(c, cdir, base_title, title_ok):
     """Dropped on the head (core < CORE_KEEP), titled with the clip's own measured direction,
     carrying every song word and the artist (`title_ok`), long enough to hold a section, and
-    not a mashup / "vs" / medley / "A x B" (a section of one plays the plain song: clip 32)."""
+    not a mashup / "vs" / medley / "A x B" (a section of one plays the plain song: clip 32).
+    ROUND 5 (review, waste): never a YouTube row. Its 120 s pull goes through today's route,
+    which YouTube blocks on the server (findings/youtube-wall.md; the cookie route covers only
+    the reserved head downloads), so it could never land, held a lane worker for its whole
+    timeout and counted against the shared YouTube route. SoundCloud and every other source stay."""
     t = c.get("title") or ""
-    return bool(c.get("path") and (c.get("core") or 0) < CORE_KEEP and _dur_s(c) >= 45
+    return bool(c.get("path") and not _is_yt_row(c) and (c.get("core") or 0) < CORE_KEEP
+                and _dur_s(c) >= 45
                 and _fast_edit_claim(t, cdir, base_title)
                 and (c.get("song_cov") or 0) >= 1.0 and title_ok(c)
                 and not OTHER_RENDITION.search(_ascii_fold(t)) and not _is_compilation(c)
@@ -9896,6 +9927,24 @@ def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok):
     out = [c for c in cands if _dir_align_row_ok(c, cdir, base_title, title_ok)]
     out.sort(key=lambda c: (0 if c.get("source") == "soundcloud" else 1, -(c.get("plays") or 0)))
     return out[:DIR_ALIGN_MAX]
+
+
+def _dir_align_join_rows(da, lane, hb):
+    """ROUND 5 (review finding): the rows the ranking pass joins. HUNT BUDGET rule 1 holds back
+    NEW work only. A row offer() started during the waves is always joined, past T too: its pull
+    is paid for and its reading is usually done, and hb.map_bounded still bounds the wait by the
+    cap. Round 4 gated the whole join on may_start, which past T with no evidence threw the
+    finished readings away, fired the budget (res["hunt_budget"]) and so kept the scan out of both
+    caches. A row first seen here is a new 120 s pull: past T with no evidence it is left out, and
+    only that skip is recorded (may_start fires the budget, as it does for any wave). With no
+    budget (hb None) every row is joined, as before."""
+    new = [c for c in da if id(c) not in lane.jobs]
+    if new and hb is not None and not _hb_go(hb, "dir_align"):
+        joined = [c for c in da if id(c) in lane.jobs]
+        tlog("dir_align_skipped", 0.0, n=len(new), joined=len(joined),
+             rows=[(c.get("title") or "")[:50] for c in new])
+        return joined
+    return list(da)
 
 
 def _dir_align_speeds(xs, ctxs):
@@ -10062,22 +10111,36 @@ class _DirAlignLane(object):
         self.closed = False
         self.decisive = False
         self.procs = set()
+        self.kprocs = {}                # job key -> its running yt-dlp (round 5: retire kills it)
+        self._tls = threading.local()   # .key = the job this worker thread is running
         self._ctxs = None
         self._n = 0
         self.info = {}                  # url -> what the reading saw, for the tlog row
 
     @property
     def dead(self):
-        return self.closed or (self.hb is not None and self.hb.dead)
+        """True once the lane is closed or the hunt's cap fired, and (ROUND 5) on a job's own
+        thread once the ranking pass retired that job: dl_clip reads `abort.dead` after its
+        direct fetch and before its fallback, so a retired job drops a late fetch and never
+        starts a yt-dlp."""
+        if self.closed or (self.hb is not None and self.hb.dead):
+            return True
+        k = getattr(self._tls, "key", None)
+        return k is not None and k in self.retired
 
     def run(self, args, timeout):
-        """dl_clip's yt-dlp fallback: own process group, killed by close()."""
+        """dl_clip's yt-dlp fallback: own process group, killed by close(), and (ROUND 5) by
+        retire() when its job is retired, so a retired job stuck in a fallback fetch frees its
+        worker at once instead of after the fetch's whole timeout."""
+        k = getattr(self._tls, "key", None)
         with self.lock:
             if self.dead:
                 return False
             p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)
             self.procs.add(p)
+            if k is not None:
+                self.kprocs.setdefault(k, set()).add(p)
         try:
             try:
                 p.wait(timeout=timeout)
@@ -10092,6 +10155,8 @@ class _DirAlignLane(object):
         finally:
             with self.lock:
                 self.procs.discard(p)
+                if k is not None:
+                    self.kprocs.get(k, set()).discard(p)
 
     def ctxs(self):
         """[the clip's head context, the clip 20 s in] (the second only on a clip >= 40 s).
@@ -10149,13 +10214,21 @@ class _DirAlignLane(object):
 
     def retire(self, wanted):
         """The ranking pass's pick is final: a started row not in `wanted` stops at its next
-        step and a queued one never starts, so its worker is free for a wanted row."""
+        step and a queued one never starts, so its worker is free for a wanted row. ROUND 5
+        (review): a retired job inside its yt-dlp fallback has that process group killed here
+        (run() then returns False, dl_clip None, the job drops its file and returns), and a
+        retired job inside its direct fetch (capped at 6 s) drops what lands and never starts
+        a fallback (`dead` reads the job's own retirement)."""
         keep = {id(c) for c in wanted}
+        kill = []
         with self.lock:
             for k, (_c, f) in self.jobs.items():
                 if k not in keep:
                     self.retired.add(k)
                     f.cancel()
+                    kill.extend(self.kprocs.get(k, ()))
+        for p in kill:
+            _killpg(p)
 
     def result(self, c):
         """-> the reading dict (see _one) or None, waiting for the row's job. A row never
@@ -10175,12 +10248,14 @@ class _DirAlignLane(object):
     def one(self, c, key=None):
         t0 = time.time()
         inf = {"t0": round(t0, 3)}
+        self._tls.key = key             # this worker runs `key` now (dead / run read it)
         try:
             return self._one(c, inf, key)
         except Exception as e:
             inf["err"] = str(e)[:80]
             return None
         finally:
+            self._tls.key = None        # the executor reuses the thread
             inf["secs"] = round(time.time() - t0, 2)
             self.info[c.get("url")] = inf
 
@@ -11602,7 +11677,8 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     _da_closest = []
     if _dal is not None:
         _dal.retire(_da)
-    if _da and _hb_go(_hb, "dir_align"):
+        _da = _dir_align_join_rows(_da, _dal, _hb)     # round 5: only NEW pulls are gated
+    if _da:
         _td0 = time.time()
         _dspec = sum(1 for c in _da if id(c) in _dal.jobs)
         if _hb is None:

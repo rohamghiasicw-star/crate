@@ -2230,10 +2230,21 @@ SPEED_HANDLES_OVERLAP = E._speed_flag("CRATE_HANDLES_OVERLAP", True)
 SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
 
 
+def _section_rows(edit):
+    """The rows a per-section hunt may pick from: editmatch, in rank order, and (CRATE_DIR_ALIGN
+    round 5, review finding) never a lane row. The section's version is ranked[0] with no crown
+    gate at all, so a lane row there (its head under CORE_KEEP, its core read on the section the
+    lane aligned, its tempo up to 11% off the clip) would become a section's version without the
+    widened tempo gate's _dir_family_ok check, which only the whole-clip crown runs. Leaving lane
+    rows out gives each section exactly the pick it had before the lane existed (a lane row's
+    head never passed CORE_KEEP, so it was never editmatch there)."""
+    return [c for c in (edit.get("ranked") or []) if c.get("editmatch") and not c.get("dir_align")]
+
+
 def _cands_of(edit, n=6):
     """The verified candidates of a find_edit result, in the shape the UI already eats."""
     out = []
-    for c in [c for c in edit.get("ranked", []) if c.get("editmatch")][:n]:
+    for c in _section_rows(edit)[:n]:
         # Same unverified-claim note as the whole-clip rows. A per-section answer is
         # still an answer, so a section crown must not be the one place a "reverb" or
         # "bass boosted" title gets to stand unqualified.
@@ -2295,8 +2306,11 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
                 row["hunted"] = "failed (%s)" % type(ex).__name__
                 rows.append(row); continue
             cands = _cands_of(e)
+            # find_edit's `decisive` is about its ranked[0]; when that is a lane row (left out
+            # of the section's pick above) it says nothing about the pick, so it is not carried
+            _rk = e.get("ranked") or []
             row.update(candidates=cands, exact=(cands[0] if cands else None),
-                       decisive=bool(e.get("decisive")),
+                       decisive=bool(e.get("decisive")) and not (_rk and _rk[0].get("dir_align")),
                        hunted="own audio %.1f-%.1fs" % (a, b),
                        secs=round(time.time() - t, 1))
             _cleanup(e.get("tmp"))
@@ -2660,6 +2674,11 @@ def _cand_row(c):
                                           and float(c["speed_conf"]) < 0.10) else None),
             "claim": _claim or None,
             "claimkind": _kinds or None,
+            # CRATE_DIR_ALIGN round 5: this row's core was read on the section the lane ALIGNED,
+            # not on its first 20 s like every other row's, so the two cannot be compared. The
+            # page and _row_figure read it to keep a lane row that is not the crown from printing
+            # above the crown (_level_with). Absent on every other row, so old rows are unchanged.
+            "dir_align": True if c.get("dir_align") else None,
             # COVER ART. Display only - see _cand_art. Built here, in the one row builder,
             # so the streamed row and the final row can never disagree about it. Old saved
             # payloads have no `art` key and render the coloured placeholder, which is
@@ -4126,10 +4145,24 @@ def _level_with(row, crown, pitched):
     if crown is None or row is crown or row.get("url") == crown.get("url"):
         return False
     core = row.get("core")
-    if core is None or core >= E.CORE_SAME:
+    # CRATE_DIR_ALIGN round 5 (review: L at v 0.975 printed 81 under the crown X at 75): a lane
+    # row's core was read on the section the lane aligned, the crown's on its first 20 s, so a
+    # lane row's 1.000 is no more comparable with the crown's score than a first-20s 0.74 is. It
+    # is judged on the speed and EQ legs alone, like a row under CORE_SAME, whatever its core.
+    # (Two lane rows were read the same way, so between them the old rule stands.)
+    lane = bool(row.get("dir_align")) and not crown.get("dir_align")
+    if core is None or (core >= E.CORE_SAME and not lane):
         return False
     rl, cl = _legs_figure(row, pitched), _legs_figure(crown, pitched)
     return rl is not None and cl is not None and rl <= cl
+
+
+def _lane_under_crown(row, crown):
+    """CRATE_DIR_ALIGN round 5, display: a lane row that is not the crown never prints above
+    it. The walk and the figure step decide whether a lane row is the answer; when they did not
+    crown it, its aligned score cannot argue on screen (crate.html vmatch does the same)."""
+    return bool(crown is not None and row.get("dir_align") and row is not crown
+                and row.get("url") != crown.get("url"))
 
 
 def _row_figure(row, pitched, crown_src=None, crown=None):
@@ -4148,7 +4181,7 @@ def _row_figure(row, pitched, crown_src=None, crown=None):
         pct = 94 if exact else max(_FIG_FLOOR, _js_round(f * 100))
     else:
         pct = 100 if exact else max(_FIG_FLOOR, _js_round(f * 100))
-    if crown is not None and _level_with(row, crown, pitched):
+    if crown is not None and (_level_with(row, crown, pitched) or _lane_under_crown(row, crown)):
         cf = _row_figure(crown, pitched, crown_src=crown_src)
         if cf is not None and pct > cf:
             pct = cf

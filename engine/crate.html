@@ -3463,10 +3463,14 @@ function vmatch(c){
   if(k==='source'){ m.refused='source'; m.word=GATE_WORD.source; m.exact=false;
     if(exact) m.pct=94;
     m.why=m.word+' · clip '+offTxt; m.eq=(g&&g.why)?g.why:gateSentence(k,c,offTxt);}
-  if(CROWN_ROW && c.url!==CROWN_URL && core<CORE_SAME){
+  // CRATE_DIR_ALIGN round 5 (server _level_with, _lane_under_crown): c.dir_align = this row's
+  // score was read on the section the lane aligned, not its first 20 s, so it cannot argue with
+  // the crown's. A lane row that is not the crown never prints above it, and never as Exact
+  // under a lower crown (the review's case: 81% listed under a 75% crown).
+  if(CROWN_ROW && c.url!==CROWN_URL && (core<CORE_SAME || c.dir_align)){
     var cm=vmatch(CROWN_ROW);
-    if(cm && cm.pct!==null && m.pct>cm.pct && legsFig(c)<=legsFig(CROWN_ROW)){
-      m.pct=cm.pct; m.level=true;}}
+    if(cm && cm.pct!==null && m.pct>cm.pct && (c.dir_align || legsFig(c)<=legsFig(CROWN_ROW))){
+      m.pct=cm.pct; m.level=c.dir_align?'lane':true; m.exact=false;}}
   m.key=m.pct;
   return m;}
 /* What the speed and EQ legs alone allow a row: its figure with the same-recording leg
@@ -3551,7 +3555,8 @@ function confChip(c,full){
   if(m.refused && m.refused!=='source')
     tip='Not this version: '+m.eq+'. A version we ruled out counts half, so it never sits above one that passed.';
   else
-    tip=(m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
+    tip=(m.level==='lane'?'Level with our pick: its match was found later in the upload, and a score read there cannot be compared with our pick\'s, so it never sits above it. ':
+         m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
         (m.refused==='source'?'The recording this clip was cut from. ':'')+
         'Same recording: '+(m.core>=CORE_SAME?'strong':m.core>=0.62?'likely':
             m.core>=CORE_KEEP?'partial':'not confirmed')+
