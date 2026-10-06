@@ -47,6 +47,19 @@ Round 5 (the re-review's 2 confirmed defects and 3 low findings):
    _level_with judges it on the legs, _row_figure caps it), and the page's vmatch / pageCrown do
    the same, number for number with the server (run through node when it is installed).
 16. server: the per-section hunt never takes a lane row as a section's version.
+Round 6 (the re-review's 3 confirmed defects):
+9. (extended) a medley / transition joined by a word or mark the join list does not know
+   ("into", "->", an arrow, a comma, "//", " ~ ", "and", or nothing at all) is a mix, and so is a
+   " + ", " / " or " | " join after an unbracketed feat credit (the strip stopped only at " x ");
+   plain credit titles stay eligible; only ever stricter than round 5 (a control shows round 5
+   admitting all 11 shapes), round 4 and round 3.
+17. the join gets EVERY eligible row (cap=None) and makes the pick: past T with no evidence the
+   started rows fill it, so a started row is never traded for a new pull rule 1 refuses (readings
+   kept, nothing retired, budget not fired); retire() runs after the join; before T the pick is
+   the first DIR_ALIGN_MAX as before (control: round 5's retire-then-join fired the budget and
+   retired a started row). find_edit offers the carried fast-path rows to the lane as soon as it
+   is built, so such a row is a started row: joined past T, budget not fired (control: never
+   offered, it is a new pull, skipped, and the budget fires).
 """
 import asyncio, os, random, shutil, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -477,6 +490,89 @@ R5_PLAINS = ["Usher - Yeah! (w/ Lil Jon & Ludacris) (slowed)",
              "Usher - Yeah! (Slowed & Reverbed)"]
 
 
+# ROUND 6 (review finding 1): a medley / transition joined by a word or mark _DA_JOIN does not
+# know, or by nothing at all (clip 32's failure); (review finding 3): a + / | join after an
+# unbracketed feat credit, which round 5's strip swallowed with the credit
+R6_MEDLEYS = ["Usher - Yeah! into OMG (slowed)",
+              "Usher - Yeah! -> OMG (slowed)",
+              u"Usher - Yeah! \u2192 Love In This Club (slowed)",
+              "Usher - Yeah!, Love In This Club (slowed)",
+              "Usher - Yeah! // Love In This Club (slowed)",
+              "Usher - Yeah! ~ OMG (slowed)",
+              "Usher - Yeah! and Love In This Club (slowed)",
+              "Usher - Yeah! Love In This Club (slowed)"]
+R6_CREDIT_MIXES = ["Usher - Yeah! ft. Lil Jon, Ludacris + Love In This Club (Slowed + Reverb)",
+                   "Usher - Yeah! ft. Lil Jon / Love In This Club (slowed)",
+                   "Usher - Yeah! feat. Ludacris | OMG (slowed)"]
+R6_MIXES = R6_MEDLEYS + R6_CREDIT_MIXES
+R6_PLAINS = ["Usher - Yeah! feat. Lil Jon & Ludacris | slowed + reverb",
+             "Usher - Yeah! ft. Lil Jon & Ludacris (Slowed + Reverb)",
+             "Usher - Yeah! ft. Lil Jon & Ludacris / slowed",
+             "Usher - Yeah! ft. Lil Jon & Ludacris + reverb (slowed)",
+             "Usher ft. Lil Jon / Ludacris - Yeah! (slowed)",
+             "Yeah! - Usher ft. Lil Jon + Ludacris (slowed)",
+             "Usher - Yeah! slowed reverb .mp3"]
+
+
+def _mixed_r5(c, base_title, artist_toks):
+    """Round 5's _dir_align_mixed, verbatim (the control): a feat credit stripped up to an " x "
+    join or a dash only, and no read of a side's other words."""
+    import re
+    t = c.get("title") or ""
+    ft = E._ascii_fold(t)
+    if E._SEEK_MIX.search(ft) or E._DA_MIX_WORDS.search(ft):
+        return True
+
+    def words(s):
+        return set(re.findall(r"[a-z0-9]+", E._ascii_fold("%s" % (s or "")).lower()))
+    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
+    sw = {w for w in words(E._clean(name)) if w not in E.ORIGINAL_WORDS and not E.EDIT_WORDS.search(w)}
+    sw = {w for w in sw if len(w) >= 3} or sw
+    if not sw:
+        return False
+    known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
+    kb = known | words(base_title)
+    for inner in re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t):
+        if re.match(r"\s*(?:prod|produced by|feat|ft|featuring)\b", inner, re.I):
+            continue
+        lead = re.match(u"\\s*(?:(?:x|\u00d7|with)\\s|w/)", inner, re.I)
+        body = inner[lead.end():] if lead else inner
+        if not lead and not sw <= words(body):
+            continue
+        for p in E._DA_JOIN.split(body):
+            pw = words(p)
+            if sw <= pw:
+                continue
+            if any(len(w) >= 3 and not w.isdigit() and w not in kb and not E._DA_TAG.match(w)
+                   for w in pw):
+                return True
+    raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
+    raw = re.sub(u"\\b(?:feat|ft|featuring)\\b.*?(?=\\s+(?:x|\u00d7)\\s+|\\s[-\u2013\u2014~]\\s|$)",
+                 " ", raw, flags=re.I)
+    raw = re.sub(u"\\b(?:prod|produced by)\\b.*?(?=\\s[-\u2013\u2014~]\\s|$)", " ", raw, flags=re.I)
+    for side in E._DA_SIDE.split(raw):
+        parts = [p for p in E._DA_JOIN.split(side) if p.strip()]
+        if len(parts) < 2 or not sw <= words(side):
+            continue
+        for p in parts:
+            pw = words(p)
+            if sw <= pw:
+                continue
+            if any(len(w) >= 3 and not w.isdigit() and w not in known and not E._DA_TAG.match(w)
+                   for w in pw):
+                return True
+    return False
+
+
+def _join_r5(da, lane, hb):
+    """Round 5's _dir_align_join_rows, verbatim (the control): it got the capped pick, after
+    find_edit had already retired every started row outside it."""
+    new = [c for c in da if id(c) not in lane.jobs]
+    if new and hb is not None and not E._hb_go(hb, "dir_align"):
+        return [c for c in da if id(c) in lane.jobs]
+    return list(da)
+
+
 def _mixed_r4(c, base_title, artist_toks):
     """Round 4's _dir_align_mixed, verbatim (the control): brackets dropped whole, and a credit
     stripped to the END of the title."""
@@ -648,6 +744,9 @@ def main():
             # ROUND 5 (review finding): a join after an unbracketed credit, or inside brackets
             mixes += R5_MIXES
             plains += R5_PLAINS
+            # ROUND 6 (review findings 1 and 3): medley / transition joins, and + / | after a credit
+            mixes += R6_MIXES
+            plains += R6_PLAINS
             bad_mix = [t for t in mixes if ok4(t)]
             bad_plain = [t for t in plains if not ok4(t)]
             check("mix4 (%d artist toks): %d mashup shapes excluded" % (len(arts), len(mixes)),
@@ -658,7 +757,9 @@ def main():
                           and not E._dir_align_mixed(c, bt, ["usher"]))
         every = mixes + plains + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers",
                                   "Usher - Yeah! ft. Lil Jon x Ludacris (slowed)",
-                                  "Yeah! x Ludacris - Stand Up (slowed)", "Usher - Yeah! (Remastered 2004) slowed"]
+                                  "Yeah! x Ludacris - Stand Up (slowed)", "Usher - Yeah! (Remastered 2004) slowed",
+                                  "Usher - Yeah! ft. Lil Jon + Ludacris (slowed)",
+                                  "Usher - Yeah! Slowed Down", "Usher - Yeah! (Slowed Down)"]
         check("mix4: only ever stricter (eligible now => eligible in round 3)",
               all(ok(t) for t in every
                   if E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)))
@@ -671,6 +772,26 @@ def main():
                       and _mixed_r4({"title": t, "uploader": "someone"}, bt, arts)]
             check("mix5 (%d artist toks): only ever stricter than round 4 (%d titles)" % (len(arts), len(every)),
                   not looser, str(looser))
+        for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
+            r5 = [t for t in R6_MIXES if not _mixed_r5({"title": t, "uploader": "someone"}, bt, arts)]
+            check("mix6 control (%d artist toks): round 5's _dir_align_mixed read these %d shapes as plain"
+                  % (len(arts), len(R6_MIXES)), r5 == R6_MIXES, str(set(R6_MIXES) - set(r5)))
+            looser = [t for t in every if not E._dir_align_mixed({"title": t, "uploader": "someone"}, bt, arts)
+                      and _mixed_r5({"title": t, "uploader": "someone"}, bt, arts)]
+            check("mix6 (%d artist toks): only ever stricter than round 5 (%d titles)" % (len(arts), len(every)),
+                  not looser, str(looser))
+        # the known coverage cost of finding 3 (a lane read lost, never a crown added): a featured
+        # name joined by " + " counts as a second song unless Shazam credited that name too
+        _ftp = {"title": "Usher - Yeah! ft. Lil Jon + Ludacris (slowed)", "uploader": "someone"}
+        check("mix6: 'ft. Lil Jon + Ludacris' is plain when the credit names Ludacris, refused when not",
+              not E._dir_align_mixed(_ftp, bt, ["usher", "lil", "jon", "ludacris"])
+              and E._dir_align_mixed(_ftp, bt, ["usher"]))
+        # the uploader counts as known on a side too ("... slowed version by <uploader>")
+        check("mix6: the uploader's own name on the song side is not a second song",
+              not E._dir_align_mixed({"title": "Usher - Yeah! slowed version by Ttraamat",
+                                      "uploader": "Ttraamat"}, bt, ["usher"])
+              and E._dir_align_mixed({"title": "Usher - Yeah! slowed version by Ttraamat",
+                                      "uploader": "someone"}, bt, ["usher"]))
         check("words: a substring song hit is not a title claim",
               not ok("Usher - Yeahright (slowed)"))
         check("words: a substring artist hit is not a title claim",
@@ -855,6 +976,136 @@ def main():
               got_k == [None] and time.time() - t0 < 3 and hbk.dead,
               "%.2f s %s" % (time.time() - t0, got_k))
         lnk.close(wait=True)
+
+        # 17. ROUND 6 (review finding 2): the join makes the pick from EVERY eligible row, and
+        # find_edit retires after it. Four eligible rows commit in order u1..u4, so offer()
+        # starts u1..u3 (the cap); u4 has the most plays, so the pick order is u4, u2, u3, u1.
+        def lane6(hb):
+            ln6 = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hb)
+            ln6._one = lambda c, inf, key=None: dict(reading, url=c.get("url"))
+            return ln6
+
+        def four():
+            return [mk(path=a, duration=130, url="file://u%d" % i, plays=p)
+                    for i, p in ((1, 10), (2, 50), (3, 40), (4, 900))]
+
+        def settle(ln6):
+            t1 = time.time() + 5
+            while time.time() < t1 and not all(f.done() for _c, f in list(ln6.jobs.values())):
+                time.sleep(0.02)
+
+        def hb_at(el, evid=False):
+            h = E._HuntBudget(25, 35, t0=time.time() - el)
+            h.note(0.70, 0.40) if evid else h.note(0.298, 0.601)
+            return h
+        U = lambda rows: [c["url"][7:] for c in rows]
+        pick = lambda rows, cap=E.DIR_ALIGN_MAX: E._dir_align_rows(rows, "slowed", "slowed ~0.84x",
+                                                                   "Yeah!", art, cap=cap)
+        rows6 = four()
+        check("join6: _dir_align_rows(cap=None) hands the join every eligible row; the default cap is unchanged",
+              U(pick(rows6, None)) == ["u4", "u2", "u3", "u1"] and U(pick(rows6)) == ["u4", "u2", "u3"]
+              and U(E._dir_align_rows(rows6, "slowed", "slowed ~0.84x", "Yeah!", art)) == ["u4", "u2", "u3"],
+              str(U(pick(rows6, None))))
+        # past T, no evidence (the lane's target case)
+        hb6 = hb_at(26)
+        ln6 = lane6(hb6)
+        for c in rows6:
+            ln6.offer(c)
+        settle(ln6)
+        started6 = U([c for c in rows6 if id(c) in ln6.jobs])
+        j6 = E._dir_align_join_rows(pick(rows6, None), ln6, hb6)
+        ln6.retire(j6)
+        got6 = [ln6.result(c) for c in j6]
+        check("join6: past T the started rows fill the pick: u2, u3, u1 joined, 3 readings kept",
+              started6 == ["u1", "u2", "u3"] and U(j6) == ["u2", "u3", "u1"]
+              and all(g and g.get("url") == c["url"] for g, c in zip(got6, j6)),
+              "started %s joined %s got %s" % (started6, U(j6), [bool(g) for g in got6]))
+        check("join6: ... nothing retired, and the budget does not fire (the scan stays cacheable)",
+              not ln6.retired and hb6.fired_at is None and hb6.skipped == [] and not hb6.dead,
+              "retired %d fired %s skipped %s" % (len(ln6.retired), hb6.fired_at, hb6.skipped))
+        ln6.close(wait=True)
+        # control: round 5 retired against the capped pick first, then joined
+        rows5 = four()
+        hb5 = hb_at(26)
+        ln5 = lane6(hb5)
+        for c in rows5:
+            ln5.offer(c)
+        settle(ln5)
+        da5 = pick(rows5)
+        ln5.retire(da5)
+        j5 = _join_r5(da5, ln5, hb5)
+        check("join6 control: round 5 retired started u1, joined only u2, u3 and fired the budget",
+              U(j5) == ["u2", "u3"] and [c for c in rows5 if id(c) in ln5.retired] == [rows5[0]]
+              and hb5.fired_at is not None and hb5.skipped == ["dir_align"],
+              "joined %s fired %s" % (U(j5), hb5.fired_at))
+        ln5.close(wait=True)
+        # before T: exactly the old pick (u4 read now, u1 retired AFTER the join)
+        rows7 = four()
+        hb7 = hb_at(20)
+        ln7 = lane6(hb7)
+        for c in rows7:
+            ln7.offer(c)
+        settle(ln7)
+        j7 = E._dir_align_join_rows(pick(rows7, None), ln7, hb7)
+        ln7.retire(j7)
+        got7 = [ln7.result(c) for c in j7]
+        check("join6: before T the pick is the first DIR_ALIGN_MAX as before: u4, u2, u3 read, u1 retired",
+              U(j7) == ["u4", "u2", "u3"] and all(got7)
+              and [c for c in rows7 if id(c) in ln7.retired] == [rows7[0]] and hb7.fired_at is None,
+              "joined %s got %s fired %s" % (U(j7), [bool(g) for g in got7], hb7.fired_at))
+        ln7.close(wait=True)
+        rows8 = four()
+        hb8 = hb_at(26, evid=True)
+        ln8 = lane6(hb8)
+        for c in rows8:
+            ln8.offer(c)
+        settle(ln8)
+        j8 = E._dir_align_join_rows(pick(rows8, None), ln8, hb8)
+        check("join6: past T with evidence, or with no budget, the pick is the first DIR_ALIGN_MAX",
+              U(j8) == ["u4", "u2", "u3"] and hb8.fired_at is None
+              and U(E._dir_align_join_rows(pick(rows8, None), ln8, None)) == ["u4", "u2", "u3"],
+              str(U(j8)))
+        ln8.close(wait=True)
+        # a carried fast-path row: scored before the lane existed, _done set, so no wave re-scores
+        # it and _hit never offers it. find_edit now offers it as soon as the lane is built.
+        import inspect
+        src6 = inspect.getsource(E._find_edit_body)
+        i_lane = src6.find("_dal = _DirAlignLane(")
+        i_carry = src6.find('if _c.get("fast_carry") and _c.get("path"):')
+        i_offer = src6.find("_dal.offer(_c)")
+        i_wave = src6.find("_download_and_score(", i_lane)
+        i_join = src6.find("_da = _dir_align_join_rows(_da, _dal, _hb)")
+        i_ret = src6.find("_dal.retire(_da)")
+        check("join6: find_edit offers carried fast-path rows when the lane is built (before any wave), "
+              "and retires after the join",
+              0 < i_lane < i_carry < i_offer < i_wave and 0 < i_join < i_ret
+              and "_dir_align_rows(cands, known_dir, edit_label, base_title, _da_title_ok, cap=None)" in src6,
+              "lane %d carry %d offer %d wave %d join %d retire %d" % (i_lane, i_carry, i_offer, i_wave,
+                                                                      i_join, i_ret))
+        carry = lambda: mk(path=a, duration=130, url="file://fc", fast_carry=True, _done=True,
+                           core=0.2979, fp=0.6006)
+        fc = carry()
+        hbf = hb_at(26)
+        lnf = lane6(hbf)
+        for _c in [fc]:                         # find_edit's own statement, as written there
+            if _c.get("fast_carry") and _c.get("path"):
+                lnf.offer(_c)
+        settle(lnf)
+        jf = E._dir_align_join_rows(pick([fc], None), lnf, hbf)
+        lnf.retire(jf)
+        gotf = [lnf.result(c) for c in jf]
+        check("join6: an offered carried row is joined past T, its reading kept, the budget not fired",
+              jf == [fc] and gotf and gotf[0] and hbf.fired_at is None and hbf.skipped == [],
+              "joined %d fired %s" % (len(jf), hbf.fired_at))
+        lnf.close(wait=True)
+        fc0 = carry()
+        hbn = hb_at(26)
+        lnn = lane6(hbn)
+        jn = E._dir_align_join_rows(pick([fc0], None), lnn, hbn)
+        check("join6 control: never offered (round 5), the carried row is a new pull past T: skipped, "
+              "and the budget fires", jn == [] and hbn.fired_at is not None and hbn.skipped == ["dir_align"],
+              "joined %d fired %s" % (len(jn), hbn.fired_at))
+        lnn.close(wait=True)
 
         # 14. ROUND 5 (review, low): YouTube rows never enter the lane; retire() frees a worker
         # whose job sits in a fallback fetch

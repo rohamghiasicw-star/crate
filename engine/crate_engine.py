@@ -9881,7 +9881,10 @@ def _dir_align_mixed(c, base_title, artist_toks):
     # old strip ran to the end, so "Usher feat Lil Jon & Ludacris - Yeah! x Lovers & Friends" kept
     # no song side and "Yeah! ft. Lil Jon, Ludacris x Love In This Club" no second song. It only
     # ever keeps more of the title, so it is only ever stricter.
-    raw = re.sub(u"\\b(?:feat|ft|featuring)\\b.*?(?=\\s+(?:x|\u00d7)\\s+|\\s[-\u2013\u2014~]\\s|$)",
+    # ROUND 6 (review finding): a feat credit also stops at a " + ", " / " or " | " join (never at
+    # "&", which joins the credited names themselves), so "Yeah! ft. Lil Jon, Ludacris + Love In
+    # This Club" keeps its second song. It only ever stops the strip earlier: only ever stricter.
+    raw = re.sub(u"\\b(?:feat|ft|featuring)\\b.*?(?=\\s+(?:x|\u00d7|\\+|/|\\|)\\s+|\\s[-\u2013\u2014~]\\s|$)",
                  " ", raw, flags=re.I)
     raw = re.sub(u"\\b(?:prod|produced by)\\b.*?(?=\\s[-\u2013\u2014~]\\s|$)", " ", raw, flags=re.I)
     for side in _DA_SIDE.split(raw):
@@ -9895,6 +9898,20 @@ def _dir_align_mixed(c, base_title, artist_toks):
             if any(len(w) >= 3 and not w.isdigit() and w not in known and not _DA_TAG.match(w)
                    for w in pw):
                 return True
+    # ROUND 6 (review finding): a medley / transition joined by a word or mark the join list
+    # does not know ("into", "->", an arrow, a comma, "//", " ~ ", "and", or nothing at all).
+    # The side holding every song word is read whole, split on dashes only (so " ~ " cannot
+    # hide the second title on its own side): every word of 3+ letters there must be the song,
+    # a credited artist, the uploader, a number, a treatment / tag / filler word or a file
+    # extension ("... slowed reverb .mp3"). It tests against `known`, not the song's own credits
+    # (`kb`), so "Yeah! x Ludacris - Stand Up" stays refused. It only adds refusals, so it is only
+    # ever stricter.
+    for side in re.split(u"\\s[-\u2013\u2014]\\s", raw):
+        sidew = words(side)
+        if sw <= sidew and any(len(w) >= 3 and not w.isdigit() and w not in known
+                               and not _DA_TAG.match(w) and w not in ("mp3", "wav", "m4a")
+                               for w in sidew):
+            return True
     return False
 
 
@@ -9915,9 +9932,10 @@ def _dir_align_row_ok(c, cdir, base_title, title_ok):
                 and not _seek_is_mix(c))
 
 
-def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok):
+def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok, cap=DIR_ALIGN_MAX):
     """Rows the CRATE_DIR_ALIGN lane may re-read (see _dir_align_row_ok), SoundCloud first, then
-    most played, at most DIR_ALIGN_MAX. Empty when phase 1 did not measure a direction, or when
+    most played, at most `cap` (DIR_ALIGN_MAX; None = every eligible row, which the ranking pass
+    hands to _dir_align_join_rows). Empty when phase 1 did not measure a direction, or when
     a row is already decisive on its fingerprint at the clip's speed (nothing to find)."""
     cdir = _fast_clip_dir(known_dir, edit_label)
     if not cdir:
@@ -9926,7 +9944,7 @@ def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok):
         return []
     out = [c for c in cands if _dir_align_row_ok(c, cdir, base_title, title_ok)]
     out.sort(key=lambda c: (0 if c.get("source") == "soundcloud" else 1, -(c.get("plays") or 0)))
-    return out[:DIR_ALIGN_MAX]
+    return out[:cap]
 
 
 def _dir_align_join_rows(da, lane, hb):
@@ -9937,14 +9955,26 @@ def _dir_align_join_rows(da, lane, hb):
     finished readings away, fired the budget (res["hunt_budget"]) and so kept the scan out of both
     caches. A row first seen here is a new 120 s pull: past T with no evidence it is left out, and
     only that skip is recorded (may_start fires the budget, as it does for any wave). With no
-    budget (hb None) every row is joined, as before."""
+    budget (hb None) every row is joined, as before.
+    ROUND 6 (review finding): `da` is EVERY eligible row in pick order (_dir_align_rows with
+    cap=None), and the pick is its first DIR_ALIGN_MAX. Past T with no evidence, a picked row
+    offer() never started (a fast-path row, or a row that outranks a started one) is not traded
+    for a started eligible row: the started rows fill the pick, and the budget fires only when
+    they cannot fill it (the agreed round 4 rule for a genuinely new pull). Before T, with
+    evidence, or with no budget, the pick is exactly the first DIR_ALIGN_MAX, as before. The
+    caller retires what this returns AFTER this call, so a started row it keeps is never
+    cancelled."""
+    elig, da = da, list(da[:DIR_ALIGN_MAX])
     new = [c for c in da if id(c) not in lane.jobs]
-    if new and hb is not None and not _hb_go(hb, "dir_align"):
-        joined = [c for c in da if id(c) in lane.jobs]
-        tlog("dir_align_skipped", 0.0, n=len(new), joined=len(joined),
-             rows=[(c.get("title") or "")[:50] for c in new])
-        return joined
-    return list(da)
+    if not new or hb is None or hb.evidence or (not hb.dead and hb.elapsed() <= hb.T):
+        return da
+    # past T, no evidence: never trade a started row for a new pull rule 1 refuses
+    joined = [c for c in elig if id(c) in lane.jobs][:DIR_ALIGN_MAX]
+    if len(joined) < len(da) and _hb_go(hb, "dir_align"):
+        return da                       # evidence landed in between: as before T
+    tlog("dir_align_skipped", 0.0, n=len(new), joined=len(joined),
+         rows=[(c.get("title") or "")[:50] for c in new])
+    return joined
 
 
 def _dir_align_speeds(xs, ctxs):
@@ -11067,6 +11097,17 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                              base_title, _da_title_ok, _hb)
         if _closers is not None:
             _closers.append(_dal)
+        # ROUND 6 (review finding): a fast-path row was scored before the lane existed and is
+        # carried with _done set, so no wave re-scores it and offer() never saw it. At the join it
+        # was a NEW pull: past T with no evidence (the lane's own target case) rule 1 skipped it,
+        # fired the budget and kept the scan out of both caches; before T it was read serially
+        # after the last wave. Offered here, in scoring order (the fast path scored first), it is
+        # a started row like any wave row: its pull runs under the waves and the join keeps it.
+        # offer() applies the same eligibility and DIR_ALIGN_MAX cap; a decisive carried row
+        # stops the lane exactly as _dir_align_rows would.
+        for _c in cands:
+            if _c.get("fast_carry") and _c.get("path"):
+                _dal.offer(_c)
 
         def _hit(c, _prev=_hit, _lane=_dal):
             if _prev is not None:
@@ -11672,12 +11713,14 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # reading is merged into the row as before, and a "closest" reading (it failed only a
     # crown-only test: the reversed control, or the aligned-section lock) goes to
     # result["closest"] and never into the pool.
-    _da = (_dir_align_rows(cands, known_dir, edit_label, base_title, _da_title_ok)
+    # ROUND 6: every eligible row goes to the join (cap=None), which makes the pick; the rows
+    # it does not keep are retired after it, so a started row the pick keeps is never cancelled
+    _da = (_dir_align_rows(cands, known_dir, edit_label, base_title, _da_title_ok, cap=None)
            if _dal is not None else [])
     _da_closest = []
     if _dal is not None:
-        _dal.retire(_da)
         _da = _dir_align_join_rows(_da, _dal, _hb)     # round 5: only NEW pulls are gated
+        _dal.retire(_da)
     if _da:
         _td0 = time.time()
         _dspec = sum(1 for c in _da if id(c) in _dal.jobs)
