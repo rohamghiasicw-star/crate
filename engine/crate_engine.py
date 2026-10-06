@@ -9720,79 +9720,57 @@ def _lane_rows_ordered(lanes, cands, rel, tag, posted_rival=None):
     return [r[-1] for r in rows], new
 
 
-# CRATE_DIR_ALIGN (USHER-SC-MISS 2026-10-06, ~/addify-harness/reorg/USHER-SC-MISS.md). An upload
-# whose TITLE claims the treatment phase 1 measured on the clip ("Usher - Yeah! (Slowed&Reverbed)"
-# on a slowed clip) is scored like any row on its first 20 s, and a clip cut from the middle of
-# the song never matches a head: Ttraamat read core 0.298 / fp 0.601 / spectral 0.446 there and
-# was dropped (artist rescue needs 0.30, speed-family rescue needs spectral 0.45), while its 84 s
-# window reads core 1.000 / fp 0.729 at speed 0.9353. SEEK v2 places sections only from
-# ShazamKit's offset_in_master; shazamio answers carry none, so on a server scan without the
-# phone it never runs.
-# The lane re-reads at most DIR_ALIGN_MAX such rows (SoundCloud first, then YouTube, most played
-# first) over a longer pull and adopts the aligned reading only when it is decisive on TWO clip
-# windows: the clip's head and the clip 20 s in each find a window with core >= CORE_EDIT and
-# fp >= SEEK_FP_OK, at speeds within DIR_ALIGN_LOCK of each other, and that speed is inside the
-# edit family band (DIR_ALIGN_VMAX, the band server._crown_tempo_mismatch admits it in). Two
-# independent windows locking at one speed is what a 4 s-step search cannot fake (offline: 9
-# same-treatment / same-song controls slid 4 s at a time read best core 0.479, best fp 0.621).
-# The row then carries seek_at / seek_clip_at, so the crown's reversed null re-measures on that
-# same window, and `dir_align` for server._crown_tempo_mismatch.
+# CRATE_DIR_ALIGN, SIMILAR EDITS ONLY (USHER-SC-MISS 2026-10-06, ~/addify-harness/reorg/USHER-SC-MISS.md;
+# closest-only redesign after seven review rounds). An upload whose TITLE claims the treatment
+# phase 1 measured on the clip ("Usher - Yeah! (Slowed&Reverbed)" on a slowed clip) is scored like
+# any row on its first 20 s, and a clip cut from the middle of the song never matches a head:
+# Ttraamat read core 0.298 / fp 0.601 there and was dropped, while its 84 s window reads core 1.000
+# / fp 0.729 at speed 0.9353 (the upload runs about 7% faster than the clip).
 #
-# ROUND 2 (speed, same file "Round 2 (speed)"). Round 1 cut + verified every 4 s window of the
-# pull for both clip windows (two ffmpeg runs and an fpcalc per window): 18.9 s for one row on
-# the server, which the hunt budget would cut. Now, per row:
-#   1. ONE decode of the pull; every window is a slice of it. verify_samples() on a slice reads
-#      the same numbers as cut + verify() (measured: max |delta| 0 on core/fp/arr/speed over
-#      340 windows of 7 rows).
-#   2. LOCATE: verify()'s own two-pass spectral speed, read on the whole pull, gives the speed
-#      hypotheses; one fpcalc of the pull resampled to each, and both clip windows' chromaprints
-#      slide across it (SEEK v2's locate, CRATE_SEEK_MOFF).
-#   3. verify() only the 4 s grid windows whose fp slide can reach the DIR_ALIGN_PEAKS best
-#      alignments of each clip window (a step either side), instead of the whole grid. The pick
-#      among them is round 1's: best (core, fp), then the same thresholds and speed lock.
-#   4. The row starts the moment its head verifies (_DirAlignLane.offer, from the download
-#      worker), so the pull and the reading run underneath the rest of the hunt; the ranking
-#      pass only joins it. A row first seen there is read there, as in round 1.
+# THE LANE NEVER CROWNS AND NEVER CHANGES THE SCAN. It re-reads at most DIR_ALIGN_MAX such rows over
+# a longer pull, underneath the hunt, and its only output is result["similar_edits"]: a separate
+# list the server shows as "Similar edit" rows under the version list. A lane reading never enters
+# `cands`, `keep`, `ranked` or any score, dedup, lead, bass target or decisiveness the ranking pass
+# computes, so every crown and ranked field is exactly what the scan gives without the lane. The
+# lane never calls may_start or note, never fires the hunt budget, never marks a scan budget-cut and
+# never keeps a scan out of a cache: at the ranking pass it takes the readings that have finished
+# (waiting at most DIR_ALIGN_JOIN_WAIT, and only before the budget's T) and lets the rest go.
 #
-# ROUND 3 (the adversarial review of round 2: 8 confirmed defects, each fixed below).
-#   * REVERSED CONTROL. A section search takes the best forward read over many windows, so a
-#     wrong upload's gap is biased upward (SEEK v2's own reason for SEEK_REV_GAP). Each adopted
-#     window must now beat its own time-reversed slice by SEEK_REV_GAP (0.12) on fp, the bar SEEK
-#     v2 uses. Ttraamat's 84 s window reads a gap of ~0.06, inside the 0.064 spread of wrong
-#     pairs, so it no longer qualifies as a crown.
-#   * CLOSEST, NEVER CROWNED (Roham's rule: a wrong crown is worse than no crown). A reading that
-#     passes every lane test (both windows' bars, the two-window speed lock, the family band) but
-#     fails a CROWN-only test (the reversed control, or the bass-robust lock on the aligned
-#     section disagreeing with the lane's speed) is returned in result["closest"], NOT merged
-#     into the pool: the row keeps its head scores (dropped by keep, exactly as before the lane),
-#     so nothing the engine ranks, dedups, measures or crowns can see it. server.py lists it as a
-#     "closest version" row with a speed note and a refusal gate (the page prints it at the
-#     refused cap, under any crown), and nothing on the crown path ever reads result["closest"].
-#   * The aligned section, not the pull's head, carries the row's speed lock (_da_lock), so the
-#     server gates and labels a lane row on a speed measured where the clip sits.
-#   * A mashup / "vs" / medley / "A x B" title never enters the lane (_seek_is_mix, SEEK v2's
-#     PLAIN OVER MASHUP rule); the title claim is on whole words (_dir_align_words_ok).
-#   * RETENTION: find_edit's wrapper closes the lane (close(wait=True)) before it removes the
-#     hunt's dirs, so no lane yt-dlp can recreate a deleted dir; every lane job, including a row
-#     first read at the ranking pass, runs on the lane's one executor (DIR_ALIGN_MAX workers, the
-#     per-scan cap on concurrent pulls), and ctxs() builds the second clip window single-flight.
-# Default ON (CRATE_DIR_ALIGN=0 turns it off); the lab gate it ships on is in its commit message.
+# A reading is listed only when it is decisive on TWO clip windows: the clip's head and the clip
+# 20 s in each find a window with core >= CORE_EDIT and fp >= SEEK_FP_OK, at speeds within
+# DIR_ALIGN_LOCK of each other, inside the edit family band (DIR_ALIGN_VMAX), and each window's
+# fp beats its own time-reversed slice (a section its reversal matches as well carries no
+# recording evidence). SEEK v2's crown bar (SEEK_REV_GAP) and the aligned-section speed lock no
+# longer decide anything, since nothing is crowned; a reading that misses one says so in `reason`.
+# Reader safety: the title claims the measured direction and every song word and the artist as
+# whole words (_dir_align_words_ok), no mashup / medley / two-song title (_seek_is_mix,
+# _dir_align_mixed), no YouTube row, and server._similar_edits checks the upload's own tempo
+# against the master in the title's direction.
+#
+# Mechanics: ONE decode of the pull, every window a slice of it (verify_samples() reads the same
+# numbers as cut + verify()); verify()'s spectral speed on the pull gives the speed hypotheses; one
+# fpcalc of the pull per hypothesis, and both clip windows' chromaprints slide across it; only the
+# grid windows near the slide's best alignments are verified. RETENTION: find_edit's wrapper closes
+# the lane (close(wait=True)) before it removes the hunt's dirs, a pull is dropped the moment its
+# reading is done, and ctxs() builds the second clip window single-flight.
+# Default ON (CRATE_DIR_ALIGN=0 turns it off); server._phase2 asks for it (find_edit's
+# similar_edits=True), every other find_edit caller (the per-section hunt) runs without it.
 DIR_ALIGN = _speed_flag("CRATE_DIR_ALIGN", True)
 DIR_ALIGN_MAX = int(os.environ.get("CRATE_DIR_ALIGN_MAX", 3))
-# Seconds pulled per row. SoundCloud's direct range path tops out at 2 MB (~125 s at 128 kbps),
-# so round 1's 240 s request decoded exactly 125 s anyway (its slide over Ttraamat ran on 125 s).
-# 120 s stays inside that one range request, so the fast path never falls to yt-dlp.
+# Seconds pulled per row. SoundCloud's direct range path tops out at 2 MB (~125 s at 128 kbps).
+# A shorter upload asks for its own length (less 2 s), so the direct path's length check holds.
 DIR_ALIGN_PULL = 120
 DIR_ALIGN_DL_TIMEOUT = 15
 DIR_ALIGN_STEP = 4              # the window grid (verify()'s fp slide covers ~4 s)
 DIR_ALIGN_LOCK = 0.03           # |log2| between the two windows' speeds (speed_exact's bucket)
-# |log2| of the adopted speed: the edit-family band server._crown_tempo_mismatch admits a lane
-# row in (0.152 = ski slopes' distance, v 0.90). A reading outside it could never be crowned as
-# a family member, only rank above rows that can. It is not listed as "closest" either.
+# |log2| of the adopted speed: the edit-family band (0.152 = ski slopes' distance, v 0.90)
 DIR_ALIGN_VMAX = float(os.environ.get("CRATE_DIR_FAMILY_TOL", 0.152))
 DIR_ALIGN_PEAKS = 2             # slide peaks verified per clip window (the hook repeats)
 DIR_ALIGN_PEAK_GAP = 8.0        # seconds between two peaks of one slide
 DIR_ALIGN_LOCK_SECS = 30        # seconds of the aligned section the bass-robust lock reads
+# The ranking pass waits at most this long for a reading still running, and only before the hunt
+# budget's T (no budget armed: always this bound). Past T it takes what has finished.
+DIR_ALIGN_JOIN_WAIT = 3.0
 
 
 def _dir_align_decisive(c):
@@ -9912,6 +9890,18 @@ def _dir_align_mixed(c, base_title, artist_toks):
                                and not _DA_TAG.match(w) and w not in ("mp3", "wav", "m4a")
                                for w in sidew):
             return True
+    # ROUND 8 (review finding): a second song on its OWN dash side, joined to the song's side with
+    # the artist repeated ("Usher - Yeah! / Usher - Love In This Club", "... | Usher - OMG",
+    # "... ~ Usher - Burn"). The whole title is split on the joins and " ~ ": a half without every
+    # song word is a second song when it holds a word (3+ letters) that is not in kb (the song,
+    # credited artists incl. the song's own credits, the uploader), not a number, not a tag word
+    # and not a file extension. It only adds refusals, so it is only ever stricter.
+    for half in re.split(u"\\s+(?:x|\u00d7|&|\\+|/|\\|)\\s+|\\s~\\s", raw, flags=re.I):
+        hw = words(half)
+        if not sw <= hw and any(len(w) >= 3 and not w.isdigit() and w not in kb
+                                and not _DA_TAG.match(w) and w not in ("mp3", "wav", "m4a")
+                                for w in hw):
+            return True
     return False
 
 
@@ -9935,7 +9925,7 @@ def _dir_align_row_ok(c, cdir, base_title, title_ok):
 def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok, cap=DIR_ALIGN_MAX):
     """Rows the CRATE_DIR_ALIGN lane may re-read (see _dir_align_row_ok), SoundCloud first, then
     most played, at most `cap` (DIR_ALIGN_MAX; None = every eligible row, which the ranking pass
-    hands to _dir_align_join_rows). Empty when phase 1 did not measure a direction, or when
+    hands to _dir_align_join). Empty when phase 1 did not measure a direction, or when
     a row is already decisive on its fingerprint at the clip's speed (nothing to find)."""
     cdir = _fast_clip_dir(known_dir, edit_label)
     if not cdir:
@@ -9948,52 +9938,47 @@ def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok, cap=DIR_
 
 
 def _dir_align_two_windows(clip_audio):
-    """ctxs()'s own bar (a clip >= 40 s): under it the lane has one clip window and can never lock.
-    ROUND 7 (review finding): find_edit builds the lane only when this holds, so a short clip (most
-    TikToks) runs exactly live's path. Before, the lane was built anyway: offer() started the first
-    eligible row (which returned before any pull), refused the rest, and the ranking-pass join then
-    saw them as NEW pulls past T, so may_start fired the hunt budget for rows the lane could never
-    read and the scan was kept out of both caches."""
+    """ctxs()'s own bar (a clip >= 40 s): under it the lane has one clip window and can never lock,
+    so find_edit does not build the lane at all and a short clip (most TikToks) runs no lane work."""
     try:
         return (duration_of(clip_audio) or 0) >= 40
     except Exception:
         return False
 
 
-def _dir_align_join_rows(da, lane, hb):
-    """ROUND 5 (review finding): the rows the ranking pass joins. HUNT BUDGET rule 1 holds back
-    NEW work only. A row offer() started during the waves is always joined, past T too: its pull
-    is paid for and its reading is usually done, and hb.map_bounded still bounds the wait by the
-    cap. Round 4 gated the whole join on may_start, which past T with no evidence threw the
-    finished readings away, fired the budget (res["hunt_budget"]) and so kept the scan out of both
-    caches. A row first seen here is a new 120 s pull: past T with no evidence it is left out, and
-    only that skip is recorded (may_start fires the budget, as it does for any wave). With no
-    budget (hb None) every row is joined, as before.
-    ROUND 6 (review finding): `da` is EVERY eligible row in pick order (_dir_align_rows with
-    cap=None), and the pick is its first DIR_ALIGN_MAX. Past T with no evidence, a picked row
-    offer() never started (a fast-path row, or a row that outranks a started one) is not traded
-    for a started eligible row: the started rows fill the pick, and the budget fires only when
-    they cannot fill it (the agreed round 4 rule for a genuinely new pull). Before T, with
-    evidence, or with no budget, the pick is exactly the first DIR_ALIGN_MAX, as before. The
-    caller retires what this returns AFTER this call, so a started row it keeps is never
-    cancelled."""
-    elig, da = da, list(da[:DIR_ALIGN_MAX])
-    new = [c for c in da if id(c) not in lane.jobs]
-    if not new or hb is None or hb.evidence or (not hb.dead and hb.elapsed() <= hb.T):
-        return da
-    # ROUND 7 (review finding): one clip window (a long clip whose second window failed ctxs()'s
-    # 90% fingerprint check; a short clip never gets a lane, _dir_align_two_windows): no row can
-    # lock, so none is a pull and nothing fires the budget. Every started job returns None at
-    # _one's own `len(ctxs) < 2`, so no reading is lost; the caller's retire([]) stops them.
-    if len(lane.ctxs()) < 2:
+def _dir_align_join(lane, rows, hb):
+    """The ranking pass's join. -> [(row, reading)] for the rows in `rows` whose lane job STARTED
+    during the hunt and has FINISHED with a reading. It starts nothing (no new pull, no
+    lane.offer), never calls may_start / note / cut_wait, and never touches the budget, so it can
+    neither fire the hunt budget nor mark the scan budget-cut. Before the budget's T (or with no
+    budget armed) it waits at most DIR_ALIGN_JOIN_WAIT for readings still running, never past T;
+    past T, or once the budget is dead, it takes only what has finished. Everything it does not
+    take is let go without consequence: the caller's lane.close() stops it."""
+    futs = []
+    with lane.lock:
+        for c in rows:
+            j = lane.jobs.get(id(c))
+            if j is not None:
+                futs.append((c, j[1]))
+    if not futs:
         return []
-    # past T, no evidence: never trade a started row for a new pull rule 1 refuses
-    joined = [c for c in elig if id(c) in lane.jobs][:DIR_ALIGN_MAX]
-    if len(joined) < len(da) and _hb_go(hb, "dir_align"):
-        return da                       # evidence landed in between: as before T
-    tlog("dir_align_skipped", 0.0, n=len(new), joined=len(joined),
-         rows=[(c.get("title") or "")[:50] for c in new])
-    return joined
+    wait = DIR_ALIGN_JOIN_WAIT
+    if hb is not None:
+        el = hb.elapsed()
+        wait = 0.0 if (hb.dead or el > hb.T) else min(wait, max(0.0, hb.T - el))
+    pending = [f for _c, f in futs if not f.done()]
+    if pending and wait > 0:
+        concurrent.futures.wait(pending, timeout=wait)
+    out = []
+    for c, f in futs:
+        if f.done() and not f.cancelled():
+            try:
+                got = f.result()
+            except Exception:
+                got = None
+            if got:
+                out.append((c, got))
+    return out
 
 
 def _dir_align_speeds(xs, ctxs):
@@ -10043,9 +10028,10 @@ def _fp_peaks(curve, n, gap):
 def _dir_align_read(xs, ctxs, tmp, tag, stop=None):
     """The lane's reading of one decoded pull `xs` (mono, verify.SR) against the clip windows
     `ctxs`. -> (window start s, verify() dict, info) when every window clears its bars, the two
-    windows lock at one speed and that speed is inside the family band, else (None, None, info).
-    info["verdict"] is then "crown" when both windows also beat their time-reversed slice by
-    SEEK_REV_GAP on fp, else "closest" (info["why"] = "rev"). `stop()` True abandons it."""
+    windows lock at one speed, that speed is inside the family band and each window's fp beats
+    its own time-reversed slice, else (None, None, info) with info["why"]. A reading that does
+    not beat its reversal by SEEK_REV_GAP (SEEK v2's crown bar) is still a reading: nothing is
+    crowned from it, and info["why"] = "rev" says so. `stop()` True abandons it."""
     SR = _verify.SR
     dur = len(xs) / float(SR)
     grid = list(range(0, max(1, int(dur) - 20), DIR_ALIGN_STEP))     # round 1's windows
@@ -10115,39 +10101,38 @@ def _dir_align_read(xs, ctxs, tmp, tag, stop=None):
         rf = float(rv.get("fp") or 0.0)
         gaps.append(round(float(v["fp"]) - rf, 4) if rf > 0 else None)
     info["rev_gap"] = gaps
-    if all(g is not None and g >= SEEK_REV_GAP for g in gaps):
-        info["verdict"] = "crown"
-    else:
-        info["verdict"], info["why"] = "closest", "rev"
+    if not all(g is not None and g > 0 for g in gaps):
+        info["why"] = "rev0"            # its reversal matches as well: no recording evidence
+        return None, None, info
+    if not all(g >= SEEK_REV_GAP for g in gaps):
+        info["why"] = "rev"             # under the crown bar: a reason, not a refusal
     return reads[0][0], reads[0][1], info
 
 
-def _dir_align_closest_row(c, got):
-    """A CLOSEST row (round 3): the lane's aligned reading of `c`, as a separate dict for
-    result["closest"]. `c` itself is never touched, so the pool keeps its head scores."""
+def _dir_align_similar_row(c, got):
+    """A SIMILAR EDIT row for result["similar_edits"]: the lane's aligned reading of `c`, as a new
+    dict. `c` itself is never touched, and nothing on the crown or ranking path reads this."""
     bv = got["v"]
-    r = {k: v for k, v in c.items() if not str(k).startswith("_") and k != "path"}
-    r.update(core_head=c.get("core"), fp_head=c.get("fp"), seek_at=float(got["at"]),
-             seek_clip_at=0.0, dir_closest=True, dir_closest_why=got.get("why"),
-             da_rev=got.get("rev"), editmatch=False, dir_align=False,
-             core=bv["core"], spectral=bv["spectral"], fp=bv["fp"], arr=bv["arr"],
-             same=bv["same"], vspeed=bv["speed"], vspeed_locked=got.get("lock"),
-             speed_conf=bv.get("speed_conf"), bass_delta=bv["bass_delta"],
-             cand_tilt=bv["cand_tilt"], slope_delta=bv.get("slope_delta"),
-             clip_slope=bv.get("clip_slope"), cand_slope=bv.get("cand_slope"),
-             score=bv["score"], vscore=bv["score"], final=bv["score"])
-    return r
+    return {"title": c.get("title"), "url": c.get("url"), "source": c.get("source"),
+            "uploader": c.get("uploader"), "duration": c.get("duration"),
+            "thumb": c.get("thumb"), "plays": c.get("plays"),
+            "core": bv["core"], "fp": bv["fp"], "arr": bv["arr"], "spectral": bv["spectral"],
+            "vspeed": bv["speed"], "vspeed_locked": got.get("lock"),
+            "speed_conf": bv.get("speed_conf"), "bass_delta": bv["bass_delta"],
+            "cand_tilt": bv["cand_tilt"], "slope_delta": bv.get("slope_delta"),
+            "seek_at": float(got["at"]), "core_head": c.get("core"), "fp_head": c.get("fp"),
+            "rev_gap": got.get("rev"), "reason": got.get("why"), "similar_edit": True}
 
 
 class _DirAlignLane(object):
     """CRATE_DIR_ALIGN alongside the hunt. `offer(row)` (the download worker's on_scored, after
-    the row is committed) starts a row the moment its head verifies, at most DIR_ALIGN_MAX; the
-    ranking pass `retire()`s started rows it does not want, then asks `result(row)` for each row
-    _dir_align_rows picks (a row never started is submitted then, to the same executor), then
+    the row is committed) starts a row the moment its head verifies, at most DIR_ALIGN_MAX, on
+    the lane's one executor; the ranking pass takes the finished readings (_dir_align_join), then
     `close()`: anything still running stops, its yt-dlp is killed, and it writes nothing more.
-    RETENTION: the pulls live in the hunt's tmp; find_edit's wrapper calls close(wait=True)
-    before it removes that dir, so no job can write (or let yt-dlp recreate the dir) after it.
-    Doubles as dl_clip's `abort` (`dead`, `run`)."""
+    The lane reads `hb` (dead) and never writes it. RETENTION: the pulls live in the hunt's tmp,
+    each is removed the moment its reading is done, and find_edit's wrapper calls
+    close(wait=True) before it removes that dir, so no job can write (or let yt-dlp recreate the
+    dir) after it. Doubles as dl_clip's `abort` (`dead`, `run`)."""
 
     def __init__(self, clip_audio, clip_ctx, tmp, cdir, base_title, title_ok, hb=None):
         self.clip_audio, self.clip_ctx, self.tmp = clip_audio, clip_ctx, tmp
@@ -10155,41 +10140,29 @@ class _DirAlignLane(object):
         self.lock = threading.Lock()
         self._ctx_build = threading.Lock()  # ctxs() single-flight (review: da_clip20.wav race)
         self.jobs = {}                  # id(row) -> (row, future)
-        self.retired = set()            # id(row) of started rows the ranking pass does not want
         self.ex = None
         self.closed = False
         self.decisive = False
         self.procs = set()
-        self.kprocs = {}                # job key -> its running yt-dlp (round 5: retire kills it)
-        self._tls = threading.local()   # .key = the job this worker thread is running
         self._ctxs = None
         self._n = 0
         self.info = {}                  # url -> what the reading saw, for the tlog row
 
     @property
     def dead(self):
-        """True once the lane is closed or the hunt's cap fired, and (ROUND 5) on a job's own
-        thread once the ranking pass retired that job: dl_clip reads `abort.dead` after its
-        direct fetch and before its fallback, so a retired job drops a late fetch and never
-        starts a yt-dlp."""
-        if self.closed or (self.hb is not None and self.hb.dead):
-            return True
-        k = getattr(self._tls, "key", None)
-        return k is not None and k in self.retired
+        """True once the lane is closed or the hunt's cap fired (read only: the lane never
+        fires it). dl_clip reads `abort.dead` after its direct fetch and before its fallback."""
+        return bool(self.closed or (self.hb is not None and self.hb.dead))
 
     def run(self, args, timeout):
-        """dl_clip's yt-dlp fallback: own process group, killed by close(), and (ROUND 5) by
-        retire() when its job is retired, so a retired job stuck in a fallback fetch frees its
-        worker at once instead of after the fetch's whole timeout."""
-        k = getattr(self._tls, "key", None)
+        """dl_clip's yt-dlp fallback: own process group, killed by close(). Not counted in the
+        scan's download tally (a lane pull is never the hunt's evidence)."""
         with self.lock:
             if self.dead:
                 return False
             p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)
             self.procs.add(p)
-            if k is not None:
-                self.kprocs.setdefault(k, set()).add(p)
         try:
             try:
                 p.wait(timeout=timeout)
@@ -10204,15 +10177,12 @@ class _DirAlignLane(object):
         finally:
             with self.lock:
                 self.procs.discard(p)
-                if k is not None:
-                    self.kprocs.get(k, set()).discard(p)
 
     def ctxs(self):
         """[the clip's head context, the clip 20 s in] (the second only on a clip >= 40 s).
         Built ONCE, under its own lock, so concurrent jobs wait for the same result instead of
-        rewriting one temp file under each other (review: a truncated second window, cached for
-        the whole scan, loosened the two-window gate). A second window whose fingerprint is
-        missing or shorter than 90% of the head's is not kept."""
+        rewriting one temp file under each other. A second window whose fingerprint is missing
+        or shorter than 90% of the head's is not kept."""
         with self._ctx_build:
             if self._ctxs is not None:
                 return self._ctxs
@@ -10239,13 +10209,6 @@ class _DirAlignLane(object):
             self._ctxs = out
             return out
 
-    def _submit(self, c, key):
-        """Under self.lock: the one executor every lane job runs on (DIR_ALIGN_MAX workers)."""
-        if self.ex is None:
-            self.ex = ThreadPoolExecutor(max_workers=max(1, DIR_ALIGN_MAX))
-        snap = {k: c.get(k) for k in ("url", "path", "duration", "title")}
-        return self.ex.submit(self.one, snap, key)
-
     def offer(self, c):
         if self.dead:
             return
@@ -10255,70 +10218,40 @@ class _DirAlignLane(object):
         if self.decisive or not _dir_align_row_ok(c, self.cdir, self.base_title, self.title_ok):
             return
         if self._ctxs is not None and len(self._ctxs) < 2:
-            return                          # a clip under 40 s has one window: nothing can lock
+            return                          # one clip window: nothing can lock
         with self.lock:
             if self.closed or id(c) in self.jobs or len(self.jobs) >= DIR_ALIGN_MAX:
                 return
-            self.jobs[id(c)] = (c, self._submit(c, id(c)))
+            if self.ex is None:
+                self.ex = ThreadPoolExecutor(max_workers=max(1, DIR_ALIGN_MAX))
+            snap = {k: c.get(k) for k in ("url", "path", "duration", "title")}
+            self.jobs[id(c)] = (c, self.ex.submit(self.one, snap))
 
-    def retire(self, wanted):
-        """The ranking pass's pick is final: a started row not in `wanted` stops at its next
-        step and a queued one never starts, so its worker is free for a wanted row. ROUND 5
-        (review): a retired job inside its yt-dlp fallback has that process group killed here
-        (run() then returns False, dl_clip None, the job drops its file and returns), and a
-        retired job inside its direct fetch (capped at 6 s) drops what lands and never starts
-        a fallback (`dead` reads the job's own retirement)."""
-        keep = {id(c) for c in wanted}
-        kill = []
-        with self.lock:
-            for k, (_c, f) in self.jobs.items():
-                if k not in keep:
-                    self.retired.add(k)
-                    f.cancel()
-                    kill.extend(self.kprocs.get(k, ()))
-        for p in kill:
-            _killpg(p)
-
-    def result(self, c):
-        """-> the reading dict (see _one) or None, waiting for the row's job. A row never
-        started is submitted now, to the same executor (the per-scan concurrency cap)."""
-        with self.lock:
-            j = self.jobs.get(id(c))
-            if j is None:
-                if self.closed:
-                    return None
-                j = (c, self._submit(c, id(c)))
-                self.jobs[id(c)] = j
-        try:
-            return j[1].result()
-        except (Exception, concurrent.futures.CancelledError):
-            return None
-
-    def one(self, c, key=None):
+    def one(self, c):
         t0 = time.time()
         inf = {"t0": round(t0, 3)}
-        self._tls.key = key             # this worker runs `key` now (dead / run read it)
         try:
-            return self._one(c, inf, key)
+            return self._one(c, inf)
         except Exception as e:
             inf["err"] = str(e)[:80]
             return None
         finally:
-            self._tls.key = None        # the executor reuses the thread
             inf["secs"] = round(time.time() - t0, 2)
             self.info[c.get("url")] = inf
 
     @staticmethod
     def _drop(path):
+        """RETENTION: the file and anything yt-dlp left beside it (parts, a pre-convert copy)."""
         if path:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            for f in [path] + _glob.glob(_glob.escape(os.path.splitext(path)[0]) + ".*"):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
 
     def _aligned_lock(self, xs, at, tag):
-        """ROUND 3: candidate_speed_lock on the section the clip sits in (DIR_ALIGN_LOCK_SECS
-        from `at`), not the pull's head. None when it finds no confident cluster."""
+        """candidate_speed_lock on the section the clip sits in (DIR_ALIGN_LOCK_SECS from `at`),
+        not the pull's head. None when it finds no confident cluster."""
         SR = _verify.SR
         seg = xs[int(at * SR):int((at + DIR_ALIGN_LOCK_SECS) * SR)]
         if len(seg) < 12 * SR:
@@ -10332,8 +10265,10 @@ class _DirAlignLane(object):
         finally:
             self._drop(w)
 
-    def _one(self, c, inf, key=None):
-        stop = lambda: self.dead or key in self.retired
+    def _one(self, c, inf):
+        """-> {"at", "v", "lock", "rev", "why"} or None. The pull is removed before this returns,
+        whatever happens (a similar edit never needs its audio again)."""
+        stop = lambda: self.dead
         if stop() or not c.get("path"):
             return None
         with self.lock:
@@ -10343,45 +10278,41 @@ class _DirAlignLane(object):
         if len(ctxs) < 2 or stop():
             return None                     # one clip window cannot lock: no pull for nothing
         path, pulled = c["path"], None
-        dur = duration_of(path) or 0
-        if dur < DIR_ALIGN_PULL * 0.8 and _dur_s(c) > dur + 5:
-            longer = os.path.join(self.tmp, "da_%s.wav" % tag)
-            _t = time.time()
-            got = dl_clip(c["url"], longer, seconds=DIR_ALIGN_PULL,
-                          timeout=DIR_ALIGN_DL_TIMEOUT, abort=self)
-            inf["dl"] = round(time.time() - _t, 2)
-            if not got or stop():
-                self._drop(longer)          # dl_clip leaves a late direct fetch to its caller
+        try:
+            dur = duration_of(path) or 0
+            if dur < DIR_ALIGN_PULL * 0.8 and _dur_s(c) > dur + 5:
+                longer = os.path.join(self.tmp, "da_%s.wav" % tag)
+                pulled = longer             # dl_clip leaves a late direct fetch to its caller
+                secs = int(max(dur + 5, min(DIR_ALIGN_PULL, _dur_s(c) - 2)))
+                _t = time.time()
+                got = dl_clip(c["url"], longer, seconds=secs, timeout=DIR_ALIGN_DL_TIMEOUT,
+                              abort=self)
+                inf["dl"] = round(time.time() - _t, 2)
+                if not got or stop():
+                    return None
+                path = got
+            if stop():
                 return None
-            path = pulled = got
-        if stop():
-            self._drop(pulled)
-            return None
-        _t = time.time()
-        xs = _verify._decode(path, DIR_ALIGN_PULL + 5)
-        at, v, info = _dir_align_read(xs, ctxs, self.tmp, tag, stop=stop)
-        inf.update(info, read=round(time.time() - _t, 2))
-        if at is None:
+            _t = time.time()
+            xs = _verify._decode(path, DIR_ALIGN_PULL + 5)
+            at, v, info = _dir_align_read(xs, ctxs, self.tmp, tag, stop=stop)
+            inf.update(info, read=round(time.time() - _t, 2))
+            if at is None or stop():
+                return None
+            why = info.get("why")
+            lk = self._aligned_lock(xs, at, tag)
             del xs
+            inf["lock"] = None if lk is None else round(lk, 4)
+            if lk is not None and abs(float(np.log2(lk / float(v["speed"])))) > DIR_ALIGN_LOCK:
+                # the bass-robust lock on the aligned section and the lane's own speed disagree:
+                # the note uses the lane's speed, and the reason says so
+                why, lk = ("%s+lock" % why if why else "lock"), None
+            inf["reading"] = not stop()
+            if stop():
+                return None
+            return {"at": at, "v": v, "why": why, "lock": lk, "rev": info.get("rev_gap")}
+        finally:
             self._drop(pulled)
-            return None
-        if stop():
-            del xs
-            self._drop(pulled)
-            return None
-        verdict, why = info.get("verdict"), info.get("why")
-        lk = self._aligned_lock(xs, at, tag)
-        del xs
-        inf["lock"] = None if lk is None else round(lk, 4)
-        if lk is not None and abs(float(np.log2(lk / float(v["speed"])))) > DIR_ALIGN_LOCK:
-            # the bass-robust lock on the aligned section and the lane's own speed disagree:
-            # no widened gate on a speed two measurements do not agree on
-            verdict, why, lk = "closest", ("%s+lock" % why if why else "lock"), None
-        inf["verdict"] = verdict
-        if verdict != "crown":
-            self._drop(pulled)              # a closest row never needs its audio again
-        return {"at": at, "v": v, "path": path if verdict == "crown" else None,
-                "verdict": verdict, "why": why, "lock": lk, "rev": info.get("rev_gap")}
 
     def close(self, wait=False):
         """Stop every job: nothing new starts (run() refuses once closed), yt-dlp is killed,
@@ -10397,44 +10328,27 @@ class _DirAlignLane(object):
             ex.shutdown(wait=wait, cancel_futures=True)
 
 
-def _edit_sig(c):
-    """_shelf_dedup's cluster key: same speed (~1.4% buckets) and same bass tilt (2 dB buckets)."""
-    v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
-    return (round(float(np.log2(v)) * 50),          # ~1.4% speed buckets
-            round((c.get("cand_tilt") or 0.0) / 2.0))   # 2 dB bass buckets
-
-
-def _shelf_dedup(ranked):
-    """DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
-    different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
-    Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
-    the same edit when the audio is the same recording AND the transform matches:
-    same speed, same bass tilt. Keep the strongest representative of each cluster so
-    the shelf offers real alternatives instead of repeats, and so the decisiveness
-    margin below compares against a genuine rival rather than a copy of the winner.
-    (Moved out of find_edit's body in CRATE_DIR_ALIGN round 7, unchanged but for the lane rule.)
-
-    CRATE_DIR_ALIGN ROUND 7 (review finding): a lane row (dir_align) neither collapses nor is
-    collapsed. Its crown can still be refused by the server's _dir_family_ok, which needs the
-    confident clip speed only _phase2 measures, AFTER this pass; the engine has no such speed
-    here, so it cannot run that test itself. A lane row that ranked first used to add its
-    bucket to seen_sig and drop the plain at-tempo upload of the same section (official master
-    or lyrics channel, same speed, same tilt); the server then refused the lane row as
-    "closest" and had nothing left to crown, where 7125e63 crowned that upload as the SOURCE.
-    Keeping lane rows out of the collapse leaves the plain row in `ranked` for the walk, which
-    is the lane's own contract: a refused reading leaves the pool as before."""
-    seen_sig, deduped = set(), []
-    for c in ranked:
-        # only collapse provably identical audio; a lane row neither collapses nor is collapsed
-        if c.get("core", 0) >= CORE_SAME and not c.get("dir_align"):
-            sig = _edit_sig(c)
-            # CORRECTIONS 2026-09-29: never collapse the owner-confirmed upload into another
-            # upload of the same audio; WHICH upload is exactly what the owners corrected
-            if sig in seen_sig and not c.get("correction"):
-                continue
-            seen_sig.add(sig)
-        deduped.append(c)
-    return deduped
+def _dir_align_collect(lane, cands, known_dir, edit_label, base_title, title_ok, hb):
+    """The ranking pass's whole lane step: the readings of rows that are STILL eligible (dropped
+    on the head, no row fp-decisive at the clip's speed; _dir_align_rows) and that the lane started
+    during the hunt and finished (_dir_align_join), as new SIMILAR EDIT dicts, then the lane is
+    closed. Reads `cands` and never writes to it or to any row in it. -> [similar row]."""
+    sims, elig = [], []
+    try:
+        elig = _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok, cap=None)
+        got = _dir_align_join(lane, elig, hb)
+        sims = [_dir_align_similar_row(c, g) for c, g in got][:DIR_ALIGN_MAX]
+    except Exception as e:
+        tlog("dir_align", 0.0, error=type(e).__name__)
+        sims = []
+    finally:
+        lane.close()            # a started row nobody takes stops here (RETENTION: no file after)
+    if lane.jobs:
+        tlog("dir_align", 0.0, started=len(lane.jobs), eligible=len(elig), listed=len(sims),
+             decisive=lane.decisive, ctxs=len(lane._ctxs or []),
+             rows=[[(c.get("title") or "")[:50], c.get("core"), c.get("fp"),
+                    lane.info.get(c.get("url"))] for c, _f in list(lane.jobs.values())])
+    return sims
 
 
 async def find_edit(*args, **kwargs):
@@ -10461,12 +10375,12 @@ async def find_edit(*args, **kwargs):
     _sk = (_SeekRun(_skp) if (SEEK_MOFF and _skp and _ska is not None
                               and time.time() - _ska < 5.0) else None)
     _SEEK_TLS.run = _sk if (_sk is not None and _sk.entries) else None
-    closers = []           # CRATE_DIR_ALIGN lanes the body started (round 3, RETENTION)
+    closers = []           # CRATE_DIR_ALIGN lanes the body started (RETENTION)
     try:
         res = await _find_edit_body(*args, _tmps=tmps, _closers=closers, **kwargs)
     except BaseException:
-        # ROUND 3: every lane is closed, and its running step waited for, BEFORE the dirs go.
-        # Once closed its run() refuses yt-dlp, so nothing can recreate a deleted dir and write
+        # CRATE_DIR_ALIGN: every lane is closed, and its running step waited for, BEFORE the dirs
+        # go. Once closed its run() refuses yt-dlp, so nothing can recreate a deleted dir and write
         # a pull into it; a direct fetch already in flight finishes first (bounded by its 6 s
         # budget), so its .part / wav is inside the dir when the dir is removed.
         for _l in closers:
@@ -10500,9 +10414,9 @@ async def find_edit(*args, **kwargs):
              **res["hunt_budget"])
     keep = res.get("tmp") if isinstance(res, dict) else None
     for _l in closers:
-        # the body closes its lane at the ranking pass; an early return never got there. A
-        # lane whose dir is about to be removed is waited for, one whose dir the caller keeps
-        # is not (its jobs stop at their next step and write only inside that dir).
+        # CRATE_DIR_ALIGN: the body closes its lane at the ranking pass; an early return never got
+        # there. A lane whose dir is about to be removed is waited for, one whose dir the caller
+        # keeps is not (its jobs stop at their next step and write only inside that dir).
         try:
             _l.close(wait=(_l.tmp != keep))
         except Exception:
@@ -10517,7 +10431,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                           edit_label, known_dir=None, handle=None, max_dl=14,
                           hints=None, shazam_reliable=True, pair=None, on_cand=None,
                           creator=None, comment_urls=None, _tmps=None, posted_rival=None,
-                          comment_urls_more=None, _closers=None):
+                          comment_urls_more=None, _closers=None, similar_edits=False):
     """Ranked candidate edits, verified against the clip. `known_dir` (slowed / sped
     up / None) is the RELIABLE speed call from the caller (Shazam's counter-speed
     sweep or frequencyskew). We no longer guess speed by comparing to a random
@@ -11136,36 +11050,24 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
             return
         on_cand(c)
     _hit = _stream_hit if on_cand is not None else None
-    # CRATE_DIR_ALIGN round 2: every scored row of the waves below is offered to the lane the
-    # moment it is committed, so an eligible row's longer pull and reading run underneath the
-    # rest of the hunt (see _DirAlignLane). Off, or no measured direction: _hit as it was.
-    # ROUND 3: the lane's title claim is song_cov + _artist_hit AND the same claim on whole
-    # words (_dir_align_words_ok), and find_edit's wrapper gets the lane to close it before it
-    # removes this hunt's dirs (RETENTION, review finding: an exception between here and the
-    # ranking pass left a lane yt-dlp free to recreate the deleted tmp).
+    # CRATE_DIR_ALIGN (similar edits only, see DIR_ALIGN): asked for by server._phase2 only. Every
+    # scored row of the waves below is offered to the lane the moment it is committed, so an
+    # eligible row's longer pull and reading run underneath the rest of the hunt. The lane never
+    # writes to a row, and the hunt never reads the lane: off, not asked for, no measured
+    # direction or a clip under 40 s, and _hit is exactly as it was. The title claim is song_cov +
+    # _artist_hit AND the same claim on whole words, and never a mashup / two-song title.
     _dal = None
 
-    # ROUND 4: and not a mashup / blend / transition by its title (_dir_align_mixed), on either
-    # side of the dash. Both lane paths (offer() during the waves, _dir_align_rows at the ranking
-    # pass) read this, so the crown and the "closest" list are both covered.
     def _da_title_ok(c):
         return (_artist_hit(c) and _dir_align_words_ok(c, base_title, artist_toks)
                 and not _dir_align_mixed(c, base_title, artist_toks))
-    # ROUND 7 (review finding): and only on a clip that gives ctxs() two windows (>= 40 s); the
-    # helper sits last so its ffprobe runs only when the lane would otherwise be built
-    if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label) and _dir_align_two_windows(clip_audio):
+    if (similar_edits and DIR_ALIGN and _fast_clip_dir(known_dir, edit_label)
+            and _dir_align_two_windows(clip_audio)):
         _dal = _DirAlignLane(clip_audio, clip_ctx, tmp, _fast_clip_dir(known_dir, edit_label),
                              base_title, _da_title_ok, _hb)
         if _closers is not None:
-            _closers.append(_dal)
-        # ROUND 6 (review finding): a fast-path row was scored before the lane existed and is
-        # carried with _done set, so no wave re-scores it and offer() never saw it. At the join it
-        # was a NEW pull: past T with no evidence (the lane's own target case) rule 1 skipped it,
-        # fired the budget and kept the scan out of both caches; before T it was read serially
-        # after the last wave. Offered here, in scoring order (the fast path scored first), it is
-        # a started row like any wave row: its pull runs under the waves and the join keeps it.
-        # offer() applies the same eligibility and DIR_ALIGN_MAX cap; a decisive carried row
-        # stops the lane exactly as _dir_align_rows would.
+            _closers.append(_dal)       # find_edit's wrapper closes it before the dirs go
+        # a fast-path row was scored before the lane existed and no wave re-scores it
         for _c in cands:
             if _c.get("fast_carry") and _c.get("path"):
                 _dal.offer(_c)
@@ -11767,61 +11669,13 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
 
     if SEEK_MOFF:
         seek_settle(cands, "rank")          # CRATE_SEEK_MOFF v2: aligned against aligned
-    # ---- CRATE_DIR_ALIGN (see DIR_ALIGN): a row titled with the clip's measured treatment,
-    # dropped on its head, gets its section found by audio on two clip windows. Round 2: the
-    # rows the lane started during the waves are joined here, the rest are read now. Round 3:
-    # started rows the pick does not want are retired first (their worker is freed), a "crown"
-    # reading is merged into the row as before, and a "closest" reading (it failed only a
-    # crown-only test: the reversed control, or the aligned-section lock) goes to
-    # result["closest"] and never into the pool.
-    # ROUND 6: every eligible row goes to the join (cap=None), which makes the pick; the rows
-    # it does not keep are retired after it, so a started row the pick keeps is never cancelled
-    _da = (_dir_align_rows(cands, known_dir, edit_label, base_title, _da_title_ok, cap=None)
-           if _dal is not None else [])
-    _da_closest = []
+    # ---- CRATE_DIR_ALIGN (similar edits only, see DIR_ALIGN): the readings the lane finished go
+    # to result["similar_edits"], a separate list nothing below reads; the lane is closed here
     if _dal is not None:
-        _da = _dir_align_join_rows(_da, _dal, _hb)     # round 5: only NEW pulls are gated
-        _dal.retire(_da)
-    if _da:
-        _td0 = time.time()
-        _dspec = sum(1 for c in _da if id(c) in _dal.jobs)
-        if _hb is None:
-            _dex = ThreadPoolExecutor(max_workers=min(3, len(_da)))
-            try:
-                _dgot = list(_dex.map(_dal.result, _da))
-            finally:
-                _dex.shutdown(wait=False)
-        else:
-            _dgot = _hb.map_bounded("dir_align", _dal.result, _da, min(3, len(_da)))
-        for c, got in zip(_da, _dgot):
-            if not got:
-                continue
-            if got.get("verdict") != "crown":
-                _da_closest.append(_dir_align_closest_row(c, got))
-                continue
-            bv = got["v"]
-            c.update(core_head=c.get("core"), fp_head=c.get("fp"), path=got["path"],
-                     seek_at=float(got["at"]), seek_clip_at=0.0, dir_align=True,
-                     _da_lock=got.get("lock"), da_rev=got.get("rev"),
-                     core=bv["core"], spectral=bv["spectral"], fp=bv["fp"], arr=bv["arr"],
-                     same=bv["same"], vspeed=bv["speed"], speed_conf=bv.get("speed_conf"),
-                     bass_delta=bv["bass_delta"], cand_tilt=bv["cand_tilt"],
-                     slope_delta=bv.get("slope_delta"), clip_slope=bv.get("clip_slope"),
-                     cand_slope=bv.get("cand_slope"), score=bv["score"], vscore=bv["score"])
-        tlog("dir_align", time.time() - _td0, n=len(_da), spec=_dspec,
-             ctxs=len(_dal._ctxs or []), hit=sum(1 for c in _da if c.get("dir_align")),
-             closest=len(_da_closest),
-             rows=[[(c.get("title") or "")[:50], c.get("core"), c.get("fp"), c.get("vspeed"),
-                    c.get("seek_at"), _dal.info.get(c.get("url"))] for c in _da])
-    if _dal is not None:
-        if not _da and _dal.jobs:
-            # started during the waves, then not wanted (a decisive row landed, or the row's
-            # head moved): logged so the CPU it cost stays visible
-            tlog("dir_align_unused", 0.0, spec=len(_dal.jobs), decisive=_dal.decisive,
-                 rows=[[(c.get("title") or "")[:50], _dal.info.get(c.get("url"))]
-                       for c, _f in list(_dal.jobs.values())])
-        _dal.close()            # a started row nobody asked for stops here (RETENTION: no file after)
-    result["closest"] = _da_closest
+        _sims = _dir_align_collect(_dal, cands, known_dir, edit_label, base_title, _da_title_ok,
+                                   _hb)
+        if _sims:
+            result["similar_edits"] = _sims
     # ---- which upload IS the exact audio in the clip ----
     # Driven by verify()'s BASS-INDEPENDENT same-recording evidence (`core` = chromaprint
     # + EQ-invariant arrangement match), NOT the bass-penalised score. Platforms
@@ -11969,15 +11823,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # PARALLEL, same results: each lock is an independent pure function of
     # (clip, candidate) - ffmpeg decode + numpy, both of which release the GIL - and
     # the serial loop paid them one after another for every editmatch candidate.
-    # CRATE_DIR_ALIGN round 3: a lane row's path is its pull from 0:00, whose head the lane
-    # just showed is NOT where the clip sits, so it takes the lock the lane measured on the
-    # aligned section (_da_lock: agreeing with the lane's speed, or None when inconclusive)
-    # instead of a fresh one from the head (review finding: the server gated and labelled it
-    # on the head's number).
-    _lockable = [c for c in keep if c.get("editmatch") and c.get("path")
-                 and not c.get("dir_align")]
+    _lockable = [c for c in keep if c.get("editmatch") and c.get("path")]
     for c in keep:
-        c["vspeed_locked"] = c.get("_da_lock") if c.get("dir_align") else None
+        c["vspeed_locked"] = None
     if _lockable:
         with ThreadPoolExecutor(max_workers=min(6, len(_lockable))) as _lex:
             for c, v in zip(_lockable, _lex.map(
@@ -12289,9 +12137,28 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 tlog("fp_lead", 0.0, lead=round(_lead, 3), to=_byfp[0].get("title"),
                      was=ranked[0].get("title"), n=len(_grp))
                 ranked.remove(_byfp[0]); ranked.insert(0, _byfp[0])
-    # DEDUP THE SHELF (_shelf_dedup above find_edit; round 7 moved it out of this body,
-    # unchanged except that a CRATE_DIR_ALIGN lane row neither collapses nor is collapsed).
-    ranked = _shelf_dedup(ranked)
+    # DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
+    # different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
+    # Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
+    # the same edit when the audio is the same recording AND the transform matches:
+    # same speed, same bass tilt. Keep the strongest representative of each cluster so
+    # the shelf offers real alternatives instead of repeats, and so the decisiveness
+    # margin below compares against a genuine rival rather than a copy of the winner.
+    def _edit_sig(c):
+        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+        return (round(float(np.log2(v)) * 50),          # ~1.4% speed buckets
+                round((c.get("cand_tilt") or 0.0) / 2.0))   # 2 dB bass buckets
+    seen_sig, deduped = set(), []
+    for c in ranked:
+        if c.get("core", 0) >= CORE_SAME:      # only collapse provably identical audio
+            sig = _edit_sig(c)
+            # CORRECTIONS 2026-09-29: never collapse the owner-confirmed upload into another
+            # upload of the same audio; WHICH upload is exactly what the owners corrected
+            if sig in seen_sig and not c.get("correction"):
+                continue
+            seen_sig.add(sig)
+        deduped.append(c)
+    ranked = deduped
     # decisive = the audio verdict is clear, not a play-count guess: a real edit on top
     # with a genuine match margin over the next edit rival.
     decisive = False

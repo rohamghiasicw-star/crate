@@ -1398,6 +1398,14 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   background:linear-gradient(155deg,var(--phc,#7B6BFF),var(--phc2,#5B4BE8))}
 .tart.ph svg{width:17px;height:17px;opacity:.92}
 .trk.top .tart.ph svg{width:23px;height:23px}
+/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Plain rows in their own group under
+   the version list: no card, no play control, no match chip, the figure in muted text. They are
+   never the answer, so nothing here borrows the crown's look. */
+.simg .sect{margin-top:16px}
+.trk.simr .tt .nm{color:var(--muted)}
+.trk.simr .simtag{font-size:11px;font-weight:650;color:var(--muted)}
+.trk.simr .simnote{font-size:11.5px;color:var(--faint);margin-top:3px;line-height:1.35}
+.trk.simr .simfig{font-size:11px;color:var(--faint)}
 @media (max-width:400px){
   .trk .tart{width:36px;height:36px}
 }
@@ -3373,12 +3381,9 @@ var TEMPO_TOL=0.06, EQ_CAP=0.90, OFF_DROP=4/9, PCT_FLOOR=50, REF_CAP=45,
     CROWN_URL='', CROWN_SRC='', CROWN_ROW=null;   // set by renderResult; the crown never takes a page-side verdict
 var GATE_WORD={tempo:'Different edit', tilt:'Different EQ', speedclaim:'Titled a speed edit',
                official:'Official release', othersong:'Different song', 'null':'Texture only',
-               rendition:'The original, not this version', source:'Source recording',
-               // CRATE_DIR_ALIGN round 3: the lane's nearest family member, listed, never crowned
-               closest:'Closest version'};
+               rendition:'The original, not this version', source:'Source recording'};
 var G_NUM=2, G_UNC=5, G_NONE=6;
 function gateWhy(k,c,offTxt){
-  if(k==='closest') return (c&&c.gate&&c.gate.note)||'';
   if(k==='tempo'||k==='source') return 'clip '+offTxt;
   if(k==='tilt') return 'EQ '+Math.abs(c.bass||0).toFixed(1)+' dB off';
   return '';}
@@ -3463,14 +3468,10 @@ function vmatch(c){
   if(k==='source'){ m.refused='source'; m.word=GATE_WORD.source; m.exact=false;
     if(exact) m.pct=94;
     m.why=m.word+' · clip '+offTxt; m.eq=(g&&g.why)?g.why:gateSentence(k,c,offTxt);}
-  // CRATE_DIR_ALIGN round 5 (server _level_with, _lane_under_crown): c.dir_align = this row's
-  // score was read on the section the lane aligned, not its first 20 s, so it cannot argue with
-  // the crown's. A lane row that is not the crown never prints above it, and never as Exact
-  // under a lower crown (the review's case: 81% listed under a 75% crown).
-  if(CROWN_ROW && c.url!==CROWN_URL && (core<CORE_SAME || c.dir_align)){
+  if(CROWN_ROW && c.url!==CROWN_URL && core<CORE_SAME){
     var cm=vmatch(CROWN_ROW);
-    if(cm && cm.pct!==null && m.pct>cm.pct && (c.dir_align || legsFig(c)<=legsFig(CROWN_ROW))){
-      m.pct=cm.pct; m.level=c.dir_align?'lane':true; m.exact=false;}}
+    if(cm && cm.pct!==null && m.pct>cm.pct && legsFig(c)<=legsFig(CROWN_ROW)){
+      m.pct=cm.pct; m.level=true;}}
   m.key=m.pct;
   return m;}
 /* What the speed and EQ legs alone allow a row: its figure with the same-recording leg
@@ -3555,8 +3556,7 @@ function confChip(c,full){
   if(m.refused && m.refused!=='source')
     tip='Not this version: '+m.eq+'. A version we ruled out counts half, so it never sits above one that passed.';
   else
-    tip=(m.level==='lane'?'Level with our pick: its match was found later in the upload, and a score read there cannot be compared with our pick\'s, so it never sits above it. ':
-         m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
+    tip=(m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
         (m.refused==='source'?'The recording this clip was cut from. ':'')+
         'Same recording: '+(m.core>=CORE_SAME?'strong':m.core>=0.62?'likely':
             m.core>=CORE_KEEP?'partial':'not confirmed')+
@@ -3776,6 +3776,28 @@ document.addEventListener('load',function(e){
   // never fires for it. A real mqdefault is 320 wide; anything at or under 120 is the grey.
   if(_isCover(t)&&t.naturalWidth&&t.naturalWidth<=120) _tartFallback(t);
 },true);
+/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Uploads whose matching section the
+   engine found later in the upload, a few percent off the clip's speed. Never the crown and
+   never in the version list: their own small group under it, labelled "Similar edit" with the
+   speed note, the figure muted and always under the crown's own figure. A payload with none
+   draws nothing, so the page renders exactly as before. */
+function simEdits(d){
+  var s=(d&&d.similar_edits)||[];
+  if(!s.length) return '';
+  var cap=null;
+  if(CROWN_ROW){var cm=vmatch(CROWN_ROW); if(cm&&cm.pct!==null) cap=cm.pct-1;}
+  return '<div class="simg"><div class="sect">Similar edit'+(s.length>1?'s':'')+'</div><div class="list">'+
+    s.map(function(c){
+      var f=(typeof c.figure==='number')?c.figure:null, src=(c.source||'').toLowerCase();
+      if(f!==null&&cap!==null) f=Math.min(f,cap);
+      var note=c.note?String(c.note):'';
+      return '<a class="trk simr" href="'+esc(c.url)+'" target="_blank" rel="noopener"'+
+          (c.reason?' title="'+esc(c.reason)+'"':'')+'>'+rowThumb(c)+
+        '<span class="tt"><div class="nm">'+esc(c.title||'Untitled')+'</div>'+
+        '<div class="mt"><span class="simtag">Similar edit</span>'+(src?srcChip(src):'')+
+          (f!==null&&f>0?'<span class="simfig mono">'+f+'%</span>':'')+'</div>'+
+        (note?'<div class="simnote">'+esc(note.charAt(0).toUpperCase()+note.slice(1))+'</div>':'')+
+        '</span></a>';}).join('')+'</div></div>';}
 function trackRow(c,top,tag,fresh,opt){var src=(c.source||'').toLowerCase(); opt=opt||{};
   return '<a class="trk'+(top?' top':'')+(fresh?' fresh':'')+(opt.held?' held':'')+
       '" href="'+esc(c.url)+'" target="_blank" rel="noopener">'+
@@ -4916,6 +4938,7 @@ function renderResult(d,partial){
   // whichever path called us (a fold before /health's features landed drew the list).
   // The list lands with the final render when the wave reaches 100%.
   if(hunting){ shelf='<div class="list" id="livelist" style="margin-top:11px"></div>'; plain=false; noCrown=false; }
+  else shelf+=simEdits(d);          // CRATE_DIR_ALIGN: its own group under the versions
   // The save card and `pv` are built further up now - see the hoist note next to `var ex`.
   // Preview has left this row for the cover's own corner control (layout spec item 7), so
   // what is left is the two the spec keeps: Other playlist, and Like.

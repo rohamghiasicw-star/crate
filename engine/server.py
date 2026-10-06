@@ -2230,21 +2230,10 @@ SPEED_HANDLES_OVERLAP = E._speed_flag("CRATE_HANDLES_OVERLAP", True)
 SECTION_MIN_SECS = 5.0   # below this there isn't enough audio to verify anything against
 
 
-def _section_rows(edit):
-    """The rows a per-section hunt may pick from: editmatch, in rank order, and (CRATE_DIR_ALIGN
-    round 5, review finding) never a lane row. The section's version is ranked[0] with no crown
-    gate at all, so a lane row there (its head under CORE_KEEP, its core read on the section the
-    lane aligned, its tempo up to 11% off the clip) would become a section's version without the
-    widened tempo gate's _dir_family_ok check, which only the whole-clip crown runs. Leaving lane
-    rows out gives each section exactly the pick it had before the lane existed (a lane row's
-    head never passed CORE_KEEP, so it was never editmatch there)."""
-    return [c for c in (edit.get("ranked") or []) if c.get("editmatch") and not c.get("dir_align")]
-
-
 def _cands_of(edit, n=6):
     """The verified candidates of a find_edit result, in the shape the UI already eats."""
     out = []
-    for c in _section_rows(edit)[:n]:
+    for c in [c for c in edit.get("ranked", []) if c.get("editmatch")][:n]:
         # Same unverified-claim note as the whole-clip rows. A per-section answer is
         # still an answer, so a section crown must not be the one place a "reverb" or
         # "bass boosted" title gets to stand unqualified.
@@ -2306,11 +2295,8 @@ def _hunt_sections(loop, ctx, whole_exact, whole_cands):
                 row["hunted"] = "failed (%s)" % type(ex).__name__
                 rows.append(row); continue
             cands = _cands_of(e)
-            # find_edit's `decisive` is about its ranked[0]; when that is a lane row (left out
-            # of the section's pick above) it says nothing about the pick, so it is not carried
-            _rk = e.get("ranked") or []
             row.update(candidates=cands, exact=(cands[0] if cands else None),
-                       decisive=bool(e.get("decisive")) and not (_rk and _rk[0].get("dir_align")),
+                       decisive=bool(e.get("decisive")),
                        hunted="own audio %.1f-%.1fs" % (a, b),
                        secs=round(time.time() - t, 1))
             _cleanup(e.get("tmp"))
@@ -2674,11 +2660,6 @@ def _cand_row(c):
                                           and float(c["speed_conf"]) < 0.10) else None),
             "claim": _claim or None,
             "claimkind": _kinds or None,
-            # CRATE_DIR_ALIGN round 5: this row's core was read on the section the lane ALIGNED,
-            # not on its first 20 s like every other row's, so the two cannot be compared. The
-            # page and _row_figure read it to keep a lane row that is not the crown from printing
-            # above the crown (_level_with). Absent on every other row, so old rows are unchanged.
-            "dir_align": True if c.get("dir_align") else None,
             # COVER ART. Display only - see _cand_art. Built here, in the one row builder,
             # so the streamed row and the final row can never disagree about it. Old saved
             # payloads have no `art` key and render the coloured placeholder, which is
@@ -3002,74 +2983,6 @@ _SOFT_TEMPO_TOL = float(os.environ.get("CRATE_SOFT_TEMPO_TOL", 0.0))
 # before the candidate is called the SOURCE rather than a different edit. 0.06 in log2 is
 # about +-4%, the same window _TEMPO_TOL uses to call two tempos equal.
 _SOURCE_AGREE_TOL = float(os.environ.get("CRATE_SOURCE_AGREE_TOL", 0.06))
-# CRATE_DIR_ALIGN's family band: 0.152 is ski slopes' distance (v 0.90), the one Roham called
-# "basically closer to original"; only rows the lane placed by audio ever use it.
-_DIR_FAMILY_TOL = float(os.environ.get("CRATE_DIR_FAMILY_TOL", 0.152))
-
-
-def _dir_family_ok(top, v, m_speed, base_title):
-    """CRATE_DIR_ALIGN round 3: is this lane row (placed on the clip by audio, inside the family
-    band) really a member of the clip's edit family? All three must hold:
-      * the clip's own speed against the master was measured with confidence (m_speed);
-      * the TITLE claims the measured direction, read with the lane's own words
-        (E._fast_edit_claim: slow/slowed/daycore/screwed vs sped up/nightcore/fast/genre), so
-        the lane and this gate can no longer disagree on "Daycore" or "Chopped & Screwed";
-      * the upload's OWN tempo against the master, m_speed / v, has moved off 1.0 in that
-        direction by more than _TEMPO_TOL. A "(Slowed + Reverb)" upload that really plays at
-        the master's tempo, or faster, is the original relabelled (review finding: v 0.94 on a
-        0.94x clip is an upload at 1.000x) and stays refused.
-    Usher / Ttraamat: m 0.7022, v 0.9353 -> the upload runs 0.751x of the master, slowed."""
-    try:
-        if not m_speed or float(m_speed) <= 0 or not v or float(v) <= 0:
-            return False
-        cdir = "slowed" if float(m_speed) < 1.0 else "sped up"
-        if not E._fast_edit_claim(top.get("title") or "", cdir, base_title):
-            return False
-        u = math.log2(float(m_speed) / float(v))
-        return u < -_TEMPO_TOL if cdir == "slowed" else u > _TEMPO_TOL
-    except Exception:
-        return False
-
-
-# CLOSEST, NEVER CROWNED (CRATE_DIR_ALIGN round 3; Roham's rule, a wrong crown is worse than no
-# crown). A lane reading that passed every lane test but failed a crown-only one is listed with
-# this sentence as its gate (kind "closest", _gate_kind), so the page prints it at the refused
-# cap with the speed note beside it, under any crown, and no crown path can pick it.
-_CLOSEST_WHY = {
-    "rev": "its matching section did not beat its own reversed audio by enough to prove the "
-           "recording",
-    "lock": "two speed readings on its matching section disagree",
-    "rev+lock": "its matching section did not beat its own reversed audio by enough to prove "
-                "the recording, and two speed readings on it disagree",
-    "speed": "its own speed was not measured as the clip's edit family",
-}
-
-
-def _closest_note(c):
-    """'this upload runs about N% faster/slower than the clip' (the crown_tempo_off sentence)."""
-    try:
-        v = c.get("vspeed_locked")
-        if v is None:
-            v = c.get("vspeed")
-        v = float(v or 0)
-    except Exception:
-        return None
-    if v <= 0:
-        return None
-    if abs(math.log2(v)) <= _TEMPO_EXACT:
-        return "this upload runs at the clip's speed"
-    return ("this upload runs about %.0f%% %s than the clip"
-            % (abs(1.0 - 1.0 / v) * 100.0, "slower" if v > 1.0 else "faster"))
-
-
-def _closest_why(c, why):
-    note = _closest_note(c)
-    return ("closest version, not crowned: %s%s" % (
-        (note + "; ") if note else "", _CLOSEST_WHY.get(why or "", "it did not pass every check")))
-
-
-def _closest_gate(c, why):
-    return {"kind": "closest", "why": _closest_why(c, why), "note": _closest_note(c)}
 
 # THE SOURCE HAS TO BE PLAIN. The source branch below crowns an upload the clip was
 # re-pitched FROM, so the upload must be the recording itself, not somebody's edit of
@@ -3586,22 +3499,6 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None, res=None):
             and (top.get("core") or 0) >= E.CORE_SAME
             and not _SPEED_CLAIM.search(title)):
         return None, v
-    # CRATE_DIR_ALIGN (USHER-SC-MISS 2026-10-06, ON since round 2): an upload the direction-align
-    # lane placed on the clip by audio (two clip windows, core >= CORE_EDIT, fp >= 0.638, one
-    # speed) whose title claims the clip's own treatment is that edit's family member, a few
-    # percent off: Ttraamat's "Yeah! (Slowed&Reverbed)" is 0.746x of the master, the clip
-    # 0.704x (both measured against the Apple and Deezer previews), v 0.9353. Refusing it
-    # crowns the plain lyrics upload as the SOURCE at 0.70x instead, which is the original
-    # relabelled (Roham on ski slopes: he wants the slowed version found). Admitted up to
-    # _DIR_FAMILY_TOL; the crown then carries crown_tempo_off ("about 7% faster than the clip")
-    # and the walk still prefers any row nearer the clip's tempo.
-    # ROUND 3 (review findings): admitted only by _dir_family_ok, which needs a confident clip
-    # speed, the lane's own direction words, and the upload's own tempo off the master in the
-    # title's direction. A row this refuses is listed as a "closest version", never crowned
-    # (the walk below, _closest_why).
-    if (getattr(E, "DIR_ALIGN", False) and top.get("dir_align") and d <= _DIR_FAMILY_TOL
-            and _dir_family_ok(top, v, m_speed, base_title)):
-        return None, None
     # verify()'s `speed` is the CLIP's tempo relative to the candidate, so below 1.0 means
     # the clip is the slower of the two.
     return ("clip plays %.0f%% %s than this upload, so it is a different edit of the "
@@ -3795,8 +3692,6 @@ def _gate_kind(why):
     """Which of the engine's own rules wrote this refusal. Keyed on the fixed sentences the
     gate functions above return, so the page can pick a short word without parsing English."""
     w = why or ""
-    if w.startswith("closest version"):
-        return "closest"            # CRATE_DIR_ALIGN round 3: listed, never crowned
     if w.startswith("clip plays "):
         return "tempo"
     if w.startswith("candidate is the official release"):
@@ -3835,8 +3730,6 @@ def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
         ann, src = {}, {}
         for _why, _c in (rejects or {}).values():
             ann[_c.get("url")] = {"kind": _gate_kind(_why), "why": _why}
-            if ann[_c.get("url")]["kind"] == "closest":
-                ann[_c.get("url")]["note"] = _closest_note(_c)
         for _i, _c, _sv in (clean_all or []):
             if _sv is not None:
                 src[_c.get("url")] = float(_sv)
@@ -3863,179 +3756,6 @@ def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
         # A label that cannot be computed must never cost the user the result. Without the
         # flag the page falls back to its own tempo test for every row.
         res.pop("gates_on_rows", None)
-
-
-def _gate_one(cand, measured, base_title, res, gate_label, mdir, reup, src, fa_n,
-              fp_floor_hits):
-    """One pool row through the crown gates, in the walk's order (moved out of the walk
-    verbatim in CRATE_DIR_ALIGN round 3 so the closest rule is testable). -> (why_or_None,
-    source_v). `fa_n` ([count]) and `fp_floor_hits` (list) are the walk's own accumulators."""
-    _why, _sv = _crown_tempo_mismatch(cand, measured, base_title, res=res)
-    # CRATE_DIR_ALIGN round 3: a lane row refused ONLY by the tempo gate (its widened family
-    # band, _dir_family_ok) is judged by every other gate below and, when they all pass, is
-    # listed as a "closest version" (never crowned).
-    _da_tempo = bool(_why and (cand.get("dir_align") or cand.get("dir_closest"))
-                     and _gate_kind(_why) == "tempo")
-    if _da_tempo:
-        _why = None
-    if not _why:
-        _why = _crown_contradicts(cand, gate_label, mdir, measured=measured,
-                                  tilt_readable=(_sv is None))
-    if not _why:
-        _why = _crown_other_song(cand, base_title, reup, res)
-    if not _why:
-        # TASK A: the rendition test is a gate on every row now, so the walk (and the
-        # highest-figure pick below) steps past the plain original.
-        _why = _rendition_original_why(cand, res.get("rendition"))
-    if not _why:
-        _why = _crown_fp_floor(cand, _sv)          # ROOTFIX B, flag-gated
-        if (_why and FP_FLOOR_ALIGN and fa_n[0] < _FA_MAX_ROWS
-                and (cand.get("core") or 0) >= E.CORE_EDIT):
-            fa_n[0] += 1                   # graded #41: head fp misaligned?
-            _fa = _floor_align(src.get("audio"), cand, src.get("tmp"))
-            if _fa and _fa.get("pass"):
-                _why = None
-        if _why:
-            fp_floor_hits.append(cand)
-    if not _why and (_da_tempo or cand.get("dir_closest")):
-        _why = _closest_why(cand, cand.get("dir_closest_why") or "speed")
-    return _why, _sv
-
-
-def _row_tempo_d(c):
-    """|log2| of the row's tempo against the clip (the bass-robust lock first, else vspeed); the
-    walk's distance. Moved out of _phase2 unchanged (CRATE_DIR_ALIGN round 4) so the walk's pick
-    is testable."""
-    _v = c.get("vspeed_locked")
-    if _v is None:
-        _v = c.get("vspeed")
-    return abs(math.log2(float(_v))) if _v and float(_v) > 0 else 0.0
-
-
-def _row_tempo_known(c):
-    # verify() writes vspeed 1.0 EXACTLY when its own confidence is too low to
-    # measure (verify.py, "unreliable -> don't invent a speed edit"). Real
-    # readings come back 0.9991, 1.0001, 1.0006 (the gate crowns), never the
-    # bare 1.0. An unmeasured row cannot be "nearer" than anything, so it may
-    # keep the crown rank_key gave it but never take one from a measured row.
-    return (c.get("vspeed_locked") is not None
-            or (c.get("vspeed") is not None and float(c["vspeed"]) != 1.0))
-
-
-def _walk_key(r):
-    """A source row (the clip re-pitched from it) last, then the nearest tempo, then rank."""
-    return (0 if r[2] is None else 1, _row_tempo_d(r[1]), r[0])
-
-
-def _walk_band_pick(rows):
-    """The walk's pick as it always was: row 1 when it is exact and not a source, else the nearest
-    tempo among rows of row 1's core (within 0.05) that have a measured tempo. -> (row, exact)."""
-    _i0, _c0, _s0 = rows[0]
-    if _s0 is None and _row_tempo_d(_c0) <= _TEMPO_EXACT:
-        return rows[0], True
-    _band = [r for r in rows
-             if r is rows[0]
-             or ((r[1].get("core") or 0) >= (_c0.get("core") or 0) - 0.05
-                 and _row_tempo_known(r[1]))]
-    return min(_band, key=_walk_key), False
-
-
-def _walk_pick(clean):
-    """The crown walk's pick from the remaining gate-clean rows [(pool_index, cand, source_v)].
-
-    CRATE_DIR_ALIGN round 4 (review finding: SEEK v1's failure (a)). A lane row's core is read on
-    the section the lane ALIGNED, every other row's on its first 20 s, so the two cannot be
-    compared. When row 1 is a lane row, the first-20s rows are walked exactly as they would be
-    without it (_walk_band_pick over them alone: core decides the song, tempo picks the family
-    member), and the lane rows compete with THAT pick on tempo only (_walk_key). An exact
-    first-20s pick keeps the crown. So a lane row 5-11% off the clip can no longer push the
-    at-tempo row out of the core band (X at v 1.004, core 0.75 under L at v 0.941, aligned core
-    1.0: X is the pick), and a lane row on top can never pull in a lower-core first-20s row the
-    walk without it would not pick (the review's proposed band, which admitted every row with a
-    measured tempo, crowned a core-0.70 row over the core-0.97 one in that case). When row 1 is
-    not a lane row, or only lane rows are left, the walk is unchanged."""
-    if not clean[0][1].get("dir_align"):
-        return _walk_band_pick(clean)[0]
-    heads = [r for r in clean if not r[1].get("dir_align")]
-    if not heads:
-        return _walk_band_pick(clean)[0]
-    pick, exact = _walk_band_pick(heads)
-    if exact:
-        return pick
-    return min([pick] + [r for r in clean if r[1].get("dir_align") and _row_tempo_known(r[1])],
-               key=_walk_key)
-
-
-def _figure_rows(clean_all, rejects, top):
-    """Rows _crown_by_figure may move the crown to: gate-clean, not refused by a null, and
-    (CRATE_DIR_ALIGN round 4) never a lane row farther from the clip's tempo than a walk pick
-    that is not a lane row. The figure prices a lane row on its aligned core, the pick on its
-    first 20 s, and the figure step's null (floor 0.0, on the pick's first 20 s) can refuse a
-    right at-tempo row on slowed+reverb audio (findings/core-saturation.md), which handed the
-    crown to a lane row 2.5-6% off (review: L at v 0.975, figure 81, over X at 75)."""
-    return [r for r in clean_all if r[0] not in rejects
-            and not (top is not None and r[1].get("dir_align") and not top.get("dir_align")
-                     and _row_tempo_d(r[1]) > _row_tempo_d(top))]
-
-
-def _list_closest(rows, candidates, gate_label, mdir, measured, base_title, reup, res,
-                  crown_url=None):
-    """CRATE_DIR_ALIGN round 3: list the lane's CLOSEST readings (find_edit's
-    result["closest"]) as rows of the result's version list, NEVER as a crown.
-
-    A closest reading passed every lane test (both clip windows' bars, the two-window speed
-    lock, the family band) but failed a crown-only one: the reversed control on its section, or
-    the bass-robust lock on that section disagreeing with the lane's speed. The engine kept it
-    out of the pool, so nothing on the crown path (the walk, _crown_by_figure, corrections)
-    can reach it; this runs after the crown is decided and only appends display rows. A row is
-    listed only when every non-tempo crown gate passes it (title contradiction, other song,
-    rendition, fp floor), and carries gate {"kind": "closest", "why", "note"}: the page prints
-    it at the refused cap (never above any crown) with the speed note ("this upload runs about
-    7% faster than the clip"). Display only; any failure lists nothing.
-
-    The lane only reads rows whose HEAD scored under CORE_KEEP, so such a row is never in the
-    gate pool; if a keep rescue still put its head reading on the list, that list entry is
-    replaced by the closest one (same url, never the crown: `crown_url` is skipped outright)."""
-    try:
-        listed, refused = [], []
-        shown = {c.get("url"): i for i, c in enumerate(candidates)}
-        for r in rows or []:
-            if not r.get("url") or r.get("url") == crown_url:
-                continue
-            why = _crown_contradicts(r, gate_label, mdir, measured=measured, tilt_readable=True)
-            if not why:
-                why = _crown_other_song(r, base_title, reup, res)
-            if not why:
-                why = _rendition_original_why(r, res.get("rendition"))
-            if not why:
-                why = _crown_fp_floor(r, None)
-            if why:
-                refused.append([(r.get("title") or "")[:60], (why or "")[:80]])
-                continue
-            row = _cand_row(r)
-            row["gate"] = _closest_gate(r, r.get("dir_closest_why"))
-            row["closest"] = True
-            row["aligned_at"] = r.get("seek_at")
-            if r.get("url") in shown:
-                candidates[shown[r.get("url")]] = row
-            else:
-                shown[r.get("url")] = len(candidates)
-                candidates.append(row)
-            listed.append(row)
-        if listed:
-            res["closest_version"] = {"title": listed[0].get("title"),
-                                      "url": listed[0].get("url"),
-                                      "note": listed[0]["gate"].get("note"),
-                                      "why": listed[0]["gate"].get("why")}
-        if rows:
-            E.tlog("dir_closest", 0.0, n=len(rows), listed=[[(x.get("title") or "")[:60],
-                                                            x["gate"].get("note")] for x in listed],
-                   refused=refused)
-    except Exception as _e:
-        try:
-            E.tlog("dir_closest", 0.0, error=type(_e).__name__)
-        except Exception:
-            pass
 
 
 # ------------- THE HIGHEST MATCH IS THE MAIN RESULT (task A, rebased as A2 2026-09-27) -------------
@@ -4145,24 +3865,10 @@ def _level_with(row, crown, pitched):
     if crown is None or row is crown or row.get("url") == crown.get("url"):
         return False
     core = row.get("core")
-    # CRATE_DIR_ALIGN round 5 (review: L at v 0.975 printed 81 under the crown X at 75): a lane
-    # row's core was read on the section the lane aligned, the crown's on its first 20 s, so a
-    # lane row's 1.000 is no more comparable with the crown's score than a first-20s 0.74 is. It
-    # is judged on the speed and EQ legs alone, like a row under CORE_SAME, whatever its core.
-    # (Two lane rows were read the same way, so between them the old rule stands.)
-    lane = bool(row.get("dir_align")) and not crown.get("dir_align")
-    if core is None or (core >= E.CORE_SAME and not lane):
+    if core is None or core >= E.CORE_SAME:
         return False
     rl, cl = _legs_figure(row, pitched), _legs_figure(crown, pitched)
     return rl is not None and cl is not None and rl <= cl
-
-
-def _lane_under_crown(row, crown):
-    """CRATE_DIR_ALIGN round 5, display: a lane row that is not the crown never prints above
-    it. The walk and the figure step decide whether a lane row is the answer; when they did not
-    crown it, its aligned score cannot argue on screen (crate.html vmatch does the same)."""
-    return bool(crown is not None and row.get("dir_align") and row is not crown
-                and row.get("url") != crown.get("url"))
 
 
 def _row_figure(row, pitched, crown_src=None, crown=None):
@@ -4181,7 +3887,7 @@ def _row_figure(row, pitched, crown_src=None, crown=None):
         pct = 94 if exact else max(_FIG_FLOOR, _js_round(f * 100))
     else:
         pct = 100 if exact else max(_FIG_FLOOR, _js_round(f * 100))
-    if crown is not None and (_level_with(row, crown, pitched) or _lane_under_crown(row, crown)):
+    if crown is not None and _level_with(row, crown, pitched):
         cf = _row_figure(crown, pitched, crown_src=crown_src)
         if cf is not None and pct > cf:
             pct = cf
@@ -4310,6 +4016,131 @@ def _write_figs(res):
             r["fig"] = _row_figure(r, pitched, crown_src=src_url, crown=(ex or None))
     except Exception as _ex:
         E.tlog("write_figs", 0.0, error=type(_ex).__name__)
+
+
+# ------------- SIMILAR EDITS (CRATE_DIR_ALIGN, closest-only redesign) -------------
+# find_edit's lane hands back result["similar_edits"] (crate_engine DIR_ALIGN): uploads whose
+# matching SECTION it found later in the upload, on two clip windows at one speed, a few percent
+# off the clip (Usher / Ttraamat "Yeah! (Slowed&Reverbed)" runs about 7% faster than the clip).
+# They are NEVER crowned and never reach the version list, the gates, the walk, the figure pick,
+# corrections, the rows' figures or anything else the crown is computed from: _similar_edits runs
+# after the payload is final and only ADDS res["similar_edits"], so a scan without one is
+# byte-identical to the scan without the lane. A reading the crown bar would have refused says so
+# in `reason`; it does not stop the listing, since nothing is crowned from it.
+_SIMILAR_WHY = {
+    "rev": "its matching section beat its own reversed audio, though not by enough to prove the "
+           "recording",
+    "lock": "two speed readings on its matching section disagree",
+    "rev+lock": "its matching section beat its own reversed audio, though not by enough to prove "
+                "the recording, and two speed readings on it disagree",
+}
+
+
+def _similar_speed(r):
+    """The row's tempo against the clip: the bass-robust lock on its section, else the lane's."""
+    v = r.get("vspeed_locked")
+    if v is None:
+        v = r.get("vspeed")
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _similar_note(r):
+    """'this upload runs about N% faster/slower than the clip' (verify's speed is the CLIP's tempo
+    against the upload, so v 0.9353 = the upload runs 1/v = about 7% faster)."""
+    v = _similar_speed(r)
+    if v is None:
+        return None
+    if abs(math.log2(v)) <= _TEMPO_EXACT:
+        return "this upload runs at the clip's speed"
+    return ("this upload runs about %.0f%% %s than the clip"
+            % (abs(1.0 - 1.0 / v) * 100.0, "slower" if v > 1.0 else "faster"))
+
+
+def _similar_tempo_ok(r, m_speed, base_title):
+    """TEMPO DIRECTION, the reader's last safety check: the upload's own tempo against the master
+    (m_speed / v) has moved off 1.0, by more than _TEMPO_TOL, in the direction its title claims
+    (crate_engine._fast_edit_claim, the lane's own words). `m_speed` is the clip's speed against
+    the master. A "(Slowed + Reverb)" upload that really plays at the master's tempo, or faster,
+    is the original relabelled and is not listed (v 0.94 on a 0.94x clip is an upload at 1.000x).
+    Usher / Ttraamat: m 0.84 (phase 1) or 0.7022 (measured), v 0.9342 -> 0.90x / 0.75x, slowed."""
+    try:
+        v = _similar_speed(r)
+        if not m_speed or float(m_speed) <= 0 or v is None:
+            return False
+        cdir = "slowed" if float(m_speed) < 1.0 else "sped up"
+        if not E._fast_edit_claim(r.get("title") or "", cdir, base_title):
+            return False
+        u = math.log2(float(m_speed) / v)
+        return u < -_TEMPO_TOL if cdir == "slowed" else u > _TEMPO_TOL
+    except Exception:
+        return False
+
+
+def _similar_edits(res, edit, measured, edit_label, base_title):
+    """Attach find_edit's similar edits to a FINISHED payload as res["similar_edits"], a list of
+    {title, url, source, uploader, art, figure, note, reason, aligned_at, speed}. Reads `res`
+    and writes nothing but that one key. Listed only on a "found" result whose speed is a
+    tempo (not CRATE_TEMPO_KEPT's pitch-kept clip), never a url already on screen (the crown or a
+    version row), and only when the upload's own tempo moved in its title's direction
+    (_similar_tempo_ok, against the confident measurement, else phase 1's own ratio). `figure` is
+    the refused-row figure the page prints for a version it ruled out (half, never above 45),
+    and always under the crown's own figure. Display only; any failure lists nothing."""
+    try:
+        rows = (edit or {}).get("similar_edits") or []
+        if not rows:
+            return
+        if res.get("result") != "found" or res.get("pitch_kept"):
+            E.tlog("similar_edits", 0.0, n=len(rows), listed=[],
+                   skipped="result %s pitch_kept %s" % (res.get("result"), res.get("pitch_kept")))
+            return
+        m = (measured or {}).get("speed") if (measured or {}).get("confident") else None
+        m = m or _phase1_speed(edit_label)
+        ex = res.get("exact") or None
+        shown = {c.get("url") for c in (res.get("candidates") or [])}
+        _rd = res.get("rendition") or {}
+        _fam = (_rd.get("speed_vs_source") if _rd.get("of_song") else res.get("speed")) or ""
+        pitched = (res["fig_pitched"] if isinstance(res.get("fig_pitched"), bool)
+                   else bool(_FIG_PITCH.search(_fam)))
+        cap = None
+        if ex:
+            shown.add(ex.get("url"))
+            cap = _row_figure(ex, pitched,
+                              crown_src=(ex.get("url") if res.get("crown_is_source") else None))
+        out, skipped = [], []
+        for r in rows:
+            u = r.get("url")
+            if not u or u in shown:
+                skipped.append([(r.get("title") or "")[:60], "on screen"])
+                continue
+            if not _similar_tempo_ok(r, m, base_title):
+                skipped.append([(r.get("title") or "")[:60], "tempo direction"])
+                continue
+            row = _cand_row(r)
+            fig = _row_figure(dict(row, gate={"kind": "similar"}), pitched)
+            if fig is not None and cap is not None:
+                fig = min(fig, cap - 1)
+            shown.add(u)
+            out.append({"title": row.get("title"), "url": u, "source": row.get("source"),
+                        "uploader": row.get("uploader"), "art": row.get("art"), "figure": fig,
+                        "note": _similar_note(r),
+                        "reason": _SIMILAR_WHY.get(r.get("reason") or ""),
+                        "aligned_at": r.get("seek_at"), "speed": row.get("vspeed")})
+        out = out[:getattr(E, "DIR_ALIGN_MAX", 3)]
+        if out:
+            res["similar_edits"] = out
+        E.tlog("similar_edits", 0.0, n=len(rows), m=m,
+               listed=[[o["title"][:60] if o.get("title") else "", o["note"], o["figure"]]
+                       for o in out], skipped=skipped)
+    except Exception as _e:
+        res.pop("similar_edits", None)
+        try:
+            E.tlog("similar_edits", 0.0, error=type(_e).__name__)
+        except Exception:
+            pass
 
 
 def _official_refs(src, base_title, base_artist, prefix="om"):
@@ -5000,6 +4831,7 @@ def _phase2(ctx, on_cand=None):
                 comment_urls=_cmlinks,
                 pair=(mash or {}).get("pair"), on_cand=_emit,
                 posted_rival=(fp or {}).get("posted_rival"),   # ROOTFIX A (flag-gated)
+                similar_edits=True,    # CRATE_DIR_ALIGN: a separate list, never in the pool
                 **({"comment_urls_more": _more_fn} if _more_fn is not None else {})))
             E.tlog("find_edit", time.time() - _t,
                    fast=bool(edit.get("fast_path")), nranked=len(edit.get("ranked") or []))
@@ -5309,21 +5141,61 @@ def _phase2(ctx, on_cand=None):
             _fa_n = [0]                    # FP_FLOOR_ALIGN rows looked at this scan
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
-                _why, _sv = _gate_one(_cand, measured, base_title, res, _gate_label, mdir,
-                                      _reup, src, _fa_n, _fp_floor_hits)
+                _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title, res=res)
+                if not _why:
+                    _why = _crown_contradicts(_cand, _gate_label, mdir,
+                                              measured=measured,
+                                              tilt_readable=(_sv is None))
+                if not _why:
+                    _why = _crown_other_song(_cand, base_title, _reup, res)
+                if not _why:
+                    # TASK A: the rendition test is a gate on every row now, so the walk
+                    # (and the highest-figure pick below) steps past the plain original.
+                    _why = _rendition_original_why(_cand, res.get("rendition"))
+                if not _why:
+                    _why = _crown_fp_floor(_cand, _sv)          # ROOTFIX B, flag-gated
+                    if (_why and FP_FLOOR_ALIGN and _fa_n[0] < _FA_MAX_ROWS
+                            and (_cand.get("core") or 0) >= E.CORE_EDIT):
+                        _fa_n[0] += 1                   # graded #41: head fp misaligned?
+                        _fa = _floor_align(src.get("audio"), _cand, src.get("tmp"))
+                        if _fa and _fa.get("pass"):
+                            _why = None
+                    if _why:
+                        _fp_floor_hits.append(_cand)
                 if _why:
                     _rejects[_i] = (_why, _cand)
                     continue
                 _clean.append((_i, _cand, _sv))
             _clean_all = list(_clean)      # the walk below consumes _clean; rows read this
 
-            # the walk's tempo distance and pick moved to module level unchanged
-            # (_row_tempo_d, _row_tempo_known, _walk_band_pick); CRATE_DIR_ALIGN round 4 changes
-            # only a walk whose row 1 is a lane row (_walk_pick)
+            def _tempo_d(c):
+                _v = c.get("vspeed_locked")
+                if _v is None:
+                    _v = c.get("vspeed")
+                return abs(math.log2(float(_v))) if _v and float(_v) > 0 else 0.0
+
+            def _tempo_known(c):
+                # verify() writes vspeed 1.0 EXACTLY when its own confidence is too low to
+                # measure (verify.py, "unreliable -> don't invent a speed edit"). Real
+                # readings come back 0.9991, 1.0001, 1.0006 (the gate crowns), never the
+                # bare 1.0. An unmeasured row cannot be "nearer" than anything, so it may
+                # keep the crown rank_key gave it but never take one from a measured row.
+                return (c.get("vspeed_locked") is not None
+                        or (c.get("vspeed") is not None and float(c["vspeed"]) != 1.0))
+
             top = None
             _source_v = None
             while _clean:
-                _pick = _walk_pick(_clean)
+                _i0, _c0, _s0 = _clean[0]
+                if _s0 is None and _tempo_d(_c0) <= _TEMPO_EXACT:
+                    _pick = _clean[0]
+                else:
+                    _band = [r for r in _clean
+                             if r is _clean[0]
+                             or ((r[1].get("core") or 0) >= (_c0.get("core") or 0) - 0.05
+                                 and _tempo_known(r[1]))]
+                    _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
+                                                       _tempo_d(r[1]), r[0]))
                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
                                            _pick[1].get("core"), seek=_seek_of(_pick[1]))
                 if _why:
@@ -5338,7 +5210,7 @@ def _phase2(ctx, on_cand=None):
             # runs. Any failure keeps the walk's pick: this can never cost the answer.
             try:
                 _shown = {c.get("url") for c in candidates}
-                _okrows = _figure_rows(_clean_all, _rejects, top)
+                _okrows = [r for r in _clean_all if r[0] not in _rejects]
 
                 def _p_of(c, sv):
                     return bool(_FIG_PITCH.search(
@@ -5383,8 +5255,6 @@ def _phase2(ctx, on_cand=None):
             # it, the reason is logged and the engine's own pick stands.
             if _corr is not None:
                 def _cgate(c):
-                    if c.get("dir_closest"):
-                        return _closest_why(c, c.get("dir_closest_why")), None
                     _w, _s = _crown_tempo_mismatch(c, measured, base_title, res=res)
                     if not _w:
                         _w = _crown_contradicts(c, _gate_label, mdir, measured=measured,
@@ -5425,11 +5295,7 @@ def _phase2(ctx, on_cand=None):
                 # every row above the bar was refused - report the FIRST refusal, which is
                 # the one about the strongest candidate and the one worth showing.
                 if _rejects:
-                    # a "closest version" listing is not a refusal of the strongest candidate;
-                    # the first REAL refusal is the one shown (it is shown only when none exists)
-                    _realr = [i for i, (_w, _c) in _rejects.items()
-                              if _gate_kind(_w) != "closest"]
-                    _first_reject = _rejects[min(_realr) if _realr else min(_rejects)]
+                    _first_reject = _rejects[min(_rejects)]
                     res["crown_rejected"] = _first_reject[0]
                     res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
@@ -5464,12 +5330,6 @@ def _phase2(ctx, on_cand=None):
                 pass
             _gate_rows(candidates, verified, _rejects, _clean_all, measured, base_title,
                        _gate_label, mdir, _reup, res)
-            # CRATE_DIR_ALIGN round 3: the lane's CLOSEST readings (result["closest"]) were
-            # never in the pool, so no gate, walk, figure pick or correction above saw them.
-            # Each is listed after the verified rows, with its speed note and a "closest"
-            # gate, when every non-tempo crown gate passes it.
-            _list_closest(edit.get("closest"), candidates, _gate_label, mdir, measured,
-                          base_title, _reup, res, crown_url=(top or {}).get("url"))
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.
@@ -5791,6 +5651,7 @@ def _phase2(ctx, on_cand=None):
                 and "pitch kept" not in res["speed"]):
             res["speed"] = res["speed"] + ", pitch kept"       # CRATE_TEMPO_KEPT: display
         _write_figs(res)
+        _similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only
         res["edits_pending"] = False
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key, outcome="hunt")   # APPLYALL 2026-09-29

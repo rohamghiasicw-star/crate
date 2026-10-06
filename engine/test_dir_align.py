@@ -1,79 +1,43 @@
-"""CRATE_DIR_ALIGN rounds 2 and 3, proven without the network: no Shazam, no downloads, no scan.
-Synthetic songs (seeded note sequences with harmonics and a pulse) stand in for uploads.
-`/usr/bin/python3 test_dir_align.py` from engine/ (needs ffmpeg + fpcalc, like verify()).
+"""CRATE_DIR_ALIGN, SIMILAR EDITS ONLY (the closest-only redesign), proven without the network: no
+Shazam, no downloads, no scan. Synthetic songs (seeded note sequences with harmonics and a pulse)
+stand in for uploads. `/usr/bin/python3 test_dir_align.py` from engine/ (needs ffmpeg + fpcalc).
 
-Round 2:
-1. verify_samples() on a slice of one decode == cut + verify() on that window (round 1's way).
-2. _dir_align_read adopts a clip cut from the middle of its own upload, re-pitched within the
-   family band, at that speed and that window; rejects another song; refuses the same locked
-   reading once its speed is outside DIR_ALIGN_VMAX ("band").
-3. _dir_align_rows: direction, eligibility, SoundCloud first, the cap, the decisive skip.
-4. _DirAlignLane: offer() starts an eligible row (cap, decisive), result() joins it, close()
-   leaves no file behind.
-Round 3 (the review's risky branches):
-5. REVERSED CONTROL: a section whose time-reversed slice fingerprints as well as it does (a
-   time-symmetric song) passes every lane test but comes back "closest", never "crown", and the
-   lane drops its pull.
-6. ctxs() under concurrent callers (staggered starts): one build, one result, full fingerprint,
-   no temp file left.
-7. EXCEPTION UNWIND: the body raises while a lane job is inside its pull. find_edit's wrapper
-   closes the lane before it removes the dir, so yt-dlp can never recreate it: no dir, no file.
-   A control run without the close shows the leak the test exists to catch.
-8. close() kills a running lane yt-dlp; every job (offered or first read at the ranking pass)
-   runs on one executor, so at most DIR_ALIGN_MAX run at once; retire() stops unwanted rows.
-9. Title claims: a mashup / "vs" / medley / "A x B" never enters the lane; words, not substrings.
-10. _dir_align_speeds dedupes hypotheses one spectrum bin apart in log10 (verify._PER_BIN's unit).
-11. server: the widened gate checks a confident clip speed, the lane's own direction words and the
-    upload's own tempo against the master; a lane row refused only there, or a lane CLOSEST row,
-    is listed with gate "closest" and never reaches the walk's clean rows (never crowned).
-Round 4 (the re-review):
-9. (extended) the lane's title claim as find_edit composes it also refuses a mashup / blend /
-   transition whichever side of the dash holds the song, or joined by & + / | (_dir_align_mixed).
-12. the walk: a lane row on top competes with the first-20s rows' own pick on tempo only, so an
-    at-tempo row is crowned over a lane row 5-11% off even when its figure null refuses it, a lane
-    row never takes the crown by figure from a nearer first-20s pick, and a lane row on top never
-    pulls a lower-core row into the crown (controls show round 3 and the review's band failing).
-Round 5 (the re-review's 2 confirmed defects and 3 low findings):
-9. (extended) a join after an unbracketed ft./feat. credit, or inside brackets, is still a mix
-   (clip 32's failure through a credit); credit brackets and treatment brackets stay plain; only
-   ever stricter than round 4 (a control shows round 4 admitting all 8 shapes).
-13. the join past the hunt budget's T: a row the lane started during the waves is joined (its
-   reading kept, the budget not fired, so the scan stays cacheable); only a NEW ranking-pass pull
-   is skipped and recorded; the cap still bounds the wait (control: round 4's gate fires).
-14. YouTube rows never enter the lane (SoundCloud and other sources do); retire() kills a retired
-   job's yt-dlp fallback and its own thread reads the lane as dead, so its worker is freed at once
-   (control: round 4's retire left the fallback running).
-15. server: a lane row that is not the crown never prints above it (_cand_row carries dir_align,
-   _level_with judges it on the legs, _row_figure caps it), and the page's vmatch / pageCrown do
-   the same, number for number with the server (run through node when it is installed).
-16. server: the per-section hunt never takes a lane row as a section's version.
-Round 6 (the re-review's 3 confirmed defects):
-9. (extended) a medley / transition joined by a word or mark the join list does not know
-   ("into", "->", an arrow, a comma, "//", " ~ ", "and", or nothing at all) is a mix, and so is a
-   " + ", " / " or " | " join after an unbracketed feat credit (the strip stopped only at " x ");
-   plain credit titles stay eligible; only ever stricter than round 5 (a control shows round 5
-   admitting all 11 shapes), round 4 and round 3.
-17. the join gets EVERY eligible row (cap=None) and makes the pick: past T with no evidence the
-   started rows fill it, so a started row is never traded for a new pull rule 1 refuses (readings
-   kept, nothing retired, budget not fired); retire() runs after the join; before T the pick is
-   the first DIR_ALIGN_MAX as before (control: round 5's retire-then-join fired the budget and
-   retired a started row). find_edit offers the carried fast-path rows to the lane as soon as it
-   is built, so such a row is a started row: joined past T, budget not fired (control: never
-   offered, it is a new pull, skipped, and the budget fires).
-Round 7 (the re-review's 2 confirmed defects):
-18. server + engine: a lane row neither collapses nor is collapsed in the shelf dedup
-   (_shelf_dedup, moved out of find_edit's body unchanged but for that rule). A lane row the server
-   refuses (_dir_family_ok: a "(Slowed + Reverb)" upload really at the master's tempo) no longer
-   drops the plain at-tempo upload of the same section from the pool, so the walk still crowns it
-   as the SOURCE, as 7125e63 does (control: round 6's dedup dropped it and nothing was crowned);
-   for a pool with no lane row the dedup is exactly round 6's.
-19. find_edit builds the lane only on a clip ctxs() can give two windows (>= 40 s,
-   _dir_align_two_windows), so a short clip runs live's path; and past T with no evidence, a lane
-   with one clip window joins nothing and never fires the hunt budget, on a 25 s clip and on a long
-   clip whose second window failed the 90% fingerprint check (controls: round 6's join fired it);
-   a 60 s clip still joins all 3 started rows.
+The design under test: the lane can never produce a crown and never changes anything the scan did
+before it existed. Its only output is result["similar_edits"] / res["similar_edits"], a separate
+list the page shows in its own "Similar edit" group.
+
+A. the reader: verify_samples() on a slice == cut + verify(); _dir_align_read finds a clip cut from
+   the middle of its own upload at that window and speed, rejects another song and a reading
+   outside the family band; the reversed control decides what is LISTED (a section its reversal
+   matches as well is never listed) and the crown bar is only a reason; verify() is still 7125e63's.
+B. eligibility: direction, SoundCloud first, the cap, the decisive skip, whole words, every mashup /
+   medley / two-song shape (round 8's repeated-artist joins included), only ever stricter than the
+   f07eb8c lane, never a YouTube row.
+C. the lane object: offer() (cap, once, decisive), the executor cap, ctxs() single-flight, close()
+   kills a running yt-dlp, a one-window clip starts nothing.
+D. the join never touches the hunt budget: finished readings are kept and running ones let go, past
+   T and at the cap (the review's case); the wait is bounded and only before T; a row never started
+   is never pulled at the join; 300 random budgets come out of the lane step exactly as they went in;
+   no lane code names a budget method.
+E. the pool is untouched and nothing is crowned in the engine: _dir_align_collect on 300 random pools
+   leaves every row byte-identical and returns new dicts only; find_edit's body and wrapper are
+   7125e63's code plus the two lane blocks and nothing else, and every other engine function is
+   7125e63's verbatim.
+F. server: server.py is 7125e63 plus additions only; _phase2 run end to end (find_edit, the network
+   and the null controls stubbed identically) on 600 random pools gives a payload byte-identical to
+   7125e63's with and without similar edits present, and a similar edit is never the crown or a
+   version row on any of them; _similar_edits' own rules (tempo direction, on-screen urls, pitch
+   kept, figure under the crown's, note text, failure lists nothing); the per-section hunt never asks
+   for the lane.
+G. page: crate.html is 7125e63 plus additions only, simEdits is its one reader of similar_edits, and
+   (through node) it labels rows "Similar edit", never "Closest version" or "Our pick", prints the
+   figure under the crown's, and draws nothing for a payload without similar edits.
+H. retention: find_edit's wrapper closes the lane before the dirs go (control: without it yt-dlp
+   recreates the dir); a lane job that raises leaves no file; 40 lane jobs, half raising, leave no
+   fd, no thread and no process behind.
 """
-import asyncio, os, random, shutil, subprocess, sys, tempfile, threading, time
+import asyncio, copy, difflib, glob, importlib.util, inspect, json, os, pickle, random, re, shutil
+import socket, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import numpy as np
@@ -82,12 +46,42 @@ import verify as V
 from find_song import cut
 
 FAIL = []
+BASE_REV = "7125e63"       # live (origin/shazamkit-testflight)
+LANE_REV = "f07eb8c"       # the crown-capable lane this redesign replaces (stricter-than control)
 
 
 def check(name, ok, detail=""):
     print("%s %s %s" % ("PASS" if ok else "FAIL", name, detail))
     if not ok:
         FAIL.append(name)
+
+
+def skip(name, why):
+    print("SKIP %s (%s)" % (name, why))
+
+
+def rev_src(rev, name):
+    """engine/<name> at `rev`, from git, or from $DIR_ALIGN_BASE_DIR (the 7125e63 copy, on the box
+    where the engine is not a git checkout). None when neither is there."""
+    d = os.environ.get("DIR_ALIGN_BASE_DIR")
+    if rev == BASE_REV and d and os.path.exists(os.path.join(d, name)):
+        return open(os.path.join(d, name), encoding="utf-8").read()
+    try:
+        return subprocess.run(["git", "-C", HERE, "show", "%s:engine/%s" % (rev, name)],
+                              capture_output=True, text=True, check=True).stdout
+    except Exception:
+        return None
+
+
+def load_src(name, src, tmp):
+    """`src` imported as module `name` (from a file in tmp, so inspect can read it)."""
+    p = os.path.join(tmp, name + ".py")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(src)
+    spec = importlib.util.spec_from_file_location(name, p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
 
 
 def song(seed, secs=130, sr=44100):
@@ -115,9 +109,8 @@ def song(seed, secs=130, sr=44100):
 
 
 def palindrome_song(seed, secs=130, sr=44100, note=0.5):
-    """A TIME-SYMMETRIC 'track': a short palindromic motif (notes with symmetric envelopes, no
-    attack/decay) repeated, so any window reversed is the same music at a shifted phase. Its
-    reversed slice fingerprints as well as the forward one: the reversed control's null case."""
+    """A TIME-SYMMETRIC 'track': a palindromic motif with symmetric envelopes, repeated, so any
+    window reversed is the same music at a shifted phase: the reversed control's null case."""
     rng = np.random.RandomState(seed)
     scale = [0, 2, 3, 5, 7, 8, 10, 12]
     half = [(110.0 * 2 ** (scale[rng.randint(8)] / 12.0), 440.0 * 2 ** (scale[rng.randint(8)] / 12.0))
@@ -148,390 +141,25 @@ def mkclip(src, dst, r, start=40, dur=60):
                     "-b:a", "96k", dst], check=True)
 
 
-def server_tests(tmp):
-    """11. server.py: the widened gate and the closest rule (imports server as a module, as
-    test_corr_server does: no HTTP server, no scan, no Shazam)."""
-    os.environ.update({"ADDIFY_CORRECTIONS": os.path.join(tmp, "corrections.json"),
-                       "ADDIFY_FIXQUEUE": os.path.join(tmp, "fixqueue.jsonl"),
-                       "CRATE_PERSIST_CACHE": "0", "PORT": "8991", "ADDIFY_X_ALERT": "0",
-                       "CRATE_TIMING": os.path.join(tmp, "tlog.jsonl")})
-    import server as S
-    E.DIR_ALIGN = True
-    m94 = {"speed": 0.94, "confident": True}
-    usher_m = {"speed": 0.7022, "confident": True}
-    row = lambda v, title="Usher - Yeah! (Slowed + Reverb)", **k: dict(
-        {"title": title, "uploader": "someone", "vspeed": v, "core": 1.0, "fp": 0.72,
-         "dir_align": True, "url": "https://soundcloud.com/x/%s" % v}, **k)
-    bt = "Yeah! (feat. Lil Jon & Ludacris)"
-    w, sv = S._crown_tempo_mismatch(row(0.94), m94, bt)
-    check("gate: a 'slowed' upload at the master's tempo is refused", bool(w) and sv is None, str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.905), m94, bt)
-    check("gate: a 'slowed' upload faster than the master is refused", bool(w), str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.905), {"speed": 0.94, "confident": False}, bt)
-    check("gate: no confident clip speed, no widened gate", bool(w), str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.9353, title="Usher - Yeah! (Slowed&Reverbed)"),
-                                    usher_m, bt)
-    check("gate: Usher/Ttraamat numbers (upload 0.751x of the master) admitted",
-          w is None and sv is None, str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.9353, title="Usher - Yeah! (Daycore)"), usher_m, bt)
-    check("gate: daycore counts as slowed, as in the lane", w is None, str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.9353, title="Usher - Yeah! (Chopped & Screwed)"),
-                                    usher_m, bt)
-    check("gate: screwed counts as slowed, as in the lane", w is None, str(w))
-    w, sv = S._crown_tempo_mismatch(row(0.9353, title="Usher - Yeah! (Sped Up)",
-                                        uploader="slowedtunes"), usher_m, bt)
-    check("gate: an uploader name is not a title claim", bool(w), str(w))
-    lane_dirs_agree = all(
-        bool(E._fast_edit_claim(t, "slowed", bt)) == S._dir_family_ok(
-            {"title": t}, 0.9353, 0.7022, bt)
-        for t in ("Usher - Yeah! (Slowed)", "Usher - Yeah! daycore", "Usher - Yeah! screwed",
-                  "Usher - Yeah! (sped up)", "Usher - Yeah!", "Usher - Yeah! slow"))
-    check("gate: lane and server read the same direction words", lane_dirs_agree)
-    w, sv = S._crown_tempo_mismatch(row(0.9353, dir_align=False,
-                                        title="Usher - Yeah! (Slowed&Reverbed)"), usher_m, bt)
-    check("gate: without the lane mark the row is refused as before", bool(w), str(w))
-    w, sv = S._crown_tempo_mismatch({"title": "Usher - Yeah!", "vspeed": 0.94, "core": 1.0},
-                                    m94, bt)
-    check("gate: the plain master stays the honest SOURCE", w is None and sv == 0.94, "%s %s" % (w, sv))
-
-    # the closest rule in the walk's gates (_gate_one) and the listing (_list_closest)
-    ttr = row(0.9353, title="Usher - Yeah! (Slowed&Reverbed)", fp=0.7291,
-              url="https://soundcloud.com/ttraamat/usher-yeah-slowed-reverbed")
-    lyr = {"title": "Usher - Yeah! (Lyrics) Ft. Lil Jon, Ludacris", "uploader": "lyrics",
-           "vspeed": 0.7022, "core": 1.0, "fp": 0.5749, "url": "https://www.youtube.com/watch?v=x"}
-    src = {"audio": None, "tmp": None}
-    res = {}
-
-    def walk(pool, measured):
-        rej, clean, fa, hits = {}, [], [0], []
-        for i, c in enumerate(pool):
-            why, s = S._gate_one(c, measured, bt, res, "slowed ~0.84x", "slowed", None, src, fa, hits)
-            if why:
-                rej[i] = (why, c)
-            else:
-                clean.append((i, c, s))
-        return rej, clean
-    rej, clean = walk([ttr, lyr], {"speed": 0.84, "confident": False})
-    check("walk: a lane row refused only by the widened gate is CLOSEST, not clean",
-          0 in rej and S._gate_kind(rej[0][0]) == "closest" and all(c is not ttr for _i, c, _s in clean),
-          rej.get(0, ("",))[0])
-    check("walk: closest sentence carries the speed note",
-          "this upload runs about 7% faster than the clip" in rej.get(0, ("",))[0])
-    rej2, clean2 = walk([dict(ttr, dir_align=False, dir_closest=True, dir_closest_why="rev"), lyr],
-                        usher_m)
-    check("walk: a lane CLOSEST row never reaches the clean rows, even with every gate passing",
-          0 in rej2 and S._gate_kind(rej2[0][0]) == "closest"
-          and all(not c.get("dir_closest") for _i, c, _s in clean2), rej2.get(0, ("",))[0])
-    rej3, clean3 = walk([ttr], usher_m)
-    check("walk: a lane row that passes the widened gate stays crown-eligible",
-          not rej3 and len(clean3) == 1, str(rej3))
-    cands = [S._cand_row(lyr)]
-    res4 = {}
-    S._list_closest([dict(ttr, dir_align=False, dir_closest=True, dir_closest_why="rev")],
-                    cands, "slowed ~0.70x", "slowed", usher_m, bt, None, res4)
-    lst = [c for c in cands if c.get("closest")]
-    check("list: the closest row is listed after the verified rows, gate 'closest'",
-          len(cands) == 2 and cands[-1].get("closest") and cands[-1]["gate"]["kind"] == "closest",
-          str(cands[-1].get("gate")))
-    check("list: speed note on the row and in closest_version",
-          lst and lst[0]["gate"]["note"] == "this upload runs about 7% faster than the clip"
-          and res4.get("closest_version", {}).get("note") == lst[0]["gate"]["note"],
-          str(res4.get("closest_version")))
-    S._list_closest([dict(ttr, dir_closest=True, title="Usher - Yeah! (Official Video) slowed",
-                          url="https://soundcloud.com/z")], cands, "as posted", None, None, bt,
-                    None, {})
-    check("list: a row another crown gate refuses is not listed", len(cands) == 2,
-          str([c.get("title") for c in cands]))
-    c2 = [S._cand_row(lyr), dict(S._cand_row(ttr), core=0.4)]
-    S._list_closest([dict(ttr, dir_closest=True, dir_closest_why="rev")], c2, "slowed ~0.70x",
-                    "slowed", usher_m, bt, None, {})
-    check("list: a head reading of the same upload on the list is replaced, not doubled",
-          len(c2) == 2 and c2[1].get("closest") and c2[1]["core"] == 1.0, str(c2[1].get("gate")))
-    c3 = [S._cand_row(lyr)]
-    S._list_closest([dict(ttr, dir_closest=True, dir_closest_why="rev", url=lyr["url"])], c3,
-                    "slowed ~0.70x", "slowed", usher_m, bt, None, {}, crown_url=lyr["url"])
-    check("list: the crown's own url is never relabelled closest", len(c3) == 1
-          and not c3[0].get("closest"))
-    w = S._closest_why({"vspeed": 1.07}, "lock")
-    check("closest kind wins over the null wording", S._gate_kind(w) == "closest"
-          and "slower" in w, w)
-
-    # 12. ROUND 4 (review finding, SEEK v1 failure (a)): the walk and the figure step with a lane
-    # row in the pool. The walk loop below is _phase2's (gates, pick, null, figure rows,
-    # _crown_by_figure); every decision in it is the server's own function.
-    def crown(pool, measured, label, pickf=S._walk_pick, figrows=S._figure_rows,
-              fig_null=(), walk_null=()):
-        rej, clean = {}, []
-        for i, c in enumerate(pool):
-            why, s = S._gate_one(c, measured, bt, {}, label, "slowed", None, src, [0], [])
-            if why:
-                rej[i] = (why, c)
-            else:
-                clean.append((i, c, s))
-        clean_all = list(clean)
-        top = sv = None
-        while clean:
-            pick = pickf(clean)
-            # the walk's null runs only at core >= 0.999 (its floor)
-            if pick[1]["url"] in walk_null and (pick[1].get("core") or 0) >= 0.999:
-                rej[pick[0]] = ("null", pick[1])
-                clean.remove(pick)
-                continue
-            top, sv = pick[1], pick[2]
-            break
-        ok_rows = figrows(clean_all, rej, top)
-        top2, _sv2, _info = S._crown_by_figure(
-            ok_rows, top, sv, {c["url"] for c in pool}, lambda c, s: True,
-            lambda c: "Texture only" if c["url"] in fig_null else None)
-        return (top or {}).get("url"), (top2 or {}).get("url")
-    m80 = {"speed": 0.80, "confident": True}
-    L = {"title": "Usher - Yeah! (Slowed)", "uploader": "b", "vspeed": 0.941, "core": 1.0,
-         "fp": 0.80, "dir_align": True, "seek_at": 84.0, "seek_clip_at": 0.0, "url": "L"}
-    X = {"title": "usher yeah slowed + reverb", "uploader": "a", "vspeed": 1.004,
-         "vspeed_locked": 1.004, "core": 0.75, "fp": 0.63, "url": "X"}
-    check("walk4: the review's pool [L v0.941 lane, X v1.004 core 0.75], X's figure null refusing:"
-          " X is crowned", crown([L, X], m80, "slowed ~0.80x", fig_null=("X",)) == ("X", "X"),
-          str(crown([L, X], m80, "slowed ~0.80x", fig_null=("X",))))
-    old_pick = lambda cl: S._walk_band_pick(cl)[0]
-    old_fig = lambda ca, rj, top: [r for r in ca if r[0] not in rj]
-    check("walk4: control, round 3's walk crowned L there",
-          crown([L, X], m80, "slowed ~0.80x", old_pick, old_fig, fig_null=("X",))[1] == "L")
-    for v in (0.966, 0.975):
-        Lv = dict(L, vspeed=v, url="L%d" % int(v * 1000))
-        got = crown([Lv, X], m80, "slowed ~0.80x", fig_null=("X",))
-        check("walk4: L at v %.3f (figure %s) never takes the crown from X by figure" % (
-            v, S._version_figure(S._cand_row(Lv), True)[0]), got == ("X", "X"), str(got))
-    check("walk4: Usher [lane Ttraamat, plain lyrics SOURCE]: the lane row still beats the source",
-          crown([ttr, lyr], usher_m, "slowed ~0.70x") == (ttr["url"], ttr["url"]))
-    check("walk4: a lane row alone is still crowned",
-          crown([L], m80, "slowed ~0.80x") == ("L", "L"))
-    A = {"title": "Usher - Yeah! slowed", "uploader": "c", "vspeed": 0.978, "vspeed_locked": 0.978,
-         "core": 0.97, "fp": 0.66, "url": "A"}
-    B = {"title": "usher yeah (slowed)", "uploader": "d", "vspeed": 0.995, "vspeed_locked": 0.995,
-         "core": 0.70, "fp": 0.66, "url": "B"}
-    L94 = dict(L, vspeed=0.94, url="L94")
-    base_ab = crown([A, B], m80, "slowed ~0.80x", old_pick, old_fig, fig_null=("A",))
-    got = crown([L94, A, B], m80, "slowed ~0.80x", fig_null=("A",))
-    check("walk4: a lane row on top never pulls a lower-core first-20s row into the crown "
-          "(the walk without it picks A at core 0.97; the review's all-rows band picked B at 0.70)",
-          got == base_ab == ("A", "A"), "%s base %s" % (got, base_ab))
-
-    def review_pick(cl):
-        i0, c0, s0 = cl[0]
-        if s0 is None and S._row_tempo_d(c0) <= S._TEMPO_EXACT:
-            return cl[0]
-        band = [r for r in cl if r is cl[0]
-                or ((((r[1].get("core") or 0) >= (c0.get("core") or 0) - 0.05) or c0.get("dir_align"))
-                    and S._row_tempo_known(r[1]))]
-        return min(band, key=S._walk_key)
-    check("walk4: control, the review's band crowns B there",
-          crown([L94, A, B], m80, "slowed ~0.80x", review_pick, fig_null=("A",))[1] == "B")
-    got = crown([dict(L, vspeed=0.99, url="L99"), dict(A, vspeed=0.965, vspeed_locked=0.965), B],
-                m80, "slowed ~0.80x")
-    check("walk4: a lane row nearer the clip's tempo than the first-20s pick still takes it",
-          got[0] == "L99", str(got))
-    check("walk4: rows not in the walk's way are unchanged (row 1 not a lane row)",
-          crown([X, dict(L, core=0.74, url="Lb")], m80, "slowed ~0.80x")[0] == "X")
-    Xe = dict(X, vspeed=1.01, vspeed_locked=1.01, url="Xe")
-    check("walk4: an exact first-20s row keeps the walk's pick over a lane row",
-          S._walk_pick([(0, dict(L, vspeed=0.999), None), (1, Xe, None)])[1] is Xe)
-    check("walk4: figure rows drop a lane row farther off tempo than a first-20s pick only",
-          [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, X)] == ["X"]
-          and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, L)] == ["L", "X"]
-          and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, None)] == ["L", "X"])
-
-    # 15. ROUND 5 (review, low): a lane row that is not the crown never prints above it
-    L975 = dict(L, vspeed=0.975, url="L975")
-    LE = dict(L, vspeed=0.999, slope_delta=0.1, bass_delta=0.5, url="LE")
-    rx, rl, re_ = S._cand_row(X), S._cand_row(L975), S._cand_row(LE)
-    check("fig5: _cand_row carries dir_align on a lane row only",
-          rl.get("dir_align") is True and re_.get("dir_align") is True and rx.get("dir_align") is None)
-    fx = S._row_figure(rx, True, crown=rx)
-    own_l = S._version_figure(rl, True)[0]
-    check("fig5 control: round 4 printed the review's L (v 0.975) above the crown X",
-          S._row_figure(dict(rl, dir_align=None), True, crown=rx) == own_l > fx,
-          "L %s X %s" % (own_l, fx))
-    check("fig5: the review's L prints level with the crown X, not above it",
-          S._row_figure(rl, True, crown=rx) == fx, "L %s X %s" % (S._row_figure(rl, True, crown=rx), fx))
-    check("fig5: an Exact lane row under a lower crown prints level with it",
-          S._version_figure(re_, True) == (100, True) and S._row_figure(re_, True, crown=rx) == fx,
-          str(S._row_figure(re_, True, crown=rx)))
-    rxh = S._cand_row(dict(X, core=1.0, slope_delta=0.1, bass_delta=0.5, url="Xh"))
-    check("fig5: a lane row under a higher crown keeps its own figure, and a lane crown its own",
-          S._row_figure(rl, True, crown=rxh) == own_l and S._row_figure(rl, True, crown=rl) == own_l)
-    check("fig5: _level_with judges a lane row on its legs, whatever its aligned core",
-          S._level_with(rl, rx, True) is True
-          and S._level_with(S._cand_row(dict(L, vspeed=1.002, slope_delta=0.1, bass_delta=0.0)),
-                            S._cand_row(dict(X, slope_delta=0.7)), True) is False
-          and S._level_with(rl, S._cand_row(dict(LE, url="LE2")), True) is False)
-    resf = {"gates_on_rows": True, "fig_pitched": True, "exact": rx, "candidates": [rx, rl, re_]}
-    S._write_figs(resf)
-    check("fig5: _write_figs never puts a lane row's fig above the crown's",
-          all(r["fig"] <= rx["fig"] for r in resf["candidates"]),
-          str([(r["url"], r["fig"]) for r in resf["candidates"]]))
-    # the figure step: a lane row ahead only on its aligned score no longer takes an exact
-    # first-20s pick's crown; one with measurably better legs still can
-    X2 = dict(X, core=0.80, slope_delta=0.1, bass_delta=0.5, url="X2")
-    Lb = dict(L, vspeed=1.002, slope_delta=0.1, bass_delta=0.0, url="Lb")
-
-    def lw4(row, crown_, pitched):
-        if crown_ is None or row is crown_ or row.get("url") == crown_.get("url"):
-            return False
-        core = row.get("core")
-        if core is None or core >= E.CORE_SAME:
-            return False
-        rl_, cl_ = S._legs_figure(row, pitched), S._legs_figure(crown_, pitched)
-        return rl_ is not None and cl_ is not None and rl_ <= cl_
-    real_lw = S._level_with
-    S._level_with = lw4
-    try:
-        ctl = crown([Lb, X2], m80, "slowed ~0.80x")
-    finally:
-        S._level_with = real_lw
-    check("fig5 control: round 4's figure step moved an exact first-20s pick's crown to a lane row "
-          "ahead only on its aligned score", ctl == ("X2", "Lb"), str(ctl))
-    check("fig5: ... now the walk's pick keeps it", crown([Lb, X2], m80, "slowed ~0.80x") == ("X2", "X2"))
-    X2q = dict(X2, slope_delta=0.7, url="X2q")
-    check("fig5: a lane row with measurably better legs (the pick's EQ off) can still take it",
-          crown([Lb, X2q], m80, "slowed ~0.80x") == ("X2q", "Lb"))
-    page_tests([rx, rl, re_, rxh], S)
-
-    # 16. ROUND 5 (review, low): the per-section hunt never takes a lane row as a section's version
-    lane_r = dict(L, editmatch=True, final=0.9)
-    plain_r = {"title": "Usher - Yeah! (slowed)", "uploader": "p", "url": "P", "editmatch": True,
-               "core": 0.97, "final": 0.7, "plays": 3}
-    check("sec5: _cands_of leaves lane rows out",
-          [c["url"] for c in S._cands_of({"ranked": [lane_r, plain_r]})] == ["P"])
-    real_fe, real_cut = E.find_edit, E.cut
-    box = {}
-
-    async def fake_fe(*a, **k):
-        return {"ranked": list(box["ranked"]), "decisive": True, "tmp": None}
-    E.find_edit = fake_fe
-    E.cut = lambda *a, **k: None
-    sctx = {"src": {"audio": "/nonexistent.wav"}, "edit_label": "slowed ~0.80x", "mdir": "slowed",
-            "shazam_reliable": True,
-            "fp": {"sections": [{"start": 0.0, "end": 20.0, "song": "Yeah!", "artist": "Usher"}]}}
-    loop = asyncio.new_event_loop()
-    try:
-        box["ranked"] = [lane_r, plain_r]
-        sec = S._hunt_sections(loop, sctx, None, [])[0]
-        box["ranked"] = [dict(lane_r, dir_align=None), plain_r]
-        sec_c = S._hunt_sections(loop, sctx, None, [])[0]
-    finally:
-        E.find_edit, E.cut = real_fe, real_cut
-        loop.close()
-    check("sec5 control: unmarked, that row would have been the section's version (no crown gate there)",
-          (sec_c.get("exact") or {}).get("url") == "L" and sec_c.get("decisive") is True)
-    check("sec5: a lane row is never a section's version, and its decisive is not carried",
-          (sec.get("exact") or {}).get("url") == "P" and sec.get("decisive") is False
-          and [c["url"] for c in sec.get("candidates") or []] == ["P"], str(sec))
-
-    # 18. ROUND 7 (review finding 1): a lane row the server later refuses never dedups the plain
-    # at-tempo upload out of the pool. The clip is slowed 0.92x (confident) and cut from mid-song.
-    # LY is the plain upload whose head matched (core 0.97, v 0.92): 7125e63 crowns it as the
-    # SOURCE. L7 is "(Slowed + Reverb)" but really the master's tempo; its head missed and the lane
-    # adopted its section (crown verdict, core 1.0, v 0.92, lock 0.92), and it ranks first. Same
-    # speed and the same section's tilt: one _edit_sig bucket.
-    m92 = {"speed": 0.92, "confident": True}
-    L7 = {"title": "Usher - Yeah! (Slowed + Reverb)", "uploader": "s", "vspeed": 0.92, "core": 1.0,
-          "fp": 0.74, "dir_align": True, "_da_lock": 0.92, "seek_at": 96.0, "seek_clip_at": 0.0,
-          "cand_tilt": 1.4, "url": "L7"}
-    LY = {"title": "Usher - Yeah! (Lyrics) Ft. Lil Jon, Ludacris", "uploader": "lyrics",
-          "vspeed": 0.92, "core": 0.97, "fp": 0.66, "cand_tilt": 1.2, "url": "LY"}
-    U7 = lambda rows: [c["url"] for c in rows]
-    check("dedup7: L7 and LY share one _edit_sig bucket", E._edit_sig(L7) == E._edit_sig(LY))
-    wl, sl = S._gate_one(L7, m92, bt, {}, "slowed ~0.92x", "slowed", None, src, [0], [])
-    wy, sy = S._gate_one(LY, m92, bt, {}, "slowed ~0.92x", "slowed", None, src, [0], [])
-    check("dedup7: the server refuses L7 as closest (_dir_family_ok: its own tempo is the master's) "
-          "and passes LY as the SOURCE at 0.92",
-          bool(wl) and S._gate_kind(wl) == "closest" and not S._dir_family_ok(L7, 0.92, 0.92, bt)
-          and wy is None and sy == 0.92, "%s | %s %s" % (wl, wy, sy))
-    shelf_c = _dedup_r6([L7, LY])
-    check("dedup7 control: round 6's dedup dropped LY behind the lane row, and nothing was crowned",
-          U7(shelf_c) == ["L7"] and crown(shelf_c, m92, "slowed ~0.92x") == (None, None),
-          "%s %s" % (U7(shelf_c), crown(shelf_c, m92, "slowed ~0.92x")))
-    shelf = E._shelf_dedup([L7, LY])
-    check("dedup7: a lane row neither collapses nor is collapsed: both rows stay", U7(shelf) == ["L7", "LY"])
-    check("dedup7: ... so the walk crowns LY as the SOURCE, exactly as without the lane row (7125e63)",
-          crown(shelf, m92, "slowed ~0.92x") == crown([LY], m92, "slowed ~0.92x") == ("LY", "LY"),
-          str(crown(shelf, m92, "slowed ~0.92x")))
-    check("dedup7: a lane row ranked under a same-bucket plain row is not collapsed into it either",
-          U7(E._shelf_dedup([LY, L7])) == ["LY", "L7"] and U7(_dedup_r6([LY, L7])) == ["LY"])
-    L7b = dict(L7, url="L7b")
-    check("dedup7: two lane rows in one bucket both stay; a lane row the server admits is still "
-          "crowned over the source (Usher)",
-          U7(E._shelf_dedup([L7, L7b, LY])) == ["L7", "L7b", "LY"]
-          and crown(E._shelf_dedup([ttr, dict(lyr, cand_tilt=0.0), dict(ttr, url="t2")]),
-                    usher_m, "slowed ~0.70x")[0] == ttr["url"])
-    rnd = random.Random(7)
-    same = True
-    for _ in range(400):
-        pool = [{"url": "r%d" % i, "core": rnd.choice((0.4, 0.94, 0.95, 0.97, 1.0)),
-                 "vspeed": rnd.choice((None, 0.0, 0.92, 0.925, 0.94, 1.0, 1.01, 1.3)),
-                 "cand_tilt": rnd.choice((None, 0.0, 0.9, 1.1, 3.2, -2.5)),
-                 "correction": rnd.random() < 0.1} for i in range(rnd.randint(0, 8))]
-        same = same and U7(E._shelf_dedup(pool)) == U7(_dedup_r6(pool))
-    check("dedup7: on 400 random pools with no lane row the moved dedup is exactly round 6's", same)
+def settle(ln, secs=5):
+    t1 = time.time() + secs
+    while time.time() < t1 and not all(f.done() for _c, f in list(ln.jobs.values())):
+        time.sleep(0.02)
 
 
-def page_tests(rows, S):
-    """15 (page half): crate.html's own vmatch / pageCrown on the server's rows, through node.
-    rows[0] is the crown X (75), rows[1] the review's lane row L (81 on its own), rows[2] an Exact
-    lane row, rows[3] a higher crown. Skipped (not failed) where node is not installed (the box)."""
-    import json as _json
-    node = shutil.which("node")
-    if not node:
-        print("SKIP page5: node not installed, crate.html's vmatch not run here")
-        return
-    html = open(os.path.join(HERE, "crate.html"), encoding="utf-8").read()
-    block = html[html.index("var CORE_KEEP=0.50"):html.index("function vtxt(")]
-    i = html.index("var RX_SPEEDCLAIM=")
-    j = html.index("TILT_MAX=9.0, BASS_GAP=6.0;") + len("TILT_MAX=9.0, BASS_GAP=6.0;")
-    harness = html[i:j] + "\n" + block + "\n" + r"""
-var inp=JSON.parse(require('fs').readFileSync(0,'utf8')), out={};
-function figs(crown, rows){GATED=true; CLIP_PITCHED=true; CROWN_URL=crown.url; CROWN_SRC=''; CROWN_ROW=crown;
-  return rows.map(function(r){var m=vmatch(r); return {url:r.url, pct:m.pct, exact:m.exact, level:m.level||false};});}
-out.under_x=figs(inp.rows[0], inp.rows);
-out.under_xh=figs(inp.rows[3], inp.rows);
-out.under_l=figs(inp.rows[1], inp.rows);
-GATED=false; CROWN_URL=''; CROWN_ROW=null;
-var d={result:'found', exact:inp.rows[0], candidates:inp.rows.slice(1,3), gates_on_rows:true, speed:'slowed ~0.80x'};
-out.page_crown=(pageCrown(d).exact||{}).url;
-var dc=JSON.parse(JSON.stringify(d)); dc.candidates.forEach(function(r){delete r.dir_align;});
-out.page_crown_control=(pageCrown(dc).exact||{}).url;
-process.stdout.write(JSON.stringify(out));
-"""
-    hp = os.path.join(tempfile.mkdtemp(), "page5.js")
-    try:
-        with open(hp, "w", encoding="utf-8") as f:
-            f.write(harness)
-        pr = subprocess.run([node, hp], input=_json.dumps({"rows": rows}), capture_output=True,
-                            text=True, timeout=30)
-    finally:
-        shutil.rmtree(os.path.dirname(hp), ignore_errors=True)
-    try:
-        out = _json.loads(pr.stdout)
-    except Exception:
-        check("page5: crate.html's vmatch ran under node", False, (pr.stderr or pr.stdout)[-300:])
-        return
-    ux = {r["url"]: r for r in out["under_x"]}
-    check("page5: under the crown X, the page prints the lane rows level with it, never Exact",
-          ux["L975"]["pct"] == ux["X"]["pct"] and ux["LE"]["pct"] == ux["X"]["pct"]
-          and not ux["LE"]["exact"] and ux["L975"]["level"] == "lane", str(out["under_x"]))
-    same = all(r["pct"] == S._row_figure(dict(next(x for x in rows if x["url"] == r["url"])), True,
-                                         crown=crn)
-               for key, crn in (("under_x", rows[0]), ("under_xh", rows[3]), ("under_l", rows[1]))
-               for r in out[key])
-    check("page5: page and server print the same figure on every row, under three crowns", same,
-          str({k: [(r["url"], r["pct"]) for r in out[k]] for k in ("under_x", "under_xh", "under_l")}))
-    check("page5: pageCrown never moves the crown to a lane row (control: unmarked, it moved to the "
-          "Exact lane row)", out["page_crown"] == "X" and out["page_crown_control"] == "LE",
-          "%s / control %s" % (out["page_crown"], out["page_crown_control"]))
+def hb_at(el, evid=False, T=25, C=35):
+    h = E._HuntBudget(T, C, t0=time.time() - el)
+    h.note(0.70, 0.40) if evid else h.note(0.298, 0.601)     # Ttraamat's head: no evidence
+    return h
 
 
-# ROUND 5 (review finding 1): the shapes round 4 still let into the lane, and the credit /
-# treatment brackets that must stay plain (the reviewer's verified set)
+def hb_state(h):
+    return pickle.dumps((h.evidence, h.dead, h.fired_at, list(h.skipped), list(h.cut),
+                         h.abandoned, h.cancelled, h.dropped, h.best_core, h.best_fp,
+                         len(h.procs)))
+
+
+# ---------------------------------------------------------------- titles (section B)
 R5_MIXES = ["Usher - Yeah! ft. Lil Jon, Ludacris x Love In This Club (Slowed + Reverb)",
             "Usher ft. Lil Jon & Ludacris - Yeah! x Love In This Club (Slowed + Reverb)",
             "Usher ft. Lil Jon - Yeah! x Get Low (slowed)",
@@ -547,23 +175,14 @@ R5_PLAINS = ["Usher - Yeah! (w/ Lil Jon & Ludacris) (slowed)",
              "Usher - Yeah! (feat. Lil Jon & Ludacris) (slowed)",
              "Usher - Yeah! (slowed) (with Reverb)",
              "Usher - Yeah! (Slowed & Reverbed)"]
-
-
-# ROUND 6 (review finding 1): a medley / transition joined by a word or mark _DA_JOIN does not
-# know, or by nothing at all (clip 32's failure); (review finding 3): a + / | join after an
-# unbracketed feat credit, which round 5's strip swallowed with the credit
-R6_MEDLEYS = ["Usher - Yeah! into OMG (slowed)",
-              "Usher - Yeah! -> OMG (slowed)",
-              u"Usher - Yeah! \u2192 Love In This Club (slowed)",
-              "Usher - Yeah!, Love In This Club (slowed)",
-              "Usher - Yeah! // Love In This Club (slowed)",
-              "Usher - Yeah! ~ OMG (slowed)",
-              "Usher - Yeah! and Love In This Club (slowed)",
-              "Usher - Yeah! Love In This Club (slowed)"]
-R6_CREDIT_MIXES = ["Usher - Yeah! ft. Lil Jon, Ludacris + Love In This Club (Slowed + Reverb)",
-                   "Usher - Yeah! ft. Lil Jon / Love In This Club (slowed)",
-                   "Usher - Yeah! feat. Ludacris | OMG (slowed)"]
-R6_MIXES = R6_MEDLEYS + R6_CREDIT_MIXES
+R6_MIXES = ["Usher - Yeah! into OMG (slowed)", "Usher - Yeah! -> OMG (slowed)",
+            u"Usher - Yeah! → Love In This Club (slowed)",
+            "Usher - Yeah!, Love In This Club (slowed)", "Usher - Yeah! // Love In This Club (slowed)",
+            "Usher - Yeah! ~ OMG (slowed)", "Usher - Yeah! and Love In This Club (slowed)",
+            "Usher - Yeah! Love In This Club (slowed)",
+            "Usher - Yeah! ft. Lil Jon, Ludacris + Love In This Club (Slowed + Reverb)",
+            "Usher - Yeah! ft. Lil Jon / Love In This Club (slowed)",
+            "Usher - Yeah! feat. Ludacris | OMG (slowed)"]
 R6_PLAINS = ["Usher - Yeah! feat. Lil Jon & Ludacris | slowed + reverb",
              "Usher - Yeah! ft. Lil Jon & Ludacris (Slowed + Reverb)",
              "Usher - Yeah! ft. Lil Jon & Ludacris / slowed",
@@ -571,126 +190,373 @@ R6_PLAINS = ["Usher - Yeah! feat. Lil Jon & Ludacris | slowed + reverb",
              "Usher ft. Lil Jon / Ludacris - Yeah! (slowed)",
              "Yeah! - Usher ft. Lil Jon + Ludacris (slowed)",
              "Usher - Yeah! slowed reverb .mp3"]
+# ROUND 8 (review finding): a second song on its own dash side, the artist repeated after the join
+R8_MIXES = ["Usher - Yeah! / Usher - Love In This Club (slowed)",
+            "Usher - Yeah! (slowed) | Usher - OMG (slowed)",
+            "Usher - Yeah! (Slowed) ~ Usher - Burn (Slowed)",
+            "Yeah! - Usher / Love In This Club - Usher (slowed)"]
+R8_PLAINS = ["Usher x Lil Jon x Ludacris - Yeah! (slowed)", "Yeah! - Usher ft. Lil Jon + Ludacris (slowed)",
+             "Usher ft. Lil Jon / Ludacris - Yeah! (slowed)", "Usher ~ Yeah! (slowed)",
+             "Usher | Yeah! | slowed", "Usher - Yeah! | slowed + reverb | tiktok version",
+             "Usher - Yeah! | 8D audio (slowed)", "Usher - Yeah! (slowed) | lyrics",
+             "Usher - Yeah! (Slowed&Reverbed)"]
+MIXES = (["Love In This Club x Yeah! - Usher (Slowed + Reverb)", "Usher - Yeah! & Love In This Club (slowed)",
+          "Usher - Yeah! + Love In This Club (slowed)", "Usher - Yeah! | OMG (slowed)",
+          "Usher - Yeah! / OMG (slowed)", "Usher - Yeah! (Love In This Club Blend) slowed",
+          "Usher Yeah! Love In This Club transition (slowed)", "Yeah! x OMG (slowed) - Usher",
+          "Yeah! & Burn - Usher slowed", "Usher - Yeah! x Superman (slowed)",
+          "USHER - Yeah! x Love In This Club (Slowed + Reverb)", "Usher Yeah mashup (slowed)",
+          "Usher - Yeah! vs Lovers and Friends (slowed)", "Usher - Yeah! / Burn medley (slowed)"]
+         + R5_MIXES + R6_MIXES + R8_MIXES)
+PLAINS = (["Usher - Yeah! (Slowed&Reverbed)", "Usher - Yeah! slowed + reverb",
+           "Usher - Yeah! slowed & reverbed", "Usher - Yeah! | slowed + reverb | tiktok version",
+           "Usher - Yeah! | ultra slowed + perfectly reverbed", "Usher - Yeah! | slowed | 2024",
+           "Usher - Yeah! | Slowed and Reverb", "Usher x Lil Jon x Ludacris - Yeah! (slowed)",
+           "Yeah! - Usher & Lil Jon (slowed)", "Usher - Yeah! ft. Lil Jon & Ludacris (slowed + reverb)",
+           "Usher - Yeah! (slowed) [prod. a x b]", "Yeah! (slowed) - Usher"]
+          + R5_PLAINS + R6_PLAINS + R8_PLAINS)
 
 
-def _mixed_r5(c, base_title, artist_toks):
-    """Round 5's _dir_align_mixed, verbatim (the control): a feat credit stripped up to an " x "
-    join or a dash only, and no read of a side's other words."""
-    import re
-    t = c.get("title") or ""
-    ft = E._ascii_fold(t)
-    if E._SEEK_MIX.search(ft) or E._DA_MIX_WORDS.search(ft):
-        return True
+# ---------------------------------------------------------------- F: server
+def server_tests(tmp):
+    os.environ.update({"ADDIFY_CORRECTIONS": os.path.join(tmp, "corrections.json"),
+                       "ADDIFY_FIXQUEUE": os.path.join(tmp, "fixqueue.jsonl"),
+                       "CRATE_PERSIST_CACHE": "0", "PORT": "8991", "ADDIFY_X_ALERT": "0",
+                       "CRATE_TIMING": os.path.join(tmp, "tlog.jsonl")})
+    import server as S1
+    bt = "Yeah! (feat. Lil Jon & Ludacris)"
 
-    def words(s):
-        return set(re.findall(r"[a-z0-9]+", E._ascii_fold("%s" % (s or "")).lower()))
-    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
-    sw = {w for w in words(E._clean(name)) if w not in E.ORIGINAL_WORDS and not E.EDIT_WORDS.search(w)}
-    sw = {w for w in sw if len(w) >= 3} or sw
-    if not sw:
-        return False
-    known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
-    kb = known | words(base_title)
-    for inner in re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t):
-        if re.match(r"\s*(?:prod|produced by|feat|ft|featuring)\b", inner, re.I):
-            continue
-        lead = re.match(u"\\s*(?:(?:x|\u00d7|with)\\s|w/)", inner, re.I)
-        body = inner[lead.end():] if lead else inner
-        if not lead and not sw <= words(body):
-            continue
-        for p in E._DA_JOIN.split(body):
-            pw = words(p)
-            if sw <= pw:
-                continue
-            if any(len(w) >= 3 and not w.isdigit() and w not in kb and not E._DA_TAG.match(w)
-                   for w in pw):
-                return True
-    raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
-    raw = re.sub(u"\\b(?:feat|ft|featuring)\\b.*?(?=\\s+(?:x|\u00d7)\\s+|\\s[-\u2013\u2014~]\\s|$)",
-                 " ", raw, flags=re.I)
-    raw = re.sub(u"\\b(?:prod|produced by)\\b.*?(?=\\s[-\u2013\u2014~]\\s|$)", " ", raw, flags=re.I)
-    for side in E._DA_SIDE.split(raw):
-        parts = [p for p in E._DA_JOIN.split(side) if p.strip()]
-        if len(parts) < 2 or not sw <= words(side):
-            continue
-        for p in parts:
-            pw = words(p)
-            if sw <= pw:
-                continue
-            if any(len(w) >= 3 and not w.isdigit() and w not in known and not E._DA_TAG.match(w)
-                   for w in pw):
-                return True
-    return False
+    # F1. server.py is 7125e63 plus additions only
+    base = rev_src(BASE_REV, "server.py")
+    new = open(os.path.join(HERE, "server.py"), encoding="utf-8").read()
+    if base is None:
+        skip("F1 structure", "no 7125e63 server.py (no git, DIR_ALIGN_BASE_DIR unset)")
+    else:
+        d = list(difflib.ndiff(base.splitlines(), new.splitlines()))
+        removed = [l for l in d if l.startswith("- ")]
+        added = [l[2:] for l in d if l.startswith("+ ")]
+        a0 = new.index("# ------------- SIMILAR EDITS (CRATE_DIR_ALIGN")
+        a1 = new.index("\n\n\ndef ", new.index("def _similar_edits("))
+        sect = set(new[a0:a1].splitlines())
+        stray = [l for l in added if l.strip() and l not in sect]
+        check("F1 server.py: no 7125e63 line removed or changed", not removed, str(removed[:5]))
+        check("F1 server.py: every added line is the similar-edits section or its 2 call lines",
+              sorted(stray) == sorted([
+                  "                similar_edits=True,    # CRATE_DIR_ALIGN: a separate list, never in the pool",
+                  "        _similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only"]),
+              str(stray))
+        check("F4 the per-section hunt never asks for the lane (find_edit's default is off)",
+              "similar_edits" not in inspect.getsource(S1._hunt_sections)
+              and inspect.signature(E._find_edit_body).parameters["similar_edits"].default is False
+              and new.count("similar_edits=True") == 1)
+        check("F1 nothing on the crown path reads similar_edits: _phase2 names it only in its 2 lines",
+              [l.strip() for l in inspect.getsource(S1._phase2).splitlines() if "similar_edits" in l]
+              == ["similar_edits=True,    # CRATE_DIR_ALIGN: a separate list, never in the pool",
+                  "_similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only"])
+
+    # F3. _similar_edits' own rules, on the Usher numbers
+    def sim(v=0.9353, lock=0.9342, title="Usher - Yeah! (Slowed&Reverbed)", url="https://soundcloud.com/ttraamat/u",
+            why="rev", source="soundcloud"):
+        return {"title": title, "url": url, "source": source, "uploader": "Ttraamat", "core": 1.0,
+                "fp": 0.7291, "arr": 0.5, "spectral": 0.45, "vspeed": v, "vspeed_locked": lock,
+                "speed_conf": 0.5, "bass_delta": 1.2, "cand_tilt": -3.0, "slope_delta": 0.4,
+                "seek_at": 84.0, "core_head": 0.2979, "fp_head": 0.6006, "rev_gap": [0.0842, 0.203],
+                "reason": why, "similar_edit": True}
+    crown = {"title": "Usher - Yeah! (slowed)", "url": "https://soundcloud.com/c/c", "core": 0.97,
+             "vspeed": 1.004, "bass": 0.5, "slope": 0.2, "source": "soundcloud"}
+
+    def res0(**k):
+        r = {"result": "found", "speed": "slowed ~0.84x", "exact": dict(crown),
+             "candidates": [dict(crown), {"title": "row", "url": "https://soundcloud.com/r/r", "core": 0.7}],
+             "gates_on_rows": True}
+        r.update(k)
+        return r
+    r = res0()
+    snap = json.dumps(r, sort_keys=True)
+    S1._similar_edits(r, {"similar_edits": [sim()]}, None, "slowed ~0.84x", bt)
+    se = r.get("similar_edits") or []
+    rest = dict(r)
+    rest.pop("similar_edits", None)
+    check("F3 Usher: Ttraamat listed once as a similar edit, with the 7% faster note",
+          len(se) == 1 and se[0]["url"] == "https://soundcloud.com/ttraamat/u"
+          and se[0]["note"] == "this upload runs about 7% faster than the clip", str(se))
+    check("F3 ... and nothing else in the payload moved", json.dumps(rest, sort_keys=True) == snap)
+    cf = S1._row_figure(crown, True)
+    check("F3 figure: the refused-row figure (never above 45) and under the crown's own figure",
+          se and isinstance(se[0]["figure"], int) and se[0]["figure"] <= 45 and se[0]["figure"] < cf,
+          "fig %s crown %s" % (se and se[0]["figure"], cf))
+    check("F3 the crown bar's miss is a reason, not a refusal",
+          se and "reversed audio" in (se[0]["reason"] or ""), str(se and se[0]["reason"]))
+    check("F3 row shape: title, url, source, figure, note, aligned_at, speed (no gate, no crown fields)",
+          se and set(se[0]) == {"title", "url", "source", "uploader", "art", "figure", "note", "reason",
+                                "aligned_at", "speed"} and se[0]["aligned_at"] == 84.0)
+    r = res0()
+    S1._similar_edits(r, {"similar_edits": [sim()]}, {"speed": 0.7022, "confident": True},
+                      "slowed ~0.84x", bt)
+    check("F3 tempo direction against the confident measurement (0.7022): listed",
+          len(r.get("similar_edits") or []) == 1)
+    r = res0()
+    S1._similar_edits(r, {"similar_edits": [sim(v=0.84, lock=None, url="https://soundcloud.com/x/relabelled")]},
+                      None, "slowed ~0.84x", bt)
+    check("F3 tempo direction: a 'slowed' upload at the master's tempo (v 0.84 on a 0.84x clip) is not listed",
+          "similar_edits" not in r)
+    r = res0()
+    S1._similar_edits(r, {"similar_edits": [sim(title="Usher - Yeah! (Sped Up)")]}, None, "slowed ~0.84x", bt)
+    check("F3 tempo direction: a title claiming the other direction is not listed", "similar_edits" not in r)
+    r = res0(speed="slowed")
+    S1._similar_edits(r, {"similar_edits": [sim()]}, {"speed": 0.84, "confident": False}, "slowed", bt)
+    check("F3 tempo direction: no confident measurement and no phase-1 ratio, nothing listed",
+          "similar_edits" not in r)
+    r = res0()
+    S1._similar_edits(r, {"similar_edits": [sim(url="https://soundcloud.com/c/c"),
+                                            sim(url="https://soundcloud.com/r/r")]}, None, "slowed ~0.84x", bt)
+    check("F3 never the crown's url or a version row's url", "similar_edits" not in r)
+    for k, v in (("result", "no_match"), ("result", "uncertain"), ("pitch_kept", True)):
+        r = res0(**{k: v})
+        S1._similar_edits(r, {"similar_edits": [sim()]}, None, "slowed ~0.84x", bt)
+        check("F3 nothing listed when %s=%s" % (k, v), "similar_edits" not in r)
+    r = res0(exact=None)
+    S1._similar_edits(r, {"similar_edits": [sim(url="https://soundcloud.com/s/%d" % i) for i in range(5)]},
+                      None, "slowed ~0.84x", bt)
+    check("F3 no crown: listed, at most DIR_ALIGN_MAX, figure still under the refused cap",
+          len(r.get("similar_edits") or []) == E.DIR_ALIGN_MAX
+          and all(o["figure"] <= 45 for o in r["similar_edits"]))
+    r = res0()
+    snap = json.dumps(r, sort_keys=True)
+    real_cr = S1._cand_row
+    S1._cand_row = lambda c: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        S1._similar_edits(r, {"similar_edits": [sim()]}, None, "slowed ~0.84x", bt)
+    finally:
+        S1._cand_row = real_cr
+    check("F3 a failure lists nothing and leaves the payload as it was",
+          json.dumps(r, sort_keys=True) == snap)
+    check("F3 note: at the clip's speed / slower", S1._similar_note({"vspeed": 1.01}) ==
+          "this upload runs at the clip's speed" and S1._similar_note({"vspeed": 1.08}) ==
+          "this upload runs about 7% slower than the clip")
+
+    # F2. _phase2 end to end against 7125e63's, on random pools
+    if base is None:
+        skip("F2 payload identity", "no 7125e63 server.py")
+        return
+    S0 = load_src("server_base_7125e63", base, tmp)
+    real_connect, real_cc = socket.socket.connect, socket.create_connection
+
+    def _blocked(*a, **k):
+        raise OSError("network blocked in test_dir_align")
+    socket.socket.connect = _blocked
+    socket.create_connection = _blocked
+    stubs = {"_url_is_dead": lambda u: False,
+             "_time_reversed_null": lambda audio, url, core, seek=None, **k: (
+                 "the time-reversed copy of this upload scores as high as the upload itself"
+                 if (url and sum(map(ord, url)) % 7 == 0) else None),
+             "_floor_align": lambda *a, **k: None,
+             "_creator_attach": lambda *a, **k: None,
+             "_official_refs": lambda *a, **k: []}
+    saved = {m: {k: getattr(m, k) for k in stubs} for m in (S0, S1)}
+    for m in (S0, S1):
+        for k, f in stubs.items():
+            setattr(m, k, f)
+    real_fe = E.find_edit
+    rnd = random.Random(8)
+    titles = ["Usher - Yeah! (Slowed & Reverb)", "Usher - Yeah! (Official Audio)", "Yeah! sped up",
+              "Usher - Yeah!", "Yeah! - Usher (slowed)", "Usher Yeah bass boosted", "Usher - Yeah! nightcore",
+              "Yeah! (Remix)", "Usher - Yeah! (Slowed&Reverbed)", "Usher - Yeah! lyrics"]
+
+    def prow(i):
+        v = rnd.choice([rnd.uniform(0.7, 1.35), 1.0, rnd.uniform(0.97, 1.03), rnd.uniform(0.8, 0.9)])
+        return {"title": rnd.choice(titles) + " %d" % i, "uploader": rnd.choice(["a", "b", "Usher"]),
+                "url": "https://soundcloud.com/p%d/t%d" % (rnd.randint(0, 9), i),
+                "source": rnd.choice(["soundcloud", "youtube"]),
+                "core": round(rnd.uniform(0.3, 1.0), 4), "fp": round(rnd.uniform(0.4, 0.9), 4),
+                "arr": round(rnd.uniform(0.2, 0.6), 4), "vspeed": round(v, 4),
+                "vspeed_locked": rnd.choice([None, round(v * rnd.uniform(0.99, 1.01), 4)]),
+                "speed_conf": rnd.uniform(0, 1), "bass_delta": round(rnd.uniform(-15, 15), 2),
+                "cand_tilt": round(rnd.uniform(-10, 10), 2),
+                "slope_delta": rnd.choice([None, round(rnd.uniform(-8, 8), 3)]),
+                "editmatch": rnd.random() < 0.85, "final": round(rnd.uniform(0.01, 1), 3), "score": 0.5,
+                "plays": rnd.randint(0, 10 ** 6), "not_other": True}
+
+    def srow(i, pool):
+        c = {"title": rnd.choice(["Usher - Yeah! (Slowed&Reverbed)", "Usher - Yeah! slowed + reverb",
+                                  "Usher - Yeah! (Sped Up)", "Usher - Yeah! nightcore"]) + " s%d" % i,
+             "url": ("https://soundcloud.com/sim/%d" % i) if (not pool or rnd.random() < 0.8)
+             else rnd.choice(pool)["url"], "source": "soundcloud", "uploader": "x", "core": 0.3,
+             "fp": 0.6, "duration": 200}
+        v = rnd.choice([rnd.uniform(0.9, 0.97), rnd.uniform(1.03, 1.11), rnd.uniform(0.985, 1.015)])
+        got = {"at": float(rnd.randrange(0, 100, 4)), "why": rnd.choice([None, "rev", "lock", "rev+lock"]),
+               "lock": rnd.choice([None, v]), "rev": [0.2, 0.3],
+               "v": {"core": 1.0, "fp": round(rnd.uniform(0.64, 0.9), 4), "arr": 0.5, "spectral": 0.5,
+                     "speed": round(v, 4), "speed_conf": 0.4, "bass_delta": round(rnd.uniform(-6, 6), 2),
+                     "cand_tilt": 0.0, "slope_delta": 0.1}}
+        return E._dir_align_similar_row(c, got)
+
+    def ctx_of(label, mdir, key, reliable, pk):
+        res = {"result": "found", "speed": label, "base_song": "Yeah!", "base_artist": "USHER"}
+        if pk:
+            res["pitch_kept"] = True
+        stmp = tempfile.mkdtemp(dir=tmp, prefix="src_")      # _phase2 removes its src tmp
+        return {"src": {"audio": os.path.join(stmp, "no_audio.wav"), "tmp": stmp, "handle": None},
+                "fp": {"songs": [], "k": 1}, "res": res, "key": key, "t0": time.time(),
+                "url": "https://vt.tiktok.com/x/", "base_title": bt, "base_artist": "USHER",
+                "edit_label": label, "mdir": mdir, "hint_texts": [], "shazam_reliable": reliable}
+
+    def run(S, edit, *a):
+        async def fe(*_a, **_k):
+            return copy.deepcopy(edit)
+        E.find_edit = fe
+        c = ctx_of(*a)
+        S._phase2(c)
+        r = dict(c["res"])
+        r.pop("secs", None)
+        return r
+
+    def dump(r):
+        r = dict(r)
+        r.pop("similar_edits", None)
+        return json.dumps(r, sort_keys=True, default=str)
+    n = same_with = same_without = listed_runs = 0
+    crowned_sim = shown_sim = 0
+    diffs = []
+    try:
+        for k in range(200):
+            pool = [prow(i) for i in range(rnd.randint(0, 8))]
+            sims = [srow(i, pool) for i in range(rnd.randint(1, 4))]
+            ed = {"ranked": pool, "decisive": rnd.random() < 0.3, "ref_paths": [], "tmp": None}
+            eds = dict(ed, similar_edits=sims)
+            for label, mdir in (("slowed ~0.84x", "slowed"), ("as posted", None), ("sped up ~1.12x", "sped up")):
+                n += 1
+                a = (label, mdir, "k%d" % n, rnd.random() < 0.5, rnd.random() < 0.1)
+                r0 = run(S0, ed, *a)
+                r1s = run(S1, eds, *a)
+                r1 = run(S1, ed, *a)
+                same_with += dump(r0) == dump(r1s)
+                same_without += json.dumps(r0, sort_keys=True, default=str) == json.dumps(r1, sort_keys=True, default=str)
+                if dump(r0) != dump(r1s) and len(diffs) < 3:
+                    diffs.append((k, label, [x for x in difflib.unified_diff(dump(r0).split(", "),
+                                                                             dump(r1s).split(", "), n=0)][:8]))
+                ss = r1s.get("similar_edits") or []
+                listed_runs += bool(ss)
+                surls = {s["url"] for s in sims} - {c["url"] for c in pool}
+                crowned_sim += bool((r1s.get("exact") or {}).get("url") in surls)
+                shown_sim += any(c.get("url") in surls for c in (r1s.get("candidates") or []))
+                shown_sim += any(s["url"] in {c.get("url") for c in (r1s.get("candidates") or [])}
+                                 | {(r1s.get("exact") or {}).get("url")} for s in ss)
+    finally:
+        E.find_edit = real_fe
+        socket.socket.connect, socket.create_connection = real_connect, real_cc
+        for m, kv in saved.items():
+            for k, f in kv.items():
+                setattr(m, k, f)
+    check("F2 payload identity: %d random pools x labels, _phase2 with similar edits present == 7125e63's "
+          "(every field but similar_edits)" % n, same_with == n, "%d/%d %s" % (same_with, n, diffs))
+    check("F2 payload identity: without similar edits the payload is 7125e63's byte for byte",
+          same_without == n, "%d/%d" % (same_without, n))
+    check("F2 the add path ran: similar edits were listed on %d of %d runs" % (listed_runs, n),
+          listed_runs >= 50)
+    check("F2 a similar edit is never the crown and never a version row (any path, any pool)",
+          crowned_sim == 0 and shown_sim == 0, "crowned %d shown %d" % (crowned_sim, shown_sim))
+    # control: the same comparison bites when a similar edit leaks into the version list
+    real_se = S1._similar_edits
+
+    def leaky(res, edit, *a):
+        real_se(res, edit, *a)
+        if res.get("similar_edits"):
+            res.setdefault("candidates", []).append({"url": res["similar_edits"][0]["url"]})
+    S1._similar_edits = leaky
+    for m in (S0, S1):
+        for k, f in stubs.items():
+            setattr(m, k, f)
+    socket.socket.connect = _blocked
+    socket.create_connection = _blocked
+    caught = tried = 0
+    try:
+        for k in range(40):
+            pool = [prow(i) for i in range(rnd.randint(0, 6))]
+            sims = [srow(i, []) for i in range(2)]
+            ed = {"ranked": pool, "decisive": False, "ref_paths": [], "tmp": None}
+            a = ("slowed ~0.84x", "slowed", "c%d" % k, False, False)
+            r0, r1s = run(S0, ed, *a), run(S1, dict(ed, similar_edits=sims), *a)
+            if r1s.get("similar_edits"):
+                tried += 1
+                caught += dump(r0) != dump(r1s)
+    finally:
+        S1._similar_edits = real_se
+        E.find_edit = real_fe
+        socket.socket.connect, socket.create_connection = real_connect, real_cc
+        for m, kv in saved.items():
+            for k, f in kv.items():
+                setattr(m, k, f)
+    check("F2 control: a similar edit leaked into the version list is caught on every run it lists (%d)" % tried,
+          tried > 5 and caught == tried, "%d/%d" % (caught, tried))
 
 
-def _join_r5(da, lane, hb):
-    """Round 5's _dir_align_join_rows, verbatim (the control): it got the capped pick, after
-    find_edit had already retired every started row outside it."""
-    new = [c for c in da if id(c) not in lane.jobs]
-    if new and hb is not None and not E._hb_go(hb, "dir_align"):
-        return [c for c in da if id(c) in lane.jobs]
-    return list(da)
+# ---------------------------------------------------------------- G: page
+def page_tests(tmp):
+    html = open(os.path.join(HERE, "crate.html"), encoding="utf-8").read()
+    base = rev_src(BASE_REV, "crate.html")
+    if base is None:
+        skip("G structure", "no 7125e63 crate.html")
+    else:
+        d = list(difflib.ndiff(base.splitlines(), html.splitlines()))
+        check("G crate.html: no 7125e63 line removed or changed",
+              not [l for l in d if l.startswith("- ")])
+    f0, f1 = html.index("/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Uploads whose"), \
+        html.index("function trackRow(")
+    c0 = html.index("/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Plain rows")
+    c1 = html.index("*/", c0)
+    rest = html[:c0] + html[c1:f0] + html[f1:]
+    check("G simEdits is the page's only reader of similar_edits, called once, after the hunt",
+          "similar_edits" not in rest and html.count("simEdits(") == 2
+          and "  else shelf+=simEdits(d);" in html
+          and html.index("  else shelf+=simEdits(d);") > html.index("  if(hunting){ shelf="))
+    check("G the group never uses the crown's card (.top) or the words Closest version / Our pick",
+          "Closest version" not in html[html.index("function simEdits"):html.index("function trackRow")]
+          and "Our pick" not in html[html.index("function simEdits"):html.index("function trackRow")]
+          and " top" not in html[html.index("function simEdits"):html.index("function trackRow")])
+    node = shutil.which("node")
+    if not node:
+        skip("G page render", "node not installed")
+        return
+    fn = html[html.index("function simEdits(d){"):html.index("function trackRow(")]
+    harness = r"""
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function rowThumb(c){return '<i></i>';} function srcChip(s){return '<b>'+s+'</b>';}
+var CROWN_ROW=null, CROWN_PCT=null; function vmatch(c){return {pct:CROWN_PCT};}
+""" + fn + r"""
+var inp=JSON.parse(require('fs').readFileSync(0,'utf8')), out={};
+var s=inp.sims;
+out.none=simEdits({}); out.empty=simEdits({similar_edits:[]});
+CROWN_ROW={url:'c'}; CROWN_PCT=20; out.under20=simEdits({similar_edits:s});
+CROWN_PCT=88; out.under88=simEdits({similar_edits:s});
+CROWN_ROW=null; out.nocrown=simEdits({similar_edits:s.slice(0,1)});
+process.stdout.write(JSON.stringify(out));
+"""
+    hp = os.path.join(tmp, "page.js")
+    with open(hp, "w", encoding="utf-8") as f:
+        f.write(harness)
+    sims = [{"title": "Usher - Yeah! (Slowed&Reverbed) <b>", "url": "https://soundcloud.com/t/u", "source": "soundcloud",
+             "figure": 25, "note": "this upload runs about 7% faster than the clip", "reason": "why"},
+            {"title": "B", "url": "https://soundcloud.com/t/v", "source": "soundcloud", "figure": 0, "note": None}]
+    pr = subprocess.run([node, hp], input=json.dumps({"sims": sims}), capture_output=True, text=True, timeout=30)
+    try:
+        out = json.loads(pr.stdout)
+    except Exception:
+        check("G simEdits ran under node", False, (pr.stderr or pr.stdout)[-300:])
+        return
+    check("G a payload without similar edits draws nothing (renders exactly as 7125e63)",
+          out["none"] == "" and out["empty"] == "")
+    u88 = out["under88"]
+    check("G labelled 'Similar edit(s)' with the speed note, never 'Closest version' / 'Our pick'",
+          ">Similar edits<" in u88 and ">Similar edit<" in u88 and "This upload runs about 7% faster than the clip" in u88
+          and "Closest version" not in u88 and "Our pick" not in u88 and ">Similar edit<" in out["nocrown"])
+    check("G figure: as sent under a higher crown, capped under a lower crown, none when 0",
+          ">25%<" in u88 and ">19%<" in out["under20"] and ">25%<" not in out["under20"]
+          and u88.count("%</span>") == 1)
+    check("G titles are escaped, rows link to the upload", "&lt;b&gt;" in u88 and 'href="https://soundcloud.com/t/u"' in u88)
 
 
-def _join_r6(da, lane, hb):
-    """Round 6's _dir_align_join_rows, verbatim (the control): no clip-window check past T."""
-    elig, da = da, list(da[:E.DIR_ALIGN_MAX])
-    new = [c for c in da if id(c) not in lane.jobs]
-    if not new or hb is None or hb.evidence or (not hb.dead and hb.elapsed() <= hb.T):
-        return da
-    joined = [c for c in elig if id(c) in lane.jobs][:E.DIR_ALIGN_MAX]
-    if len(joined) < len(da) and E._hb_go(hb, "dir_align"):
-        return da
-    return joined
-
-
-def _dedup_r6(ranked):
-    """Round 6's shelf dedup (find_edit's body then), verbatim (the control): a lane row collapses
-    and is collapsed like any other row."""
-    seen_sig, deduped = set(), []
-    for c in ranked:
-        if c.get("core", 0) >= E.CORE_SAME:
-            sig = E._edit_sig(c)
-            if sig in seen_sig and not c.get("correction"):
-                continue
-            seen_sig.add(sig)
-        deduped.append(c)
-    return deduped
-
-
-def _mixed_r4(c, base_title, artist_toks):
-    """Round 4's _dir_align_mixed, verbatim (the control): brackets dropped whole, and a credit
-    stripped to the END of the title."""
-    import re
-    t = c.get("title") or ""
-    ft = E._ascii_fold(t)
-    if E._SEEK_MIX.search(ft) or E._DA_MIX_WORDS.search(ft):
-        return True
-
-    def words(s):
-        return set(re.findall(r"[a-z0-9]+", E._ascii_fold("%s" % (s or "")).lower()))
-    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
-    sw = {w for w in words(E._clean(name)) if w not in E.ORIGINAL_WORDS and not E.EDIT_WORDS.search(w)}
-    sw = {w for w in sw if len(w) >= 3} or sw
-    if not sw:
-        return False
-    known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
-    raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
-    raw = re.sub(r"\b(prod|produced by|feat|ft)\b.*$", " ", raw, flags=re.I)
-    for side in E._DA_SIDE.split(raw):
-        parts = [p for p in E._DA_JOIN.split(side) if p.strip()]
-        if len(parts) < 2 or not sw <= words(side):
-            continue
-        for p in parts:
-            pw = words(p)
-            if sw <= pw:
-                continue
-            if any(len(w) >= 3 and not w.isdigit() and w not in known and not E._DA_TAG.match(w)
-                   for w in pw):
-                return True
-    return False
-
-
+# ---------------------------------------------------------------- main
 def main():
     tmp = tempfile.mkdtemp()
     real_dl = E.dl_clip
@@ -706,7 +572,7 @@ def main():
         ctxs = lane.ctxs()
         check("two clip windows", len(ctxs) == 2)
 
-        # 1. slice == cut + verify, every key, several windows
+        # A1. slice == cut + verify, every key, several windows
         xs = V._decode(a, E.DIR_ALIGN_PULL + 5)
         w = os.path.join(tmp, "w.wav")
         same = True
@@ -716,202 +582,205 @@ def main():
             v2 = V.verify_samples(ctxs[0], xs[off * V.SR:(off + 20) * V.SR])
             same = same and all(v1[k] == v2[k] for k in v1 if k != "spectral") \
                 and abs(v1["spectral"] - v2["spectral"]) < 1e-9
+        check("A1 verify_samples == cut + verify", same)
+        vb = rev_src(BASE_REV, "verify.py")
+        if vb is None:
+            skip("A1 verify() identity", "no 7125e63 verify.py")
+        else:
+            V0 = load_src("verify_base_7125e63", vb, tmp)
+            ok = True
+            for off in (0, 40, 70):
+                cut(a, w, float(off), 1.0, span=25)
+                ok = ok and V0.verify(clip, w, 20) == V.verify(clip, w, 20)
+            cut(b, w, 10.0, 1.0, span=25)
+            ok = ok and V0.verify(clip, w, 20) == V.verify(clip, w, 20)
+            check("A1 verify() returns exactly 7125e63's dict (4 candidates)", ok)
         os.remove(w)
-        check("verify_samples == cut + verify", same)
 
-        # 2. the reading
+        # A2. the reading
         t0 = time.time()
         at, v, info = E._dir_align_read(xs, ctxs, tmp, "a")
-        check("adopts its own upload", at is not None, str(info))
+        check("A2 finds its own upload", at is not None, str(info))
         if at is not None:
-            check("at the clip's window", abs(at - 40) <= E.DIR_ALIGN_STEP, "at %s" % at)
-            check("at the clip's speed", abs(np.log2(v["speed"] / r)) <= 0.02, "speed %s" % v["speed"])
-            check("decisive", v["core"] >= E.CORE_EDIT and v["fp"] >= E.SEEK_FP_OK,
-                  "core %s fp %s" % (v["core"], v["fp"]))
-            check("reversed control passes on the real section (crown)",
-                  info.get("verdict") == "crown" and min(info["rev_gap"]) >= E.SEEK_REV_GAP,
-                  str(info.get("rev_gap")))
-        check("reads fewer windows than the grid", info["nv"] < 2 * (len(xs) // V.SR - 20) // 4,
+            check("A2 at the clip's window", abs(at - 40) <= E.DIR_ALIGN_STEP, "at %s" % at)
+            check("A2 at the clip's speed", abs(np.log2(v["speed"] / r)) <= 0.02, "speed %s" % v["speed"])
+            check("A2 decisive on both windows", v["core"] >= E.CORE_EDIT and v["fp"] >= E.SEEK_FP_OK)
+            check("A2 the real section beats its reversal by the crown bar: no reason given",
+                  min(info["rev_gap"]) >= E.SEEK_REV_GAP and info.get("why") is None, str(info.get("rev_gap")))
+        check("A2 reads fewer windows than the grid", info["nv"] < 2 * (len(xs) // V.SR - 20) // 4,
               "nv %d, %.2f s" % (info["nv"], time.time() - t0))
         xb = V._decode(b, E.DIR_ALIGN_PULL + 5)
         at2, _v2, info2 = E._dir_align_read(xb, ctxs, tmp, "b")
-        check("rejects another song", at2 is None, str(info2.get("best")))
+        check("A2 rejects another song", at2 is None, str(info2.get("best")))
         _vmax = E.DIR_ALIGN_VMAX
         E.DIR_ALIGN_VMAX = 0.05
         try:
             at3, _v3, info3 = E._dir_align_read(xs, ctxs, tmp, "f")
         finally:
             E.DIR_ALIGN_VMAX = _vmax
-        check("rejects a reading outside the family band", at3 is None and info3.get("why") == "band",
-              "%s %s" % (info3.get("why"), info3.get("best")))
+        check("A2 rejects a reading outside the family band", at3 is None and info3.get("why") == "band")
 
-        # 5. the reversed control's null case: a time-symmetric song
+        # A3. the reversed control decides what is LISTED; the crown bar is only a reason
         p = os.path.join(tmp, "p.wav")
         write(palindrome_song(11), p)
         pclip = os.path.join(tmp, "pclip.m4a")
         mkclip(p, pclip, r)
-        pctx = V.prepare_clip(pclip, 20)
-        plane = E._DirAlignLane(pclip, pctx, tmp, "slowed", "Yeah!", lambda c: True)
-        pctxs = plane.ctxs()
+        plane = E._DirAlignLane(pclip, V.prepare_clip(pclip, 20), tmp, "slowed", "Yeah!", lambda c: True)
         xp = V._decode(p, E.DIR_ALIGN_PULL + 5)
-        atp, vp, infop = E._dir_align_read(xp, pctxs, tmp, "p")
-        check("reversed control: a section its own reversal matches comes back CLOSEST",
-              atp is not None and infop.get("verdict") == "closest" and infop.get("why") == "rev",
-              "verdict %s gaps %s best %s" % (infop.get("verdict"), infop.get("rev_gap"),
-                                               infop.get("best")))
-        before = set(os.listdir(tmp))
-        prow = {"path": p, "core": 0.3, "duration": 130, "song_cov": 1.0, "url": "file://p",
-                "title": "Usher - Yeah! (Slowed)", "source": "soundcloud", "plays": 1}
-        pres = plane.result(prow)
-        plane.close(wait=True)
-        check("lane: a closest reading returns verdict 'closest' with no path",
-              pres is not None and pres["verdict"] == "closest" and pres["path"] is None,
-              str(pres and {k: pres[k] for k in ("verdict", "why", "lock", "rev")}))
-        crow = E._dir_align_closest_row(dict(prow, _spec=1), pres) if pres else {}
-        check("closest row: separate dict, head row untouched, never editmatch",
-              prow["core"] == 0.3 and crow.get("dir_closest") and not crow.get("editmatch")
-              and not crow.get("dir_align") and "path" not in crow and "_spec" not in crow
-              and crow.get("core", 0) >= E.CORE_EDIT, str({k: crow.get(k) for k in
-                                                          ("core", "fp", "vspeed", "seek_at")}))
-        check("lane: no file left by a closest read", set(os.listdir(tmp)) == before,
-              str(sorted(set(os.listdir(tmp)) - before)))
+        atp, _vp, infop = E._dir_align_read(xp, plane.ctxs(), tmp, "p")
+        check("A3 a section its own reversal matches as well (time-symmetric song) is never a reading",
+              atp is None and infop.get("why") == "rev0", "gaps %s why %s" % (infop.get("rev_gap"), infop.get("why")))
+        real_vs = V.verify_samples
+        gap_cases = {0.0: None, -0.03: None, 0.05: "rev", 0.119: "rev", 0.13: "ok", 0.3: "ok"}
+        got_cases = {}
+        for gap, want in gap_cases.items():
+            def vs(cx, x, out=None, gap=gap):
+                o = real_vs(cx, x, out)
+                if x is not None and x.base is None:        # the reversed slice is a fresh copy
+                    fwd = real_vs(cx, np.ascontiguousarray(x[::-1]).view())["fp"]   # its own window
+                    o = dict(o, fp=max(0.0001, fwd - gap))
+                return o
+            V.verify_samples = vs
+            try:
+                atg, _vg, infg = E._dir_align_read(xs, ctxs, tmp, "g")
+            finally:
+                V.verify_samples = real_vs
+            got_cases[gap] = (None if atg is None else (infg.get("why") or "ok"))
+        check("A3 listed only when forward beats reversed on both windows; under the crown bar the "
+              "reason says 'rev'", got_cases == gap_cases, str(got_cases))
+        V.verify_samples = lambda cx, x, out=None: (dict(real_vs(cx, x, out), fp=0.0)
+                                                   if (x is not None and x.base is None) else real_vs(cx, x, out))
+        try:
+            atn, _vn, infn = E._dir_align_read(xs, ctxs, tmp, "n")
+        finally:
+            V.verify_samples = real_vs
+        check("A3 a reversed fp that could not be read counts as a failed control", atn is None
+              and infn.get("why") == "rev0", str(infn.get("rev_gap")))
 
-        # 3. row selection
+        # A4. the real lane end to end: offer -> collect -> close, nothing left behind
         art = lambda c: "usher" in (c.get("title") or "").lower()
         mk = lambda **k: dict({"path": a, "core": 0.3, "duration": 200, "song_cov": 1.0,
                                "title": "Usher - Yeah! (Slowed & Reverb)", "source": "soundcloud",
                                "plays": 1}, **k)
+        before = set(os.listdir(tmp))
+        l4 = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        row4 = mk(path=a, duration=130, url="file://a")
+        l4.offer(row4)
+        l4.offer(row4)
+        check("A4 offer starts an eligible row once", len(l4.jobs) == 1)
+        settle(l4, 30)
+        snap4 = pickle.dumps([row4])
+        sims4 = E._dir_align_collect(l4, [row4], "slowed", "slowed ~0.95x", "Yeah!", art, None)
+        check("A4 the reading comes back as one similar edit at the clip's window, the row untouched",
+              len(sims4) == 1 and abs(sims4[0]["seek_at"] - 40) <= 4 and sims4[0]["similar_edit"]
+              and sims4[0]["reason"] is None and pickle.dumps([row4]) == snap4 and l4.closed,
+              str(sims4 and {k: sims4[0][k] for k in ("seek_at", "vspeed", "vspeed_locked", "reason")}))
+        l4.close(wait=True)
+        prow = mk(path=p, duration=130, url="file://p")
+        lp = E._DirAlignLane(pclip, V.prepare_clip(pclip, 20), tmp, "slowed", "Yeah!", art)
+        lp.offer(prow)
+        settle(lp, 30)
+        simp = E._dir_align_collect(lp, [prow], "slowed", "slowed ~0.95x", "Yeah!", art, None)
+        lp.close(wait=True)
+        check("A4 the time-symmetric upload is never listed", simp == [], str(simp))
+        left = set(os.listdir(tmp)) - before
+        check("A4 no file left behind", not left, str(sorted(left)))
+
+        # B. eligibility
         rows = [mk(plays=5, source="youtube"), mk(plays=1), mk(plays=9), mk(plays=3),
                 mk(title="Usher - Yeah! (Sped Up)"), mk(core=0.6), mk(duration=30),
                 mk(title="Usher - Yeah! (Slowed) Remix"), mk(song_cov=0.5), mk(path=None)]
         got = E._dir_align_rows(rows, "slowed", "slowed ~0.84x", "Yeah!", art)
-        check("rows: SoundCloud first, most played, capped",
+        check("B rows: SoundCloud first, most played, capped",
               [(c["source"], c["plays"]) for c in got] == [("soundcloud", 9), ("soundcloud", 3),
-                                                          ("soundcloud", 1)][:E.DIR_ALIGN_MAX],
-              str([(c["source"], c["plays"]) for c in got]))
-        check("rows: none on an as-posted clip", E._dir_align_rows(rows, None, "as posted", "Yeah!", art) == [])
-        dec = rows + [mk(core=1.0, fp=0.70, vspeed=1.01)]
-        check("rows: none when a row is already decisive",
-              E._dir_align_rows(dec, "slowed", "", "Yeah!", art) == [])
-
-        # 9. mashups and whole words
+                                                          ("soundcloud", 1)][:E.DIR_ALIGN_MAX])
+        check("B rows: none on an as-posted clip", E._dir_align_rows(rows, None, "as posted", "Yeah!", art) == [])
+        check("B rows: none when a row is already decisive at the clip's speed",
+              E._dir_align_rows(rows + [mk(core=1.0, fp=0.70, vspeed=1.01)], "slowed", "", "Yeah!", art) == [])
         bt = "Yeah! (feat. Lil Jon & Ludacris)"
-        tok = lambda c: E._dir_align_words_ok(c, bt, ["usher"])
-        ok = lambda t, **k: E._dir_align_row_ok(mk(title=t, **k), "slowed", bt, tok)
-        check("mix: the plain slowed edit is eligible", ok("Usher - Yeah! (Slowed&Reverbed)"))
-        for t in ("USHER - Yeah! x Love In This Club (Slowed + Reverb)",
-                  "Usher Yeah mashup (slowed)", "Usher - Yeah! vs Lovers and Friends (slowed)",
-                  "Usher - Yeah! / Burn medley (slowed)"):
-            check("mix: excluded %r" % t, not ok(t))
-        # ROUND 4 (review finding): the lane's title claim as find_edit composes it
-        # (_da_title_ok: words AND not _dir_align_mixed), so a mashup with the other song before
-        # the dash, or joined by & + / |, or a blend / transition, never enters the lane
         for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
-            tok4 = lambda c, arts=arts: (E._dir_align_words_ok(c, bt, arts)
-                                         and not E._dir_align_mixed(c, bt, arts))
-            ok4 = lambda t, tok4=tok4: E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)
-            mixes = ["Love In This Club x Yeah! - Usher (Slowed + Reverb)",
-                     "Usher - Yeah! & Love In This Club (slowed)",
-                     "Usher - Yeah! + Love In This Club (slowed)", "Usher - Yeah! | OMG (slowed)",
-                     "Usher - Yeah! / OMG (slowed)", "Usher - Yeah! (Love In This Club Blend) slowed",
-                     "Usher Yeah! Love In This Club transition (slowed)",
-                     "Yeah! x OMG (slowed) - Usher", "Yeah! & Burn - Usher slowed",
-                     "Usher - Yeah! x Superman (slowed)",
-                     "USHER - Yeah! x Love In This Club (Slowed + Reverb)",
-                     "Usher Yeah mashup (slowed)", "Usher - Yeah! vs Lovers and Friends (slowed)",
-                     "Usher - Yeah! / Burn medley (slowed)"]
-            plains = ["Usher - Yeah! (Slowed&Reverbed)", "Usher - Yeah! slowed + reverb",
-                      "Usher - Yeah! slowed & reverbed", "Usher - Yeah! | slowed + reverb | tiktok version",
-                      "Usher - Yeah! | ultra slowed + perfectly reverbed", "Usher - Yeah! | slowed | 2024",
-                      "Usher - Yeah! | Slowed and Reverb", "Usher x Lil Jon x Ludacris - Yeah! (slowed)",
-                      "Yeah! - Usher & Lil Jon (slowed)", "Usher - Yeah! ft. Lil Jon & Ludacris (slowed + reverb)",
-                      "Usher - Yeah! (slowed) [prod. a x b]", "Yeah! (slowed) - Usher"]
-            # ROUND 5 (review finding): a join after an unbracketed credit, or inside brackets
-            mixes += R5_MIXES
-            plains += R5_PLAINS
-            # ROUND 6 (review findings 1 and 3): medley / transition joins, and + / | after a credit
-            mixes += R6_MIXES
-            plains += R6_PLAINS
-            bad_mix = [t for t in mixes if ok4(t)]
-            bad_plain = [t for t in plains if not ok4(t)]
-            check("mix4 (%d artist toks): %d mashup shapes excluded" % (len(arts), len(mixes)),
-                  not bad_mix, str(bad_mix))
-            check("mix4 (%d artist toks): %d plain shapes still eligible" % (len(arts), len(plains)),
+            tok = lambda c, arts=arts: (E._dir_align_words_ok(c, bt, arts) and not E._dir_align_mixed(c, bt, arts))
+            ok4 = lambda t, tok=tok: E._dir_align_row_ok(mk(title=t), "slowed", bt, tok)
+            bad_mix = [t for t in MIXES if ok4(t)]
+            bad_plain = [t for t in PLAINS if not ok4(t)]
+            check("B mix (%d artist toks): %d mashup / medley / two-song shapes never enter the lane"
+                  % (len(arts), len(MIXES)), not bad_mix, str(bad_mix))
+            check("B mix (%d artist toks): %d plain shapes still do" % (len(arts), len(PLAINS)),
                   not bad_plain, str(bad_plain))
-        tok4 = lambda c: (E._dir_align_words_ok(c, bt, ["usher"])
-                          and not E._dir_align_mixed(c, bt, ["usher"]))
-        every = mixes + plains + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers",
-                                  "Usher - Yeah! ft. Lil Jon x Ludacris (slowed)",
-                                  "Yeah! x Ludacris - Stand Up (slowed)", "Usher - Yeah! (Remastered 2004) slowed",
-                                  "Usher - Yeah! ft. Lil Jon + Ludacris (slowed)",
-                                  "Usher - Yeah! Slowed Down", "Usher - Yeah! (Slowed Down)"]
-        check("mix4: only ever stricter (eligible now => eligible in round 3)",
-              all(ok(t) for t in every
-                  if E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)))
-        for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
-            r4miss = [t for t in R5_MIXES if "featuring" not in t]
-            r4 = [t for t in r4miss if not _mixed_r4({"title": t, "uploader": "someone"}, bt, arts)]
-            check("mix5 control (%d artist toks): round 4's _dir_align_mixed read these %d shapes as plain"
-                  % (len(arts), len(r4miss)), r4 == r4miss, str(set(r4miss) - set(r4)))
-            looser = [t for t in every if not E._dir_align_mixed({"title": t, "uploader": "someone"}, bt, arts)
-                      and _mixed_r4({"title": t, "uploader": "someone"}, bt, arts)]
-            check("mix5 (%d artist toks): only ever stricter than round 4 (%d titles)" % (len(arts), len(every)),
+        lsrc = rev_src(LANE_REV, "crate_engine.py")
+        if lsrc is None:
+            skip("B only ever stricter than %s" % LANE_REV, "no git")
+        else:
+            i0 = lsrc.index("def _dir_align_mixed(")
+            i1 = lsrc.index("\ndef ", i0 + 10)
+            ns = dict(vars(E))
+            exec(lsrc[i0:i1], ns)
+            old_mixed = ns["_dir_align_mixed"]
+            every = MIXES + PLAINS + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers",
+                                      "Yeah! x Ludacris - Stand Up (slowed)", "Usher - Yeah! Slowed Down",
+                                      "Yeah! (slowed) - Usher | Best Of 2004 Hits"]
+            looser = [(t, arts) for t in every for arts in (["usher"], ["usher", "lil", "jon", "ludacris"])
+                      for up in ("someone", "Ttraamat")
+                      if not E._dir_align_mixed({"title": t, "uploader": up}, bt, arts)
+                      and old_mixed({"title": t, "uploader": up}, bt, arts)]
+            r8old = [t for t in R8_MIXES if not old_mixed({"title": t, "uploader": "someone"}, bt, ["usher"])]
+            check("B only ever stricter than the %s lane (%d titles x 2 credits x 2 uploaders)" % (LANE_REV, len(every)),
                   not looser, str(looser))
-        for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
-            r5 = [t for t in R6_MIXES if not _mixed_r5({"title": t, "uploader": "someone"}, bt, arts)]
-            check("mix6 control (%d artist toks): round 5's _dir_align_mixed read these %d shapes as plain"
-                  % (len(arts), len(R6_MIXES)), r5 == R6_MIXES, str(set(R6_MIXES) - set(r5)))
-            looser = [t for t in every if not E._dir_align_mixed({"title": t, "uploader": "someone"}, bt, arts)
-                      and _mixed_r5({"title": t, "uploader": "someone"}, bt, arts)]
-            check("mix6 (%d artist toks): only ever stricter than round 5 (%d titles)" % (len(arts), len(every)),
-                  not looser, str(looser))
-        # the known coverage cost of finding 3 (a lane read lost, never a crown added): a featured
-        # name joined by " + " counts as a second song unless Shazam credited that name too
-        _ftp = {"title": "Usher - Yeah! ft. Lil Jon + Ludacris (slowed)", "uploader": "someone"}
-        check("mix6: 'ft. Lil Jon + Ludacris' is plain when the credit names Ludacris, refused when not",
-              not E._dir_align_mixed(_ftp, bt, ["usher", "lil", "jon", "ludacris"])
-              and E._dir_align_mixed(_ftp, bt, ["usher"]))
-        # the uploader counts as known on a side too ("... slowed version by <uploader>")
-        check("mix6: the uploader's own name on the song side is not a second song",
-              not E._dir_align_mixed({"title": "Usher - Yeah! slowed version by Ttraamat",
-                                      "uploader": "Ttraamat"}, bt, ["usher"])
-              and E._dir_align_mixed({"title": "Usher - Yeah! slowed version by Ttraamat",
-                                      "uploader": "someone"}, bt, ["usher"]))
-        check("words: a substring song hit is not a title claim",
-              not ok("Usher - Yeahright (slowed)"))
-        check("words: a substring artist hit is not a title claim",
-              not E._dir_align_row_ok(mk(title="Ushering - Yeah! (slowed)"), "slowed", bt,
-                                      lambda c: E._dir_align_words_ok(c, bt, ["usher"])))
-        check("words: the artist may be the uploader",
-              E._dir_align_words_ok({"title": "Yeah! (slowed)", "uploader": "Usher Fan"}, bt, ["usher"]))
-        check("words: a short song name needs its own word",
-              not E._dir_align_words_ok({"title": "Artist - Upbeat (slowed)"}, "Up", ["artist"])
+            check("B control: the %s lane read the 4 round-8 shapes as plain" % LANE_REV, r8old == R8_MIXES, str(r8old))
+        check("B words: a substring song or artist hit is not a title claim",
+              not E._dir_align_row_ok(mk(title="Usher - Yeahright (slowed)"), "slowed", bt,
+                                      lambda c: E._dir_align_words_ok(c, bt, ["usher"]))
+              and not E._dir_align_row_ok(mk(title="Ushering - Yeah! (slowed)"), "slowed", bt,
+                                          lambda c: E._dir_align_words_ok(c, bt, ["usher"])))
+        check("B words: the artist may be the uploader; a short song name needs its own word",
+              E._dir_align_words_ok({"title": "Yeah! (slowed)", "uploader": "Usher Fan"}, bt, ["usher"])
+              and not E._dir_align_words_ok({"title": "Artist - Upbeat (slowed)"}, "Up", ["artist"])
               and E._dir_align_words_ok({"title": "Artist - Up (slowed)"}, "Up", ["artist"]))
+        yt1 = mk(source="youtube", url="https://www.youtube.com/watch?v=abc")
+        yt2 = mk(source="ddg", url="https://youtu.be/abc")
+        okr = lambda c: bool(E._dir_align_row_ok(c, "slowed", "Yeah!", art))
+        check("B a YouTube row (by source or by url) never enters the lane; SoundCloud and others do",
+              not okr(yt1) and not okr(yt2) and okr(mk(source="soundcloud", url="https://soundcloud.com/x/y"))
+              and okr(mk(source="audiomack", url="https://audiomack.com/x/song/y")))
 
-        # 4. the lane object: offer -> result -> close, nothing left behind
-        before = set(os.listdir(tmp))
-        lane2 = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        row = mk(path=a, duration=130, url="file://a")
-        lane2.offer(mk(core=1.0, fp=0.70, vspeed=1.0))       # decisive: starts nothing after
-        lane2.offer(row)
-        check("decisive row stops offers", len(lane2.jobs) == 0)
-        lane3 = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        lane3.offer(row)
-        lane3.offer(row)
-        check("offer starts an eligible row once", len(lane3.jobs) == 1)
-        res = lane3.result(row)
-        check("result joins the started row (crown, aligned lock agrees)",
-              res is not None and abs(res["at"] - 40) <= 4 and res["verdict"] == "crown"
-              and (res["lock"] is None or abs(np.log2(res["lock"] / res["v"]["speed"])) <= E.DIR_ALIGN_LOCK),
-              str(res and {k: res[k] for k in ("at", "verdict", "lock", "rev")}))
-        lane3.close()
-        lane3.offer(mk(path=a, duration=130, url="file://b"))
-        check("closed lane starts nothing", len(lane3.jobs) == 1)
-        lane3.close(wait=True)
-        left = set(os.listdir(tmp)) - before
-        check("no file left behind", not left, str(sorted(left)))
+        # C. the lane object
+        lc = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        lc.offer(mk(core=1.0, fp=0.70, vspeed=1.0))       # decisive: starts nothing after
+        lc.offer(mk(path=a, duration=130, url="file://a"))
+        check("C a decisive row stops offers", len(lc.jobs) == 0 and lc.decisive)
+        lc.close()
+        lc.offer(mk(path=a, duration=130, url="file://b"))
+        check("C a closed lane starts nothing", len(lc.jobs) == 0)
+        conc, peak, lk = [0], [0], threading.Lock()
 
-        # 6. ctxs() under concurrent callers, staggered like offer() from download workers
+        def slow_one(c, inf):
+            with lk:
+                conc[0] += 1
+                peak[0] = max(peak[0], conc[0])
+            time.sleep(0.3)
+            with lk:
+                conc[0] -= 1
+            return None
+        ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        ln._one = slow_one
+        offered = [mk(path=a, duration=130, url="file://o%d" % i, plays=i) for i in range(6)]
+        for c in offered:
+            ln.offer(c)
+        settle(ln)
+        ln.close(wait=True)
+        check("C offer starts at most DIR_ALIGN_MAX rows, at most DIR_ALIGN_MAX run at once",
+              len(ln.jobs) == E.DIR_ALIGN_MAX and peak[0] <= E.DIR_ALIGN_MAX, "jobs %d peak %d" % (len(ln.jobs), peak[0]))
+        ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+        ln._one = lambda c, inf: ln.run(["sleep", "30"], 60) and None
+        ln.offer(mk(path=a, duration=130, url="file://y"))
+        t1 = time.time() + 3
+        while time.time() < t1 and not ln.procs:
+            time.sleep(0.02)
+        procs = list(ln.procs)
+        t0 = time.time()
+        ln.close(wait=True)
+        check("C close() kills the lane's yt-dlp and joins its job",
+              procs and all(pp.poll() is not None for pp in procs) and time.time() - t0 < 5)
         calls = [0]
         real_prep = V.prepare_clip
 
@@ -919,18 +788,17 @@ def main():
             calls[0] += 1
             return real_prep(path, seconds)
         V.prepare_clip = counting_prep
-        bad, builds = 0, []
-        ref_len = len(ctxs[1]["fp"])
+        bad, builds, ref_len = 0, [], len(ctxs[1]["fp"])
         try:
             rnd = random.Random(5)
-            for trial in range(12):
+            for trial in range(10):
                 calls[0] = 0
-                ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
+                lx = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
                 outs = []
 
-                def go(d):
-                    time.sleep(d)
-                    outs.append(ln.ctxs())
+                def go(dl):
+                    time.sleep(dl)
+                    outs.append(lx.ctxs())
                 th = [threading.Thread(target=go, args=(rnd.uniform(0, 0.25),)) for _ in range(3)]
                 [t.start() for t in th]
                 [t.join() for t in th]
@@ -940,460 +808,251 @@ def main():
                     bad += 1
         finally:
             V.prepare_clip = real_prep
-        check("ctxs: concurrent callers share one full build", bad == 0 and set(builds) == {1},
-              "bad %d builds %s" % (bad, builds))
-        check("ctxs: no temp file left", not [f for f in os.listdir(tmp) if f.startswith("da_clip20")])
-
-        # 8. executor cap, retire, close kills a lane yt-dlp
-        conc, peak, lk = [0], [0], threading.Lock()
-
-        def slow_one(c, inf, key=None):
-            with lk:
-                conc[0] += 1
-                peak[0] = max(peak[0], conc[0])
-            time.sleep(0.4)
-            with lk:
-                conc[0] -= 1
-            return None
-        ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        ln._one = slow_one
-        offered = [mk(path=a, duration=130, url="file://o%d" % i, plays=i) for i in range(5)]
-        for c in offered:
-            ln.offer(c)
-        late = [mk(path=a, duration=130, url="file://l%d" % i) for i in range(3)]
-        ths = [threading.Thread(target=ln.result, args=(c,)) for c in late]
-        [t.start() for t in ths]
-        [t.join() for t in ths]
-        ln.close(wait=True)
-        check("cap: offer starts at most DIR_ALIGN_MAX rows", sum(1 for c in offered if id(c) in ln.jobs) == E.DIR_ALIGN_MAX)
-        check("cap: at most DIR_ALIGN_MAX lane jobs at once, ranking-pass rows included",
-              peak[0] <= E.DIR_ALIGN_MAX, "peak %d" % peak[0])
-        ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        seen = {}
-
-        def watch_one(c, inf, key=None):
-            t1 = time.time() + 3
-            while time.time() < t1 and not (ln.dead or key in ln.retired):
-                time.sleep(0.02)
-            seen[c["url"]] = key in ln.retired
-            return None
-        ln._one = watch_one
-        ra, rb = mk(path=a, duration=130, url="file://ra"), mk(path=a, duration=130, url="file://rb")
-        ln.offer(ra)
-        ln.offer(rb)
-        time.sleep(0.1)
-        ln.retire([rb])
-        time.sleep(0.2)
-        check("retire: an unwanted started row stops at its next step", seen.get("file://ra") is True
-              and "file://rb" not in seen, str(seen))
-        ln.close(wait=True)
-        ln = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        procs = []
-
-        def ytdlp_one(c, inf, key=None):
-            ln.run(["sleep", "30"], 60)
-            return None
-        ln._one = ytdlp_one
-        ln.offer(mk(path=a, duration=130, url="file://y"))
-        t1 = time.time() + 3
-        while time.time() < t1 and not ln.procs:
-            time.sleep(0.02)
-        procs = list(ln.procs)
-        t0 = time.time()
-        ln.close(wait=True)
-        check("close: kills the lane's yt-dlp and joins its job",
-              procs and all(p.poll() is not None for p in procs) and time.time() - t0 < 5,
-              "%d procs, %.2f s" % (len(procs), time.time() - t0))
-
-        # 13. ROUND 5 (review finding 2): the join past the hunt budget's T. The lane's target case
-        # has no evidence (Ttraamat's head read 0.298 / 0.601), so past T may_start says no.
-        reading = {"at": 84.0, "v": {"core": 1.0}, "path": None, "verdict": "closest",
-                   "why": "rev", "lock": None, "rev": [0.08, 0.2]}
-        hbj = E._HuntBudget(25, 35, t0=time.time() - 26)
-        hbj.note(0.298, 0.601)
-        lnj = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hbj)
-        lnj._one = lambda c, inf, key=None: dict(reading)
-        JA = mk(path=a, duration=130, url="file://ja")
-        JB = mk(path=a, duration=130, url="file://jb")
-        lnj.offer(JA)
-        t1 = time.time() + 3
-        while time.time() < t1 and not (id(JA) in lnj.jobs and lnj.jobs[id(JA)][1].done()):
-            time.sleep(0.02)
-        hbc = E._HuntBudget(25, 35, t0=time.time() - 26)
-        hbc.note(0.298, 0.601)
-        check("join5 control: round 4's gate refuses the join past T and fires the budget",
-              E._hb_go(hbc, "dir_align") is False and hbc.fired_at is not None)
-        rows_j = E._dir_align_join_rows([JA], lnj, hbj)
-        got_j = hbj.map_bounded("dir_align", lnj.result, rows_j, 1) if rows_j else []
-        check("join5: a row started during the waves is joined past T, its reading kept",
-              rows_j == [JA] and got_j and got_j[0] == reading, str(got_j))
-        check("join5: ... and the budget does not fire (the scan stays cacheable)",
-              hbj.fired_at is None and hbj.skipped == [] and not hbj.dead,
-              "fired %s skipped %s" % (hbj.fired_at, hbj.skipped))
-        rows_j2 = E._dir_align_join_rows([JA, JB], lnj, hbj)
-        check("join5: a NEW ranking-pass pull past T is left out, and only that skip fires the budget",
-              rows_j2 == [JA] and hbj.skipped == ["dir_align"] and hbj.fired_at is not None,
-              "rows %d skipped %s fired %s" % (len(rows_j2), hbj.skipped, hbj.fired_at))
-        hbe = E._HuntBudget(25, 35, t0=time.time() - 26)
-        hbe.note(0.70, 0.40)
-        hbt = E._HuntBudget(25, 35, t0=time.time() - 10)
-        check("join5: before T, or with evidence, or with no budget, every row is joined",
-              E._dir_align_join_rows([JA, JB], lnj, hbt) == [JA, JB] and hbt.fired_at is None
-              and E._dir_align_join_rows([JA, JB], lnj, hbe) == [JA, JB] and hbe.fired_at is None
-              and E._dir_align_join_rows([JA, JB], lnj, None) == [JA, JB])
-        lnj.close(wait=True)
-        # a started row still running at the cap: map_bounded lets it go (the wait stays bounded)
-        hbk = E._HuntBudget(25, 35, t0=time.time() - 34.2)
-        hbk.note(0.298, 0.601)
-        lnk = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hbk)
-
-        def slow_read(c, inf, key=None):
-            t9 = time.time() + 6
-            while time.time() < t9 and not lnk.dead:
-                time.sleep(0.02)
-            return dict(reading)
-        lnk._one = slow_read
-        lnk.offer(JA)
-        time.sleep(0.1)
-        t0 = time.time()
-        got_k = hbk.map_bounded("dir_align", lnk.result, E._dir_align_join_rows([JA], lnk, hbk), 1)
-        check("join5: a started row still running at the cap is let go there (bounded wait)",
-              got_k == [None] and time.time() - t0 < 3 and hbk.dead,
-              "%.2f s %s" % (time.time() - t0, got_k))
-        lnk.close(wait=True)
-
-        # 17. ROUND 6 (review finding 2): the join makes the pick from EVERY eligible row, and
-        # find_edit retires after it. Four eligible rows commit in order u1..u4, so offer()
-        # starts u1..u3 (the cap); u4 has the most plays, so the pick order is u4, u2, u3, u1.
-        def lane6(hb):
-            ln6 = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hb)
-            ln6._one = lambda c, inf, key=None: dict(reading, url=c.get("url"))
-            return ln6
-
-        def four():
-            return [mk(path=a, duration=130, url="file://u%d" % i, plays=p)
-                    for i, p in ((1, 10), (2, 50), (3, 40), (4, 900))]
-
-        def settle(ln6):
-            t1 = time.time() + 5
-            while time.time() < t1 and not all(f.done() for _c, f in list(ln6.jobs.values())):
-                time.sleep(0.02)
-
-        def hb_at(el, evid=False):
-            h = E._HuntBudget(25, 35, t0=time.time() - el)
-            h.note(0.70, 0.40) if evid else h.note(0.298, 0.601)
-            return h
-        U = lambda rows: [c["url"][7:] for c in rows]
-        pick = lambda rows, cap=E.DIR_ALIGN_MAX: E._dir_align_rows(rows, "slowed", "slowed ~0.84x",
-                                                                   "Yeah!", art, cap=cap)
-        rows6 = four()
-        check("join6: _dir_align_rows(cap=None) hands the join every eligible row; the default cap is unchanged",
-              U(pick(rows6, None)) == ["u4", "u2", "u3", "u1"] and U(pick(rows6)) == ["u4", "u2", "u3"]
-              and U(E._dir_align_rows(rows6, "slowed", "slowed ~0.84x", "Yeah!", art)) == ["u4", "u2", "u3"],
-              str(U(pick(rows6, None))))
-        # past T, no evidence (the lane's target case)
-        hb6 = hb_at(26)
-        ln6 = lane6(hb6)
-        for c in rows6:
-            ln6.offer(c)
-        settle(ln6)
-        started6 = U([c for c in rows6 if id(c) in ln6.jobs])
-        j6 = E._dir_align_join_rows(pick(rows6, None), ln6, hb6)
-        ln6.retire(j6)
-        got6 = [ln6.result(c) for c in j6]
-        check("join6: past T the started rows fill the pick: u2, u3, u1 joined, 3 readings kept",
-              started6 == ["u1", "u2", "u3"] and U(j6) == ["u2", "u3", "u1"]
-              and all(g and g.get("url") == c["url"] for g, c in zip(got6, j6)),
-              "started %s joined %s got %s" % (started6, U(j6), [bool(g) for g in got6]))
-        check("join6: ... nothing retired, and the budget does not fire (the scan stays cacheable)",
-              not ln6.retired and hb6.fired_at is None and hb6.skipped == [] and not hb6.dead,
-              "retired %d fired %s skipped %s" % (len(ln6.retired), hb6.fired_at, hb6.skipped))
-        ln6.close(wait=True)
-        # control: round 5 retired against the capped pick first, then joined
-        rows5 = four()
-        hb5 = hb_at(26)
-        ln5 = lane6(hb5)
-        for c in rows5:
-            ln5.offer(c)
-        settle(ln5)
-        da5 = pick(rows5)
-        ln5.retire(da5)
-        j5 = _join_r5(da5, ln5, hb5)
-        check("join6 control: round 5 retired started u1, joined only u2, u3 and fired the budget",
-              U(j5) == ["u2", "u3"] and [c for c in rows5 if id(c) in ln5.retired] == [rows5[0]]
-              and hb5.fired_at is not None and hb5.skipped == ["dir_align"],
-              "joined %s fired %s" % (U(j5), hb5.fired_at))
-        ln5.close(wait=True)
-        # before T: exactly the old pick (u4 read now, u1 retired AFTER the join)
-        rows7 = four()
-        hb7 = hb_at(20)
-        ln7 = lane6(hb7)
-        for c in rows7:
-            ln7.offer(c)
-        settle(ln7)
-        j7 = E._dir_align_join_rows(pick(rows7, None), ln7, hb7)
-        ln7.retire(j7)
-        got7 = [ln7.result(c) for c in j7]
-        check("join6: before T the pick is the first DIR_ALIGN_MAX as before: u4, u2, u3 read, u1 retired",
-              U(j7) == ["u4", "u2", "u3"] and all(got7)
-              and [c for c in rows7 if id(c) in ln7.retired] == [rows7[0]] and hb7.fired_at is None,
-              "joined %s got %s fired %s" % (U(j7), [bool(g) for g in got7], hb7.fired_at))
-        ln7.close(wait=True)
-        rows8 = four()
-        hb8 = hb_at(26, evid=True)
-        ln8 = lane6(hb8)
-        for c in rows8:
-            ln8.offer(c)
-        settle(ln8)
-        j8 = E._dir_align_join_rows(pick(rows8, None), ln8, hb8)
-        check("join6: past T with evidence, or with no budget, the pick is the first DIR_ALIGN_MAX",
-              U(j8) == ["u4", "u2", "u3"] and hb8.fired_at is None
-              and U(E._dir_align_join_rows(pick(rows8, None), ln8, None)) == ["u4", "u2", "u3"],
-              str(U(j8)))
-        ln8.close(wait=True)
-        # a carried fast-path row: scored before the lane existed, _done set, so no wave re-scores
-        # it and _hit never offers it. find_edit now offers it as soon as the lane is built.
-        import inspect
-        src6 = inspect.getsource(E._find_edit_body)
-        i_lane = src6.find("_dal = _DirAlignLane(")
-        i_carry = src6.find('if _c.get("fast_carry") and _c.get("path"):')
-        i_offer = src6.find("_dal.offer(_c)")
-        i_wave = src6.find("_download_and_score(", i_lane)
-        i_join = src6.find("_da = _dir_align_join_rows(_da, _dal, _hb)")
-        i_ret = src6.find("_dal.retire(_da)")
-        check("join6: find_edit offers carried fast-path rows when the lane is built (before any wave), "
-              "and retires after the join",
-              0 < i_lane < i_carry < i_offer < i_wave and 0 < i_join < i_ret
-              and "_dir_align_rows(cands, known_dir, edit_label, base_title, _da_title_ok, cap=None)" in src6,
-              "lane %d carry %d offer %d wave %d join %d retire %d" % (i_lane, i_carry, i_offer, i_wave,
-                                                                      i_join, i_ret))
-        carry = lambda: mk(path=a, duration=130, url="file://fc", fast_carry=True, _done=True,
-                           core=0.2979, fp=0.6006)
-        fc = carry()
-        hbf = hb_at(26)
-        lnf = lane6(hbf)
-        for _c in [fc]:                         # find_edit's own statement, as written there
-            if _c.get("fast_carry") and _c.get("path"):
-                lnf.offer(_c)
-        settle(lnf)
-        jf = E._dir_align_join_rows(pick([fc], None), lnf, hbf)
-        lnf.retire(jf)
-        gotf = [lnf.result(c) for c in jf]
-        check("join6: an offered carried row is joined past T, its reading kept, the budget not fired",
-              jf == [fc] and gotf and gotf[0] and hbf.fired_at is None and hbf.skipped == [],
-              "joined %d fired %s" % (len(jf), hbf.fired_at))
-        lnf.close(wait=True)
-        fc0 = carry()
-        hbn = hb_at(26)
-        lnn = lane6(hbn)
-        jn = E._dir_align_join_rows(pick([fc0], None), lnn, hbn)
-        check("join6 control: never offered (round 5), the carried row is a new pull past T: skipped, "
-              "and the budget fires", jn == [] and hbn.fired_at is not None and hbn.skipped == ["dir_align"],
-              "joined %d fired %s" % (len(jn), hbn.fired_at))
-        lnn.close(wait=True)
-
-        # 19. ROUND 7 (review finding 2): a clip under 40 s gives ctxs() one window, so no lane row
-        # can lock. find_edit no longer builds the lane there (_dir_align_two_windows, ctxs()'s
-        # own bar), and past T with no evidence a one-window lane joins nothing and never fires
-        # the hunt budget for rows it could never read (which kept the scan out of both caches).
-        import inspect
+        check("C ctxs(): concurrent callers share one full build, no temp file left",
+              bad == 0 and set(builds) == {1} and not [f for f in os.listdir(tmp) if f.startswith("da_clip20")])
         clip25 = os.path.join(tmp, "clip25.m4a")
         mkclip(a, clip25, r, dur=25)
-        ctx25 = V.prepare_clip(clip25, 20)
-        check("win7: _dir_align_two_windows is ctxs()'s bar: a 25 s clip no, the 60 s clip yes, "
-              "a missing file no", E._dir_align_two_windows(clip25) is False
-              and E._dir_align_two_windows(clip) is True
+        check("C _dir_align_two_windows: a 25 s clip no, the 60 s clip yes, a missing file no",
+              E._dir_align_two_windows(clip25) is False and E._dir_align_two_windows(clip) is True
               and E._dir_align_two_windows(os.path.join(tmp, "nope.m4a")) is False)
-        src7 = inspect.getsource(E._find_edit_body)
-        check("win7: find_edit builds the lane only on a two-window clip (the one place it is built)",
-              "if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label) and "
-              "_dir_align_two_windows(clip_audio):" in src7 and src7.count("_DirAlignLane(") == 1)
-        ln25r = E._DirAlignLane(clip25, ctx25, tmp, "slowed", "Yeah!", art)
-        before7 = set(os.listdir(tmp))
-        real25 = ln25r.one({"url": "file://real", "path": a, "duration": 130, "title": "x"})
-        check("win7: on a 25 s clip the real lane job returns None before any pull, one window, "
-              "no file left", real25 is None and len(ln25r.ctxs()) == 1
-              and not (set(os.listdir(tmp)) - before7))
-        ln25r.close(wait=True)
+        l25 = E._DirAlignLane(clip25, V.prepare_clip(clip25, 20), tmp, "slowed", "Yeah!", art)
+        b25 = set(os.listdir(tmp))
+        check("C on a 25 s clip a lane job returns None before any pull, no file left",
+              l25.one({"url": "file://real", "path": a, "duration": 130, "title": "x"}) is None
+              and len(l25.ctxs()) == 1 and not (set(os.listdir(tmp)) - b25))
+        l25.offer(mk(path=a, duration=130, url="file://s"))
+        check("C ... and once it knows, offer() starts nothing", not l25.jobs)
+        l25.close(wait=True)
 
-        def lane7(clip_, ctx_, hb):
-            ln = E._DirAlignLane(clip_, ctx_, tmp, "slowed", "Yeah!", art, hb=hb)
+        # D. the join never touches the hunt budget
+        reading = {"at": 84.0, "v": {"core": 1.0, "fp": 0.73, "arr": 0.5, "spectral": 0.4, "speed": 0.9353,
+                                     "speed_conf": 0.3, "bass_delta": 0.5, "cand_tilt": 0.0, "slope_delta": 0.1},
+                   "why": "rev", "lock": 0.9342, "rev": [0.0842, 0.203]}
 
-            def one7(c, inf, key=None):         # _one's own first gate, then the reading
-                if len(ln.ctxs()) < 2:
-                    return None
-                return dict(reading, url=c.get("url"))
-            ln._one = one7
-            return ln
+        def lane_d(hb, durs):
+            """a lane whose job for url u takes durs[u] s and returns the Usher reading"""
+            ld = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art, hb=hb)
 
-        def three():
-            return [mk(path=a, duration=130, url="file://s%d" % i, plays=p)
-                    for i, p in ((1, 30), (2, 20), (3, 10))]
+            def one_d(c, inf):
+                t9 = time.time() + durs.get(c["url"], 0)
+                while time.time() < t9 and not ld.dead:
+                    time.sleep(0.01)
+                return None if ld.dead else dict(reading)
+            ld._one = one_d
+            return ld
+        JA, JB = mk(path=a, duration=130, url="file://ja"), mk(path=a, duration=130, url="file://jb")
 
-        def offer_spaced(ln, rows):             # commits 0.6 s apart, as from the download workers
-            for c in rows:
-                ln.offer(c)
-                time.sleep(0.6)
-            settle(ln)
-        # a 25 s clip, past T, no evidence: the first offer starts s1, which finds one window and
-        # returns; offer() refuses s2 and s3; the join must not count them as new pulls
-        rows25 = three()
-        hb25 = hb_at(26)
-        ln25 = lane7(clip25, ctx25, hb25)
-        offer_spaced(ln25, rows25)
-        started25 = U([c for c in rows25 if id(c) in ln25.jobs])
-        j25 = E._dir_align_join_rows(pick(rows25, None), ln25, hb25)
-        ln25.retire(j25)
-        check("win7: 25 s clip past T: only s1 started, the join is empty and the budget does not fire "
-              "(the scan stays cacheable)",
-              started25 == ["s1"] and j25 == [] and hb25.fired_at is None and hb25.skipped == []
-              and not hb25.dead, "started %s joined %s fired %s skipped %s" % (
-                  started25, U(j25), hb25.fired_at, hb25.skipped))
-        ln25.close(wait=True)
-        rows25c = three()
-        hb25c = hb_at(26)
-        ln25c = lane7(clip25, ctx25, hb25c)
-        offer_spaced(ln25c, rows25c)
-        j25c = _join_r6(pick(rows25c, None), ln25c, hb25c)
-        check("win7 control: round 6's join counted s2, s3 as new pulls and fired the budget",
-              U(j25c) == ["s1"] and hb25c.fired_at is not None and hb25c.skipped == ["dir_align"],
-              "joined %s fired %s" % (U(j25c), hb25c.fired_at))
-        ln25c.close(wait=True)
-        hb25t = hb_at(20)
-        ln25t = lane7(clip25, ctx25, hb25t)
-        rows25t = three()
-        offer_spaced(ln25t, rows25t)
-        check("win7: before T the join is unchanged (the first DIR_ALIGN_MAX), and nothing fires",
-              U(E._dir_align_join_rows(pick(rows25t, None), ln25t, hb25t)) == ["s1", "s2", "s3"]
-              and hb25t.fired_at is None)
-        ln25t.close(wait=True)
-        # a long clip whose second window failed the 90% fingerprint check: the belt
-        rowsw = three()
-        hbw = hb_at(26)
-        lnw = lane7(clip, ctx, hbw)
-        lnw._ctxs = [ctx]
-        offer_spaced(lnw, rowsw)
-        jw = E._dir_align_join_rows(pick(rowsw, None), lnw, hbw)
-        rowswc = three()
-        hbwc = hb_at(26)
-        lnwc = lane7(clip, ctx, hbwc)
-        lnwc._ctxs = [ctx]
-        offer_spaced(lnwc, rowswc)
-        jwc = _join_r6(pick(rowswc, None), lnwc, hbwc)
-        check("win7: a 60 s clip with one surviving window joins nothing past T and does not fire "
-              "(control: round 6 fired)",
-              not lnw.jobs and jw == [] and hbw.fired_at is None
-              and jwc == [] and hbwc.fired_at is not None and hbwc.skipped == ["dir_align"],
-              "jobs %d joined %s fired %s / control fired %s" % (len(lnw.jobs), U(jw), hbw.fired_at,
-                                                                 hbwc.fired_at))
-        lnw.close(wait=True)
-        lnwc.close(wait=True)
-        # control: the 60 s clip with both windows still joins all 3 started rows past T
-        rows60 = three()
-        hb60 = hb_at(26)
-        ln60 = lane7(clip, ctx, hb60)
-        offer_spaced(ln60, rows60)
-        j60 = E._dir_align_join_rows(pick(rows60, None), ln60, hb60)
-        ln60.retire(j60)
-        got60 = [ln60.result(c) for c in j60]
-        check("win7: a 60 s clip past T still joins all 3 started rows, readings kept, budget not fired",
-              U([c for c in rows60 if id(c) in ln60.jobs]) == ["s1", "s2", "s3"]
-              and U(j60) == ["s1", "s2", "s3"] and all(g and g.get("url") == c["url"]
-                                                       for g, c in zip(got60, j60))
-              and hb60.fired_at is None and hb60.skipped == [],
-              "joined %s got %s fired %s" % (U(j60), [bool(g) for g in got60], hb60.fired_at))
-        ln60.close(wait=True)
-
-        # 14. ROUND 5 (review, low): YouTube rows never enter the lane; retire() frees a worker
-        # whose job sits in a fallback fetch
-        yt1 = mk(source="youtube", url="https://www.youtube.com/watch?v=abc")
-        yt2 = mk(source="ddg", url="https://youtu.be/abc")
-        sc1 = mk(source="soundcloud", url="https://soundcloud.com/x/y")
-        am1 = mk(source="audiomack", url="https://audiomack.com/x/song/y")
-        okr = lambda c: bool(E._dir_align_row_ok(c, "slowed", "Yeah!", art))
-        check("yt5: a YouTube row (by source or by url) never enters the lane",
-              not okr(yt1) and not okr(yt2))
-        check("yt5: SoundCloud and other sources still do (control: the same row off YouTube)",
-              okr(sc1) and okr(am1) and okr(dict(yt1, source="soundcloud", url="https://soundcloud.com/a/b")))
-        check("yt5: _dir_align_rows picks no YouTube row, even with nothing else",
-              E._dir_align_rows([yt1, yt2], "slowed", "slowed ~0.84x", "Yeah!", art) == [])
-        lny = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        lny._one = lambda c, inf, key=None: None
-        lny.offer(yt1)
-        lny.offer(yt2)
-        check("yt5: offer() starts no YouTube row", len(lny.jobs) == 0)
-        lny.close(wait=True)
-
-        def fallback_lane():
-            lnf = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-            ends = {}
-
-            def stuck(c, inf, key=None):
-                t5 = time.time()
-                ok_ = lnf.run(["sleep", "30"], 60)      # dl_clip's yt-dlp fallback
-                ends[c["url"]] = (ok_, round(time.time() - t5, 2))
-                return None
-            lnf._one = stuck
-            fa = mk(path=a, duration=130, url="file://fa")
-            fb = mk(path=a, duration=130, url="file://fb")
-            lnf.offer(fa)
-            lnf.offer(fb)
-            t5 = time.time() + 3
-            while time.time() < t5 and len(lnf.procs) < 2:
-                time.sleep(0.02)
-            return lnf, ends, fa, fb
-        lnf, ends, fa, fb = fallback_lane()
-        pa, pb = list(lnf.kprocs.get(id(fa), ())), list(lnf.kprocs.get(id(fb), ()))
-        t0 = time.time()
-        lnf.retire([fb])
+        def join_case(el, durs, evid=False, hb=True, pre=0.15):
+            h = hb_at(el, evid) if hb else None
+            ld = lane_d(h, durs)
+            ld.offer(JA)
+            ld.offer(JB)
+            time.sleep(pre)
+            s0 = hb_state(h) if h else None
+            t0 = time.time()
+            sims = E._dir_align_collect(ld, [JA, JB], "slowed", "slowed ~0.84x", "Yeah!", art, h)
+            took = time.time() - t0
+            ld.close(wait=True)
+            return [s["url"] for s in sims], took, (hb_state(h) == s0) if h else True, h
+        got, took, same_hb, h = join_case(26, {"file://jb": 6})
+        check("D past T: the finished reading is kept, the running one is let go without a wait",
+              got == ["file://ja"] and took < 0.5, "%s %.2f s" % (got, took))
+        check("D past T: the budget is exactly as it was (not fired, no skip, no cut, not dead)",
+              same_hb and h.fired_at is None and not h.skipped and not h.cut and not h.dead)
+        got, took, same_hb, h = join_case(33.5, {"file://jb": 6})
+        check("D at the cap (the review's case: A done, B still pulling at 33.5 s): A kept, budget untouched",
+              got == ["file://ja"] and took < 0.5 and same_hb and h.fired_at is None and not h.dead,
+              "%s %.2f s fired %s" % (got, took, h.fired_at))
+        got, took, same_hb, h = join_case(20, {"file://jb": 1.0})
+        check("D before T: a reading still running is waited for (bounded) and kept",
+              got == ["file://ja", "file://jb"] and took < E.DIR_ALIGN_JOIN_WAIT + 0.3 and same_hb,
+              "%s %.2f s" % (got, took))
+        got, took, same_hb, h = join_case(20, {"file://jb": 9})
+        check("D before T: the wait stops at DIR_ALIGN_JOIN_WAIT, the slow row is let go",
+              got == ["file://ja"] and E.DIR_ALIGN_JOIN_WAIT - 0.3 < took < E.DIR_ALIGN_JOIN_WAIT + 0.5 and same_hb,
+              "%s %.2f s" % (got, took))
+        got, took, same_hb, h = join_case(24.4, {"file://jb": 9})
+        check("D near T: the wait never crosses T", got == ["file://ja"] and took < 0.6 + 0.5 and same_hb,
+              "%.2f s" % took)
+        got, took, same_hb, h = join_case(26, {"file://jb": 9}, evid=True)
+        check("D past T with evidence: no wait either, budget untouched", got == ["file://ja"] and took < 0.5
+              and same_hb)
+        got, took, _s, _h = join_case(0, {"file://jb": 9}, hb=False)
+        check("D no budget armed: the wait is DIR_ALIGN_JOIN_WAIT at most",
+              got == ["file://ja"] and took < E.DIR_ALIGN_JOIN_WAIT + 0.5, "%.2f s" % took)
+        ld = lane_d(hb_at(10), {})
+        JN = mk(path=a, duration=130, url="file://never")
+        nj = E._dir_align_join(ld, [JN], hb_at(10))
+        check("D a row the lane never started is never pulled at the join", nj == [] and not ld.jobs)
+        ld.close(wait=True)
+        rnd = random.Random(11)
+        wj = E.DIR_ALIGN_JOIN_WAIT
+        E.DIR_ALIGN_JOIN_WAIT = 0.25
+        bad_hb, bad_wait, n_kept = [], [], 0
         try:
-            lnf.jobs[id(fa)][1].result(timeout=3)
-        except Exception:
-            pass
-        freed = time.time() - t0
-        check("retire5: a retired job's yt-dlp fallback is killed and its worker freed at once",
-              pa and all(p.poll() is not None for p in pa) and lnf.jobs[id(fa)][1].done()
-              and freed < 2 and ends.get("file://fa", (True,))[0] is False,
-              "freed in %.2f s, ends %s" % (freed, ends))
-        check("retire5: the wanted row's fallback keeps running",
-              pb and all(p.poll() is None for p in pb) and not lnf.jobs[id(fb)][1].done())
-        lnf.close(wait=True)
-        # control: round 4's retire (mark + cancel only) leaves the fallback running
-        lnf, ends, fa, fb = fallback_lane()
-        pa = list(lnf.kprocs.get(id(fa), ()))
-        with lnf.lock:
-            lnf.retired.add(id(fa))
-            lnf.jobs[id(fa)][1].cancel()
-        time.sleep(1.0)
-        check("retire5 control: round 4's retire left the retired job's fallback running",
-              pa and all(p.poll() is None for p in pa) and not lnf.jobs[id(fa)][1].done())
-        lnf.close(wait=True)
-        # a retired job inside its direct fetch: its own thread reads the lane as dead, so dl_clip
-        # drops what lands and never starts a fallback; other threads do not
-        lnd = E._DirAlignLane(clip, ctx, tmp, "slowed", "Yeah!", art)
-        seen_d = {}
+            for i in range(300):
+                el = rnd.uniform(0, 40)
+                h = hb_at(el, evid=rnd.random() < 0.3)
+                if rnd.random() < 0.15:
+                    h.cut_wait("batch")                  # the hunt's own cap fired earlier
+                rows_r = [mk(path=a, duration=130, url="file://r%d_%d" % (i, j), plays=j) for j in range(rnd.randint(1, 5))]
+                ld = lane_d(h, {c["url"]: rnd.choice([0, 0, 0.05, 0.4, 2]) for c in rows_r})
+                for c in rows_r:
+                    ld.offer(c)
+                time.sleep(rnd.choice([0, 0.03]))
+                s0 = hb_state(h)
+                t0 = time.time()
+                sims = E._dir_align_collect(ld, rows_r, "slowed", "slowed ~0.84x", "Yeah!", art, h)
+                took = time.time() - t0
+                ld.close(wait=True)
+                n_kept += len(sims)
+                if hb_state(h) != s0:
+                    bad_hb.append(i)
+                bound = 0.0 if (h.dead or el > h.T) else min(0.25, max(0.0, h.T - el))
+                if took > bound + 0.15:
+                    bad_wait.append((i, round(el, 1), round(took, 2)))
+        finally:
+            E.DIR_ALIGN_JOIN_WAIT = wj
+        check("D 300 random budgets (elapsed 0-40 s, evidence, an earlier cut): the lane step leaves every "
+              "budget exactly as it was", not bad_hb and n_kept > 0, "changed %s kept %d" % (bad_hb[:5], n_kept))
+        check("D ... and its wait is bounded by DIR_ALIGN_JOIN_WAIT, never past T", not bad_wait, str(bad_wait[:5]))
+        import ast
+        hb_methods = {"may_start", "note", "cut_wait", "abandon", "map_bounded", "run_batch", "call",
+                      "_fire", "_wrap", "drop", "remaining"}
+        hb_fields = {"evidence", "dead", "fired_at", "skipped", "cut", "abandoned", "cancelled", "dropped",
+                     "best_core", "best_fp", "procs", "T", "C", "t0"}
+        hb_funcs = {"_hb_go", "_hb_call", "_hb_left", "hunt_budget_arm", "_hunt_budget"}
+        def budget_offences(src, name):
+            out = []
+            tree = ast.parse(__import__("textwrap").dedent(src))
+            for nd in ast.walk(tree):
+                if isinstance(nd, ast.Call) and isinstance(nd.func, ast.Attribute) and nd.func.attr in hb_methods:
+                    who = getattr(nd.func.value, "id", None) or getattr(nd.func.value, "attr", None)
+                    if who in ("hb", "_hb"):
+                        out.append((name, nd.func.attr))
+                if isinstance(nd, ast.Call) and isinstance(nd.func, ast.Name) and nd.func.id in hb_funcs:
+                    out.append((name, nd.func.id))
+                if isinstance(nd, (ast.Assign, ast.AugAssign)):
+                    for t in (nd.targets if isinstance(nd, ast.Assign) else [nd.target]):
+                        if isinstance(t, ast.Attribute) and t.attr in hb_fields \
+                                and getattr(t.value, "attr", getattr(t.value, "id", None)) in ("hb", "_hb"):
+                            out.append((name, "write " + t.attr))
+                if isinstance(nd, ast.Attribute) and nd.attr in hb_fields - {"dead", "T"} \
+                        and getattr(nd.value, "attr", getattr(nd.value, "id", None)) in ("hb", "_hb"):
+                    out.append((name, "read " + nd.attr))
+            return out
+        offend = []
+        for f in (E._DirAlignLane, E._dir_align_join, E._dir_align_collect, E._dir_align_read,
+                  E._dir_align_rows, E._dir_align_row_ok, E._dir_align_similar_row, E._dir_align_two_windows):
+            offend += budget_offences(inspect.getsource(f), f.__name__)
+        _ls = rev_src(LANE_REV, "crate_engine.py")
+        if _ls is not None:
+            k0 = _ls.index("def _dir_align_join_rows(")
+            ctl = budget_offences(_ls[k0:_ls.index("\ndef ", k0 + 10)], "join_rows@" + LANE_REV)
+            check("D control: the same check flags the %s join (it called _hb_go)" % LANE_REV,
+                  ("join_rows@" + LANE_REV, "_hb_go") in ctl, str(ctl))
+        check("D no lane code calls a hunt-budget method or writes a budget field (it reads only "
+              "hb.dead, hb.T and hb.elapsed())", not offend, str(offend))
 
-        def direct(c, inf, key=None):
-            t6 = time.time() + 3
-            while time.time() < t6 and key not in lnd.retired:
-                time.sleep(0.02)                    # the direct fetch in flight
-            seen_d["dead"] = lnd.dead
-            t7 = time.time()
-            seen_d["run"] = lnd.run(["sleep", "5"], 10)
-            seen_d["run_s"] = time.time() - t7
-            return None
-        lnd._one = direct
-        da_ = mk(path=a, duration=130, url="file://da")
-        lnd.offer(da_)
-        time.sleep(0.1)
-        lnd.retire([])
-        lnd.jobs[id(da_)][1].result(timeout=5)
-        check("retire5: a retired job's own thread reads the lane dead and starts no fallback",
-              seen_d.get("dead") is True and seen_d.get("run") is False and seen_d.get("run_s", 9) < 0.5
-              and not lnd.dead and not lnd.procs, str(seen_d))
-        lnd.close(wait=True)
+        # E. the pool is untouched; the engine crowns nothing from the lane
+        rnd = random.Random(3)
+        bad_pool, bad_rows, n_sims = [], [], 0
+        wj = E.DIR_ALIGN_JOIN_WAIT
+        E.DIR_ALIGN_JOIN_WAIT = 0.2
+        try:
+            for i in range(300):
+                pool = []
+                for j in range(rnd.randint(0, 10)):
+                    pool.append(mk(path=a, duration=rnd.choice([30, 130, 200]), url="file://p%d_%d" % (i, j),
+                                   core=round(rnd.uniform(0.1, 1.0), 3), fp=round(rnd.uniform(0.3, 0.8), 3),
+                                   vspeed=round(rnd.uniform(0.8, 1.2), 3), plays=rnd.randint(0, 99),
+                                   title=rnd.choice(PLAINS[:6] + MIXES[:4] + ["Usher - Yeah! (Sped Up)"]),
+                                   source=rnd.choice(["soundcloud", "youtube"]), editmatch=rnd.random() < 0.5,
+                                   _done=True, cand_tilt=rnd.uniform(-5, 5)))
+                ld = lane_d(rnd.choice([None, hb_at(rnd.uniform(0, 40))]), {})
+                snap0 = pickle.dumps(pool)
+                for c in pool:
+                    ld.offer(c)
+                settle(ld, 2)
+                if pickle.dumps(pool) != snap0:     # offer() and the running jobs read only
+                    bad_pool.append(("offer", i))
+                for c in pool:                  # the head of a started row can move before the join
+                    if rnd.random() < 0.1:
+                        c["core"] = 0.9
+                snap = pickle.dumps(pool)
+                ids = [id(c) for c in pool]
+                sims = E._dir_align_collect(ld, pool, "slowed", "slowed ~0.84x", "Yeah!", art, ld.hb)
+                ld.close(wait=True)
+                n_sims += len(sims)
+                if pickle.dumps(pool) != snap or [id(c) for c in pool] != ids:
+                    bad_pool.append(i)
+                for s in sims:
+                    src_row = next((c for c in pool if c["url"] == s["url"]), None)
+                    if (any(s is c for c in pool) or not s.get("similar_edit") or s.get("editmatch")
+                            or s.get("dir_align") or src_row is None or src_row["core"] >= E.CORE_KEEP
+                            or src_row.get("source") == "youtube" or len(sims) > E.DIR_ALIGN_MAX):
+                        bad_rows.append((i, s["url"]))
+        finally:
+            E.DIR_ALIGN_JOIN_WAIT = wj
+        check("E 300 random pools: offer(), the lane jobs and _dir_align_collect leave every row byte-identical "
+              "(and the list)",
+              not bad_pool and n_sims > 0, "changed %s sims %d" % (bad_pool[:5], n_sims))
+        check("E ... returns only new dicts for still-eligible rows, never an editmatch / crown row",
+              not bad_rows, str(bad_rows[:5]))
+        ce_base = rev_src(BASE_REV, "crate_engine.py")
+        if ce_base is None:
+            skip("E structure", "no 7125e63 crate_engine.py")
+        else:
+            import ast
+            ce_new = open(os.path.join(HERE, "crate_engine.py"), encoding="utf-8").read()
 
-        # 7. exception unwind through find_edit's wrapper
+            def defs(src):
+                tree = ast.parse(src)
+                out = {}
+                for nd in tree.body:
+                    if isinstance(nd, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        out[nd.name] = ast.get_source_segment(src, nd)
+                return out
+            db, dn = defs(ce_base), defs(ce_new)
+            changed = sorted(k for k in db if dn.get(k) != db[k])
+            added = sorted(k for k in dn if k not in db)
+            check("E every 7125e63 engine function is unchanged but find_edit and _find_edit_body",
+                  changed == ["_find_edit_body", "find_edit"], str(changed))
+            check("E the engine only adds the lane's own functions",
+                  all(k.startswith("_dir_align") or k in ("_DirAlignLane", "_fp_curve", "_fp_peaks") for k in added),
+                  str(added))
+            body = dn["_find_edit_body"].split("\n")
+            i0 = body.index("    # CRATE_DIR_ALIGN (similar edits only, see DIR_ALIGN): asked for by server._phase2 only. Every")
+            i1 = body.index("    _wave1_done = []") - 1
+            j0 = body.index("    # ---- CRATE_DIR_ALIGN (similar edits only, see DIR_ALIGN): the readings the lane finished go")
+            j1 = body.index('            result["similar_edits"] = _sims') + 1
+            stripped = body[:i0] + body[i1:j0] + body[j1:]
+            stripped = "\n".join(stripped).replace("comment_urls_more=None, _closers=None, similar_edits=False):",
+                                                   "comment_urls_more=None):")
+            check("E _find_edit_body is 7125e63's byte for byte once its two lane blocks are taken out "
+                  "(the ranking pass, dedup, FP_LEAD, bass target, decisive: all untouched)",
+                  stripped == db["_find_edit_body"])
+            fw = dn["find_edit"]
+            fl = fw.split("\n")
+            blocks = []
+            for start, stop in (("        # CRATE_DIR_ALIGN: every lane is closed", "        for d in tmps:"),
+                                ("    for _l in closers:", "    for d in tmps:")):
+                k0 = next(k for k, l in enumerate(fl) if l.startswith(start))
+                k1 = next(k for k in range(k0, len(fl)) if fl[k] == stop)
+                blocks.append("\n".join(fl[k0:k1]) + "\n")
+            for blk in blocks + ["    closers = []           # CRATE_DIR_ALIGN lanes the body started (RETENTION)\n"]:
+                fw = fw.replace(blk, "", 1)
+            fw = fw.replace("_tmps=tmps, _closers=closers, **kwargs", "_tmps=tmps, **kwargs")
+            check("E find_edit's wrapper is 7125e63's byte for byte once the lane close is taken out",
+                  fw == db["find_edit"] and all("_l.close(wait=" in blk for blk in blocks))
+            vnew = open(os.path.join(HERE, "verify.py"), encoding="utf-8").read()
+            vbase = rev_src(BASE_REV, "verify.py")
+            dv_b, dv_n = defs(vbase), defs(vnew)
+            check("E verify.py: only verify() changed (it is _decode + verify_samples) and verify_samples added",
+                  sorted(k for k in dv_b if dv_n.get(k) != dv_b[k]) == ["verify"]
+                  and sorted(k for k in dv_n if k not in dv_b) == ["verify_samples"])
+
+        # H. retention
         head = os.path.join(tmp, "head.wav")
         write(song(7, secs=20), head)
 
@@ -1404,24 +1063,24 @@ def main():
             def fake_dl(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
                 started.set()
                 time.sleep(0.8)                 # a direct fetch in flight while the body raises
-                d = os.path.dirname(dst)
-                if not os.path.isdir(d):
+                dd = os.path.dirname(dst)
+                if not os.path.isdir(dd):
                     # yt-dlp's fallback: its make_dir recreates the deleted dir, then writes
-                    ok = abort.run(["/bin/sh", "-c", "mkdir -p '%s' && printf x > '%s'" % (d, dst)], 5)
-                    return dst if ok and os.path.exists(dst) else None
+                    okk = abort.run(["/bin/sh", "-c", "mkdir -p '%s' && printf x > '%s'" % (dd, dst)], 5)
+                    return dst if okk and os.path.exists(dst) else None
                 with open(dst, "wb") as f:
                     f.write(b"x" * 64)
                 return dst
 
             async def fake_body(*args, _tmps=None, _closers=None, **kw):
-                d = tempfile.mkdtemp(dir=tmp, prefix="hunt_")
-                box["d"] = d
-                _tmps.append(d)
-                ln = E._DirAlignLane(clip, ctx, d, "slowed", "Yeah!", art)
+                dd = tempfile.mkdtemp(dir=tmp, prefix="hunt_")
+                box["d"] = dd
+                _tmps.append(dd)
+                lu = E._DirAlignLane(clip, ctx, dd, "slowed", "Yeah!", art)
                 if register:
-                    _closers.append(ln)
-                box["lane"] = ln
-                ln.offer(mk(path=head, duration=200, url="file://u"))
+                    _closers.append(lu)
+                box["lane"] = lu
+                lu.offer(mk(path=head, duration=200, url="file://u"))
                 started.wait(10)
                 raise RuntimeError("a verify() blew up mid-hunt")
             E.dl_clip = fake_dl
@@ -1429,7 +1088,7 @@ def main():
             E._find_edit_body = fake_body
             try:
                 try:
-                    asyncio.run(E.find_edit(clip, "c", "a", "Yeah!", "Usher", "slowed ~0.84x"))
+                    asyncio.run(E.find_edit(clip, "c", "a", "Yeah!", "Usher", "slowed ~0.84x", similar_edits=True))
                     raised = False
                 except RuntimeError:
                     raised = True
@@ -1437,23 +1096,69 @@ def main():
             finally:
                 E._find_edit_body = real_body
                 E.dl_clip = real_dl
-            d = box.get("d")
-            leftover = os.path.exists(d) and os.listdir(d)
-            return raised, d, leftover, box.get("lane")
-        raised, d, leftover, ln = unwind(True)
-        check("unwind: the body's exception still propagates", raised)
-        check("unwind: lane closed before the dir went, no dir and no pull left",
-              not os.path.exists(d) and ln.closed, "dir exists=%s left=%s" % (os.path.exists(d), leftover))
-        raised, d, leftover, ln = unwind(False)
-        check("unwind control: without the close, yt-dlp recreates the removed dir (test bites)",
-              os.path.exists(d), "dir exists=%s left=%s" % (os.path.exists(d), leftover))
-        shutil.rmtree(d, ignore_errors=True)
-        if ln is not None:
-            ln.close(wait=True)
+            dd = box.get("d")
+            return raised, dd, os.path.exists(dd) and os.listdir(dd), box.get("lane")
+        raised, dd, leftover, lu = unwind(True)
+        check("H unwind: the body's exception still propagates", raised)
+        check("H unwind: lane closed before the dir went, no dir and no pull left",
+              not os.path.exists(dd) and lu.closed, "dir exists=%s left=%s" % (os.path.exists(dd), leftover))
+        raised, dd, leftover, lu = unwind(False)
+        check("H unwind control: without the close, yt-dlp recreates the removed dir (test bites)",
+              os.path.exists(dd))
+        shutil.rmtree(dd, ignore_errors=True)
+        if lu is not None:
+            lu.close(wait=True)
+        # a lane job that raises after its pull landed, or inside its pull: no file, fd, thread or process
+        hd = tempfile.mkdtemp(dir=tmp, prefix="raise_")
 
-        # 10. hypothesis dedup in log10 bins
+        def pulling_dl(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
+            shutil.copy(a, dst)
+            for ext in (".webm", ".m4a.part"):          # what a killed yt-dlp leaves beside it
+                open(os.path.splitext(dst)[0] + ext, "wb").close()
+            if "boom_dl" in url:
+                raise RuntimeError("the pull blew up")
+            return dst
+        real_read = E._dir_align_read
+
+        def raising_read(xs_, ctxs_, tmp_, tag, stop=None):
+            raise RuntimeError("the reading blew up")
+
+        def fds():
+            try:
+                return len(os.listdir("/proc/self/fd"))
+            except OSError:
+                return len(os.listdir("/dev/fd"))
+        E.dl_clip = pulling_dl
+        E._dir_align_read = raising_read
+        try:
+            gc_before = fds()
+            th_before = threading.active_count()
+            for i in range(20):
+                lr = E._DirAlignLane(clip, ctx, hd, "slowed", "Yeah!", art)
+                lr._ctxs = ctxs
+                rws = [mk(path=head, duration=200, url="file://boom_dl%d" % i),
+                       mk(path=head, duration=200, url="file://boom_rd%d" % i)]
+                for c in rws:
+                    lr.offer(c)
+                settle(lr)
+                s = E._dir_align_collect(lr, rws, "slowed", "slowed ~0.84x", "Yeah!", art, None)
+                lr.close(wait=True)
+                if s:
+                    break
+            time.sleep(0.3)
+            check("H 40 lane jobs that raise (in the pull, in the reading): nothing listed, no file left "
+                  "(yt-dlp's leftovers too)", s == [] and os.listdir(hd) == [], str(os.listdir(hd)[:5]))
+            check("H ... no fd and no thread left behind", fds() <= gc_before and threading.active_count() <= th_before,
+                  "fds %d -> %d threads %d -> %d" % (gc_before, fds(), th_before, threading.active_count()))
+            kids = subprocess.run(["pgrep", "-P", str(os.getpid())], capture_output=True, text=True).stdout.split()
+            check("H ... and no child process left", not kids, str(kids))
+        finally:
+            E.dl_clip = real_dl
+            E._dir_align_read = real_read
+
+        # I. hypothesis dedup in log10 bins
         real_x, real_a, real_r = V._speed_xcorr, V._avg_logspec, V._resample_by
-        half_bin = 10 ** (0.5 * V._PER_BIN)          # half a bin in log10, 1.66 bins in log2
+        half_bin = 10 ** (0.5 * V._PER_BIN)
         seq = iter([(1.0, 0.9), (1.0, 0.0), (half_bin, 0.9), (1.0, 0.0)])
         V._speed_xcorr = lambda a_, b_: next(seq)
         V._avg_logspec = lambda x: x
@@ -1462,9 +1167,10 @@ def main():
             hy = E._dir_align_speeds(np.zeros(10), [{"s": 1}, {"s": 2}])
         finally:
             V._speed_xcorr, V._avg_logspec, V._resample_by = real_x, real_a, real_r
-        check("speeds: hypotheses under one log10 bin apart are one", len(hy) == 1, str(hy))
+        check("I speeds: hypotheses under one log10 bin apart are one", len(hy) == 1, str(hy))
 
         server_tests(tmp)
+        page_tests(tmp)
     finally:
         E.dl_clip = real_dl
         shutil.rmtree(tmp, ignore_errors=True)
