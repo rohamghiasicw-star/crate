@@ -9947,6 +9947,19 @@ def _dir_align_rows(cands, known_dir, edit_label, base_title, title_ok, cap=DIR_
     return out[:cap]
 
 
+def _dir_align_two_windows(clip_audio):
+    """ctxs()'s own bar (a clip >= 40 s): under it the lane has one clip window and can never lock.
+    ROUND 7 (review finding): find_edit builds the lane only when this holds, so a short clip (most
+    TikToks) runs exactly live's path. Before, the lane was built anyway: offer() started the first
+    eligible row (which returned before any pull), refused the rest, and the ranking-pass join then
+    saw them as NEW pulls past T, so may_start fired the hunt budget for rows the lane could never
+    read and the scan was kept out of both caches."""
+    try:
+        return (duration_of(clip_audio) or 0) >= 40
+    except Exception:
+        return False
+
+
 def _dir_align_join_rows(da, lane, hb):
     """ROUND 5 (review finding): the rows the ranking pass joins. HUNT BUDGET rule 1 holds back
     NEW work only. A row offer() started during the waves is always joined, past T too: its pull
@@ -9968,6 +9981,12 @@ def _dir_align_join_rows(da, lane, hb):
     new = [c for c in da if id(c) not in lane.jobs]
     if not new or hb is None or hb.evidence or (not hb.dead and hb.elapsed() <= hb.T):
         return da
+    # ROUND 7 (review finding): one clip window (a long clip whose second window failed ctxs()'s
+    # 90% fingerprint check; a short clip never gets a lane, _dir_align_two_windows): no row can
+    # lock, so none is a pull and nothing fires the budget. Every started job returns None at
+    # _one's own `len(ctxs) < 2`, so no reading is lost; the caller's retire([]) stops them.
+    if len(lane.ctxs()) < 2:
+        return []
     # past T, no evidence: never trade a started row for a new pull rule 1 refuses
     joined = [c for c in elig if id(c) in lane.jobs][:DIR_ALIGN_MAX]
     if len(joined) < len(da) and _hb_go(hb, "dir_align"):
@@ -10376,6 +10395,46 @@ class _DirAlignLane(object):
             _killpg(p)
         if ex is not None:
             ex.shutdown(wait=wait, cancel_futures=True)
+
+
+def _edit_sig(c):
+    """_shelf_dedup's cluster key: same speed (~1.4% buckets) and same bass tilt (2 dB buckets)."""
+    v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
+    return (round(float(np.log2(v)) * 50),          # ~1.4% speed buckets
+            round((c.get("cand_tilt") or 0.0) / 2.0))   # 2 dB bass buckets
+
+
+def _shelf_dedup(ranked):
+    """DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
+    different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
+    Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
+    the same edit when the audio is the same recording AND the transform matches:
+    same speed, same bass tilt. Keep the strongest representative of each cluster so
+    the shelf offers real alternatives instead of repeats, and so the decisiveness
+    margin below compares against a genuine rival rather than a copy of the winner.
+    (Moved out of find_edit's body in CRATE_DIR_ALIGN round 7, unchanged but for the lane rule.)
+
+    CRATE_DIR_ALIGN ROUND 7 (review finding): a lane row (dir_align) neither collapses nor is
+    collapsed. Its crown can still be refused by the server's _dir_family_ok, which needs the
+    confident clip speed only _phase2 measures, AFTER this pass; the engine has no such speed
+    here, so it cannot run that test itself. A lane row that ranked first used to add its
+    bucket to seen_sig and drop the plain at-tempo upload of the same section (official master
+    or lyrics channel, same speed, same tilt); the server then refused the lane row as
+    "closest" and had nothing left to crown, where 7125e63 crowned that upload as the SOURCE.
+    Keeping lane rows out of the collapse leaves the plain row in `ranked` for the walk, which
+    is the lane's own contract: a refused reading leaves the pool as before."""
+    seen_sig, deduped = set(), []
+    for c in ranked:
+        # only collapse provably identical audio; a lane row neither collapses nor is collapsed
+        if c.get("core", 0) >= CORE_SAME and not c.get("dir_align"):
+            sig = _edit_sig(c)
+            # CORRECTIONS 2026-09-29: never collapse the owner-confirmed upload into another
+            # upload of the same audio; WHICH upload is exactly what the owners corrected
+            if sig in seen_sig and not c.get("correction"):
+                continue
+            seen_sig.add(sig)
+        deduped.append(c)
+    return deduped
 
 
 async def find_edit(*args, **kwargs):
@@ -11092,7 +11151,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     def _da_title_ok(c):
         return (_artist_hit(c) and _dir_align_words_ok(c, base_title, artist_toks)
                 and not _dir_align_mixed(c, base_title, artist_toks))
-    if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label):
+    # ROUND 7 (review finding): and only on a clip that gives ctxs() two windows (>= 40 s); the
+    # helper sits last so its ffprobe runs only when the lane would otherwise be built
+    if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label) and _dir_align_two_windows(clip_audio):
         _dal = _DirAlignLane(clip_audio, clip_ctx, tmp, _fast_clip_dir(known_dir, edit_label),
                              base_title, _da_title_ok, _hb)
         if _closers is not None:
@@ -12228,28 +12289,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 tlog("fp_lead", 0.0, lead=round(_lead, 3), to=_byfp[0].get("title"),
                      was=ranked[0].get("title"), n=len(_grp))
                 ranked.remove(_byfp[0]); ranked.insert(0, _byfp[0])
-    # DEDUP THE SHELF. Search results are full of re-uploads of the SAME edit at
-    # different quality, so a "top 6" was really the same 2 edits listed 6 times - Dark
-    # Horse surfaced three byte-identical Kryd rips as its top three. Two candidates are
-    # the same edit when the audio is the same recording AND the transform matches:
-    # same speed, same bass tilt. Keep the strongest representative of each cluster so
-    # the shelf offers real alternatives instead of repeats, and so the decisiveness
-    # margin below compares against a genuine rival rather than a copy of the winner.
-    def _edit_sig(c):
-        v = max(0.25, min(4.0, c.get("vspeed", 1.0) or 1.0))
-        return (round(float(np.log2(v)) * 50),          # ~1.4% speed buckets
-                round((c.get("cand_tilt") or 0.0) / 2.0))   # 2 dB bass buckets
-    seen_sig, deduped = set(), []
-    for c in ranked:
-        if c.get("core", 0) >= CORE_SAME:      # only collapse provably identical audio
-            sig = _edit_sig(c)
-            # CORRECTIONS 2026-09-29: never collapse the owner-confirmed upload into another
-            # upload of the same audio; WHICH upload is exactly what the owners corrected
-            if sig in seen_sig and not c.get("correction"):
-                continue
-            seen_sig.add(sig)
-        deduped.append(c)
-    ranked = deduped
+    # DEDUP THE SHELF (_shelf_dedup above find_edit; round 7 moved it out of this body,
+    # unchanged except that a CRATE_DIR_ALIGN lane row neither collapses nor is collapsed).
+    ranked = _shelf_dedup(ranked)
     # decisive = the audio verdict is clear, not a play-count guess: a real edit on top
     # with a genuine match margin over the next edit rival.
     decisive = False

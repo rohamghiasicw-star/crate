@@ -60,6 +60,18 @@ Round 6 (the re-review's 3 confirmed defects):
    retired a started row). find_edit offers the carried fast-path rows to the lane as soon as it
    is built, so such a row is a started row: joined past T, budget not fired (control: never
    offered, it is a new pull, skipped, and the budget fires).
+Round 7 (the re-review's 2 confirmed defects):
+18. server + engine: a lane row neither collapses nor is collapsed in the shelf dedup
+   (_shelf_dedup, moved out of find_edit's body unchanged but for that rule). A lane row the server
+   refuses (_dir_family_ok: a "(Slowed + Reverb)" upload really at the master's tempo) no longer
+   drops the plain at-tempo upload of the same section from the pool, so the walk still crowns it
+   as the SOURCE, as 7125e63 does (control: round 6's dedup dropped it and nothing was crowned);
+   for a pool with no lane row the dedup is exactly round 6's.
+19. find_edit builds the lane only on a clip ctxs() can give two windows (>= 40 s,
+   _dir_align_two_windows), so a short clip runs live's path; and past T with no evidence, a lane
+   with one clip window joins nothing and never fires the hunt budget, on a 25 s clip and on a long
+   clip whose second window failed the 90% fingerprint check (controls: round 6's join fired it);
+   a 60 s clip still joins all 3 started rows.
 """
 import asyncio, os, random, shutil, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -415,6 +427,53 @@ def server_tests(tmp):
           (sec.get("exact") or {}).get("url") == "P" and sec.get("decisive") is False
           and [c["url"] for c in sec.get("candidates") or []] == ["P"], str(sec))
 
+    # 18. ROUND 7 (review finding 1): a lane row the server later refuses never dedups the plain
+    # at-tempo upload out of the pool. The clip is slowed 0.92x (confident) and cut from mid-song.
+    # LY is the plain upload whose head matched (core 0.97, v 0.92): 7125e63 crowns it as the
+    # SOURCE. L7 is "(Slowed + Reverb)" but really the master's tempo; its head missed and the lane
+    # adopted its section (crown verdict, core 1.0, v 0.92, lock 0.92), and it ranks first. Same
+    # speed and the same section's tilt: one _edit_sig bucket.
+    m92 = {"speed": 0.92, "confident": True}
+    L7 = {"title": "Usher - Yeah! (Slowed + Reverb)", "uploader": "s", "vspeed": 0.92, "core": 1.0,
+          "fp": 0.74, "dir_align": True, "_da_lock": 0.92, "seek_at": 96.0, "seek_clip_at": 0.0,
+          "cand_tilt": 1.4, "url": "L7"}
+    LY = {"title": "Usher - Yeah! (Lyrics) Ft. Lil Jon, Ludacris", "uploader": "lyrics",
+          "vspeed": 0.92, "core": 0.97, "fp": 0.66, "cand_tilt": 1.2, "url": "LY"}
+    U7 = lambda rows: [c["url"] for c in rows]
+    check("dedup7: L7 and LY share one _edit_sig bucket", E._edit_sig(L7) == E._edit_sig(LY))
+    wl, sl = S._gate_one(L7, m92, bt, {}, "slowed ~0.92x", "slowed", None, src, [0], [])
+    wy, sy = S._gate_one(LY, m92, bt, {}, "slowed ~0.92x", "slowed", None, src, [0], [])
+    check("dedup7: the server refuses L7 as closest (_dir_family_ok: its own tempo is the master's) "
+          "and passes LY as the SOURCE at 0.92",
+          bool(wl) and S._gate_kind(wl) == "closest" and not S._dir_family_ok(L7, 0.92, 0.92, bt)
+          and wy is None and sy == 0.92, "%s | %s %s" % (wl, wy, sy))
+    shelf_c = _dedup_r6([L7, LY])
+    check("dedup7 control: round 6's dedup dropped LY behind the lane row, and nothing was crowned",
+          U7(shelf_c) == ["L7"] and crown(shelf_c, m92, "slowed ~0.92x") == (None, None),
+          "%s %s" % (U7(shelf_c), crown(shelf_c, m92, "slowed ~0.92x")))
+    shelf = E._shelf_dedup([L7, LY])
+    check("dedup7: a lane row neither collapses nor is collapsed: both rows stay", U7(shelf) == ["L7", "LY"])
+    check("dedup7: ... so the walk crowns LY as the SOURCE, exactly as without the lane row (7125e63)",
+          crown(shelf, m92, "slowed ~0.92x") == crown([LY], m92, "slowed ~0.92x") == ("LY", "LY"),
+          str(crown(shelf, m92, "slowed ~0.92x")))
+    check("dedup7: a lane row ranked under a same-bucket plain row is not collapsed into it either",
+          U7(E._shelf_dedup([LY, L7])) == ["LY", "L7"] and U7(_dedup_r6([LY, L7])) == ["LY"])
+    L7b = dict(L7, url="L7b")
+    check("dedup7: two lane rows in one bucket both stay; a lane row the server admits is still "
+          "crowned over the source (Usher)",
+          U7(E._shelf_dedup([L7, L7b, LY])) == ["L7", "L7b", "LY"]
+          and crown(E._shelf_dedup([ttr, dict(lyr, cand_tilt=0.0), dict(ttr, url="t2")]),
+                    usher_m, "slowed ~0.70x")[0] == ttr["url"])
+    rnd = random.Random(7)
+    same = True
+    for _ in range(400):
+        pool = [{"url": "r%d" % i, "core": rnd.choice((0.4, 0.94, 0.95, 0.97, 1.0)),
+                 "vspeed": rnd.choice((None, 0.0, 0.92, 0.925, 0.94, 1.0, 1.01, 1.3)),
+                 "cand_tilt": rnd.choice((None, 0.0, 0.9, 1.1, 3.2, -2.5)),
+                 "correction": rnd.random() < 0.1} for i in range(rnd.randint(0, 8))]
+        same = same and U7(E._shelf_dedup(pool)) == U7(_dedup_r6(pool))
+    check("dedup7: on 400 random pools with no lane row the moved dedup is exactly round 6's", same)
+
 
 def page_tests(rows, S):
     """15 (page half): crate.html's own vmatch / pageCrown on the server's rows, through node.
@@ -571,6 +630,32 @@ def _join_r5(da, lane, hb):
     if new and hb is not None and not E._hb_go(hb, "dir_align"):
         return [c for c in da if id(c) in lane.jobs]
     return list(da)
+
+
+def _join_r6(da, lane, hb):
+    """Round 6's _dir_align_join_rows, verbatim (the control): no clip-window check past T."""
+    elig, da = da, list(da[:E.DIR_ALIGN_MAX])
+    new = [c for c in da if id(c) not in lane.jobs]
+    if not new or hb is None or hb.evidence or (not hb.dead and hb.elapsed() <= hb.T):
+        return da
+    joined = [c for c in elig if id(c) in lane.jobs][:E.DIR_ALIGN_MAX]
+    if len(joined) < len(da) and E._hb_go(hb, "dir_align"):
+        return da
+    return joined
+
+
+def _dedup_r6(ranked):
+    """Round 6's shelf dedup (find_edit's body then), verbatim (the control): a lane row collapses
+    and is collapsed like any other row."""
+    seen_sig, deduped = set(), []
+    for c in ranked:
+        if c.get("core", 0) >= E.CORE_SAME:
+            sig = E._edit_sig(c)
+            if sig in seen_sig and not c.get("correction"):
+                continue
+            seen_sig.add(sig)
+        deduped.append(c)
+    return deduped
 
 
 def _mixed_r4(c, base_title, artist_toks):
@@ -1106,6 +1191,118 @@ def main():
               "and the budget fires", jn == [] and hbn.fired_at is not None and hbn.skipped == ["dir_align"],
               "joined %d fired %s" % (len(jn), hbn.fired_at))
         lnn.close(wait=True)
+
+        # 19. ROUND 7 (review finding 2): a clip under 40 s gives ctxs() one window, so no lane row
+        # can lock. find_edit no longer builds the lane there (_dir_align_two_windows, ctxs()'s
+        # own bar), and past T with no evidence a one-window lane joins nothing and never fires
+        # the hunt budget for rows it could never read (which kept the scan out of both caches).
+        import inspect
+        clip25 = os.path.join(tmp, "clip25.m4a")
+        mkclip(a, clip25, r, dur=25)
+        ctx25 = V.prepare_clip(clip25, 20)
+        check("win7: _dir_align_two_windows is ctxs()'s bar: a 25 s clip no, the 60 s clip yes, "
+              "a missing file no", E._dir_align_two_windows(clip25) is False
+              and E._dir_align_two_windows(clip) is True
+              and E._dir_align_two_windows(os.path.join(tmp, "nope.m4a")) is False)
+        src7 = inspect.getsource(E._find_edit_body)
+        check("win7: find_edit builds the lane only on a two-window clip (the one place it is built)",
+              "if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label) and "
+              "_dir_align_two_windows(clip_audio):" in src7 and src7.count("_DirAlignLane(") == 1)
+        ln25r = E._DirAlignLane(clip25, ctx25, tmp, "slowed", "Yeah!", art)
+        before7 = set(os.listdir(tmp))
+        real25 = ln25r.one({"url": "file://real", "path": a, "duration": 130, "title": "x"})
+        check("win7: on a 25 s clip the real lane job returns None before any pull, one window, "
+              "no file left", real25 is None and len(ln25r.ctxs()) == 1
+              and not (set(os.listdir(tmp)) - before7))
+        ln25r.close(wait=True)
+
+        def lane7(clip_, ctx_, hb):
+            ln = E._DirAlignLane(clip_, ctx_, tmp, "slowed", "Yeah!", art, hb=hb)
+
+            def one7(c, inf, key=None):         # _one's own first gate, then the reading
+                if len(ln.ctxs()) < 2:
+                    return None
+                return dict(reading, url=c.get("url"))
+            ln._one = one7
+            return ln
+
+        def three():
+            return [mk(path=a, duration=130, url="file://s%d" % i, plays=p)
+                    for i, p in ((1, 30), (2, 20), (3, 10))]
+
+        def offer_spaced(ln, rows):             # commits 0.6 s apart, as from the download workers
+            for c in rows:
+                ln.offer(c)
+                time.sleep(0.6)
+            settle(ln)
+        # a 25 s clip, past T, no evidence: the first offer starts s1, which finds one window and
+        # returns; offer() refuses s2 and s3; the join must not count them as new pulls
+        rows25 = three()
+        hb25 = hb_at(26)
+        ln25 = lane7(clip25, ctx25, hb25)
+        offer_spaced(ln25, rows25)
+        started25 = U([c for c in rows25 if id(c) in ln25.jobs])
+        j25 = E._dir_align_join_rows(pick(rows25, None), ln25, hb25)
+        ln25.retire(j25)
+        check("win7: 25 s clip past T: only s1 started, the join is empty and the budget does not fire "
+              "(the scan stays cacheable)",
+              started25 == ["s1"] and j25 == [] and hb25.fired_at is None and hb25.skipped == []
+              and not hb25.dead, "started %s joined %s fired %s skipped %s" % (
+                  started25, U(j25), hb25.fired_at, hb25.skipped))
+        ln25.close(wait=True)
+        rows25c = three()
+        hb25c = hb_at(26)
+        ln25c = lane7(clip25, ctx25, hb25c)
+        offer_spaced(ln25c, rows25c)
+        j25c = _join_r6(pick(rows25c, None), ln25c, hb25c)
+        check("win7 control: round 6's join counted s2, s3 as new pulls and fired the budget",
+              U(j25c) == ["s1"] and hb25c.fired_at is not None and hb25c.skipped == ["dir_align"],
+              "joined %s fired %s" % (U(j25c), hb25c.fired_at))
+        ln25c.close(wait=True)
+        hb25t = hb_at(20)
+        ln25t = lane7(clip25, ctx25, hb25t)
+        rows25t = three()
+        offer_spaced(ln25t, rows25t)
+        check("win7: before T the join is unchanged (the first DIR_ALIGN_MAX), and nothing fires",
+              U(E._dir_align_join_rows(pick(rows25t, None), ln25t, hb25t)) == ["s1", "s2", "s3"]
+              and hb25t.fired_at is None)
+        ln25t.close(wait=True)
+        # a long clip whose second window failed the 90% fingerprint check: the belt
+        rowsw = three()
+        hbw = hb_at(26)
+        lnw = lane7(clip, ctx, hbw)
+        lnw._ctxs = [ctx]
+        offer_spaced(lnw, rowsw)
+        jw = E._dir_align_join_rows(pick(rowsw, None), lnw, hbw)
+        rowswc = three()
+        hbwc = hb_at(26)
+        lnwc = lane7(clip, ctx, hbwc)
+        lnwc._ctxs = [ctx]
+        offer_spaced(lnwc, rowswc)
+        jwc = _join_r6(pick(rowswc, None), lnwc, hbwc)
+        check("win7: a 60 s clip with one surviving window joins nothing past T and does not fire "
+              "(control: round 6 fired)",
+              not lnw.jobs and jw == [] and hbw.fired_at is None
+              and jwc == [] and hbwc.fired_at is not None and hbwc.skipped == ["dir_align"],
+              "jobs %d joined %s fired %s / control fired %s" % (len(lnw.jobs), U(jw), hbw.fired_at,
+                                                                 hbwc.fired_at))
+        lnw.close(wait=True)
+        lnwc.close(wait=True)
+        # control: the 60 s clip with both windows still joins all 3 started rows past T
+        rows60 = three()
+        hb60 = hb_at(26)
+        ln60 = lane7(clip, ctx, hb60)
+        offer_spaced(ln60, rows60)
+        j60 = E._dir_align_join_rows(pick(rows60, None), ln60, hb60)
+        ln60.retire(j60)
+        got60 = [ln60.result(c) for c in j60]
+        check("win7: a 60 s clip past T still joins all 3 started rows, readings kept, budget not fired",
+              U([c for c in rows60 if id(c) in ln60.jobs]) == ["s1", "s2", "s3"]
+              and U(j60) == ["s1", "s2", "s3"] and all(g and g.get("url") == c["url"]
+                                                       for g, c in zip(got60, j60))
+              and hb60.fired_at is None and hb60.skipped == [],
+              "joined %s got %s fired %s" % (U(j60), [bool(g) for g in got60], hb60.fired_at))
+        ln60.close(wait=True)
 
         # 14. ROUND 5 (review, low): YouTube rows never enter the lane; retire() frees a worker
         # whose job sits in a fallback fetch
