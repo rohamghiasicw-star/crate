@@ -623,8 +623,14 @@ def _is_yt_row(c):
 #     rows first), reserved when their batch starts, each once per scan. First-to-fail would be a
 #     race among the walled rows.
 #   * capped: 2 per scan (one find_edit call) and 60 per rolling hour for the process, counted on
-#     the attempt. Env can lower both, never raise them. Past a cap the row fails as it does
-#     without the file.
+#     the attempt. Env can move both, up to 6 per scan and 150 an hour (2026-10-06, Konnor's
+#     "bring YouTube versions back": with the server walled, the cookie route is the only way a
+#     YouTube version reaches a scan, and 2 rows of ~8 left most of them out). Past a cap the row
+#     fails as it does without the file.
+#   * route dead (2026-10-06, not CRATE_YT_WALL): while today's route keeps failing on YouTube (3 failures in a row,
+#     none since; 1009 of 1009 failed 2026-09-30..10-06, p50 3.6 s each), a row holding a reserved
+#     slot goes straight to the cookie download instead of failing first. One success on today's
+#     route lifts it.
 #   * paused after YT_CKF_PAUSE_AFTER refusals in a row on the same file, until the file changes
 #     or YT_CKF_PAUSE_S passes (then it tries again), so a dead login stops asking YouTube.
 #   * the file is never written: each download reads a private 0600 copy in the scan's temp dir
@@ -643,8 +649,28 @@ def _ytckf_int(name, default, top):
         return default
 
 
-YT_CKF_PER_SCAN = _ytckf_int("CRATE_YT_CK_PER_SCAN", 2, 2)
-YT_CKF_PER_HOUR = _ytckf_int("CRATE_YT_CK_PER_HOUR", 60, 60)
+YT_CKF_PER_SCAN = _ytckf_int("CRATE_YT_CK_PER_SCAN", 2, 6)
+YT_CKF_PER_HOUR = _ytckf_int("CRATE_YT_CK_PER_HOUR", 60, 150)
+# ROUTE DEAD: today's YouTube route, failures in a row (process-wide; not CRATE_YT_WALL). See the header above.
+_YT_ROUTE = {"fails": 0}
+YT_ROUTE_DEAD_AFTER = 3
+
+
+def _yt_route_note(ok):
+    with _YTCKF_LOCK:
+        _YT_ROUTE["fails"] = 0 if ok else _YT_ROUTE["fails"] + 1
+
+
+def _yt_route_dead():
+    return _YT_ROUTE["fails"] >= YT_ROUTE_DEAD_AFTER
+
+
+def _ytckf_holds(scan, url):
+    """True when `url` holds one of this scan's reserved, untried cookie slots."""
+    if scan is None:
+        return False
+    with _YTCKF_LOCK:
+        return url in scan.picked and url not in scan.tried and scan.n < YT_CKF_PER_SCAN
 YT_CKF_TIMEOUT = 15.0            # dl_clip's own subprocess ceiling
 YT_CKF_PAUSE_AFTER = 3
 YT_CKF_PAUSE_S = 1800.0
@@ -7984,16 +8010,27 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
     caller but _download_and_score, and every scan while the file is missing) = today's path."""
     if DM_ON and _is_dm(url):
         return _dl_dm(url, dst, 0.0, seconds, timeout, abort)
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    if is_yt and ytck is not None and _yt_route_dead() and _ytckf_holds(ytck, url):
+        # ROUTE DEAD (YOUTUBE COOKIE FILE): today's route has failed on every recent YouTube row, so
+        # a reserved row skips its ~3.6 s certain failure. A cookie miss still runs today's route.
+        _got = _dl_yt_ckf(url, dst, seconds, abort, ytck)
+        if _got:
+            return _got
     try:
         if abort is None:
-            return _dl_direct(url, dst, seconds, min(6, timeout))
+            _got = _dl_direct(url, dst, seconds, min(6, timeout))
+            if is_yt and _got:
+                _yt_route_note(True)
+            return _got
         _got = _dl_direct(url, dst, seconds, min(6, timeout))
         if abort.dead:
             return None                          # the caller drops the file
+        if is_yt and _got:
+            _yt_route_note(True)
         return _got
     except Exception:
         pass                                     # fall through to the proven subprocess
-    is_yt = "youtube.com" in url or "youtu.be" in url
     args = ytdlp_for(url) + [url, "-f", "bestaudio/best", "-x", "--audio-format", "wav",
                              "-o", dst.replace(".wav", ".%(ext)s"),
                              "--download-sections", "*0-%d" % seconds,
@@ -8003,6 +8040,8 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
     _ck = is_yt and ytck is not None          # YOUTUBE COOKIE FILE: a failure may retry once with it
     if abort is not None:
         if not abort.run(args, timeout):     # own process group; counted for the server's tally
+            if is_yt and not abort.dead:
+                _yt_route_note(False)
             return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
     else:
         try:
@@ -8011,9 +8050,15 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
             _run_ytdlp(args, capture_output=True, text=True, timeout=timeout, check=True,
                        kind="dl")
         except Exception:
+            if is_yt:
+                _yt_route_note(False)
             return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
     if not os.path.exists(dst):
+        if is_yt:
+            _yt_route_note(False)
         return _dl_yt_ckf(url, dst, seconds, abort, ytck) if _ck else None
+    if is_yt:
+        _yt_route_note(True)
     return dst
 
 

@@ -310,6 +310,45 @@ try:
                                                     E._ytckf_int("CRATE_YT_CK_PER_HOUR", 60, 60)) == (1, 60))
     os.environ.pop("CRATE_YT_CK_PER_SCAN"), os.environ.pop("CRATE_YT_CK_PER_HOUR")
 
+    # ---- 12. route dead (2026-10-06): a reserved row skips today's certain failure ------------------
+    route_calls = []
+
+    def counting_walled(*a, **k):
+        route_calls.append(1)
+        raise RuntimeError("stub: direct path walled")
+    E._dl_direct = counting_walled
+    FakePopen.mode = "ok"
+    E._YTCKF["hour"][:] = []
+    E._YTCKF["streak"] = 0
+    E._YT_ROUTE["fails"] = 0
+    s12 = mkscan(YT)
+    n0 = len(FakePopen.calls)
+    got12 = dl(YT[0], 40, s12)
+    check("route alive: a reserved row tries today's route first", bool(got12) and len(route_calls) == 1
+          and len(FakePopen.calls) == n0 + 1, (len(route_calls), len(FakePopen.calls) - n0))
+    check("today's failures counted", E._YT_ROUTE["fails"] >= 1, E._YT_ROUTE)
+    E._YT_ROUTE["fails"] = E.YT_ROUTE_DEAD_AFTER
+    route_calls[:] = []
+    got13 = dl(YT[1], 41, s12)
+    check("route dead: a reserved row goes straight to the cookie download",
+          bool(got13) and route_calls == [] and len(FakePopen.calls) == n0 + 2, (route_calls, len(FakePopen.calls) - n0))
+    got14 = dl(YT[2], 42, s12)
+    check("route dead: an unreserved row still runs today's route, no cookie call",
+          got14 is None and len(route_calls) == 1 and len(FakePopen.calls) == n0 + 2)
+    FakePopen.mode = "fail"
+    s15 = mkscan(YT)
+    route_calls[:] = []
+    got15 = dl(YT[0], 43, s15)
+    check("route dead + cookie miss: today's route still runs after it", got15 is None and len(route_calls) == 1)
+    FakePopen.mode = "ok"
+    E._yt_route_note(True)
+    check("one success on today's route lifts it", not E._yt_route_dead())
+    os.environ["CRATE_YT_CK_PER_SCAN"], os.environ["CRATE_YT_CK_PER_HOUR"] = "9", "999"
+    check("env can raise the caps to 6 / 150, no higher",
+          (E._ytckf_int("CRATE_YT_CK_PER_SCAN", 2, 6), E._ytckf_int("CRATE_YT_CK_PER_HOUR", 60, 150)) == (6, 150))
+    os.environ.pop("CRATE_YT_CK_PER_SCAN"), os.environ.pop("CRATE_YT_CK_PER_HOUR")
+    stubs()
+
     # ---- 11. nothing secret leaves -----------------------------------------------------------------
     h = json.dumps(E.yt_cookie_health())
     log = open(TLOG).read() if os.path.exists(TLOG) else ""
