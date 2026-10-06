@@ -452,7 +452,19 @@ def verify(clip_path, cand_path, seconds=20, clip_ctx=None):
         xk = _decode(cand_path, seconds)
     except Exception:
         return out
-    if xk.size < SR:                      # under ~1s of audio -> nothing to do
+    return verify_samples(clip_ctx, xk, out)
+
+
+def verify_samples(clip_ctx, xk, out=None):
+    """verify() on candidate audio already decoded (mono float32 at SR), against a
+    prepare_clip() context. verify() is exactly _decode + this, so a caller that slides
+    windows over one decode (CRATE_DIR_ALIGN) reads the same numbers without an ffmpeg
+    cut and an ffmpeg decode per window."""
+    if out is None:
+        out = {"score": 0.0, "same": False, "speed": 1.0, "bass_delta": 0.0,
+               "lag": 0.0, "fp": 0.0, "arr": 0.0, "spectral": -1.0, "core": 0.0,
+               "clip_tilt": 0.0, "cand_tilt": 0.0}
+    if clip_ctx is None or xk is None or xk.size < SR:   # under ~1s of audio -> nothing to do
         return out
 
     clip_s = clip_ctx["s"]

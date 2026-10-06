@@ -2983,6 +2983,9 @@ _SOFT_TEMPO_TOL = float(os.environ.get("CRATE_SOFT_TEMPO_TOL", 0.0))
 # before the candidate is called the SOURCE rather than a different edit. 0.06 in log2 is
 # about +-4%, the same window _TEMPO_TOL uses to call two tempos equal.
 _SOURCE_AGREE_TOL = float(os.environ.get("CRATE_SOURCE_AGREE_TOL", 0.06))
+# CRATE_DIR_ALIGN's family band: 0.152 is ski slopes' distance (v 0.90), the one Roham called
+# "basically closer to original"; only rows the lane placed by audio ever use it.
+_DIR_FAMILY_TOL = float(os.environ.get("CRATE_DIR_FAMILY_TOL", 0.152))
 
 # THE SOURCE HAS TO BE PLAIN. The source branch below crowns an upload the clip was
 # re-pitched FROM, so the upload must be the recording itself, not somebody's edit of
@@ -3499,6 +3502,18 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None, res=None):
             and (top.get("core") or 0) >= E.CORE_SAME
             and not _SPEED_CLAIM.search(title)):
         return None, v
+    # CRATE_DIR_ALIGN (USHER-SC-MISS 2026-10-06, ON since round 2): an upload the direction-align
+    # lane placed on the clip by audio (two clip windows, core >= CORE_EDIT, fp >= 0.638, one
+    # speed) whose title claims the clip's own treatment is that edit's family member, a few
+    # percent off: Ttraamat's "Yeah! (Slowed&Reverbed)" is 0.746x of the master, the clip
+    # 0.704x (both measured against the Apple and Deezer previews), v 0.9353. Refusing it
+    # crowns the plain lyrics upload as the SOURCE at 0.70x instead, which is the original
+    # relabelled (Roham on ski slopes: he wants the slowed version found). Admitted up to
+    # _DIR_FAMILY_TOL; the crown then carries crown_tempo_off ("about 7% faster than the clip")
+    # and the walk still prefers any row nearer the clip's tempo.
+    if (getattr(E, "DIR_ALIGN", False) and top.get("dir_align") and d <= _DIR_FAMILY_TOL
+            and not (m_speed and (float(m_speed) < 1.0) != bool(re.search(r"\bslow", title.lower())))):
+        return None, None
     # verify()'s `speed` is the CLIP's tempo relative to the candidate, so below 1.0 means
     # the clip is the slower of the two.
     return ("clip plays %.0f%% %s than this upload, so it is a different edit of the "
