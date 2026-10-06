@@ -32,6 +32,7 @@ def _ydl():
 
 def _run(req):
     text, err = "", None
+    y = None
     try:
         y = _ydl()
         info = y.extract_info(req["spec"], download=False)
@@ -44,6 +45,16 @@ def _run(req):
         text = "\n".join(lines)
     except Exception as ex:                      # same as the CLI: no rows
         err = str(ex)[:200]
+    finally:
+        # FD LEAK (2026-10-06): an unclosed YoutubeDL stays reachable from the process-wide
+        # 'urllib3' logger (yt-dlp's requests handler adds a handler holding it), so its
+        # keep-alive YouTube socket never closes: this worker held 586 CLOSE-WAIT sockets on
+        # live after 80 min. close() drops the handler and the pool; the rows are read already.
+        if y is not None:
+            try:
+                y.close()
+            except Exception:
+                pass
     msg = json.dumps({"id": req["id"], "text": text, "err": err})
     with _out:
         sys.stdout.write(msg + "\n")

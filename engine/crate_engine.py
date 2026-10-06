@@ -7184,15 +7184,31 @@ def _sc_ydl():
                              "extract_flat": "in_playlist"})
 
 
+def _ydl_close(y):
+    """FD LEAK (2026-10-06): every fresh YoutubeDL MUST be closed. yt-dlp's requests handler
+    adds a handler to the process-wide 'urllib3' logger that holds the YoutubeDL's logger, so an
+    unclosed instance is reachable forever and so is its keep-alive connection pool: one
+    api-v2.soundcloud.com socket per search, left in CLOSE-WAIT when SoundCloud hangs up
+    (live b6f2309: 613 of 623 sockets after 78 min; a lab hit its 1024 limit). close() removes
+    that handler and closes the pool. Results are read before it runs, so rows are unchanged."""
+    try:
+        y.close()
+    except Exception:
+        pass
+
+
 def _sc_search_text(spec_str):
     y = _sc_ydl()
-    info = y.extract_info(spec_str, download=False)
-    lines = []
-    for e in (info or {}).get("entries") or []:
-        if not e.get("webpage_url"):
-            e = dict(e, webpage_url=e.get("url"))     # what the CLI prints (see worker)
-        lines.append(y.evaluate_outtmpl(_SEARCH_FMT, e))
-    return "\n".join(lines)
+    try:
+        info = y.extract_info(spec_str, download=False)
+        lines = []
+        for e in (info or {}).get("entries") or []:
+            if not e.get("webpage_url"):
+                e = dict(e, webpage_url=e.get("url"))     # what the CLI prints (see worker)
+            lines.append(y.evaluate_outtmpl(_SEARCH_FMT, e))
+        return "\n".join(lines)
+    finally:
+        _ydl_close(y)
 
 
 def _sc_json_inproc(target, flat=True, timeout=SEARCH_TIMEOUT):
@@ -7211,6 +7227,8 @@ def _sc_json_inproc(target, flat=True, timeout=SEARCH_TIMEOUT):
             return y.sanitize_info(y.extract_info(target, download=False)) or {}
         except Exception:
             return {}
+        finally:
+            _ydl_close(y)                       # FD LEAK: see _ydl_close
     return _SC_POOL.submit(_go).result(timeout=timeout)
 
 
