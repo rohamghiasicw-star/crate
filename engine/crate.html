@@ -3373,9 +3373,12 @@ var TEMPO_TOL=0.06, EQ_CAP=0.90, OFF_DROP=4/9, PCT_FLOOR=50, REF_CAP=45,
     CROWN_URL='', CROWN_SRC='', CROWN_ROW=null;   // set by renderResult; the crown never takes a page-side verdict
 var GATE_WORD={tempo:'Different edit', tilt:'Different EQ', speedclaim:'Titled a speed edit',
                official:'Official release', othersong:'Different song', 'null':'Texture only',
-               rendition:'The original, not this version', source:'Source recording'};
+               rendition:'The original, not this version', source:'Source recording',
+               // CRATE_DIR_ALIGN round 3: the lane's nearest family member, listed, never crowned
+               closest:'Closest version'};
 var G_NUM=2, G_UNC=5, G_NONE=6;
 function gateWhy(k,c,offTxt){
+  if(k==='closest') return (c&&c.gate&&c.gate.note)||'';
   if(k==='tempo'||k==='source') return 'clip '+offTxt;
   if(k==='tilt') return 'EQ '+Math.abs(c.bass||0).toFixed(1)+' dB off';
   return '';}

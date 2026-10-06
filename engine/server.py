@@ -2987,6 +2987,71 @@ _SOURCE_AGREE_TOL = float(os.environ.get("CRATE_SOURCE_AGREE_TOL", 0.06))
 # "basically closer to original"; only rows the lane placed by audio ever use it.
 _DIR_FAMILY_TOL = float(os.environ.get("CRATE_DIR_FAMILY_TOL", 0.152))
 
+
+def _dir_family_ok(top, v, m_speed, base_title):
+    """CRATE_DIR_ALIGN round 3: is this lane row (placed on the clip by audio, inside the family
+    band) really a member of the clip's edit family? All three must hold:
+      * the clip's own speed against the master was measured with confidence (m_speed);
+      * the TITLE claims the measured direction, read with the lane's own words
+        (E._fast_edit_claim: slow/slowed/daycore/screwed vs sped up/nightcore/fast/genre), so
+        the lane and this gate can no longer disagree on "Daycore" or "Chopped & Screwed";
+      * the upload's OWN tempo against the master, m_speed / v, has moved off 1.0 in that
+        direction by more than _TEMPO_TOL. A "(Slowed + Reverb)" upload that really plays at
+        the master's tempo, or faster, is the original relabelled (review finding: v 0.94 on a
+        0.94x clip is an upload at 1.000x) and stays refused.
+    Usher / Ttraamat: m 0.7022, v 0.9353 -> the upload runs 0.751x of the master, slowed."""
+    try:
+        if not m_speed or float(m_speed) <= 0 or not v or float(v) <= 0:
+            return False
+        cdir = "slowed" if float(m_speed) < 1.0 else "sped up"
+        if not E._fast_edit_claim(top.get("title") or "", cdir, base_title):
+            return False
+        u = math.log2(float(m_speed) / float(v))
+        return u < -_TEMPO_TOL if cdir == "slowed" else u > _TEMPO_TOL
+    except Exception:
+        return False
+
+
+# CLOSEST, NEVER CROWNED (CRATE_DIR_ALIGN round 3; Roham's rule, a wrong crown is worse than no
+# crown). A lane reading that passed every lane test but failed a crown-only one is listed with
+# this sentence as its gate (kind "closest", _gate_kind), so the page prints it at the refused
+# cap with the speed note beside it, under any crown, and no crown path can pick it.
+_CLOSEST_WHY = {
+    "rev": "its matching section did not beat its own reversed audio by enough to prove the "
+           "recording",
+    "lock": "two speed readings on its matching section disagree",
+    "rev+lock": "its matching section did not beat its own reversed audio by enough to prove "
+                "the recording, and two speed readings on it disagree",
+    "speed": "its own speed was not measured as the clip's edit family",
+}
+
+
+def _closest_note(c):
+    """'this upload runs about N% faster/slower than the clip' (the crown_tempo_off sentence)."""
+    try:
+        v = c.get("vspeed_locked")
+        if v is None:
+            v = c.get("vspeed")
+        v = float(v or 0)
+    except Exception:
+        return None
+    if v <= 0:
+        return None
+    if abs(math.log2(v)) <= _TEMPO_EXACT:
+        return "this upload runs at the clip's speed"
+    return ("this upload runs about %.0f%% %s than the clip"
+            % (abs(1.0 - 1.0 / v) * 100.0, "slower" if v > 1.0 else "faster"))
+
+
+def _closest_why(c, why):
+    note = _closest_note(c)
+    return ("closest version, not crowned: %s%s" % (
+        (note + "; ") if note else "", _CLOSEST_WHY.get(why or "", "it did not pass every check")))
+
+
+def _closest_gate(c, why):
+    return {"kind": "closest", "why": _closest_why(c, why), "note": _closest_note(c)}
+
 # THE SOURCE HAS TO BE PLAIN. The source branch below crowns an upload the clip was
 # re-pitched FROM, so the upload must be the recording itself, not somebody's edit of
 # it. `_SPEED_CLAIM` only covers slowed/sped words, and that let through:
@@ -3511,8 +3576,12 @@ def _crown_tempo_mismatch(top, measured=None, base_title=None, res=None):
     # relabelled (Roham on ski slopes: he wants the slowed version found). Admitted up to
     # _DIR_FAMILY_TOL; the crown then carries crown_tempo_off ("about 7% faster than the clip")
     # and the walk still prefers any row nearer the clip's tempo.
+    # ROUND 3 (review findings): admitted only by _dir_family_ok, which needs a confident clip
+    # speed, the lane's own direction words, and the upload's own tempo off the master in the
+    # title's direction. A row this refuses is listed as a "closest version", never crowned
+    # (the walk below, _closest_why).
     if (getattr(E, "DIR_ALIGN", False) and top.get("dir_align") and d <= _DIR_FAMILY_TOL
-            and not (m_speed and (float(m_speed) < 1.0) != bool(re.search(r"\bslow", title.lower())))):
+            and _dir_family_ok(top, v, m_speed, base_title)):
         return None, None
     # verify()'s `speed` is the CLIP's tempo relative to the candidate, so below 1.0 means
     # the clip is the slower of the two.
@@ -3707,6 +3776,8 @@ def _gate_kind(why):
     """Which of the engine's own rules wrote this refusal. Keyed on the fixed sentences the
     gate functions above return, so the page can pick a short word without parsing English."""
     w = why or ""
+    if w.startswith("closest version"):
+        return "closest"            # CRATE_DIR_ALIGN round 3: listed, never crowned
     if w.startswith("clip plays "):
         return "tempo"
     if w.startswith("candidate is the official release"):
@@ -3745,6 +3816,8 @@ def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
         ann, src = {}, {}
         for _why, _c in (rejects or {}).values():
             ann[_c.get("url")] = {"kind": _gate_kind(_why), "why": _why}
+            if ann[_c.get("url")]["kind"] == "closest":
+                ann[_c.get("url")]["note"] = _closest_note(_c)
         for _i, _c, _sv in (clean_all or []):
             if _sv is not None:
                 src[_c.get("url")] = float(_sv)
@@ -3771,6 +3844,103 @@ def _gate_rows(candidates, verified, rejects, clean_all, measured, base_title,
         # A label that cannot be computed must never cost the user the result. Without the
         # flag the page falls back to its own tempo test for every row.
         res.pop("gates_on_rows", None)
+
+
+def _gate_one(cand, measured, base_title, res, gate_label, mdir, reup, src, fa_n,
+              fp_floor_hits):
+    """One pool row through the crown gates, in the walk's order (moved out of the walk
+    verbatim in CRATE_DIR_ALIGN round 3 so the closest rule is testable). -> (why_or_None,
+    source_v). `fa_n` ([count]) and `fp_floor_hits` (list) are the walk's own accumulators."""
+    _why, _sv = _crown_tempo_mismatch(cand, measured, base_title, res=res)
+    # CRATE_DIR_ALIGN round 3: a lane row refused ONLY by the tempo gate (its widened family
+    # band, _dir_family_ok) is judged by every other gate below and, when they all pass, is
+    # listed as a "closest version" (never crowned).
+    _da_tempo = bool(_why and (cand.get("dir_align") or cand.get("dir_closest"))
+                     and _gate_kind(_why) == "tempo")
+    if _da_tempo:
+        _why = None
+    if not _why:
+        _why = _crown_contradicts(cand, gate_label, mdir, measured=measured,
+                                  tilt_readable=(_sv is None))
+    if not _why:
+        _why = _crown_other_song(cand, base_title, reup, res)
+    if not _why:
+        # TASK A: the rendition test is a gate on every row now, so the walk (and the
+        # highest-figure pick below) steps past the plain original.
+        _why = _rendition_original_why(cand, res.get("rendition"))
+    if not _why:
+        _why = _crown_fp_floor(cand, _sv)          # ROOTFIX B, flag-gated
+        if (_why and FP_FLOOR_ALIGN and fa_n[0] < _FA_MAX_ROWS
+                and (cand.get("core") or 0) >= E.CORE_EDIT):
+            fa_n[0] += 1                   # graded #41: head fp misaligned?
+            _fa = _floor_align(src.get("audio"), cand, src.get("tmp"))
+            if _fa and _fa.get("pass"):
+                _why = None
+        if _why:
+            fp_floor_hits.append(cand)
+    if not _why and (_da_tempo or cand.get("dir_closest")):
+        _why = _closest_why(cand, cand.get("dir_closest_why") or "speed")
+    return _why, _sv
+
+
+def _list_closest(rows, candidates, gate_label, mdir, measured, base_title, reup, res,
+                  crown_url=None):
+    """CRATE_DIR_ALIGN round 3: list the lane's CLOSEST readings (find_edit's
+    result["closest"]) as rows of the result's version list, NEVER as a crown.
+
+    A closest reading passed every lane test (both clip windows' bars, the two-window speed
+    lock, the family band) but failed a crown-only one: the reversed control on its section, or
+    the bass-robust lock on that section disagreeing with the lane's speed. The engine kept it
+    out of the pool, so nothing on the crown path (the walk, _crown_by_figure, corrections)
+    can reach it; this runs after the crown is decided and only appends display rows. A row is
+    listed only when every non-tempo crown gate passes it (title contradiction, other song,
+    rendition, fp floor), and carries gate {"kind": "closest", "why", "note"}: the page prints
+    it at the refused cap (never above any crown) with the speed note ("this upload runs about
+    7% faster than the clip"). Display only; any failure lists nothing.
+
+    The lane only reads rows whose HEAD scored under CORE_KEEP, so such a row is never in the
+    gate pool; if a keep rescue still put its head reading on the list, that list entry is
+    replaced by the closest one (same url, never the crown: `crown_url` is skipped outright)."""
+    try:
+        listed, refused = [], []
+        shown = {c.get("url"): i for i, c in enumerate(candidates)}
+        for r in rows or []:
+            if not r.get("url") or r.get("url") == crown_url:
+                continue
+            why = _crown_contradicts(r, gate_label, mdir, measured=measured, tilt_readable=True)
+            if not why:
+                why = _crown_other_song(r, base_title, reup, res)
+            if not why:
+                why = _rendition_original_why(r, res.get("rendition"))
+            if not why:
+                why = _crown_fp_floor(r, None)
+            if why:
+                refused.append([(r.get("title") or "")[:60], (why or "")[:80]])
+                continue
+            row = _cand_row(r)
+            row["gate"] = _closest_gate(r, r.get("dir_closest_why"))
+            row["closest"] = True
+            row["aligned_at"] = r.get("seek_at")
+            if r.get("url") in shown:
+                candidates[shown[r.get("url")]] = row
+            else:
+                shown[r.get("url")] = len(candidates)
+                candidates.append(row)
+            listed.append(row)
+        if listed:
+            res["closest_version"] = {"title": listed[0].get("title"),
+                                      "url": listed[0].get("url"),
+                                      "note": listed[0]["gate"].get("note"),
+                                      "why": listed[0]["gate"].get("why")}
+        if rows:
+            E.tlog("dir_closest", 0.0, n=len(rows), listed=[[(x.get("title") or "")[:60],
+                                                            x["gate"].get("note")] for x in listed],
+                   refused=refused)
+    except Exception as _e:
+        try:
+            E.tlog("dir_closest", 0.0, error=type(_e).__name__)
+        except Exception:
+            pass
 
 
 # ------------- THE HIGHEST MATCH IS THE MAIN RESULT (task A, rebased as A2 2026-09-27) -------------
@@ -5030,27 +5200,8 @@ def _phase2(ctx, on_cand=None):
             _fa_n = [0]                    # FP_FLOOR_ALIGN rows looked at this scan
             _clean = []
             for _i, _cand in enumerate(_gate_pool or []):
-                _why, _sv = _crown_tempo_mismatch(_cand, measured, base_title, res=res)
-                if not _why:
-                    _why = _crown_contradicts(_cand, _gate_label, mdir,
-                                              measured=measured,
-                                              tilt_readable=(_sv is None))
-                if not _why:
-                    _why = _crown_other_song(_cand, base_title, _reup, res)
-                if not _why:
-                    # TASK A: the rendition test is a gate on every row now, so the walk
-                    # (and the highest-figure pick below) steps past the plain original.
-                    _why = _rendition_original_why(_cand, res.get("rendition"))
-                if not _why:
-                    _why = _crown_fp_floor(_cand, _sv)          # ROOTFIX B, flag-gated
-                    if (_why and FP_FLOOR_ALIGN and _fa_n[0] < _FA_MAX_ROWS
-                            and (_cand.get("core") or 0) >= E.CORE_EDIT):
-                        _fa_n[0] += 1                   # graded #41: head fp misaligned?
-                        _fa = _floor_align(src.get("audio"), _cand, src.get("tmp"))
-                        if _fa and _fa.get("pass"):
-                            _why = None
-                    if _why:
-                        _fp_floor_hits.append(_cand)
+                _why, _sv = _gate_one(_cand, measured, base_title, res, _gate_label, mdir,
+                                      _reup, src, _fa_n, _fp_floor_hits)
                 if _why:
                     _rejects[_i] = (_why, _cand)
                     continue
@@ -5144,6 +5295,8 @@ def _phase2(ctx, on_cand=None):
             # it, the reason is logged and the engine's own pick stands.
             if _corr is not None:
                 def _cgate(c):
+                    if c.get("dir_closest"):
+                        return _closest_why(c, c.get("dir_closest_why")), None
                     _w, _s = _crown_tempo_mismatch(c, measured, base_title, res=res)
                     if not _w:
                         _w = _crown_contradicts(c, _gate_label, mdir, measured=measured,
@@ -5184,7 +5337,11 @@ def _phase2(ctx, on_cand=None):
                 # every row above the bar was refused - report the FIRST refusal, which is
                 # the one about the strongest candidate and the one worth showing.
                 if _rejects:
-                    _first_reject = _rejects[min(_rejects)]
+                    # a "closest version" listing is not a refusal of the strongest candidate;
+                    # the first REAL refusal is the one shown (it is shown only when none exists)
+                    _realr = [i for i, (_w, _c) in _rejects.items()
+                              if _gate_kind(_w) != "closest"]
+                    _first_reject = _rejects[min(_realr) if _realr else min(_rejects)]
                     res["crown_rejected"] = _first_reject[0]
                     res["weak_exact"] = round(_first_reject[1].get("core") or 0, 3)
                     res["unsure"] = True
@@ -5219,6 +5376,12 @@ def _phase2(ctx, on_cand=None):
                 pass
             _gate_rows(candidates, verified, _rejects, _clean_all, measured, base_title,
                        _gate_label, mdir, _reup, res)
+            # CRATE_DIR_ALIGN round 3: the lane's CLOSEST readings (result["closest"]) were
+            # never in the pool, so no gate, walk, figure pick or correction above saw them.
+            # Each is listed after the verified rows, with its speed note and a "closest"
+            # gate, when every non-tempo crown gate passes it.
+            _list_closest(edit.get("closest"), candidates, _gate_label, mdir, measured,
+                          base_title, _reup, res, crown_url=(top or {}).get("url"))
             # NULL CONTROL on the survivor. Runs last and only on a core >= CORE_SAME
             # claim, so it costs one download plus one verify on the single candidate we
             # are about to present as proven.
