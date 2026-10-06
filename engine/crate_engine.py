@@ -10210,6 +10210,14 @@ class _DirAlignLane(object):
             return out
 
     def offer(self, c):
+        # NEVER FATAL (2026-10-07): offer() runs inside the hunt's per-row callback, so an error
+        # here must cost only this row's similar-edit reading, never the scan.
+        try:
+            self._offer(c)
+        except Exception as e:
+            tlog("dir_align", 0.0, offer_error=type(e).__name__)
+
+    def _offer(self, c):
         if self.dead:
             return
         if _dir_align_decisive(c):
@@ -10343,11 +10351,14 @@ def _dir_align_collect(lane, cands, known_dir, edit_label, base_title, title_ok,
         sims = []
     finally:
         lane.close()            # a started row nobody takes stops here (RETENTION: no file after)
-    if lane.jobs:
-        tlog("dir_align", 0.0, started=len(lane.jobs), eligible=len(elig), listed=len(sims),
-             decisive=lane.decisive, ctxs=len(lane._ctxs or []),
-             rows=[[(c.get("title") or "")[:50], c.get("core"), c.get("fp"),
-                    lane.info.get(c.get("url"))] for c, _f in list(lane.jobs.values())])
+    try:                        # NEVER FATAL: the log line can never cost the scan
+        if lane.jobs:
+            tlog("dir_align", 0.0, started=len(lane.jobs), eligible=len(elig), listed=len(sims),
+                 decisive=lane.decisive, ctxs=len(lane._ctxs or []),
+                 rows=[[(c.get("title") or "")[:50], c.get("core"), c.get("fp"),
+                        lane.info.get(c.get("url"))] for c, _f in list(lane.jobs.values())])
+    except Exception:
+        pass
     return sims
 
 
@@ -11063,14 +11074,24 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 and not _dir_align_mixed(c, base_title, artist_toks))
     if (similar_edits and DIR_ALIGN and _fast_clip_dir(known_dir, edit_label)
             and _dir_align_two_windows(clip_audio)):
-        _dal = _DirAlignLane(clip_audio, clip_ctx, tmp, _fast_clip_dir(known_dir, edit_label),
-                             base_title, _da_title_ok, _hb)
-        if _closers is not None:
-            _closers.append(_dal)       # find_edit's wrapper closes it before the dirs go
-        # a fast-path row was scored before the lane existed and no wave re-scores it
-        for _c in cands:
-            if _c.get("fast_carry") and _c.get("path"):
-                _dal.offer(_c)
+        try:                            # NEVER FATAL: no lane = the hunt exactly as without it
+            _dal = _DirAlignLane(clip_audio, clip_ctx, tmp, _fast_clip_dir(known_dir, edit_label),
+                                 base_title, _da_title_ok, _hb)
+            if _closers is not None:
+                _closers.append(_dal)   # find_edit's wrapper closes it before the dirs go
+            # a fast-path row was scored before the lane existed and no wave re-scores it
+            for _c in cands:
+                if _c.get("fast_carry") and _c.get("path"):
+                    _dal.offer(_c)
+        except Exception as e:
+            tlog("dir_align", 0.0, setup_error=type(e).__name__)
+            if _dal is not None:
+                try:
+                    _dal.close()
+                except Exception:
+                    pass
+            _dal = None
+    if _dal is not None:
 
         def _hit(c, _prev=_hit, _lane=_dal):
             if _prev is not None:

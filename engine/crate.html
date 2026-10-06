@@ -3781,6 +3781,7 @@ document.addEventListener('load',function(e){
    never in the version list: their own small group under it, labelled "Similar edit" with the
    speed note, the figure muted and always under the crown's own figure. A payload with none
    draws nothing, so the page renders exactly as before. */
+function simEditsListed(d){return !!(d&&d.similar_edits&&d.similar_edits.length);}
 function simEdits(d){
   var s=(d&&d.similar_edits)||[];
   if(!s.length) return '';
@@ -4870,11 +4871,14 @@ function renderResult(d,partial){
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
       noCrown=true;
+      // CRATE_DIR_ALIGN: when a Similar edit group follows (simEdits below), the "nothing worth
+      // listing" note would argue with it, so the heading stands alone.
       shelf='<div class="sect">No close version found</div>'+crowdCard+
+        (simEditsListed(d) ? '' :
         '<div class="trainnote">The search found '+
         cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
         'matched the clip audio, so there is nothing worth listing. The song above is '+
-        'still the answer.</div>';
+        'still the answer.</div>');
     } else {
     cands = _kept;
     noCrown=true;

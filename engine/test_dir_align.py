@@ -499,8 +499,13 @@ def page_tests(tmp):
         skip("G structure", "no 7125e63 crate.html")
     else:
         d = list(difflib.ndiff(base.splitlines(), html.splitlines()))
-        check("G crate.html: no 7125e63 line removed or changed",
-              not [l for l in d if l.startswith("- ")])
+        # 2026-10-07: the one intended change to a 7125e63 line. The "No close version found"
+        # card drops its "nothing worth listing" note when a Similar edit group follows it.
+        allowed = {"        '<div class=\"trainnote\">The search found '+",
+                   "        'still the answer.</div>';"}
+        changed = [l[2:] for l in d if l.startswith("- ")]
+        check("G crate.html: no 7125e63 line removed or changed (except the no-close-version note)",
+              all(l in allowed for l in changed), str(changed[:4]))
     f0, f1 = html.index("/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Uploads whose"), \
         html.index("function trackRow(")
     c0 = html.index("/* SIMILAR EDITS (server res.similar_edits, CRATE_DIR_ALIGN). Plain rows")
