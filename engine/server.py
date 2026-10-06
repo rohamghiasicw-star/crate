@@ -3883,6 +3883,82 @@ def _gate_one(cand, measured, base_title, res, gate_label, mdir, reup, src, fa_n
     return _why, _sv
 
 
+def _row_tempo_d(c):
+    """|log2| of the row's tempo against the clip (the bass-robust lock first, else vspeed); the
+    walk's distance. Moved out of _phase2 unchanged (CRATE_DIR_ALIGN round 4) so the walk's pick
+    is testable."""
+    _v = c.get("vspeed_locked")
+    if _v is None:
+        _v = c.get("vspeed")
+    return abs(math.log2(float(_v))) if _v and float(_v) > 0 else 0.0
+
+
+def _row_tempo_known(c):
+    # verify() writes vspeed 1.0 EXACTLY when its own confidence is too low to
+    # measure (verify.py, "unreliable -> don't invent a speed edit"). Real
+    # readings come back 0.9991, 1.0001, 1.0006 (the gate crowns), never the
+    # bare 1.0. An unmeasured row cannot be "nearer" than anything, so it may
+    # keep the crown rank_key gave it but never take one from a measured row.
+    return (c.get("vspeed_locked") is not None
+            or (c.get("vspeed") is not None and float(c["vspeed"]) != 1.0))
+
+
+def _walk_key(r):
+    """A source row (the clip re-pitched from it) last, then the nearest tempo, then rank."""
+    return (0 if r[2] is None else 1, _row_tempo_d(r[1]), r[0])
+
+
+def _walk_band_pick(rows):
+    """The walk's pick as it always was: row 1 when it is exact and not a source, else the nearest
+    tempo among rows of row 1's core (within 0.05) that have a measured tempo. -> (row, exact)."""
+    _i0, _c0, _s0 = rows[0]
+    if _s0 is None and _row_tempo_d(_c0) <= _TEMPO_EXACT:
+        return rows[0], True
+    _band = [r for r in rows
+             if r is rows[0]
+             or ((r[1].get("core") or 0) >= (_c0.get("core") or 0) - 0.05
+                 and _row_tempo_known(r[1]))]
+    return min(_band, key=_walk_key), False
+
+
+def _walk_pick(clean):
+    """The crown walk's pick from the remaining gate-clean rows [(pool_index, cand, source_v)].
+
+    CRATE_DIR_ALIGN round 4 (review finding: SEEK v1's failure (a)). A lane row's core is read on
+    the section the lane ALIGNED, every other row's on its first 20 s, so the two cannot be
+    compared. When row 1 is a lane row, the first-20s rows are walked exactly as they would be
+    without it (_walk_band_pick over them alone: core decides the song, tempo picks the family
+    member), and the lane rows compete with THAT pick on tempo only (_walk_key). An exact
+    first-20s pick keeps the crown. So a lane row 5-11% off the clip can no longer push the
+    at-tempo row out of the core band (X at v 1.004, core 0.75 under L at v 0.941, aligned core
+    1.0: X is the pick), and a lane row on top can never pull in a lower-core first-20s row the
+    walk without it would not pick (the review's proposed band, which admitted every row with a
+    measured tempo, crowned a core-0.70 row over the core-0.97 one in that case). When row 1 is
+    not a lane row, or only lane rows are left, the walk is unchanged."""
+    if not clean[0][1].get("dir_align"):
+        return _walk_band_pick(clean)[0]
+    heads = [r for r in clean if not r[1].get("dir_align")]
+    if not heads:
+        return _walk_band_pick(clean)[0]
+    pick, exact = _walk_band_pick(heads)
+    if exact:
+        return pick
+    return min([pick] + [r for r in clean if r[1].get("dir_align") and _row_tempo_known(r[1])],
+               key=_walk_key)
+
+
+def _figure_rows(clean_all, rejects, top):
+    """Rows _crown_by_figure may move the crown to: gate-clean, not refused by a null, and
+    (CRATE_DIR_ALIGN round 4) never a lane row farther from the clip's tempo than a walk pick
+    that is not a lane row. The figure prices a lane row on its aligned core, the pick on its
+    first 20 s, and the figure step's null (floor 0.0, on the pick's first 20 s) can refuse a
+    right at-tempo row on slowed+reverb audio (findings/core-saturation.md), which handed the
+    crown to a lane row 2.5-6% off (review: L at v 0.975, figure 81, over X at 75)."""
+    return [r for r in clean_all if r[0] not in rejects
+            and not (top is not None and r[1].get("dir_align") and not top.get("dir_align")
+                     and _row_tempo_d(r[1]) > _row_tempo_d(top))]
+
+
 def _list_closest(rows, candidates, gate_label, mdir, measured, base_title, reup, res,
                   crown_url=None):
     """CRATE_DIR_ALIGN round 3: list the lane's CLOSEST readings (find_edit's
@@ -5208,34 +5284,13 @@ def _phase2(ctx, on_cand=None):
                 _clean.append((_i, _cand, _sv))
             _clean_all = list(_clean)      # the walk below consumes _clean; rows read this
 
-            def _tempo_d(c):
-                _v = c.get("vspeed_locked")
-                if _v is None:
-                    _v = c.get("vspeed")
-                return abs(math.log2(float(_v))) if _v and float(_v) > 0 else 0.0
-
-            def _tempo_known(c):
-                # verify() writes vspeed 1.0 EXACTLY when its own confidence is too low to
-                # measure (verify.py, "unreliable -> don't invent a speed edit"). Real
-                # readings come back 0.9991, 1.0001, 1.0006 (the gate crowns), never the
-                # bare 1.0. An unmeasured row cannot be "nearer" than anything, so it may
-                # keep the crown rank_key gave it but never take one from a measured row.
-                return (c.get("vspeed_locked") is not None
-                        or (c.get("vspeed") is not None and float(c["vspeed"]) != 1.0))
-
+            # the walk's tempo distance and pick moved to module level unchanged
+            # (_row_tempo_d, _row_tempo_known, _walk_band_pick); CRATE_DIR_ALIGN round 4 changes
+            # only a walk whose row 1 is a lane row (_walk_pick)
             top = None
             _source_v = None
             while _clean:
-                _i0, _c0, _s0 = _clean[0]
-                if _s0 is None and _tempo_d(_c0) <= _TEMPO_EXACT:
-                    _pick = _clean[0]
-                else:
-                    _band = [r for r in _clean
-                             if r is _clean[0]
-                             or ((r[1].get("core") or 0) >= (_c0.get("core") or 0) - 0.05
-                                 and _tempo_known(r[1]))]
-                    _pick = min(_band, key=lambda r: (0 if r[2] is None else 1,
-                                                       _tempo_d(r[1]), r[0]))
+                _pick = _walk_pick(_clean)
                 _why = _time_reversed_null(src.get("audio"), _pick[1].get("url"),
                                            _pick[1].get("core"), seek=_seek_of(_pick[1]))
                 if _why:
@@ -5250,7 +5305,7 @@ def _phase2(ctx, on_cand=None):
             # runs. Any failure keeps the walk's pick: this can never cost the answer.
             try:
                 _shown = {c.get("url") for c in candidates}
-                _okrows = [r for r in _clean_all if r[0] not in _rejects]
+                _okrows = _figure_rows(_clean_all, _rejects, top)
 
                 def _p_of(c, sv):
                     return bool(_FIG_PITCH.search(

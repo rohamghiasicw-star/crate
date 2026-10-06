@@ -9821,6 +9821,57 @@ def _dir_align_words_ok(c, base_title, artist_toks):
     return bool(at) and bool(at & hay)
 
 
+_DA_MIX_WORDS = re.compile(r"\b(blend|transition)\b", re.I)
+_DA_JOIN = re.compile(u"\\s+(?:x|\u00d7|&|\\+|/|\\|)\\s+", re.I)
+_DA_SIDE = re.compile(u"\\s[-\u2013\u2014~]\\s")
+# a part of a joined title that is only a treatment, a tag or filler names no second song
+# (whole words: "superman" or "freestyle" is not "super" or "free")
+_DA_TAG = re.compile(
+    r"^(?:slow(?:ed|er|ly)?|reverb(?:ed|s)?|sped|speed|spedup|speedup|nightcore|daycore|"
+    r"screw(?:ed)?|chop(?:ped|s)?|bass|boost(?:ed)?|bassboost(?:ed)?|pitch(?:ed)?|tik|tok|tiktok|"
+    r"version|edit(?:ed)?|remix(?:ed)?|lyrics?|audio|official|video|extended|loop(?:ed)?|"
+    r"perfect(?:ly|ion)?|ultra|super|extra|lofi|free|download|hq|clean|explicit|dirty|radio|"
+    r"and|the|with|for|from|best|song|songs|music|\d+hz)$", re.I)
+
+
+def _dir_align_mixed(c, base_title, artist_toks):
+    """ROUND 4 (review finding): a mashup / blend / transition by its title, whichever side of the
+    dash holds the song. _seek_is_mix reads "A x B" only after " - " and knows no & + / | join,
+    so "Love In This Club x Yeah! - Usher (Slowed)" entered the lane (clip 32's failure: a
+    mashup's section plays the plain song and was crowned over it). The side holding every song
+    word is split on each join; it is a mix when another part names a word (3+ letters) that is
+    not the song, a credited artist, the uploader, a number, or a treatment / tag / filler word.
+    Lane only, on top of _seek_is_mix (which SEEK v2 reads live and stays as it is), so it is only
+    ever stricter: no title the lane refused before becomes eligible."""
+    t = c.get("title") or ""
+    ft = _ascii_fold(t)
+    if _SEEK_MIX.search(ft) or _DA_MIX_WORDS.search(ft):
+        return True
+
+    def words(s):
+        return set(re.findall(r"[a-z0-9]+", _ascii_fold("%s" % (s or "")).lower()))
+    name = re.sub(r"[\(\[].*?[\)\]]", " ", base_title or "")
+    sw = {w for w in words(_clean(name)) if w not in ORIGINAL_WORDS and not EDIT_WORDS.search(w)}
+    sw = {w for w in sw if len(w) >= 3} or sw
+    if not sw:
+        return False
+    known = sw | words(" ".join(artist_toks or [])) | words(c.get("uploader"))
+    raw = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
+    raw = re.sub(r"\b(prod|produced by|feat|ft)\b.*$", " ", raw, flags=re.I)
+    for side in _DA_SIDE.split(raw):
+        parts = [p for p in _DA_JOIN.split(side) if p.strip()]
+        if len(parts) < 2 or not sw <= words(side):
+            continue
+        for p in parts:
+            pw = words(p)
+            if sw <= pw:
+                continue
+            if any(len(w) >= 3 and not w.isdigit() and w not in known and not _DA_TAG.match(w)
+                   for w in pw):
+                return True
+    return False
+
+
 def _dir_align_row_ok(c, cdir, base_title, title_ok):
     """Dropped on the head (core < CORE_KEEP), titled with the clip's own measured direction,
     carrying every song word and the artist (`title_ok`), long enough to hold a section, and
@@ -10930,8 +10981,12 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # ranking pass left a lane yt-dlp free to recreate the deleted tmp).
     _dal = None
 
+    # ROUND 4: and not a mashup / blend / transition by its title (_dir_align_mixed), on either
+    # side of the dash. Both lane paths (offer() during the waves, _dir_align_rows at the ranking
+    # pass) read this, so the crown and the "closest" list are both covered.
     def _da_title_ok(c):
-        return _artist_hit(c) and _dir_align_words_ok(c, base_title, artist_toks)
+        return (_artist_hit(c) and _dir_align_words_ok(c, base_title, artist_toks)
+                and not _dir_align_mixed(c, base_title, artist_toks))
     if DIR_ALIGN and _fast_clip_dir(known_dir, edit_label):
         _dal = _DirAlignLane(clip_audio, clip_ctx, tmp, _fast_clip_dir(known_dir, edit_label),
                              base_title, _da_title_ok, _hb)

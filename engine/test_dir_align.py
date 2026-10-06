@@ -26,6 +26,13 @@ Round 3 (the review's risky branches):
 11. server: the widened gate checks a confident clip speed, the lane's own direction words and the
     upload's own tempo against the master; a lane row refused only there, or a lane CLOSEST row,
     is listed with gate "closest" and never reaches the walk's clean rows (never crowned).
+Round 4 (the re-review):
+9. (extended) the lane's title claim as find_edit composes it also refuses a mashup / blend /
+   transition whichever side of the dash holds the song, or joined by & + / | (_dir_align_mixed).
+12. the walk: a lane row on top competes with the first-20s rows' own pick on tempo only, so an
+    at-tempo row is crowned over a lane row 5-11% off even when its figure null refuses it, a lane
+    row never takes the crown by figure from a nearer first-20s pick, and a lane row on top never
+    pulls a lower-core row into the crown (controls show round 3 and the review's band failing).
 """
 import asyncio, os, random, shutil, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -210,6 +217,90 @@ def server_tests(tmp):
     check("closest kind wins over the null wording", S._gate_kind(w) == "closest"
           and "slower" in w, w)
 
+    # 12. ROUND 4 (review finding, SEEK v1 failure (a)): the walk and the figure step with a lane
+    # row in the pool. The walk loop below is _phase2's (gates, pick, null, figure rows,
+    # _crown_by_figure); every decision in it is the server's own function.
+    def crown(pool, measured, label, pickf=S._walk_pick, figrows=S._figure_rows,
+              fig_null=(), walk_null=()):
+        rej, clean = {}, []
+        for i, c in enumerate(pool):
+            why, s = S._gate_one(c, measured, bt, {}, label, "slowed", None, src, [0], [])
+            if why:
+                rej[i] = (why, c)
+            else:
+                clean.append((i, c, s))
+        clean_all = list(clean)
+        top = sv = None
+        while clean:
+            pick = pickf(clean)
+            # the walk's null runs only at core >= 0.999 (its floor)
+            if pick[1]["url"] in walk_null and (pick[1].get("core") or 0) >= 0.999:
+                rej[pick[0]] = ("null", pick[1])
+                clean.remove(pick)
+                continue
+            top, sv = pick[1], pick[2]
+            break
+        ok_rows = figrows(clean_all, rej, top)
+        top2, _sv2, _info = S._crown_by_figure(
+            ok_rows, top, sv, {c["url"] for c in pool}, lambda c, s: True,
+            lambda c: "Texture only" if c["url"] in fig_null else None)
+        return (top or {}).get("url"), (top2 or {}).get("url")
+    m80 = {"speed": 0.80, "confident": True}
+    L = {"title": "Usher - Yeah! (Slowed)", "uploader": "b", "vspeed": 0.941, "core": 1.0,
+         "fp": 0.80, "dir_align": True, "seek_at": 84.0, "seek_clip_at": 0.0, "url": "L"}
+    X = {"title": "usher yeah slowed + reverb", "uploader": "a", "vspeed": 1.004,
+         "vspeed_locked": 1.004, "core": 0.75, "fp": 0.63, "url": "X"}
+    check("walk4: the review's pool [L v0.941 lane, X v1.004 core 0.75], X's figure null refusing:"
+          " X is crowned", crown([L, X], m80, "slowed ~0.80x", fig_null=("X",)) == ("X", "X"),
+          str(crown([L, X], m80, "slowed ~0.80x", fig_null=("X",))))
+    old_pick = lambda cl: S._walk_band_pick(cl)[0]
+    old_fig = lambda ca, rj, top: [r for r in ca if r[0] not in rj]
+    check("walk4: control, round 3's walk crowned L there",
+          crown([L, X], m80, "slowed ~0.80x", old_pick, old_fig, fig_null=("X",))[1] == "L")
+    for v in (0.966, 0.975):
+        Lv = dict(L, vspeed=v, url="L%d" % int(v * 1000))
+        got = crown([Lv, X], m80, "slowed ~0.80x", fig_null=("X",))
+        check("walk4: L at v %.3f (figure %s) never takes the crown from X by figure" % (
+            v, S._version_figure(S._cand_row(Lv), True)[0]), got == ("X", "X"), str(got))
+    check("walk4: Usher [lane Ttraamat, plain lyrics SOURCE]: the lane row still beats the source",
+          crown([ttr, lyr], usher_m, "slowed ~0.70x") == (ttr["url"], ttr["url"]))
+    check("walk4: a lane row alone is still crowned",
+          crown([L], m80, "slowed ~0.80x") == ("L", "L"))
+    A = {"title": "Usher - Yeah! slowed", "uploader": "c", "vspeed": 0.978, "vspeed_locked": 0.978,
+         "core": 0.97, "fp": 0.66, "url": "A"}
+    B = {"title": "usher yeah (slowed)", "uploader": "d", "vspeed": 0.995, "vspeed_locked": 0.995,
+         "core": 0.70, "fp": 0.66, "url": "B"}
+    L94 = dict(L, vspeed=0.94, url="L94")
+    base_ab = crown([A, B], m80, "slowed ~0.80x", old_pick, old_fig, fig_null=("A",))
+    got = crown([L94, A, B], m80, "slowed ~0.80x", fig_null=("A",))
+    check("walk4: a lane row on top never pulls a lower-core first-20s row into the crown "
+          "(the walk without it picks A at core 0.97; the review's all-rows band picked B at 0.70)",
+          got == base_ab == ("A", "A"), "%s base %s" % (got, base_ab))
+
+    def review_pick(cl):
+        i0, c0, s0 = cl[0]
+        if s0 is None and S._row_tempo_d(c0) <= S._TEMPO_EXACT:
+            return cl[0]
+        band = [r for r in cl if r is cl[0]
+                or ((((r[1].get("core") or 0) >= (c0.get("core") or 0) - 0.05) or c0.get("dir_align"))
+                    and S._row_tempo_known(r[1]))]
+        return min(band, key=S._walk_key)
+    check("walk4: control, the review's band crowns B there",
+          crown([L94, A, B], m80, "slowed ~0.80x", review_pick, fig_null=("A",))[1] == "B")
+    got = crown([dict(L, vspeed=0.99, url="L99"), dict(A, vspeed=0.965, vspeed_locked=0.965), B],
+                m80, "slowed ~0.80x")
+    check("walk4: a lane row nearer the clip's tempo than the first-20s pick still takes it",
+          got[0] == "L99", str(got))
+    check("walk4: rows not in the walk's way are unchanged (row 1 not a lane row)",
+          crown([X, dict(L, core=0.74, url="Lb")], m80, "slowed ~0.80x")[0] == "X")
+    Xe = dict(X, vspeed=1.01, vspeed_locked=1.01, url="Xe")
+    check("walk4: an exact first-20s row keeps the walk's pick over a lane row",
+          S._walk_pick([(0, dict(L, vspeed=0.999), None), (1, Xe, None)])[1] is Xe)
+    check("walk4: figure rows drop a lane row farther off tempo than a first-20s pick only",
+          [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, X)] == ["X"]
+          and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, L)] == ["L", "X"]
+          and [r[1]["url"] for r in S._figure_rows([(0, L, None), (1, X, None)], {}, None)] == ["L", "X"])
+
 
 def main():
     tmp = tempfile.mkdtemp()
@@ -323,6 +414,41 @@ def main():
                   "Usher Yeah mashup (slowed)", "Usher - Yeah! vs Lovers and Friends (slowed)",
                   "Usher - Yeah! / Burn medley (slowed)"):
             check("mix: excluded %r" % t, not ok(t))
+        # ROUND 4 (review finding): the lane's title claim as find_edit composes it
+        # (_da_title_ok: words AND not _dir_align_mixed), so a mashup with the other song before
+        # the dash, or joined by & + / |, or a blend / transition, never enters the lane
+        for arts in (["usher"], ["usher", "lil", "jon", "ludacris"]):
+            tok4 = lambda c, arts=arts: (E._dir_align_words_ok(c, bt, arts)
+                                         and not E._dir_align_mixed(c, bt, arts))
+            ok4 = lambda t, tok4=tok4: E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)
+            mixes = ["Love In This Club x Yeah! - Usher (Slowed + Reverb)",
+                     "Usher - Yeah! & Love In This Club (slowed)",
+                     "Usher - Yeah! + Love In This Club (slowed)", "Usher - Yeah! | OMG (slowed)",
+                     "Usher - Yeah! / OMG (slowed)", "Usher - Yeah! (Love In This Club Blend) slowed",
+                     "Usher Yeah! Love In This Club transition (slowed)",
+                     "Yeah! x OMG (slowed) - Usher", "Yeah! & Burn - Usher slowed",
+                     "Usher - Yeah! x Superman (slowed)",
+                     "USHER - Yeah! x Love In This Club (Slowed + Reverb)",
+                     "Usher Yeah mashup (slowed)", "Usher - Yeah! vs Lovers and Friends (slowed)",
+                     "Usher - Yeah! / Burn medley (slowed)"]
+            plains = ["Usher - Yeah! (Slowed&Reverbed)", "Usher - Yeah! slowed + reverb",
+                      "Usher - Yeah! slowed & reverbed", "Usher - Yeah! | slowed + reverb | tiktok version",
+                      "Usher - Yeah! | ultra slowed + perfectly reverbed", "Usher - Yeah! | slowed | 2024",
+                      "Usher - Yeah! | Slowed and Reverb", "Usher x Lil Jon x Ludacris - Yeah! (slowed)",
+                      "Yeah! - Usher & Lil Jon (slowed)", "Usher - Yeah! ft. Lil Jon & Ludacris (slowed + reverb)",
+                      "Usher - Yeah! (slowed) [prod. a x b]", "Yeah! (slowed) - Usher"]
+            bad_mix = [t for t in mixes if ok4(t)]
+            bad_plain = [t for t in plains if not ok4(t)]
+            check("mix4 (%d artist toks): %d mashup shapes excluded" % (len(arts), len(mixes)),
+                  not bad_mix, str(bad_mix))
+            check("mix4 (%d artist toks): %d plain shapes still eligible" % (len(arts), len(plains)),
+                  not bad_plain, str(bad_plain))
+        tok4 = lambda c: (E._dir_align_words_ok(c, bt, ["usher"])
+                          and not E._dir_align_mixed(c, bt, ["usher"]))
+        every = mixes + plains + ["Usher - Yeah! (Slowed) x Reverb", "Usher - Yeah! | Lovers"]
+        check("mix4: only ever stricter (eligible now => eligible in round 3)",
+              all(ok(t) for t in every
+                  if E._dir_align_row_ok(mk(title=t), "slowed", bt, tok4)))
         check("words: a substring song hit is not a title claim",
               not ok("Usher - Yeahright (slowed)"))
         check("words: a substring artist hit is not a title claim",
