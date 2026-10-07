@@ -364,7 +364,7 @@ def _disk_epoch():
     import hashlib
     h = hashlib.md5()
     for f in ("server.py", "crate_engine.py", "verify.py", "find_song.py",
-              "speed_from_master.py", "wrong_song.py"):
+              "speed_from_master.py", "wrong_song.py", "fastorig.py"):   # fastorig: SPEED FIX 2
         try:
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f), "rb") as fh:
                 h.update(fh.read())
@@ -2627,6 +2627,20 @@ def _phase1(url, key, t0):
         ctx["correction"] = _corr          # CORRECTIONS 2026-09-29 (None almost always)
         # SPEED FIX 1: what this /base answered, so a replay can answer the same way
         ctx["base_view"] = {k: v for k, v in res.items() if k not in ("peaks", "wave")}
+        ctx["probe_hits"] = list(_fpstats.get("ohits") or [])   # SPEED FIX 2: fastorig's input
+        if worth and FAST_ORIGINAL != "off":
+            # SPEED FIX 2: when only the studio-recording check can decide, start it now, so it
+            # runs while /base answers and the page asks for the hunt (it is ready, or nearly,
+            # by the time phase 2 needs it; a full hunt never waits on it)
+            try:
+                _oi = _orig_inputs(ctx)
+                if FO.needs_ref(_oi) or (FAST_ORIGINAL == "measure" and not FO.vetoes(_oi)):
+                    _ox = ThreadPoolExecutor(max_workers=1)
+                    ctx["oref_fut"] = _ox.submit(_orig_ref, src, res.get("preview_url"),
+                                                 base_title, base_artist)
+                    _ox.shutdown(wait=False)
+            except Exception:
+                pass
         if getattr(E, "SEEK_MOFF", False):
             # CRATE_SEEK_MOFF: where the clip sits in each song Shazam placed it in, from the
             # probes' own track offsets (plain numbers; the hunt reads it, nothing else does)
@@ -4999,6 +5013,329 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
                        not in ("0", "false", "no", "off"))
 
 
+# ------------------------------------------------ SPEED FIX 2: A PLAIN ORIGINAL SKIPS THE HUNT
+# Konnor's "Addify Speed Fixes for Roham" (2026-10-06), fix 2. At the head of the hunt, an
+# original-confidence score (fastorig.py, 0-100, threshold fastorig.ORIGINAL_FAST_MIN = 80)
+# from what phase 1 already measured plus ONE check against the studio recording Shazam named
+# (its iTunes preview, the same file _preview_speed reads). At or above the threshold, with no
+# edit signal anywhere, the candidate search and the exact-version matching are SKIPPED for
+# real: the answer is the named recording with no upload crowned (the not-worth-hunting answer
+# a licensed track gets today), and the page's exact-version dial runs to 100 on it. Below the
+# threshold, or on any veto, the hunt below runs exactly as before. CRATE_FAST_ORIGINAL=off
+# turns it off; =measure logs the score on every hunt and always runs the full hunt.
+# Safety net (item 4): CRATE_FAST_SHADOW (0.10) of fast answers run the full hunt in the
+# background on a copy of the clip, never shown, never cached, logged as fast_shadow.
+import fastorig as FO
+import random as _random
+FAST_ORIGINAL = (os.environ.get("CRATE_FAST_ORIGINAL") or "on").strip().lower()
+if FAST_ORIGINAL not in ("on", "measure", "off"):
+    FAST_ORIGINAL = "on"
+FAST_SHADOW_RATE = float(os.environ.get("CRATE_FAST_SHADOW", "0.10") or 0)
+
+
+def _orig_inputs(ctx):
+    """What phase 1 already knows, in fastorig's terms (no new measurement here)."""
+    src, fp, res = ctx.get("src") or {}, ctx.get("fp") or {}, ctx.get("res") or {}
+    return {"shazam_reliable": bool(ctx.get("shazam_reliable")),
+            "base_uncertain": res.get("base_uncertain"), "shazam_partial": res.get("shazam_partial"),
+            "from_caption": res.get("from_caption"), "from_credit": res.get("from_credit"),
+            "rendition": res.get("rendition") or fp.get("rendition"),
+            "reupload": ctx.get("reupload"), "correction": ctx.get("correction"),
+            "pitch_kept": res.get("pitch_kept") or fp.get("pitch_kept"),
+            "multi": fp.get("multi"), "mashup": fp.get("mashup"), "sections": fp.get("sections"),
+            "rate": fp.get("rate", 1.0), "speed": res.get("speed"),
+            "base_title": ctx.get("base_title"), "base_artist": ctx.get("base_artist"),
+            "base_sid": fp.get("key"), "edit_words_re": E.EDIT_WORDS,
+            "credit_names_edit": E.names_an_edit(src.get("credit_title"),
+                                                 src.get("credit_author")),
+            "desc": src.get("desc") or res.get("desc") or "",
+            "hints": list(ctx.get("hint_texts") or []),
+            "later_window": fp.get("later_window"),
+            "clip_secs": res.get("clip_secs"),
+            "hits": list(ctx.get("probe_hits") or [])}
+
+
+_NOT_STUDIO = re.compile(r"karaoke|originally performed|in the style of|tribute|made famous",
+                         re.I)
+
+
+def _deezer_studio(song, artist):
+    """The studio recording's 30 s preview on Deezer, for a song the iTunes lookup missed
+    (measured from the server 2026-10-07: iTunes search returns covers for "Lil Dicky Freaky
+    Friday" and nothing for "Lil Peep nuts"; Deezer's first row is the studio track for both).
+    Title AND artist must agree (links._close), and any row naming a rendition (live,
+    remix, slowed, karaoke, instrumental...) is skipped. -> (preview url, title) or None."""
+    if not song:
+        return None
+    import urllib.request
+    q = re.sub(r"\((?:feat|ft|with)[^)]*\)", " ", song)
+    try:
+        d = json.load(urllib.request.urlopen(urllib.request.Request(
+            "https://api.deezer.com/search?limit=10&q=" + quote("%s %s" % (artist or "", q)),
+            headers={"User-Agent": "Mozilla/5.0"}), timeout=5))
+    except Exception:
+        return None
+    for r in (d.get("data") or []):
+        t = r.get("title") or ""
+        who = (r.get("artist") or {}).get("name") or ""
+        if E.EDIT_WORDS.search(t) or E.OTHER_RENDITION.search(t) or _NOT_STUDIO.search(
+                t + " " + who):
+            continue
+        if not L._close(t, song) or (artist and not L._close(who, artist)):
+            continue
+        pv = r.get("preview") or ""
+        if pv.startswith("https://") and ".dzcdn.net/" in pv:
+            return pv, t
+    return None
+
+
+def _orig_ref_one(audio, tmp, url, label):
+    """One studio preview against the clip: confirm_ref (same recording, steady speed),
+    measure_consensus (the speed) and the located fingerprint / slope (_orig_aligned)."""
+    import subprocess
+    out = {"src": label}
+    pv = os.path.join(tmp, "pv_orig_%s.wav" % label)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-rw_timeout", "8000000",
+                        "-i", url, "-ac", "1", "-ar", "44100", pv],
+                       capture_output=True, timeout=12, check=False)
+        if not os.path.exists(pv) or os.path.getsize(pv) < 20_000:
+            out["why"] = "fetch"
+            return out
+        out["confirm"] = bool(speed_from_master.confirm_ref(audio, pv))
+        r = speed_from_master.measure_consensus(audio, [pv]) or {}
+        out["speed"], out["confident"] = r.get("speed"), bool(r.get("confident"))
+        out.update(_orig_aligned(audio, pv, tmp))
+    except Exception as ex:
+        out["why"] = type(ex).__name__
+    finally:
+        try:
+            os.remove(pv)
+        except OSError:
+            pass
+    return out
+
+
+def _orig_ref(src, url, song=None, artist=None):
+    """The clip against the studio recording Shazam named: its iTunes preview (phase 1's
+    official_links) first, then its Deezer preview when iTunes had none or the clip is not in
+    the iTunes excerpt (the two stores often preview different 30 s of a song). The first one
+    the clip is LOCATED in wins; otherwise the first measured. Audio in src["tmp"], removed."""
+    audio, tmp = (src or {}).get("audio"), (src or {}).get("tmp")
+    if not (audio and tmp):
+        return {"why": "no_audio"}
+    first = None
+    if url and url.startswith("https://audio-ssl.itunes.apple.com/"):
+        first = _orig_ref_one(audio, tmp, url, "itunes")
+        if first.get("aligned"):
+            return first
+    dz = _deezer_studio(song, artist)
+    if dz:
+        o = _orig_ref_one(audio, tmp, dz[0], "deezer")
+        o["title"] = dz[1][:80]
+        if o.get("aligned") or first is None:
+            if first is not None:
+                o["tried"] = "itunes"
+            return o
+    return first or {"why": "no_preview"}
+
+
+ORIG_MIN_OVERLAP_S = 8.0     # the clip and the studio preview must share at least this much
+
+
+def _fp_partial(a, b, min_items):
+    """Chromaprint agreement at the best offset, PARTIAL overlap allowed (verify._fp_overlap
+    needs the shorter fully inside the longer, and a clip is rarely inside a 30 s preview).
+    -> (agreement 0..1, offset of a[0] in b in items, overlap items); (0.0, None, 0) if none."""
+    import numpy as np
+    if a is None or b is None or len(a) < min_items or len(b) < min_items:
+        return 0.0, None, 0
+    best, at, n_at = 0.0, None, 0
+    for o in range(-(len(a) - min_items), len(b) - min_items + 1):
+        i0, j0 = max(0, -o), max(0, o)
+        n = min(len(a) - i0, len(b) - j0)
+        if n < min_items:
+            continue
+        bits = int(np.unpackbits((a[i0:i0 + n] ^ b[j0:j0 + n]).view(np.uint8)).sum())
+        sc = 1.0 - bits / (32.0 * n)
+        if sc > best:
+            best, at, n_at = sc, o, n
+    return best, at, n_at
+
+
+def _orig_aligned(audio, pv, tmp):
+    """Where the clip sits in the studio preview (chromaprint, partial overlap), then verify()
+    on exactly that shared stretch: the raw fp and the spectral slope of the SAME music. On
+    different sections the slope means nothing (measured: Heart Attack read slope_delta 3.28
+    and fp 0.54 head-to-head against its own preview), so nothing is read unless they overlap
+    by ORIG_MIN_OVERLAP_S. Segments live in the scan's tmp and are removed here."""
+    import verify as _verify
+    dt = 4096.0 / 3.0 / 11025.0              # seconds per chromaprint item
+    out = {"aligned": False}
+    fa, fb = _verify._fp_raw(audio, 60), _verify._fp_raw(pv, 30)
+    agree, off, n = _fp_partial(fa, fb, int(ORIG_MIN_OVERLAP_S / dt))
+    out["align_fp"] = round(agree, 4)
+    out["overlap_s"] = round(n * dt, 1)
+    if off is None or agree < FO.REF_FP_FLOOR:
+        return out
+    sec = off * dt                           # where the clip's start falls in the preview
+    c0, p0 = max(0.0, -sec), max(0.0, sec)
+    dur = min(n * dt, 20.0)
+    segc, segp = os.path.join(tmp, "orig_c.wav"), os.path.join(tmp, "orig_p.wav")
+    try:
+        xc = _verify._decode(audio, c0 + dur)
+        xp = _verify._decode(pv, p0 + dur)
+        sr = _verify.SR
+        _verify._write_wav(xc[int(c0 * sr):int((c0 + dur) * sr)], segc)
+        _verify._write_wav(xp[int(p0 * sr):int((p0 + dur) * sr)], segp)
+        v = _verify.verify(segc, segp, int(dur) + 1) or {}
+        out.update(aligned=True, at=round(sec, 2), fp=v.get("fp"), core=v.get("core"),
+                   arr=v.get("arr"), slope_delta=v.get("slope_delta"),
+                   bass_delta=v.get("bass_delta"), vspeed=v.get("speed"))
+    finally:
+        for f in (segc, segp):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    return out
+
+
+def _orig_decide(ctx):
+    """Score this clip (fastorig.decide), log it, and keep it on ctx for the scan_path row."""
+    t0 = time.time()
+    x = _orig_inputs(ctx)
+    _f = ctx.pop("oref_fut", None)
+    if FO.needs_ref(x) or (FAST_ORIGINAL == "measure" and not FO.vetoes(x)):
+        if _f is not None:
+            try:
+                x["ref"] = _f.result(timeout=10)
+            except Exception as _fx:
+                x["ref"] = {"why": "prefetch %s" % type(_fx).__name__}
+        else:
+            x["ref"] = _orig_ref(ctx.get("src"), (ctx.get("res") or {}).get("preview_url"),
+                                 ctx.get("base_title"), ctx.get("base_artist"))
+    d = FO.decide(x)
+    d["secs"] = round(time.time() - t0, 3)
+    ctx["oscore"] = d["score"]
+    ctx["ovetoes"] = d["vetoes"][:6]
+    _r = x.get("ref") or {}
+    E.tlog("orig_score", d["secs"], url=ctx.get("key"), score=d["score"], fast=d["fast"],
+           mode=FAST_ORIGINAL, vetoes=d["vetoes"][:10], parts=d["parts"],
+           covered=d.get("covered"), clip_secs=x.get("clip_secs"),
+           ref={k: _r.get(k) for k in ("src", "title", "why", "confirm", "speed", "confident",
+                                        "aligned", "align_fp", "overlap_s", "at", "fp", "core",
+                                        "arr", "slope_delta", "bass_delta", "vspeed") if k in _r},
+           nbase=len(FO.base_hits(x)), slope=FO.align_slope(FO.base_hits(x)),
+           bh=[[h.get("off"), h.get("span"), h.get("moff"), h.get("fs"), h.get("ts")]
+               for h in FO.base_hits(x)][:12])
+    return d
+
+
+def _fast_disagrees(full):
+    """The safety net's question: did the full hunt find an EDIT where the fast path said
+    original? -> reason string or None."""
+    r = full or {}
+    if r.get("result") != "found":
+        return "full_%s" % (r.get("result") or "none")
+    sp = (r.get("speed") or "as posted").strip().lower()
+    if sp != "as posted":
+        return "speed %s" % sp
+    if r.get("sections") or r.get("mashup"):
+        return "mashup"
+    ex = r.get("exact") or {}
+    if ex:
+        if FO.AUDIO_EDIT.search(ex.get("title") or ""):
+            return "crown is an edit: %s" % (ex.get("title") or "")[:80]
+        try:
+            if abs(float(ex.get("vspeed") or 1.0) - 1.0) > FO.REF_SPEED_VETO:
+                return "crown at %.3fx" % float(ex.get("vspeed"))
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _fast_shadow(ctx, snap_res, d):
+    """Item 4: for FAST_SHADOW_RATE of fast answers, the full hunt on a copy of the clip, in
+    the background. Never shown, never cached, holds a gate slot only when one is free with one
+    more to spare, logs fast_shadow. The copy is deleted when it ends (transient, like the
+    clip itself)."""
+    if FAST_SHADOW_RATE <= 0 or _random.random() >= FAST_SHADOW_RATE:
+        return False
+    key = ctx.get("key")
+    tok = None
+    if GATE is not None:
+        tok = GATE.try_acquire(path="shadow", key=key, headroom=1)
+        if tok is None:
+            E.tlog("fast_shadow", 0.0, url=key, ran=False, why="no_free_slot")
+            return False
+    import copy
+    import shutil
+    src = ctx.get("src") or {}
+    tmp2 = tempfile.mkdtemp(prefix="shadow_")
+    try:
+        a2 = os.path.join(tmp2, "a.wav")
+        shutil.copyfile(src["audio"], a2)
+    except Exception as ex:
+        _cleanup(tmp2)
+        if tok is not None:
+            GATE.release(tok)
+        E.tlog("fast_shadow", 0.0, url=key, ran=False, why="copy %s" % type(ex).__name__)
+        return False
+    sctx = dict(ctx)
+    sctx.update(src=dict(src, audio=a2, tmp=tmp2), res=copy.deepcopy(snap_res),
+                key="%s#shadow" % key, shadow=True, t0=time.time())
+
+    def run():
+        t0 = time.time()
+        ttok = E.SCAN_TALLY.set(E.ScanTally())
+        try:
+            if tok is not None:
+                GATE.hand(tok, threading.current_thread())
+            full = _phase2(sctx)
+            why = _fast_disagrees(full)
+            ex = (full or {}).get("exact") or {}
+            E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=why is None,
+                   why=why, score=d.get("score"), speed=(full or {}).get("speed"),
+                   crown=(ex.get("title") or "")[:80], vspeed=ex.get("vspeed"),
+                   core=ex.get("core"), fp=ex.get("fp"))
+        except Exception as ex:
+            E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=None,
+                   why="error %s" % str(ex)[:120])
+        finally:
+            E.SCAN_TALLY.reset(ttok)
+            if tok is not None:
+                GATE.release(tok)
+            _cleanup(tmp2)
+    threading.Thread(target=run, daemon=True, name="fast-shadow").start()
+    return True
+
+
+def _fast_original_finish(ctx, d):
+    """The fast path's answer: the named recording, no upload crowned, saved like any answer."""
+    import copy
+    res, key, t0, src = ctx["res"], ctx["key"], ctx["t0"], ctx["src"]
+    snap = copy.deepcopy(res)             # the phase-1 answer, for the safety net's own hunt
+    res["result"] = "found"
+    res["exact"] = None
+    res["candidates"] = []
+    res["decisive"] = False
+    res["fast_original"] = {"score": d["score"], "parts": d["parts"]}
+    res["edits_pending"] = False
+    res["hunted"] = True                  # its replay shows the exact-version step too
+    res["secs"] = round(time.time() - t0, 1)
+    E.tlog("request_done", time.time() - t0, url=key, outcome="fast")
+    E.tlog("scan_path", time.time() - t0, url=key, path="fast", oscore=d["score"],
+           total=round(time.time() - t0, 2), ovetoes=[])
+    _cache_put(key, res)
+    _sound_cache_put(src, res)
+    _vid_put(key, res, ctx.get("base_view"))
+    try:
+        _fast_shadow(ctx, snap, d)
+    except Exception:
+        pass                              # the safety net must never cost the user the answer
+    return res
+
 
 def _phase2(ctx, on_cand=None):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
@@ -5027,6 +5364,16 @@ def _phase2(ctx, on_cand=None):
     if isinstance(_rd, dict):
         res["speed"] = _rd.get("speed_vs_source")
         res["base_song"], res["base_artist"] = _rd.get("of_song"), _rd.get("of_artist")
+    # SPEED FIX 2: a plain original skips the hunt (fastorig.py). Never on the safety net's
+    # own hunt, and only when the score clears ORIGINAL_FAST_MIN with no veto.
+    if FAST_ORIGINAL != "off" and not ctx.get("shadow"):
+        try:
+            _od = _orig_decide(ctx)
+        except Exception as _ox:
+            _od = None
+            E.tlog("orig_score", 0.0, url=key, error=str(_ox)[:160])
+        if _od is not None and _od["fast"] and FAST_ORIGINAL == "on":
+            return _fast_original_finish(ctx, _od)
     # ---- THE SPEED REFERENCE HUNT STARTS NOW, NOT AFTER THE EDIT HUNT ----
     # The fallback arm of the speed measurement below needs only base_title, base_artist
     # and src["audio"], all of which were settled at phase1_done - yet it did not begin
@@ -6110,9 +6457,12 @@ def _phase2(ctx, on_cand=None):
         res["edits_pending"] = False
         res["hunted"] = True             # SPEED FIX 1: a replay of this answer shows the hunt step
         res["secs"] = round(time.time() - t0, 1)
-        E.tlog("request_done", time.time() - t0, url=key, outcome="hunt")   # APPLYALL 2026-09-29
-        E.tlog("scan_path", time.time() - t0, url=key, path="full", oscore=None,
-               total=round(time.time() - t0, 2))
+        _shadow = bool(ctx.get("shadow"))   # SPEED FIX 2: the safety net's own hunt
+        E.tlog("request_done", time.time() - t0, url=key,                 # APPLYALL 2026-09-29
+               outcome="shadow" if _shadow else "hunt")
+        E.tlog("scan_path", time.time() - t0, url=key, path="shadow" if _shadow else "full",
+               oscore=ctx.get("oscore"), total=round(time.time() - t0, 2),
+               ovetoes=ctx.get("ovetoes"))
         if _corr_res is not None:
             # CORRECTIONS 2026-09-29: the answer says it came from a correction; a refused
             # one says why. last_check goes back onto the entry (corrections.py list shows
@@ -6145,6 +6495,8 @@ def _phase2(ctx, on_cand=None):
                                     _csid, _corr_res["title"])
                 except Exception:
                     pass
+        if ctx.get("shadow"):
+            return res                   # SPEED FIX 2: the safety net never caches or counts
         if (_corr_res is None or not _corr_res["transient"]) and not res.get("hunt_budget"):
             # (a correction that was never even downloaded is retried on the next scan)
             # HUNT BUDGET: nor is a hunt the budget cut short cached (it ends early only when
@@ -9045,6 +9397,17 @@ class _ScanGate(object):
                 if me in self.q:
                     self.q.remove(me)
                     self.cv.notify_all()
+
+    def try_acquire(self, path="", key="", headroom=1):
+        """SPEED FIX 2's safety net: a token only when a slot is free RIGHT NOW with `headroom`
+        more left over and nobody queued, else None. Never waits, never queues."""
+        with self.cv:
+            self._reap()
+            if self.draining or self.q or self.busy() + 1 + max(0, headroom) > self.slots:
+                return None
+            if self.busy() > 0 and ADMIT_CPU_PSI > 0 and _cpu_psi() >= ADMIT_CPU_PSI:
+                return None
+            return self._new(path, key)
 
     def release(self, token):
         with self.cv:

@@ -323,6 +323,64 @@ class DeadSource(unittest.TestCase):
             self.assertFalse(S._source_is_dead("https://soundcloud.com/a/b"), code)
 
 
+class StudioPreview(unittest.TestCase):
+    """The Deezer fallback picks the studio row: title and artist agree, no rendition."""
+    def setUp(self):
+        import urllib.request
+        self.ur = urllib.request
+        self.real = urllib.request.urlopen
+
+    def tearDown(self):
+        self.ur.urlopen = self.real
+
+    def test_picks_the_studio_recording(self):
+        import io
+        rows = {"data": [
+            {"title": "Freaky Friday (Originally Performed by Lil Dicky) [Karaoke]",
+             "artist": {"name": "Hit The Button Karaoke"}, "preview": "https://c.dzcdn.net/k"},
+            {"title": "Freaky Friday (Live)", "artist": {"name": "Lil Dicky"},
+             "preview": "https://c.dzcdn.net/live"},
+            {"title": "Freaky Friday (Slowed)", "artist": {"name": "Lil Dicky"},
+             "preview": "https://c.dzcdn.net/slow"},
+            {"title": "Freaky Friday", "artist": {"name": "Lil Dicky"},
+             "preview": "https://cdnt-preview.dzcdn.net/studio"}]}
+        self.ur.urlopen = lambda req, timeout=None: io.BytesIO(json.dumps(rows).encode())
+        self.assertEqual(S._deezer_studio("Freaky Friday (feat. Chris Brown)", "Lil Dicky"),
+                         ("https://cdnt-preview.dzcdn.net/studio", "Freaky Friday"))
+
+    def test_another_artist_is_never_taken(self):
+        import io
+        rows = {"data": [{"title": "Phantom", "artist": {"name": "Someone Else"},
+                          "preview": "https://c.dzcdn.net/x"}]}
+        self.ur.urlopen = lambda req, timeout=None: io.BytesIO(json.dumps(rows).encode())
+        self.assertIsNone(S._deezer_studio("Phantom", "EsDeeKid & Rico Ace"))
+
+
+class Locate(unittest.TestCase):
+    """SPEED FIX 2: the clip is found inside a preview that covers only part of it."""
+    def test_partial_overlap_is_found_where_it_is(self):
+        import numpy as np
+        rng = np.random.RandomState(7)
+        a = rng.randint(0, 2 ** 32, 300, dtype=np.uint64).astype(np.uint32)
+        b = rng.randint(0, 2 ** 32, 240, dtype=np.uint64).astype(np.uint32)
+        b[:150] = a[150:]                     # the preview starts 150 items into the clip
+        agree, off, n = S._fp_partial(a, b, 65)
+        self.assertEqual((round(agree, 3), off, n), (1.0, -150, 150))
+
+    def test_no_shared_music_stays_at_chance(self):
+        import numpy as np
+        rng = np.random.RandomState(8)
+        a = rng.randint(0, 2 ** 32, 300, dtype=np.uint64).astype(np.uint32)
+        b = rng.randint(0, 2 ** 32, 240, dtype=np.uint64).astype(np.uint32)
+        agree, off, n = S._fp_partial(a, b, 65)
+        self.assertLess(agree, 0.6)
+
+    def test_too_short_to_judge(self):
+        import numpy as np
+        a = np.zeros(40, dtype=np.uint32)
+        self.assertEqual(S._fp_partial(a, a, 65), (0.0, None, 0))
+
+
 class Corrections(Base):
     def test_a_fix_for_the_video_drops_its_saved_answer(self):
         S._vid_put(SHORT_A, answer())

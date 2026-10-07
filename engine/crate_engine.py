@@ -4878,6 +4878,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 hit["pitch_kept"] = True        # CRATE_TEMPO_KEPT: never a seek entry
             elif SEEK_MOFF and hit.get("offset_in_master") is not None:
                 _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
+            _st.setdefault("ohits", []).append(probe_hit_row(hit, kept))    # SPEED FIX 2
         return hit
 
     async def _probe_serial(off, rate, label, span=20, t_sink=None, timeout=None, kept=False):
@@ -4929,6 +4930,7 @@ async def _fingerprint_core_body(audio, hints=None, _scan_out=None, hints_fn=Non
                 hit["pitch_kept"] = True        # CRATE_TEMPO_KEPT: never a seek entry
             elif SEEK_MOFF and hit.get("offset_in_master") is not None:
                 _st.setdefault("seek_hits", []).append(seek_hit_row(hit))   # CRATE_SEEK_MOFF
+            _st.setdefault("ohits", []).append(probe_hit_row(hit, kept))    # SPEED FIX 2
         return hit
 
     async def sweep_rates(off, rates, t_sink=None, need=None, budget=SWEEP_BUDGET):
@@ -8229,6 +8231,15 @@ _SEEK_STOP = {"the", "a", "an", "feat", "ft", "remix", "slowed", "reverb", "sped
               "speed", "version", "edit", "official", "audio", "video", "lyrics", "x", "and",
               "mix", "tiktok", "bass", "boosted", "instrumental", "super", "ultra"}
 _SEEK_TLS = threading.local()
+
+
+def probe_hit_row(hit, kept=False):
+    """SPEED FIX 2: every probe answer of the scan, compact (title and numbers, no audio), for
+    the original-confidence score (fastorig.py). Read-only: the hit is not modified."""
+    return {"title": (hit.get("title") or "")[:120], "sid": hit.get("key"),
+            "off": hit.get("offset"), "rate": hit.get("rate"), "span": hit.get("span"),
+            "fs": hit.get("freqskew"), "ts": hit.get("timeskew"),
+            "moff": hit.get("offset_in_master"), "kept": bool(kept), "junk": bool(_junk_id(hit))}
 
 
 def seek_hit_row(hit):
