@@ -45,8 +45,8 @@ Not server-mode switches: these run on the Mac too. Off switches and knobs:
 | `CRATE_VID_TTL_DAYS` (90), `CRATE_VID_EPOCH` (`vid1`), `CRATE_VID_MAX` (20000), `CRATE_VID_DEAD_RECHECK_S` (3600) | vidcache.py, server.py | lifetime from creation; bump the epoch to drop every saved answer at once; size cap; how often a saved upload's page is re-checked (oEmbed 404 = gone) |
 | `ADDIFY_ADMIN_KEYS` (`name:sha256hex,...`) | server.py | `/admin/cache` (peek, list) and `/admin/cache/delete` answer only on the box (loopback, no tunnel headers) or with `X-Addify-Admin: <key>` |
 | `CRATE_FAST_ORIGINAL=off` / `measure` | server.py, fastorig.py | turns off fix 2's plain-original fast path; `measure` scores every hunt (`orig_score` rows) and always runs the full hunt |
-| `CRATE_ORIGINAL_MIN` (80) | fastorig.py | the original-confidence threshold |
-| `CRATE_FAST_SHADOW` (0.10) | server.py | share of fast answers whose full hunt runs in the background (never shown, never cached), logged as `fast_shadow` |
+| `CRATE_ORIGINAL_MIN` (80) | fastorig.py | the original-confidence threshold; the fast path also needs both located studio readings in their clean band (fp >= 0.70, \|EQ\| <= 0.20) whatever the score |
+| `CRATE_FAST_SHADOW` (0.10) | server.py | share of fast answers whose full hunt runs in the background (never shown to that scan), logged as `fast_shadow`; when it finds an edit, its answer replaces the saved fast answer in the URL, sound and video stores (`fast_replace`); a copy a phone already saved is not recalled |
 | `CRATE_ORIG_REF_WAIT_S` (3.0) | server.py | longest the hunt waits for the studio-recording check; a late check means the full hunt |
 
 Pre-warm a list of links (run on the box): `/opt/addify/venv/bin/python prewarm.py --file links.txt`.

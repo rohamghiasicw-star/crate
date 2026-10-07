@@ -5053,7 +5053,8 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
 # threshold, or on any veto, the hunt below runs exactly as before. CRATE_FAST_ORIGINAL=off
 # turns it off; =measure logs the score on every hunt and always runs the full hunt.
 # Safety net (item 4): CRATE_FAST_SHADOW (0.10) of fast answers run the full hunt in the
-# background on a copy of the clip, never shown, never cached, logged as fast_shadow.
+# background on a copy of the clip, never shown to that scan, logged as fast_shadow. When it
+# finds an edit, its answer replaces the saved fast answer (_fast_replace, logged fast_replace).
 import fastorig as FO
 import origref as OR
 import random as _random
@@ -5286,9 +5287,11 @@ def _fast_disagrees(full):
 
 def _fast_shadow(ctx, snap_res, d):
     """Item 4: for FAST_SHADOW_RATE of fast answers, the full hunt on a copy of the clip, in
-    the background. Never shown, never cached, holds a gate slot only when one is free with one
-    more to spare, logs fast_shadow. The copy is deleted when it ends (transient, like the
-    clip itself)."""
+    the background. Never shown to the scan that asked, holds a gate slot only when one is free
+    with one more to spare, logs fast_shadow. When it finds an EDIT where the fast path said
+    original, its answer REPLACES the saved fast one (_fast_replace) through the same guarded
+    saves a full scan uses; agreeing, failing or budget-cut hunts change nothing. The copy is
+    deleted when it ends (transient, like the clip itself)."""
     if FAST_SHADOW_RATE <= 0 or _random.random() >= FAST_SHADOW_RATE:
         return False
     key = ctx.get("key")
@@ -5311,6 +5314,9 @@ def _fast_shadow(ctx, snap_res, d):
             GATE.release(tok)
         E.tlog("fast_shadow", 0.0, url=key, ran=False, why="copy %s" % type(ex).__name__)
         return False
+    # read HERE, on the request thread: FS.PHONE is a context value the shadow thread does not
+    # inherit, so inside it _phone_unconfirmed would always say "not phone-named"
+    saveable = not _phone_unconfirmed(snap_res)
     sctx = dict(ctx)
     sctx.update(src=dict(src, audio=a2, tmp=tmp2), res=copy.deepcopy(snap_res),
                 key="%s#shadow" % key, shadow=True, t0=time.time())
@@ -5328,6 +5334,13 @@ def _fast_shadow(ctx, snap_res, d):
                    why=why, score=d.get("score"), speed=(full or {}).get("speed"),
                    crown=(ex.get("title") or "")[:80], vspeed=ex.get("vspeed"),
                    core=ex.get("core"), fp=ex.get("fp"))
+            # a found edit is acted on; full_no_match / full_error may be a throttled hunt and
+            # prove nothing, and a budget-cut hunt or a refused correction is not what a full
+            # scan saves either
+            if why and saveable and (full or {}).get("result") == "found" \
+                    and not full.get("hunt_budget") \
+                    and (full.get("correction") or {}).get("ok", True):
+                _fast_replace(ctx, full)
         except Exception as ex:
             E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=None,
                    why="error %s" % str(ex)[:120])
@@ -5338,6 +5351,42 @@ def _fast_shadow(ctx, snap_res, d):
             _cleanup(tmp2)
     threading.Thread(target=run, daemon=True, name="fast-shadow").start()
     return True
+
+
+def _fast_replace(ctx, full):
+    """The safety net's hunt found an EDIT where the fast path said original. The fast answer
+    leaves every store that still holds it (this link's URL row and rows a sound hit copied,
+    the video row, the sound row), then the hunt's answer goes in through the same guarded
+    saves a full scan uses (_cache_put / _sound_cache_put / _vid_put), so the next scan of this
+    video, any link to it, or another video on its sound gets the hunt's answer instead of the
+    fast one. Only rows still holding a fast answer are dropped: a newer full answer stays. If
+    the hunt's answer is not one the video store keeps, the stale video row is still gone.
+    A copy a phone already saved (vid_ok) cannot be recalled from here."""
+    key, src = ctx.get("key"), ctx.get("src") or {}
+    vk, sid = full.get("vkey"), src.get("sound_id")
+    dropped = []
+    for ck, r in list(CACHE.items()):
+        r = r or {}
+        if r.get("fast_original") and (ck == key or (vk and r.get("vkey") == vk)
+                                       or (sid and r.get("from_sound_cache") == sid)):
+            CACHE.pop(ck, None)
+            _FAIL_AT.pop(ck, None)
+            _disk_put("url", ck, None)
+            dropped.append("url")
+    with _VID_LOCK:
+        fast_vid = bool(vk and ((VID_CACHE.get(vk) or {}).get("res") or {}).get("fast_original"))
+    if fast_vid:
+        _vid_drop(vk, "fast_shadow")
+        dropped.append("vid")
+    if sid and (SOUND_CACHE.get(sid) or {}).get("fast_original"):
+        SOUND_CACHE.pop(sid, None)
+        _disk_put("sound", sid, None)
+        dropped.append("sound")
+    _cache_put(key, full)
+    _sound_cache_put(src, full)
+    _vid_put(key, full, ctx.get("base_view"))
+    E.tlog("fast_replace", 0.0, url=key, vkey=vk, sound=sid, dropped=dropped,
+           vid_ok=bool(full.get("vid_ok")))
 
 
 def _fast_original_finish(ctx, d):
