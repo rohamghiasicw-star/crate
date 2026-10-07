@@ -2322,7 +2322,10 @@ function call(path,url,opt){
   return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
   var kit=(opt&&opt.kit)?kitStart():'';
   var sq=(opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'';
-  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq).then(function(r){return r.json();}).catch(function(){engineUp=null;return {result:'engine_down'};})
+  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq).then(function(r){return r.json();})
+    .catch(function(){engineUp=null;return {result:'engine_down'};})
+    // BELIEVABLE REPLAY: a replayed /base lands at a human pace (REPLAY_NAME_MS)
+    .then(function(d){return (path==='/base'&&d&&d.replay)?replayHold(t0,replayMs(REPLAY_NAME_MS)).then(function(){return d;}):d;})
     .then(function(d){if(kit) kitStop(); return d;});});});}
 /* THE ENGINE MOVED UNDER AN OPEN PAGE (NAMING 2026-09-30, ~/addify-harness/server/NAMING.md).
    The app reads the engine's address from a public directory on every launch and foreground,
@@ -2450,6 +2453,14 @@ function endHunt(){ if(HUNT){ try{HUNT.abort();}catch(e){} HUNT=null; } }
    card all play exactly as on a real scan; only the waiting is gone. Counting is untouched:
    finish() counts the replay exactly as it counts the answer it replays (the payload is kept
    as received). 90 days, at most DEV_MAX entries, an X on the result drops it. */
+/* BELIEVABLE REPLAY (Konnor 2026-10-07: "it does it in literally 1 second ... gotta make it
+   believable ... 5 seconds atleast from 0/100%"). A replayed answer (this phone's copy, the
+   engine's video store or its URL cache: every one carries replay) still walks every step of the
+   scan, and now at a human pace: the song lands 2.6-3.5 s after the tap and the exact-version
+   half takes 3.2-4.5 s more, so 0 to 100 reads as a real 6-8 s scan. Only replays wait. */
+var REPLAY_NAME_MS=[2600,3500], REPLAY_HUNT_MS=[3200,4500];
+function replayMs(r){return r[0]+Math.round(Math.random()*(r[1]-r[0]));}
+function replayHold(since,ms){var w=ms-(performance.now()-since); return new Promise(function(res){setTimeout(res,Math.max(0,w));});}
 var DEV_VID='addify-vid-v1', DEV_LINKS='addify-vid-links', DEV_TTL=90*864e5, DEV_MAX=40, DEV_REPLAY=null;
 function devKeyOf(u){u=String(u||'');
   var m=u.match(/tiktok\.com\/(?:[^?#]*\/)?(?:video|photo)\/(\d{6,25})/i)||u.match(/tiktok\.com\/v\/(\d{6,25})/i);
@@ -2498,7 +2509,8 @@ function devBase(r){var b=JSON.parse(JSON.stringify(r)); DEV_HUNT_ONLY.forEach(f
 function devFull(r){var f=JSON.parse(JSON.stringify(r)); f.dev_hit=true; f.replay=true; f.edits_pending=false; return f;}
 function huntEdits(url,onCand){
   // SPEED FIX 1: a scan replayed from this phone's copy hands the hunt its finished answer
-  if(DEV_REPLAY&&DEV_REPLAY.url===url){var _df=DEV_REPLAY.full; DEV_REPLAY=null; return Promise.resolve(_df);}
+  if(DEV_REPLAY&&DEV_REPLAY.url===url){var _df=DEV_REPLAY.full; DEV_REPLAY=null; return replayHold(performance.now(),replayMs(REPLAY_HUNT_MS)).then(function(){return _df;});}
+  var _hs=performance.now();   // BELIEVABLE REPLAY: when this hunt started
   // NAMING 2026-09-30: the hunt carries this scan's random id, so the /edits fallback below
   // gets the answer this hunt already finished (the stream only dropped before its done
   // event) instead of a second whole scan, and, where the engine allows it (/health
@@ -2526,7 +2538,9 @@ function huntEdits(url,onCand){
       if(settled) return;
       var d=null; try{d=JSON.parse(m.data);}catch(e){}
       if(!d) return giveUp();
-      settled=true; stop(); resolve(d);});
+      settled=true; stop();
+      if(d.replay){ replayHold(_hs,replayMs(REPLAY_HUNT_MS)).then(function(){resolve(d);}); return; }   // BELIEVABLE REPLAY
+      resolve(d);});
     es.addEventListener('fail',giveUp);
     es.onerror=giveUp;});}
 // Coming back to the tab is the moment to forget a stale failure, so the next tap just works.
@@ -6106,7 +6120,8 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
   DEV_REPLAY=null;
   devLookup(p.url).then(function(de){
   if(tok!==scanTok) return;
-  if(de&&de.res){ DEV_REPLAY={url:p.url,full:devFull(de.res)}; return onBase(devBase(de.res)); }
+  if(de&&de.res){ DEV_REPLAY={url:p.url,full:devFull(de.res)};
+    return replayHold(t0,replayMs(REPLAY_NAME_MS)).then(function(){ if(tok!==scanTok) return; return onBase(devBase(de.res)); }); }
   progPollOn(p.url);
   // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
   // it reports its own milestones now (one per candidate checked), so stopping here would
