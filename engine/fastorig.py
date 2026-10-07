@@ -220,6 +220,24 @@ def ref_points(ref):
     return p
 
 
+def early_ok(hit):
+    """Cheap gate for starting the studio check at the FIRST Shazam name, before the scan is
+    over: named at 1.0x, steady skew, no edit word in the title. Anything else is left to the
+    end of phase 1 (where the full vetoes run), so edits cost no early work."""
+    h = hit or {}
+    try:
+        if abs(float(h.get("rate") or 1.0) - 1.0) > 1e-6 or h.get("pitch_kept"):
+            return False
+    except (TypeError, ValueError):
+        return False
+    for k in ("freqskew", "timeskew"):
+        v = h.get(k)
+        if isinstance(v, (int, float)) and abs(float(v)) > SKEW_OK:
+            return False
+    named = "%s %s" % (h.get("title") or "", h.get("artist") or "")
+    return bool(h.get("title")) and not AUDIO_EDIT.search(named)
+
+
 def needs_ref(x):
     """True when only the studio-recording check can still lift the clip to the threshold."""
     return not vetoes(x) and sum(shazam_points(x).values()) + 50 >= ORIGINAL_FAST_MIN

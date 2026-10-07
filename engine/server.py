@@ -2085,6 +2085,29 @@ def _phase1(url, key, t0):
         if fpd is not None:
             _publish_decided(fpd)
 
+    _oref_early = {}
+
+    def _oref_start(h):
+        # SPEED FIX 2: the studio-recording check starts at the FIRST name, beside the early
+        # Apple lookup, so the hunt rarely waits for it. Only for a name that could still be
+        # a plain original (1.0x, steady skew, no edit word: fastorig.early_ok); phase 1's end
+        # takes it only when the final song and the clip audio are the ones it measured.
+        try:
+            if FAST_ORIGINAL == "off" or not FO.early_ok(h):
+                return
+            with _dec["lock"]:
+                if _oref_early:
+                    return
+                t_, a_ = h.get("title"), h.get("artist")
+                lf = _lk_early.get("fut") if _lk_early.get("key") == (t_, a_) else None
+                _ox = ThreadPoolExecutor(max_workers=1)
+                _oref_early.update(key=(t_, a_, src.get("audio")),
+                                   fut=_ox.submit(_orig_ref, dict(src), None, t_, a_, lf))
+                _ox.shutdown(wait=False)
+            E.tlog("orig_ref_early", time.time() - t0)
+        except Exception:
+            pass
+
     def _on_named(h):
         held = False
         if EARLY_NAME_WAIT_XCHECK:
@@ -2096,6 +2119,7 @@ def _phase1(url, key, t0):
             _prog_named(key, h, t0)
         _prefetch_hunt(src, h, hint_texts)
         _links_start(h.get("title"), h.get("artist"))
+        _oref_start(h)                         # SPEED FIX 2
 
     def _hints_ready():
         return _hints_fut is None or _hints_fut.done()
@@ -2635,10 +2659,14 @@ def _phase1(url, key, t0):
             try:
                 _oi = _orig_inputs(ctx)
                 if FO.needs_ref(_oi) or (FAST_ORIGINAL == "measure" and not FO.vetoes(_oi)):
-                    _ox = ThreadPoolExecutor(max_workers=1)
-                    ctx["oref_fut"] = _ox.submit(_orig_ref, src, res.get("preview_url"),
-                                                 base_title, base_artist)
-                    _ox.shutdown(wait=False)
+                    if _oref_early.get("key") == (base_title, base_artist, src.get("audio")):
+                        ctx["oref_fut"] = _oref_early["fut"]    # already running since the name
+                        ctx["oref_early"] = True
+                    else:
+                        _ox = ThreadPoolExecutor(max_workers=1)
+                        ctx["oref_fut"] = _ox.submit(_orig_ref, src, res.get("preview_url"),
+                                                     base_title, base_artist)
+                        _ox.shutdown(wait=False)
             except Exception:
                 pass
         if getattr(E, "SEEK_MOFF", False):
@@ -5105,7 +5133,7 @@ def _orig_ref_one(audio, tmp, url, label):
         out["confirm"] = bool(speed_from_master.confirm_ref(audio, pv))
         r = speed_from_master.measure_consensus(audio, [pv]) or {}
         out["speed"], out["confident"] = r.get("speed"), bool(r.get("confident"))
-        out.update(_orig_aligned(audio, pv, tmp))
+        out.update(_orig_aligned(audio, pv, tmp, label))
     except Exception as ex:
         out["why"] = type(ex).__name__
     finally:
@@ -5116,28 +5144,54 @@ def _orig_ref_one(audio, tmp, url, label):
     return out
 
 
-def _orig_ref(src, url, song=None, artist=None):
+def _orig_ref(src, url, song=None, artist=None, links_fut=None):
     """The clip against the studio recording Shazam named: its iTunes preview (phase 1's
-    official_links) first, then its Deezer preview when iTunes had none or the clip is not in
-    the iTunes excerpt (the two stores often preview different 30 s of a song). The first one
-    the clip is LOCATED in wins; otherwise the first measured. Audio in src["tmp"], removed."""
+    official_links, or the early Apple lookup's future) and its Deezer preview, measured AT ONCE
+    (iTunes search from the droplet misses many songs, and the two stores often preview
+    different 30 s of a song). The iTunes one wins when the clip is LOCATED in it, then Deezer,
+    then whichever was measured. Audio in src["tmp"], removed."""
     audio, tmp = (src or {}).get("audio"), (src or {}).get("tmp")
     if not (audio and tmp):
         return {"why": "no_audio"}
-    first = None
-    if url and url.startswith("https://audio-ssl.itunes.apple.com/"):
-        first = _orig_ref_one(audio, tmp, url, "itunes")
-        if first.get("aligned"):
-            return first
-    dz = _deezer_studio(song, artist)
-    if dz:
+
+    def _itunes():
+        u = url
+        if not u and links_fut is not None:
+            try:
+                u = (links_fut.result(timeout=L.TIMEOUT + 2) or {}).get("preview")
+            except Exception:
+                u = None
+        if not (u and u.startswith("https://audio-ssl.itunes.apple.com/")):
+            return None
+        return _orig_ref_one(audio, tmp, u, "itunes")
+
+    def _deezer():
+        dz = _deezer_studio(song, artist)
+        if not dz:
+            return None
         o = _orig_ref_one(audio, tmp, dz[0], "deezer")
         o["title"] = dz[1][:80]
-        if o.get("aligned") or first is None:
-            if first is not None:
+        return o
+    ex = ThreadPoolExecutor(max_workers=2)
+    try:
+        fi, fd = ex.submit(_itunes), ex.submit(_deezer)
+        it = dz = None
+        try:
+            it = fi.result(timeout=30)
+        except Exception:
+            it = None
+        try:
+            dz = fd.result(timeout=30)
+        except Exception:
+            dz = None
+    finally:
+        ex.shutdown(wait=False)
+    for o in (it, dz):
+        if o and o.get("aligned"):
+            if o is dz and it is not None:
                 o["tried"] = "itunes"
             return o
-    return first or {"why": "no_preview"}
+    return it or dz or {"why": "no_preview"}
 
 
 ORIG_MIN_OVERLAP_S = 8.0     # the clip and the studio preview must share at least this much
@@ -5163,7 +5217,7 @@ def _fp_partial(a, b, min_items):
     return best, at, n_at
 
 
-def _orig_aligned(audio, pv, tmp):
+def _orig_aligned(audio, pv, tmp, label="p"):
     """Where the clip sits in the studio preview (chromaprint, partial overlap), then verify()
     on exactly that shared stretch: the raw fp and the spectral slope of the SAME music. On
     different sections the slope means nothing (measured: Heart Attack read slope_delta 3.28
@@ -5181,7 +5235,8 @@ def _orig_aligned(audio, pv, tmp):
     sec = off * dt                           # where the clip's start falls in the preview
     c0, p0 = max(0.0, -sec), max(0.0, sec)
     dur = min(n * dt, 20.0)
-    segc, segp = os.path.join(tmp, "orig_c.wav"), os.path.join(tmp, "orig_p.wav")
+    segc = os.path.join(tmp, "orig_c_%s.wav" % label)
+    segp = os.path.join(tmp, "orig_p_%s.wav" % label)
     try:
         xc = _verify._decode(audio, c0 + dur)
         xp = _verify._decode(pv, p0 + dur)
@@ -5227,6 +5282,7 @@ def _orig_decide(ctx):
                                         "aligned", "align_fp", "overlap_s", "at", "fp", "core",
                                         "arr", "slope_delta", "bass_delta", "vspeed") if k in _r},
            nbase=len(FO.base_hits(x)), slope=FO.align_slope(FO.base_hits(x)),
+           early_ref=bool(ctx.get("oref_early")),
            bh=[[h.get("off"), h.get("span"), h.get("moff"), h.get("fs"), h.get("ts")]
                for h in FO.base_hits(x)][:12])
     return d

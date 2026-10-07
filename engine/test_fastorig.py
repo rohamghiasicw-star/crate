@@ -190,6 +190,23 @@ class Vetoes(unittest.TestCase):
         self.assertVeto(x, "no_base_hit")
 
 
+class EarlyGate(unittest.TestCase):
+    """The studio check may start at the first name only for a name that could be plain."""
+    def test_plain_first_name_starts_it(self):
+        self.assertTrue(FO.early_ok({"title": "Heart Attack", "artist": "Demi Lovato",
+                                     "rate": 1.0, "freqskew": 0.0004, "timeskew": 0.0006}))
+        self.assertTrue(FO.early_ok({"title": "nuts", "artist": "Lil Peep", "rate": 1.0,
+                                     "freqskew": -0.0001, "timeskew": None}))   # ShazamKit: no time skew
+
+    def test_edit_signals_never_start_it(self):
+        for h in ({"title": "Blow", "rate": 1.12},
+                  {"title": "Don't Like", "rate": 1.0, "freqskew": -0.0399, "timeskew": -0.0399},
+                  {"title": "Three (Slowed)", "rate": 1.0},
+                  {"title": "x", "rate": 1.0, "pitch_kept": True},
+                  {"title": "", "rate": 1.0}):
+            self.assertFalse(FO.early_ok(h), h)
+
+
 class Pieces(unittest.TestCase):
     def test_alignment_slope(self):
         self.assertAlmostEqual(FO.align_slope([hit(6.0, 45.2), hit(12.0, 51.2)]), 1.0, 3)
