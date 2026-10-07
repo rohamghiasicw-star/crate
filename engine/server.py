@@ -614,6 +614,12 @@ def _vid_get(vk, check_dead=True):
     if VC.expired(e):
         _vid_drop(vk, "expired")
         return None
+    # a row saved under an older, looser confirmed() rule (unsure / withheld crown, before
+    # 2026-10-07) is dropped on read, so the good rows survive without a CRATE_VID_EPOCH bump
+    ok, why = VC.confirmed(e.get("res"))
+    if not ok:
+        _vid_drop(vk, "unconfirmed_" + why)
+        return None
     now = time.time()
     exu = ((e.get("res") or {}).get("exact") or {}).get("url")
     if check_dead and exu and now - float(e.get("td") or 0) > VID_DEAD_RECHECK_S:

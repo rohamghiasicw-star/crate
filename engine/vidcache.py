@@ -104,7 +104,11 @@ def confirmed(res):
     if r.get("busy"):
         return False, "busy"
     for k in ("shazam_partial", "base_uncertain", "from_credit", "from_caption", "hunt_budget",
-              "hunt_starved", "edits_pending", "listen"):
+              "hunt_starved", "edits_pending", "listen",
+              # a withheld crown or a "not sure" list is a low-confidence answer (Konnor item 4:
+              # never cache low-confidence guesses); often network noise (a failed download, the
+              # YouTube wall), so the next scan should hunt again, not replay it for 90 days
+              "unsure", "weak_exact", "crown_rejected"):
         if r.get(k):
             return False, k
     ex = r.get("exact") or None

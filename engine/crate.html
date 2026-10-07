@@ -2473,7 +2473,11 @@ function devIsShort(u){return /^https?:\/\/(vt|vm)\.tiktok\.com\/[A-Za-z0-9]+/i.
 function devAll(){return lsGet(DEV_VID,'{}')||{};}
 function devSave(s){try{localStorage.setItem(DEV_VID,JSON.stringify(s)); return true;}catch(e){return false;}}
 function devGet(vk){var s=devAll(), e=vk?s[vk]:null; if(!e||!e.res) return null;
-  if(Date.now()-(e.t||0)>DEV_TTL){delete s[vk]; devSave(s); return null;} return e;}
+  if(Date.now()-(e.t||0)>DEV_TTL){delete s[vk]; devSave(s); return null;}
+  // a "not sure" list or a withheld crown is never replayed (the engine stopped keeping them
+  // 2026-10-07): a copy saved before that is dropped and the clip is scanned for real
+  if(e.res.unsure||e.res.crown_rejected||e.res.weak_exact){delete s[vk]; devSave(s); return null;}
+  return e;}
 function devLink(u,vk){if(!u||!vk) return; var m=lsGet(DEV_LINKS,'{}')||{}; m[devLinkKey(u)]=vk;
   var ks=Object.keys(m); if(ks.length>400) ks.slice(0,ks.length-400).forEach(function(k){delete m[k];});
   lsSet(DEV_LINKS,m);}

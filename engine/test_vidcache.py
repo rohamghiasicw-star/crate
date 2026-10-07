@@ -70,7 +70,10 @@ class Confirmed(unittest.TestCase):
                   _found(hunt_budget={"T": 25}), _found(edits_pending=True),
                   _found(busy="shazam"), _found(listen=True),
                   _found(exact={"title": "x", "url": "u", "core": 1.0, "fp": 0.0}),
-                  _found(correction={"url": "u", "ok": False})):
+                  _found(correction={"url": "u", "ok": False}),
+                  _found(unsure=True, weak_exact=0.44),
+                  _found(unsure=True, crown_rejected="this upload is the original"),
+                  _found(weak_exact=0.5), _found(crown_rejected="x")):
             ok, why = VC.confirmed(r)
             self.assertFalse(ok, (r, why))
 
