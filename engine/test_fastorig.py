@@ -207,6 +207,12 @@ class EarlyGate(unittest.TestCase):
             self.assertFalse(FO.early_ok(h), h)
 
 
+class Constants(unittest.TestCase):
+    def test_the_worker_locates_with_the_same_floor(self):
+        import origref
+        self.assertEqual(origref.FP_FLOOR, FO.REF_FP_FLOOR)
+
+
 class Pieces(unittest.TestCase):
     def test_alignment_slope(self):
         self.assertAlmostEqual(FO.align_slope([hit(6.0, 45.2), hit(12.0, 51.2)]), 1.0, 3)

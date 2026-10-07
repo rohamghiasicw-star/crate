@@ -51,4 +51,5 @@ Not server-mode switches: these run on the Mac too. Off switches and knobs:
 
 Pre-warm a list of links (run on the box): `/opt/addify/venv/bin/python prewarm.py --file links.txt`.
 Delete one saved answer (on the box): `curl -X POST -d '{"key":"<link or tt:/ig: key>"}' http://127.0.0.1:8788/admin/cache/delete`.
+The studio-recording check runs in a child process (`origref.py`), so a running scan cannot slow it.
 Tests: `test_vidcache.py`, `test_vid_server.py`, `test_fastorig.py`.

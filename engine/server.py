@@ -364,7 +364,7 @@ def _disk_epoch():
     import hashlib
     h = hashlib.md5()
     for f in ("server.py", "crate_engine.py", "verify.py", "find_song.py",
-              "speed_from_master.py", "wrong_song.py", "fastorig.py"):   # fastorig: SPEED FIX 2
+              "speed_from_master.py", "wrong_song.py", "fastorig.py", "origref.py"):   # SPEED FIX 2
         try:
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f), "rb") as fh:
                 h.update(fh.read())
@@ -5054,6 +5054,7 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
 # Safety net (item 4): CRATE_FAST_SHADOW (0.10) of fast answers run the full hunt in the
 # background on a copy of the clip, never shown, never cached, logged as fast_shadow.
 import fastorig as FO
+import origref as OR
 import random as _random
 FAST_ORIGINAL = (os.environ.get("CRATE_FAST_ORIGINAL") or "on").strip().lower()
 if FAST_ORIGINAL not in ("on", "measure", "off"):
@@ -5123,30 +5124,9 @@ def _deezer_studio(song, artist):
 
 
 def _orig_ref_one(audio, tmp, url, label):
-    """One studio preview against the clip: confirm_ref (same recording, steady speed),
-    measure_consensus (the speed) and the located fingerprint / slope (_orig_aligned)."""
-    import subprocess
-    out = {"src": label}
-    pv = os.path.join(tmp, "pv_orig_%s.wav" % label)
-    try:
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-rw_timeout", "8000000",
-                        "-i", url, "-ac", "1", "-ar", "44100", pv],
-                       capture_output=True, timeout=12, check=False)
-        if not os.path.exists(pv) or os.path.getsize(pv) < 20_000:
-            out["why"] = "fetch"
-            return out
-        out["confirm"] = bool(speed_from_master.confirm_ref(audio, pv))
-        r = speed_from_master.measure_consensus(audio, [pv]) or {}
-        out["speed"], out["confident"] = r.get("speed"), bool(r.get("confident"))
-        out.update(_orig_aligned(audio, pv, tmp, label))
-    except Exception as ex:
-        out["why"] = type(ex).__name__
-    finally:
-        try:
-            os.remove(pv)
-        except OSError:
-            pass
-    return out
+    """One studio preview against the clip, measured in a child process (origref.py): inside
+    the engine, beside a running scan, the same work took 4-13 s instead of 1.4-1.6 s."""
+    return OR.run(audio, url, tmp, label)
 
 
 def _orig_ref(src, url, song=None, artist=None, links_fut=None):
@@ -5171,11 +5151,14 @@ def _orig_ref(src, url, song=None, artist=None, links_fut=None):
         return _orig_ref_one(audio, tmp, u, "itunes")
 
     def _deezer():
+        t0 = time.time()
         dz = _deezer_studio(song, artist)
         if not dz:
             return None
+        tl = round(time.time() - t0, 2)
         o = _orig_ref_one(audio, tmp, dz[0], "deezer")
         o["title"] = dz[1][:80]
+        o["t_lookup"] = tl
         return o
     from concurrent.futures import FIRST_COMPLETED, wait as _fwait
     ex = ThreadPoolExecutor(max_workers=2)
@@ -5201,66 +5184,9 @@ def _orig_ref(src, url, song=None, artist=None, links_fut=None):
     return got.get("itunes") or got.get("deezer") or {"why": "no_preview"}
 
 
-ORIG_MIN_OVERLAP_S = 8.0     # the clip and the studio preview must share at least this much
-
-
-def _fp_partial(a, b, min_items):
-    """Chromaprint agreement at the best offset, PARTIAL overlap allowed (verify._fp_overlap
-    needs the shorter fully inside the longer, and a clip is rarely inside a 30 s preview).
-    -> (agreement 0..1, offset of a[0] in b in items, overlap items); (0.0, None, 0) if none."""
-    import numpy as np
-    if a is None or b is None or len(a) < min_items or len(b) < min_items:
-        return 0.0, None, 0
-    best, at, n_at = 0.0, None, 0
-    for o in range(-(len(a) - min_items), len(b) - min_items + 1):
-        i0, j0 = max(0, -o), max(0, o)
-        n = min(len(a) - i0, len(b) - j0)
-        if n < min_items:
-            continue
-        bits = int(np.unpackbits((a[i0:i0 + n] ^ b[j0:j0 + n]).view(np.uint8)).sum())
-        sc = 1.0 - bits / (32.0 * n)
-        if sc > best:
-            best, at, n_at = sc, o, n
-    return best, at, n_at
-
-
-def _orig_aligned(audio, pv, tmp, label="p"):
-    """Where the clip sits in the studio preview (chromaprint, partial overlap), then verify()
-    on exactly that shared stretch: the raw fp and the spectral slope of the SAME music. On
-    different sections the slope means nothing (measured: Heart Attack read slope_delta 3.28
-    and fp 0.54 head-to-head against its own preview), so nothing is read unless they overlap
-    by ORIG_MIN_OVERLAP_S. Segments live in the scan's tmp and are removed here."""
-    import verify as _verify
-    dt = 4096.0 / 3.0 / 11025.0              # seconds per chromaprint item
-    out = {"aligned": False}
-    fa, fb = _verify._fp_raw(audio, 60), _verify._fp_raw(pv, 30)
-    agree, off, n = _fp_partial(fa, fb, int(ORIG_MIN_OVERLAP_S / dt))
-    out["align_fp"] = round(agree, 4)
-    out["overlap_s"] = round(n * dt, 1)
-    if off is None or agree < FO.REF_FP_FLOOR:
-        return out
-    sec = off * dt                           # where the clip's start falls in the preview
-    c0, p0 = max(0.0, -sec), max(0.0, sec)
-    dur = min(n * dt, 20.0)
-    segc = os.path.join(tmp, "orig_c_%s.wav" % label)
-    segp = os.path.join(tmp, "orig_p_%s.wav" % label)
-    try:
-        xc = _verify._decode(audio, c0 + dur)
-        xp = _verify._decode(pv, p0 + dur)
-        sr = _verify.SR
-        _verify._write_wav(xc[int(c0 * sr):int((c0 + dur) * sr)], segc)
-        _verify._write_wav(xp[int(p0 * sr):int((p0 + dur) * sr)], segp)
-        v = _verify.verify(segc, segp, int(dur) + 1) or {}
-        out.update(aligned=True, at=round(sec, 2), fp=v.get("fp"), core=v.get("core"),
-                   arr=v.get("arr"), slope_delta=v.get("slope_delta"),
-                   bass_delta=v.get("bass_delta"), vspeed=v.get("speed"))
-    finally:
-        for f in (segc, segp):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-    return out
+ORIG_MIN_OVERLAP_S = OR.MIN_OVERLAP_S
+_fp_partial = OR.fp_partial          # the measurement itself lives in origref.py
+_orig_aligned = OR.aligned
 
 
 def _orig_decide(ctx):
@@ -5280,6 +5206,17 @@ def _orig_decide(ctx):
             # late (or failed): the full hunt runs now; the check finishes on its own thread and
             # removes its own files (the clip's temp dir lives until the hunt ends)
             x["ref"] = {"why": "late" if not _f.done() else "error %s" % type(_fx).__name__}
+            _k, _tl = ctx.get("key"), time.time()
+
+            def _late(f, _k=_k, _tl=_tl):
+                try:
+                    r = f.result() or {}
+                except Exception as e:
+                    r = {"why": type(e).__name__}
+                E.tlog("orig_ref_late", time.time() - _tl, url=_k,
+                       ref={k: r.get(k) for k in ("src", "aligned", "why", "t_fetch", "t_speed",
+                                                  "t_total", "t_lookup")})
+            _f.add_done_callback(_late)
     d = FO.decide(x)
     d["secs"] = round(time.time() - t0, 3)
     ctx["oscore"] = d["score"]
@@ -5290,7 +5227,8 @@ def _orig_decide(ctx):
            covered=d.get("covered"), clip_secs=x.get("clip_secs"),
            ref={k: _r.get(k) for k in ("src", "title", "why", "confirm", "speed", "confident",
                                         "aligned", "align_fp", "overlap_s", "at", "fp", "core",
-                                        "arr", "slope_delta", "bass_delta", "vspeed") if k in _r},
+                                        "arr", "slope_delta", "bass_delta", "vspeed", "t_lookup",
+                                        "t_fetch", "t_speed", "t_total") if k in _r},
            nbase=len(FO.base_hits(x)), slope=FO.align_slope(FO.base_hits(x)),
            early_ref=bool(ctx.get("oref_early")),
            bh=[[h.get("off"), h.get("span"), h.get("moff"), h.get("fs"), h.get("ts")]
