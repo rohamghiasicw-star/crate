@@ -12,6 +12,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TMP = tempfile.mkdtemp(prefix="vidsrv.")
+import atexit                # noqa: E402
+import shutil                # noqa: E402
+atexit.register(shutil.rmtree, TMP, True)     # leave no store or log behind
 os.environ.update({"ADDIFY_CORRECTIONS": os.path.join(TMP, "corrections.json"),
                    "ADDIFY_FIXQUEUE": os.path.join(TMP, "fixqueue.jsonl"),
                    "CRATE_PERSIST_CACHE": "1", "CRATE_PERSIST_DIR": os.path.join(TMP, "store"),
