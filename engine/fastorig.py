@@ -220,6 +220,16 @@ def ref_points(ref):
     return p
 
 
+def clean_ref(ref):
+    """Both studio readings on the LOCATED stretch in their clean band: chromaprint fp at or
+    above REF_FP_STRONG and |slope_delta| at or under REF_SLOPE_SAME (ref_fp and ref_eq at
+    their full 15 points)."""
+    ref = ref or {}
+    fp, sd = ref.get("fp"), ref.get("slope_delta")
+    return bool(ref.get("aligned") and isinstance(fp, (int, float)) and fp >= REF_FP_STRONG
+                and isinstance(sd, (int, float)) and abs(float(sd)) <= REF_SLOPE_SAME)
+
+
 def early_ok(hit):
     """Cheap gate for starting the studio check at the FIRST Shazam name, before the scan is
     over: named at 1.0x, steady skew, no edit word in the title. Anything else is left to the
@@ -252,8 +262,14 @@ def decide(x):
     ref = x.get("ref") or {}
     cov, cwhy = coverage(x)
     # belt and braces: the fast path also needs the studio recording itself to have been
-    # matched both ways (the bass-robust lock AND the located fingerprint) and the whole clip
-    # covered (two Shazam windows, or the located stretch spanning most of it), whatever the sum
+    # matched both ways (the bass-robust lock AND the located fingerprint), the whole clip
+    # covered (two Shazam windows, or the located stretch spanning most of it), and BOTH located
+    # readings in their clean band, whatever the sum. The partial-credit bands (fp 0.62-0.70,
+    # where unrelated songs reach 0.613; |EQ| 0.20-0.40, where reverb alone reads 0.208 and
+    # slowing alone 0.225) still count toward the logged score but never open the fast path:
+    # a 1.0x reverb or mild bass-boost edit Shazam names in 3 windows reads exactly there.
+    clean = clean_ref(ref)
     fast = bool(not v and score >= ORIGINAL_FAST_MIN and ref.get("confirm") and ref.get("aligned")
-                and cov)
-    return {"score": score, "fast": fast, "vetoes": v, "parts": parts, "covered": cwhy}
+                and cov and clean)
+    return {"score": score, "fast": fast, "vetoes": v, "parts": parts, "covered": cwhy,
+            "clean_ref": clean}

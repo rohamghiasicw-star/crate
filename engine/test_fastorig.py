@@ -114,6 +114,31 @@ class Clean(unittest.TestCase):
         x["ref"]["slope_delta"] = 0.3
         self.assertFalse(FO.decide(x)["fast"])
 
+    def test_partial_credit_never_opens_the_fast_path(self):
+        # review 2026-10-07: a 1.0x reverb or mild bass-boost edit Shazam names in steady
+        # windows reads fp 0.62-0.70 / |EQ| 0.20-0.40 on the located stretch (reverb alone 0.208)
+        three = [hit(6.0, 45.2), hit(12.0, 51.2), hit(18.0, 57.2)]
+        two = [hit(6.0, 45.2), hit(12.0, 51.2)]
+        for hits, fp, sd in ((three, 0.66, 0.208), (three, 0.63, 0.38), (two, 0.74, 0.38),
+                             (two, 0.63, 0.05), (two, 0.66, 0.05), (three, 0.74, -0.25)):
+            x = clean()
+            x["hits"] = list(hits)
+            x["ref"].update(fp=fp, slope_delta=sd)
+            d = FO.decide(x)
+            self.assertEqual(d["vetoes"], [], (fp, sd))
+            self.assertFalse(d["clean_ref"], (fp, sd))
+            self.assertFalse(d["fast"], (len(hits), fp, sd, d["score"]))
+
+    def test_clean_band_edges_and_the_measured_original_stay_fast(self):
+        for hits, fp, sd in (([hit(6.0, 45.2), hit(12.0, 51.2), hit(18.0, 57.2)], 0.70, 0.20),
+                             ([hit(6.0, 45.2), hit(12.0, 51.2)], 0.8997, -0.064)):
+            x = clean()
+            x["hits"] = hits
+            x["ref"].update(fp=fp, slope_delta=sd)
+            d = FO.decide(x)
+            self.assertTrue(d["clean_ref"], (fp, sd))
+            self.assertTrue(d["fast"], (fp, sd, d["score"]))
+
     def test_the_counter_speed_hits_of_the_sweep_do_not_count(self):
         # a 0.85x probe naming the song is the sweep doing its job, not a second song
         self.assertNotIn("second_song", FO.vetoes(clean()))

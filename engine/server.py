@@ -5224,7 +5224,7 @@ def _orig_decide(ctx):
     _r = x.get("ref") or {}
     E.tlog("orig_score", d["secs"], url=ctx.get("key"), score=d["score"], fast=d["fast"],
            mode=FAST_ORIGINAL, vetoes=d["vetoes"][:10], parts=d["parts"],
-           covered=d.get("covered"), clip_secs=x.get("clip_secs"),
+           covered=d.get("covered"), clean_ref=d.get("clean_ref"), clip_secs=x.get("clip_secs"),
            ref={k: _r.get(k) for k in ("src", "title", "why", "confirm", "speed", "confident",
                                         "aligned", "align_fp", "overlap_s", "at", "fp", "core",
                                         "arr", "slope_delta", "bass_delta", "vspeed", "t_lookup",
