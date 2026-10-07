@@ -982,8 +982,9 @@ def _caption_song(src, cr_handle, budget=1.0):
 
     Only ever called when Shazam named nothing, no platform credit names the track and no
     hint names an artist - the spot that used to end in "No song here". TikTok captions
-    arrive with the creator evidence (src["desc"] is empty on embed-fetched clips, measured
-    on ZSbLB6ptR / ZSbLBcfGV); Instagram captions carry their hashtags inline in desc. The
+    arrive with the creator evidence (src["desc"] was empty on embed-fetched clips, measured
+    on ZSbLB6ptR / ZSbLBcfGV; it now carries oEmbed's caption when oEmbed answers, see
+    tiktok_fetch); Instagram captions carry their hashtags inline in desc. The
     creator thread has had the whole Shazam sweep to land, so the 1s peek is a backstop."""
     if CS is None:
         return None
@@ -5220,6 +5221,27 @@ def _orig_decide(ctx):
                        ref={k: r.get(k) for k in ("src", "aligned", "why", "t_fetch", "t_speed",
                                                   "t_total", "t_lookup")})
             _f.add_done_callback(_late)
+        # THE CREATOR EVIDENCE (TikTok) BEFORE THE DECISION. Phase 1 gives the creator lookup
+        # only 0.2 s when a hunt follows, so it can still be pending here; the full path would
+        # read it (the sound owner's handle seeds the hunt, the owner's edit tags and the
+        # caption say "edit"). It is waited for only when the fast answer hangs on it, and only
+        # inside what is left of the same ORIG_REF_WAIT_S window (never longer); a clip already
+        # headed for the full path reads what has landed and goes (the evidence only adds
+        # vetoes, so it cannot make that clip fast). Its executor stays open so phase 2 can
+        # still attach it. Still running at the end of the window = creator_pending, a veto:
+        # unsure means the full path. A lookup that finished but failed is not pending.
+        _ev = (ctx.get("res") or {}).get("creator")
+        _ch = ctx.get("creator_h")
+        if not _ev and _ch is not None:
+            _hangs = FO.decide(x)["fast"]
+            _ev = _creator_peek(_ch, max(0.0, t0 + ORIG_REF_WAIT_S - time.time())
+                                if _hangs else 0.0)
+            if _ev is None and _hangs and not _ch[1].done():
+                x["creator_pending"] = True
+        _ev = _ev or {}
+        x["desc"] = " ".join(t for t in (x.get("desc"), _ev.get("caption"),
+                                         _ev.get("origin_desc")) if t)
+        x["owner_edit_tags"] = list(_ev.get("origin_edit_tags") or [])
     d = FO.decide(x)
     d["secs"] = round(time.time() - t0, 3)
     ctx["oscore"] = d["score"]
@@ -5322,6 +5344,11 @@ def _fast_original_finish(ctx, d):
     """The fast path's answer: the named recording, no upload crowned, saved like any answer."""
     import copy
     res, key, t0, src = ctx["res"], ctx["key"], ctx["t0"], ctx["src"]
+    # the creator block, as a full answer carries it (phase 2 attaches it after the hunt). It
+    # has already landed (a pending lookup vetoes the fast path), so this reads it with no wait
+    # and closes its executor. Before the snapshot, so the safety net's hunt has it too.
+    if ctx.get("creator_h") is not None and not res.get("creator"):
+        _creator_attach(res, ctx.pop("creator_h"), budget=0.0)
     snap = copy.deepcopy(res)             # the phase-1 answer, for the safety net's own hunt
     res["result"] = "found"
     res["exact"] = None

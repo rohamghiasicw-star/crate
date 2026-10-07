@@ -169,6 +169,8 @@ class Vetoes(unittest.TestCase):
             "reupload": {"reupload": {"title": "x"}},
             "correction": {"correction": {"right_url": "x"}},
             "pitch_kept": {"pitch_kept": True},
+            "owner_tags_edit": {"owner_edit_tags": ["slowed"]},
+            "creator_pending": {"creator_pending": True},
             "multi": {"multi": True},
             "mashup": {"mashup": {"songs": 2}},
             "sections": {"sections": [{"title": "a"}, {"title": "b"}]},

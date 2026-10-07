@@ -19,7 +19,8 @@ Signals (Konnor's list, all already computed by the engine):
     recording at a steady speed (confirm_ref), speed 1.00 (measure_consensus), a strong
     chromaprint match (verify fp) and the same spectral slope (no bass boost / EQ);
   * every edit word the engine reads anywhere (title, credit, caption, comments, other
-    probe answers), a measured speed label, a rendition / re-upload / mashup / second song,
+    probe answers, the creator lookup's caption and the sound owner's edit tags), a measured
+    speed label, a rendition / re-upload / mashup / second song,
     a correction on file.
 """
 import os
@@ -134,6 +135,12 @@ def vetoes(x):
         v.append("credit_names_edit")
     if AUDIO_EDIT.search(x.get("desc") or ""):
         v.append("caption_names_edit")
+    # the creator lookup (TikTok): the sound owner's own post tagged with edit words, or the
+    # lookup still running when the decision is due (unsure means the full path)
+    if x.get("owner_edit_tags"):
+        v.append("owner_tags_edit")
+    if x.get("creator_pending"):
+        v.append("creator_pending")
     if any(AUDIO_EDIT.search(h or "") for h in (x.get("hints") or [])):
         v.append("comments_name_edit")
     lw = x.get("later_window") or {}
