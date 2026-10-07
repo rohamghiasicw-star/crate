@@ -178,6 +178,29 @@ class Vetoes(unittest.TestCase):
             x.update(kw)
             self.assertVeto(x, name)
 
+    def test_hyphenated_and_inflected_edit_words_veto(self):
+        # review 2026-10-07: "sped ?up" / "bass ?boost(ed)?" / "\breverb\b" missed these
+        for desc in ("sped-up version", "bass-boosted", "speed-up audio", "reverbed",
+                     "remixed by me", "sped\u2011up", "slowed_reverb", "#slowedandreverb",
+                     "#spedupsongs #fyp", "mash-up", "jersey-club"):
+            x = clean()
+            x["desc"] = desc
+            self.assertVeto(x, "caption_names_edit")
+        for h in ("the sped-up one", "bass-boosted version?", "song reverbed"):
+            x = clean()
+            x["hints"] = [h]
+            self.assertVeto(x, "comments_name_edit")
+        x = clean()
+        x["base_title"] = "Heart Attack (Sped-Up)"
+        self.assertVeto(x, "title_names_edit")
+
+    def test_plain_words_that_contain_an_edit_word_do_not_veto(self):
+        for desc in ("Heart Attack", "superspeed upgrade", "my remixer friend", "slowly",
+                     "flipped my car", "48d left", "#fyp #foryou #heartattack"):
+            x = clean()
+            x["desc"] = desc
+            self.assertEqual(FO.decide(x)["vetoes"], [], desc)
+
     def test_a_second_song_at_1x_vetoes(self):
         x = clean()
         x["hits"].append(hit(30.0, 12.0, title="Only Time", sid="999"))

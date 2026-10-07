@@ -41,11 +41,19 @@ REF_FP_FLOOR = 0.62         # E.FP_FLOOR: unrelated songs reach 0.613
 REF_SLOPE_SAME = 0.20       # |slope_delta| (dB/decade); a real 14 dB boost reads 0.734
 REF_SLOPE_VETO = 0.40       # server.SLOPE_BOOST_GAP: the bar for claiming "bass boosted"
 
+# Word edges that treat "_" as a separator (slowed_reverb), and the separators an edit word may
+# carry inside it: space, underscore, any hyphen or dash (sped-up, bass\u2011boosted), or none.
+_L = r"(?<![^\W_])"
+_R = r"(?![^\W_])"
+_S = r"[\s_\-\u2010\u2011\u2012\u2013\u2014]?"
 AUDIO_EDIT = re.compile(
-    r"\b(sped ?up|speed ?up|slowed|reverb|nightcore|daycore|bass ?boost(ed)?|remix|hoodtrap|"
-    r"mylancore|phonk|8d|jersey ?club|hardstyle|mashup|tekk|pitched|chopped|screwed|flip|"
-    r"super ?slowed|ultra ?slowed|bass ?boosted|remake|bootleg|vip mix|"
-    r"edit audio|audio edit|tiktok version)\b", re.I)
+    _L + r"(sped{S}up|speed{S}up|slowed|reverb(?:ed|'d)?|nightcore|daycore|bass{S}boost(?:ed)?|"
+    r"remix(?:ed|es)?|hoodtrap|mylancore|phonk|8d|jersey{S}club|hardstyle|mash{S}up|tekk|pitched|"
+    r"chopped|screwed|flip|super{S}slowed|ultra{S}slowed|remake|bootleg|vip{S}mix|"
+    r"edit{S}audio|audio{S}edit|tiktok{S}version)".replace("{S}", _S) + _R
+    # run-together hashtags: #slowedandreverb, #spedupsongs, #nightcoreedit, #bassboosted
+    + r"|#\w*?(?:slowed|reverb|spedup|speedup|nightcore|daycore|bassboost|remix|hoodtrap|mashup|"
+    r"phonk|jerseyclub|hardstyle)", re.I)
 
 
 def _key(t):

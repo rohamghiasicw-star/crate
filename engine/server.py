@@ -5080,8 +5080,11 @@ def _orig_inputs(ctx):
             "rate": fp.get("rate", 1.0), "speed": res.get("speed"),
             "base_title": ctx.get("base_title"), "base_artist": ctx.get("base_artist"),
             "base_sid": fp.get("key"), "edit_words_re": E.EDIT_WORDS,
-            "credit_names_edit": E.names_an_edit(src.get("credit_title"),
-                                                 src.get("credit_author")),
+            "credit_names_edit": (E.names_an_edit(src.get("credit_title"),
+                                                  src.get("credit_author"))
+                                  or bool(FO.AUDIO_EDIT.search("%s %s" % (
+                                      src.get("credit_title") or "",
+                                      src.get("credit_author") or "")))),
             "desc": src.get("desc") or res.get("desc") or "",
             "hints": list(ctx.get("hint_texts") or []),
             "later_window": fp.get("later_window"),
