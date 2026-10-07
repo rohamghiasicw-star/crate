@@ -47,6 +47,7 @@ Not server-mode switches: these run on the Mac too. Off switches and knobs:
 | `CRATE_FAST_ORIGINAL=off` / `measure` | server.py, fastorig.py | turns off fix 2's plain-original fast path; `measure` scores every hunt (`orig_score` rows) and always runs the full hunt |
 | `CRATE_ORIGINAL_MIN` (80) | fastorig.py | the original-confidence threshold |
 | `CRATE_FAST_SHADOW` (0.10) | server.py | share of fast answers whose full hunt runs in the background (never shown, never cached), logged as `fast_shadow` |
+| `CRATE_ORIG_REF_WAIT_S` (3.0) | server.py | longest the hunt waits for the studio-recording check; a late check means the full hunt |
 
 Pre-warm a list of links (run on the box): `/opt/addify/venv/bin/python prewarm.py --file links.txt`.
 Delete one saved answer (on the box): `curl -X POST -d '{"key":"<link or tt:/ig: key>"}' http://127.0.0.1:8788/admin/cache/delete`.

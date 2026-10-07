@@ -5059,6 +5059,11 @@ FAST_ORIGINAL = (os.environ.get("CRATE_FAST_ORIGINAL") or "on").strip().lower()
 if FAST_ORIGINAL not in ("on", "measure", "off"):
     FAST_ORIGINAL = "on"
 FAST_SHADOW_RATE = float(os.environ.get("CRATE_FAST_SHADOW", "0.10") or 0)
+# The hunt never waits longer than this for the studio check: past it the scan runs the full
+# hunt (a late check is logged, never used). Measured in the lab: the check alone takes 1.4-1.6 s
+# on the box, but 0.8-5.3 s beside a running scan; waiting it out cost some full-path scans up to
+# 5.3 s, so the full pipeline is held at most this long, and only on a clip with no edit signal.
+ORIG_REF_WAIT_S = float(os.environ.get("CRATE_ORIG_REF_WAIT_S", "3.0") or 3.0)
 
 
 def _orig_inputs(ctx):
@@ -5262,14 +5267,17 @@ def _orig_decide(ctx):
     x = _orig_inputs(ctx)
     _f = ctx.pop("oref_fut", None)
     if FO.needs_ref(x) or (FAST_ORIGINAL == "measure" and not FO.vetoes(x)):
-        if _f is not None:
-            try:
-                x["ref"] = _f.result(timeout=10)
-            except Exception as _fx:
-                x["ref"] = {"why": "prefetch %s" % type(_fx).__name__}
-        else:
-            x["ref"] = _orig_ref(ctx.get("src"), (ctx.get("res") or {}).get("preview_url"),
-                                 ctx.get("base_title"), ctx.get("base_artist"))
+        if _f is None:
+            _ox = ThreadPoolExecutor(max_workers=1)
+            _f = _ox.submit(_orig_ref, ctx.get("src"), (ctx.get("res") or {}).get("preview_url"),
+                            ctx.get("base_title"), ctx.get("base_artist"))
+            _ox.shutdown(wait=False)
+        try:
+            x["ref"] = _f.result(timeout=ORIG_REF_WAIT_S)
+        except Exception as _fx:
+            # late (or failed): the full hunt runs now; the check finishes on its own thread and
+            # removes its own files (the clip's temp dir lives until the hunt ends)
+            x["ref"] = {"why": "late" if not _f.done() else "error %s" % type(_fx).__name__}
     d = FO.decide(x)
     d["secs"] = round(time.time() - t0, 3)
     ctx["oscore"] = d["score"]
