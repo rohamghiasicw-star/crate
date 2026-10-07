@@ -381,6 +381,38 @@ class Locate(unittest.TestCase):
         self.assertEqual(S._fp_partial(a, a, 65), (0.0, None, 0))
 
 
+class StudioRace(unittest.TestCase):
+    """Both previews run at once; the first one the clip is located in decides."""
+    def setUp(self):
+        self.one, self.dz = S._orig_ref_one, S._deezer_studio
+
+    def tearDown(self):
+        S._orig_ref_one, S._deezer_studio = self.one, self.dz
+
+    def test_a_located_preview_does_not_wait_for_the_other(self):
+        def one(audio, tmp, url, label):
+            if label == "itunes":
+                time.sleep(2.0)
+                return {"src": "itunes", "aligned": False}
+            return {"src": "deezer", "aligned": True}
+        S._orig_ref_one = one
+        S._deezer_studio = lambda song, artist: ("https://x.dzcdn.net/p", "Song")
+        t0 = time.time()
+        o = S._orig_ref({"audio": "/a.wav", "tmp": "/t"},
+                        "https://audio-ssl.itunes.apple.com/x.m4a", "Song", "Artist")
+        self.assertEqual(o["src"], "deezer")
+        self.assertLess(time.time() - t0, 1.5)
+
+    def test_nothing_located_returns_what_was_measured(self):
+        S._orig_ref_one = lambda a, t, u, label: {"src": label, "aligned": False}
+        S._deezer_studio = lambda song, artist: None
+        o = S._orig_ref({"audio": "/a.wav", "tmp": "/t"},
+                        "https://audio-ssl.itunes.apple.com/x.m4a", "Song", "Artist")
+        self.assertEqual((o["src"], o["aligned"]), ("itunes", False))
+        self.assertEqual(S._orig_ref({"audio": "/a.wav", "tmp": "/t"}, None, "S", "A"),
+                         {"why": "no_preview"})
+
+
 class Corrections(Base):
     def test_a_fix_for_the_video_drops_its_saved_answer(self):
         S._vid_put(SHORT_A, answer())

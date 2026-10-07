@@ -5177,26 +5177,28 @@ def _orig_ref(src, url, song=None, artist=None, links_fut=None):
         o = _orig_ref_one(audio, tmp, dz[0], "deezer")
         o["title"] = dz[1][:80]
         return o
+    from concurrent.futures import FIRST_COMPLETED, wait as _fwait
     ex = ThreadPoolExecutor(max_workers=2)
+    got = {}
     try:
-        fi, fd = ex.submit(_itunes), ex.submit(_deezer)
-        it = dz = None
-        try:
-            it = fi.result(timeout=30)
-        except Exception:
-            it = None
-        try:
-            dz = fd.result(timeout=30)
-        except Exception:
-            dz = None
+        futs = {ex.submit(_itunes): "itunes", ex.submit(_deezer): "deezer"}
+        pending, t_end = set(futs), time.time() + 30
+        while pending and time.time() < t_end:
+            done, pending = _fwait(pending, timeout=max(0.05, t_end - time.time()),
+                                   return_when=FIRST_COMPLETED)
+            for f in done:
+                try:
+                    got[futs[f]] = f.result()
+                except Exception:
+                    got[futs[f]] = None
+            # the first preview the clip is located in decides; the other is not waited for
+            for k in ("itunes", "deezer"):
+                o = got.get(k)
+                if o and o.get("aligned"):
+                    return o
     finally:
         ex.shutdown(wait=False)
-    for o in (it, dz):
-        if o and o.get("aligned"):
-            if o is dz and it is not None:
-                o["tried"] = "itunes"
-            return o
-    return it or dz or {"why": "no_preview"}
+    return got.get("itunes") or got.get("deezer") or {"why": "no_preview"}
 
 
 ORIG_MIN_OVERLAP_S = 8.0     # the clip and the studio preview must share at least this much
