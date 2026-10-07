@@ -2438,7 +2438,67 @@ function kitWorker(s){if(!s.on) return;
    The engine still finishes and caches the old job on its own. */
 var HUNT=null;
 function endHunt(){ if(HUNT){ try{HUNT.abort();}catch(e){} HUNT=null; } }
+/* SPEED FIX 1, item 5 (Konnor, "Addify Speed Fixes for Roham"): THE PHONE KEEPS ITS OWN ANSWERS.
+   A finished, confirmed answer (the engine marks it vid_ok, or it came from the engine's video
+   store) is kept here under the same video key the engine uses (tt:<id> / ig:<code>), and a
+   rescan of that video on this phone is answered from here before anything goes on the wire.
+   TikTok mints a new short link per share, so the link itself is no key: an id in the link is
+   read here; a short link seen before is remembered; a new short link asks /vkey once (one
+   redirect on the engine, no scan), and only when something is saved here at all.
+   The answer is REPLAYED through the scan's own steps: the /base half goes through onBase and
+   the hunt half resolves huntEdits, so the naming dial, the wave, the exact-version dial and the
+   card all play exactly as on a real scan; only the waiting is gone. Counting is untouched:
+   finish() counts the replay exactly as it counts the answer it replays (the payload is kept
+   as received). 90 days, at most DEV_MAX entries, an X on the result drops it. */
+var DEV_VID='addify-vid-v1', DEV_LINKS='addify-vid-links', DEV_TTL=90*864e5, DEV_MAX=40, DEV_REPLAY=null;
+function devKeyOf(u){u=String(u||'');
+  var m=u.match(/tiktok\.com\/(?:[^?#]*\/)?(?:video|photo)\/(\d{6,25})/i)||u.match(/tiktok\.com\/v\/(\d{6,25})/i);
+  if(m) return 'tt:'+m[1];
+  m=u.match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:reel|reels|p|tv)\/([A-Za-z0-9_-]{5,80})/i);
+  if(m){var c=m[1]; if(c.length>28) c=c.slice(0,-28); return 'ig:'+c;}
+  return null;}
+function devLinkKey(u){u=String(u||'').trim().split('#')[0].split('?')[0]; return u.replace(/\/+$/,'')+'/';}
+function devIsShort(u){return /^https?:\/\/(vt|vm)\.tiktok\.com\/[A-Za-z0-9]+/i.test(u||'')||/^https?:\/\/(www\.)?tiktok\.com\/t\/[A-Za-z0-9]+/i.test(u||'');}
+function devAll(){return lsGet(DEV_VID,'{}')||{};}
+function devSave(s){try{localStorage.setItem(DEV_VID,JSON.stringify(s)); return true;}catch(e){return false;}}
+function devGet(vk){var s=devAll(), e=vk?s[vk]:null; if(!e||!e.res) return null;
+  if(Date.now()-(e.t||0)>DEV_TTL){delete s[vk]; devSave(s); return null;} return e;}
+function devLink(u,vk){if(!u||!vk) return; var m=lsGet(DEV_LINKS,'{}')||{}; m[devLinkKey(u)]=vk;
+  var ks=Object.keys(m); if(ks.length>400) ks.slice(0,ks.length-400).forEach(function(k){delete m[k];});
+  lsSet(DEV_LINKS,m);}
+function devKeyFor(u){return devKeyOf(u)||(lsGet(DEV_LINKS,'{}')||{})[devLinkKey(u)]||null;}
+function devPut(u,d){
+  try{
+    if(!d||d.dev_hit||!d.vkey||!d.base_song||d.result!=='found'||!(d.vid_ok||d.vid_hit)) return;
+    var s=devAll(); if(s[d.vkey]&&!d.vid_ok) return;   // a replay never renews its own 90 days
+    var r=JSON.parse(JSON.stringify(d)); delete r.replay; delete r.phone;
+    s[d.vkey]={t:Date.now(),res:r};
+    var ks=Object.keys(s).sort(function(a,b){return (s[a].t||0)-(s[b].t||0);});
+    while(ks.length>DEV_MAX){delete s[ks.shift()];}
+    while(!devSave(s)&&ks.length>1){delete s[ks.shift()];}   // storage full: oldest go first
+    devLink(u,d.vkey);
+  }catch(e){}}
+function devDrop(u){var vk=devKeyFor(u); if(!vk) return; var s=devAll(); if(s[vk]){delete s[vk]; devSave(s);}}
+function devOff(){   // the engine's kill switch (CRATE_VID_CACHE=0 puts vid_cache:false on /health), remembered
+  try{ if(engineInfo){ var off=engineInfo.vid_cache===false;
+      if(off) localStorage.setItem('addify-vid-off','1'); else localStorage.removeItem('addify-vid-off'); return off; }
+    return localStorage.getItem('addify-vid-off')==='1'; }catch(e){ return false; }}
+function devLookup(u){
+  if(devOff()) return Promise.resolve(null);
+  var vk=devKeyFor(u);
+  if(vk) return Promise.resolve(devGet(vk));
+  if(!devIsShort(u)||!Object.keys(devAll()).length) return Promise.resolve(null);   // nothing kept: never ask
+  return Promise.race([
+    fetch(ENGINE+'/vkey?url='+encodeURIComponent(u),{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
+      .then(function(j){var k=j&&j.vkey; if(!k) return null; devLink(u,k); return devGet(k);}).catch(function(){return null;}),
+    new Promise(function(r){setTimeout(function(){r(null);},1500);})]);}
+var DEV_HUNT_ONLY=['exact','candidates','decisive','crown_rejected','similar_edits','figs','weak_exact','unsure','crowd_version','vocals'];
+function devBase(r){var b=JSON.parse(JSON.stringify(r)); DEV_HUNT_ONLY.forEach(function(k){delete b[k];});
+  b.exact=null; b.candidates=[]; b.decisive=false; b.edits_pending=!!r.hunted; b.dev_hit=true; b.replay=true; return b;}
+function devFull(r){var f=JSON.parse(JSON.stringify(r)); f.dev_hit=true; f.replay=true; f.edits_pending=false; return f;}
 function huntEdits(url,onCand){
+  // SPEED FIX 1: a scan replayed from this phone's copy hands the hunt its finished answer
+  if(DEV_REPLAY&&DEV_REPLAY.url===url){var _df=DEV_REPLAY.full; DEV_REPLAY=null; return Promise.resolve(_df);}
   // NAMING 2026-09-30: the hunt carries this scan's random id, so the /edits fallback below
   // gets the answer this hunt already finished (the stream only dropped before its done
   // event) instead of a second whole scan, and, where the engine allows it (/health
@@ -4116,6 +4176,7 @@ function vfWire(d){
     sendFeedback({kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''});
     if(v==='wrong') vfPendAdd(url,d.base_song||'');
+    if(v==='wrong') devDrop(url);                // SPEED FIX 1: a wrong answer is never replayed here
     if(v==='wrong') refundScan(url);             // Roham 2026-09-30: an X gives the scan back
     row.classList.add('done','is-'+v);
     var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on','pop');
@@ -6040,19 +6101,25 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
   // APPLYALL 2026-09-29 (DIAL): the wording follows the engine's own labels in the /progress
   // poll (pgScanLabel). The old 2.4 s timer that guessed "Listening" is retired.
   namedEarly=false;
+  // SPEED FIX 1: this phone's own copy of the answer first (devLookup); a hit replays it through
+  // onBase and the hunt below, every step of the scan on screen, no request at all
+  DEV_REPLAY=null;
+  devLookup(p.url).then(function(de){
+  if(tok!==scanTok) return;
+  if(de&&de.res){ DEV_REPLAY={url:p.url,full:devFull(de.res)}; return onBase(devBase(de.res)); }
   progPollOn(p.url);
   // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  call('/base',p.url,{kit:true,guard:true}).then(function(d){
+  return call('/base',p.url,{kit:true,guard:true}).then(function(d){
     if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
     if(d&&d.result==='moved') return;  // NAMING 2026-09-30: the page is moving to the app's engine with this link
     if(KIT_MOVED&&d&&(d.result==='rate_limited'||d.result==='engine_down'||d.result==='error')){
       // NAMING 2026-09-30: the phone refused this page's probes mid-scan and the scan failed
       // for it: run it again on the engine the app now uses (engineMoved goes there with the link)
       return engineMoved(p.url).then(function(m){ if(!m&&tok===scanTok) onBase(d); });}
-    return onBase(d);});
+    return onBase(d);});});
   function onBase(d){
     p1Busy=false;
     clearTimeout(phaseT); progFast=false;
@@ -6145,6 +6212,7 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
         var finalize=function(fd){
           HUNT_ON=false;                      // TRACKER 2026-09-29
           if(huntPollU===scanURL) huntEnd();  // PROGRESS 2026-09-29: the hunt is over, so is its poll
+          devPut(scanURL,fd);                 // SPEED FIX 1: the phone's copy (confirmed answers only)
           if(scanFinal) return; scanFinal=true;
           clearTimeout(lateCap);
           if(!(fd&&fd.base_song)) fd=d;
@@ -6157,6 +6225,7 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
            the card, Finds and the log entry in place and is never posted a second time. */
         var lateUpgrade=function(full){
           clearTimeout(lateCap);
+          devPut(scanURL,full);               // SPEED FIX 1: a crown that landed after the cap too
           if(huntPollU===scanURL) huntEnd();             // PROGRESS 2026-09-29
           if(onScan()){
             // PROGRESS 2026-09-29: the answer is the only thing allowed to say 100. The tracker
@@ -6350,7 +6419,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
     setState('locked'); setEndTitle(d); return;}
   if(!d.cached) useScan(curURL);
-  if(!held){ logScan(d); postBridge(d); }
+  if(!held){ logScan(d); postBridge(d); devPut(curURL,d); }   // SPEED FIX 1: the phone's copy
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
   // APPLYALL 2026-09-29 (DIAL): the dial turns mint when the run ARRIVES at 100 (below)

@@ -30,6 +30,7 @@ import phone_probes as P     # on-device ShazamKit, off unless CRATE_PHONE_PROBE
 # APPLYALL 2026-09-29: per-client limits, strict link check, internal pages closed. All off
 # unless ADDIFY_RATE_LIMIT / ADDIFY_STRICT_LINKS / ADDIFY_CLOSE_INTERNAL are set.
 import ratelimit as RL
+import vidcache as VC          # SPEED FIX 1: the video key and what a saved answer may be
 RL.configure(tlog=E.tlog)     # rl_seen / rl_refuse rows, only when CRATE_TIMING is set
 import find_song as _FS
 
@@ -303,7 +304,15 @@ def _corr_sync(store):
         SOUND_CACHE.pop(sid, None)
         _disk_put("sound", sid, None)
         ds += 1
-    E.tlog("corrections_sync", 0.0, entries=len(store.entries), urls=du, sounds=ds)
+    dv = 0
+    for vk, e in list(globals().get("VID_CACHE", {}).items()):    # SPEED FIX 1
+        r = (e or {}).get("res") or {}
+        ce = store.by_key.get(vk)
+        want = ce["right_url"] if ce is not None else _corr_want(store, r.get("url") or "", r)
+        if want != (r.get("correction") or {}).get("url"):
+            _vid_drop(vk, "correction")
+            dv += 1
+    E.tlog("corrections_sync", 0.0, entries=len(store.entries), urls=du, sounds=ds, vids=dv)
 
 
 CORR = CX.Store(on_change=_corr_sync)
@@ -382,14 +391,19 @@ def _disk_open():
     db.execute("CREATE TABLE IF NOT EXISTS kv (kind TEXT, k TEXT, epoch TEXT, t REAL, "
                "v TEXT, PRIMARY KEY (kind, k))")
     _DISK["epoch"] = _disk_epoch()
-    db.execute("DELETE FROM kv WHERE epoch != ? OR t < ?",
+    # SPEED FIX 1: the url/sound rows keep their rule (code md5 + PERSIST_TTL). The video rows
+    # ("vid": confirmed answers, "short": short link -> resolved link) carry VC.VID_EPOCH and
+    # live VC.VID_TTL_S from when they were made, so a deploy no longer empties them.
+    db.execute("DELETE FROM kv WHERE kind NOT IN ('vid', 'short') AND (epoch != ? OR t < ?)",
                (_DISK["epoch"], time.time() - PERSIST_TTL))
+    db.execute("DELETE FROM kv WHERE kind IN ('vid', 'short') AND (epoch != ? OR t < ?)",
+               (VC.VID_EPOCH, time.time() - VC.VID_TTL_S))
     db.commit()
     _DISK["db"] = db
     return db
 
 
-def _disk_put(kind, key, val):
+def _disk_put(kind, key, val, t=None):
     if not PERSIST_CACHE or not key:
         return
     try:
@@ -400,8 +414,11 @@ def _disk_put(kind, key, val):
             if val is None:
                 db.execute("DELETE FROM kv WHERE kind=? AND k=?", (kind, key))
             else:
+                # SPEED FIX 1: video rows carry their own epoch and their CREATED time, so a
+                # re-verify never extends the 90 days
+                ep = VC.VID_EPOCH if kind in ("vid", "short") else _DISK["epoch"]
                 db.execute("INSERT OR REPLACE INTO kv VALUES (?,?,?,?,?)",
-                           (kind, key, _DISK["epoch"], time.time(),
+                           (kind, key, ep, time.time() if t is None else float(t),
                             json.dumps({k: v for k, v in val.items() if k != "cached"})))
             db.commit()
     except Exception:
@@ -431,7 +448,27 @@ def _disk_load():
                 nu += 1
     except Exception:
         pass
-    E.tlog("persist_cache_load", 0.0, urls=nu, sounds=ns)
+    nv = 0
+    try:                        # SPEED FIX 1: the video rows, under their own epoch
+        with _DISK_LOCK:
+            db = _disk_open()
+            vrows = db.execute("SELECT kind, k, t, v FROM kv WHERE kind IN ('vid', 'short') "
+                               "AND epoch=? ORDER BY t DESC LIMIT ?",
+                               (VC.VID_EPOCH, VID_MAX * 2)).fetchall()
+        for kind, k, t, v in vrows:
+            try:
+                val = json.loads(v)
+            except Exception:
+                continue
+            if kind == "short" and k not in SHORT_MAP and val.get("full"):
+                SHORT_MAP[k] = val["full"]
+            elif kind == "vid" and k not in VID_CACHE and isinstance(val.get("res"), dict):
+                val["t"] = float(t)
+                VID_CACHE[k] = val
+                nv += 1
+    except Exception:
+        pass
+    E.tlog("persist_cache_load", 0.0, urls=nu, sounds=ns, vids=nv, shorts=len(SHORT_MAP))
     return nu, ns
 
 
@@ -450,6 +487,381 @@ def _cache_drop(key):
     CACHE.pop(key, None)
     _FAIL_AT.pop(key, None)
     _NO_SOUND_CACHE.add(key)
+
+
+# ------------------------------------------------ SPEED FIX 1: ONE VIDEO, ONE ANSWER
+# Konnor's "Addify Speed Fixes for Roham" (2026-10-06), fix 1: a repeat scan of a video should
+# answer in 5-10 s. Measured on live and in a lab copy of a047ffd (2026-10-07) - why it did not:
+#   1. the URL cache keys on the raw link and TikTok mints a new short link per share (the
+#      owner's 05:01 / 05:02 scans: one video, two links, 51.5 s and 69.5 s);
+#   2. a phone-named answer never enters the shared caches (_phone_unconfirmed) - every owner
+#      scan on 10-06/10-07 was phone-named; in the lab a phone-named repeat of the same link
+#      was a full scan each time (19.0 / 19.8 s, 22.7 / 23.0 / 23.4 s);
+#   3. a deploy empties the store (code md5 epoch): 3 times on 10-06;
+#   4. a hunt the budget cut short is not saved (3 of 13 owner scans on 10-06).
+# This store keys on the VIDEO (VC.vkey_of: platform + id; short links resolved once and
+# remembered), keeps only confirmed answers (VC.confirmed), survives deploys (own epoch,
+# 90 days from creation), drops an answer whose upload page is gone, and is read before
+# anything else runs. Item 2's "shared by all users" stays server-confirmed: a phone-named
+# answer is client input (code review 2026-09-27) and is kept on that phone only (the page's
+# device copy, item 5). CRATE_VID_CACHE=0 turns the store off (lookups and writes).
+VID_CACHE_ON = E._speed_flag("CRATE_VID_CACHE", True)
+VID_CACHE = {}       # vkey -> {"res", "base", "meta", "t" created, "tv" verified, "td" dead-checked}
+SHORT_MAP = {}       # normalised TikTok short link -> the link it resolved to
+VID_MAX = int(os.environ.get("CRATE_VID_MAX", "20000") or 20000)
+VID_DEAD_RECHECK_S = float(os.environ.get("CRATE_VID_DEAD_RECHECK_S", "3600") or 3600)
+_VID_LOCK = threading.Lock()
+# the /edits half of a replayed hit: /base answered from a cache with edits_pending, and the
+# page's /edits(/stream) that follows takes the finished answer from here
+_REPLAY = {}
+_REPLAY_TTL = 180.0
+
+
+def _short_learn(sn, full):
+    if not sn or not full or SHORT_MAP.get(sn) == full:
+        return
+    with _VID_LOCK:
+        if len(SHORT_MAP) > VID_MAX * 2:
+            SHORT_MAP.clear()
+        SHORT_MAP[sn] = full
+    _disk_put("short", sn, {"full": full})
+
+
+def _vkey_for(link, network=True):
+    """The video key of a scan link, resolving a TikTok short link with one Location hop
+    (gs_resolve: 0.09-0.22 s) the first time it is seen. get_source then reads the same
+    answer from SHORT_MAP instead of paying that hop again (E.SHORT_LOOKUP)."""
+    vk = VC.vkey_of(link)
+    if vk or not VC.is_short(link):
+        return vk
+    sn = VC.short_norm(link)
+    full = SHORT_MAP.get(sn)
+    if full is None and network:
+        t0 = time.time()
+        try:
+            full, _how = E._fast_full(link)
+        except Exception:
+            full = None
+        if not VC.vkey_of(full or ""):
+            full = None
+        E.tlog("vkey_resolve", time.time() - t0, ok=bool(full))
+        if full:
+            _short_learn(sn, full)
+    return VC.vkey_of(full) if full else None
+
+
+def _short_lookup(u):
+    try:
+        return SHORT_MAP.get(VC.short_norm(u)) if VC.is_short(u) else None
+    except Exception:
+        return None
+
+
+E.SHORT_LOOKUP = _short_lookup
+
+
+def _vid_disk(vk, e):
+    _disk_put("vid", vk, {k: e.get(k) for k in ("res", "base", "meta", "tv", "td")},
+              t=e.get("t"))
+
+
+def _vid_drop(vk, why="drop"):
+    with _VID_LOCK:
+        e = VID_CACHE.pop(vk, None)
+    _disk_put("vid", vk, None)
+    E.tlog("vid_drop", 0.0, vkey=vk, why=why, had=e is not None)
+    return e is not None
+
+
+def _source_is_dead(u):
+    """Is the saved answer's upload gone? SoundCloud and YouTube answer HTTP 200 to a HEAD of a
+    removed page (measured from the server 2026-10-07: the removed Bat Signal track HEADs 200),
+    so _url_is_dead cannot see them; their oEmbed endpoints answer 404 for a removed or unknown
+    page and 200 for a live one. Fail-open like _url_is_dead: only a definite 404/410 is dead.
+    3 s, not 6: it sits on a replay's path, at most once an hour per saved answer."""
+    lu = (u or "").lower()
+    api = None
+    if "soundcloud.com/" in lu:
+        api = "https://soundcloud.com/oembed?format=json&url=" + quote(u, safe="")
+    elif "youtube.com/" in lu or "youtu.be/" in lu:
+        api = "https://www.youtube.com/oembed?format=json&url=" + quote(u, safe="")
+    if api is None:
+        return _url_is_dead(u)
+    import urllib.error
+    import urllib.request
+    try:
+        urllib.request.urlopen(urllib.request.Request(api, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124 Safari/537.36"}), timeout=3).read(2048)
+        return False
+    except urllib.error.HTTPError as e:
+        return e.code in (404, 410)
+    except Exception:
+        return False
+
+
+def _vid_get(vk, check_dead=True):
+    """The saved entry for a video, or None. Expired entries and entries whose upload page is
+    gone (a definite 404/410, _url_is_dead's fail-open rule) are dropped, so that scan runs
+    the full pipeline (item 7). The dead check runs at most once per VID_DEAD_RECHECK_S."""
+    if not VID_CACHE_ON or not vk:
+        return None
+    CORR.poll()         # a new correction drops the stale answer before it is served
+    with _VID_LOCK:
+        e = VID_CACHE.get(vk)
+    if e is None:
+        return None
+    if VC.expired(e):
+        _vid_drop(vk, "expired")
+        return None
+    now = time.time()
+    exu = ((e.get("res") or {}).get("exact") or {}).get("url")
+    if check_dead and exu and now - float(e.get("td") or 0) > VID_DEAD_RECHECK_S:
+        t0 = time.time()
+        dead = _source_is_dead(exu)
+        E.tlog("vid_dead_check", time.time() - t0, vkey=vk, dead=dead)
+        if dead:
+            _vid_drop(vk, "dead_source")
+            return None
+        e["td"] = e["tv"] = now
+        if isinstance(e.get("meta"), dict):
+            e["meta"]["verified"] = round(now, 1)
+        _vid_disk(vk, e)
+    return e
+
+
+def _vid_replayed(res):
+    r = res or {}
+    return bool(r.get("from_sound_cache") or r.get("cached") or r.get("vid_hit")
+                or r.get("replay"))
+
+
+def _vid_put(key, res, base=None):
+    """Save a finished answer under its video key when it is confirmed (VC.confirmed) and the
+    server stands behind it (never a phone-named one, never a replayed one). Marks
+    res["vid_ok"] for the page's device copy, which keeps phone-named answers too: the phone
+    trusts its own scan. Logs vid_store / vid_skip with the reason, every finished scan."""
+    r = res if isinstance(res, dict) else {}
+    vk = r.get("vkey")
+    ok, why = VC.confirmed(r)
+    replayed = _vid_replayed(r)
+    r["vid_ok"] = bool(ok and vk and not replayed and VID_CACHE_ON)
+    if not VID_CACHE_ON:
+        return False
+    if not vk:
+        ok, why = False, "no_vkey"
+    elif replayed:
+        ok, why = False, "replayed"
+    elif ok and _phone_unconfirmed(r):
+        ok, why = False, "phone_named"
+    E.tlog("vid_store" if ok else "vid_skip", 0.0, url=key, vkey=vk, why=why)
+    if not ok:
+        return False
+    now = time.time()
+    keep = {k: v for k, v in r.items()
+            if k not in ("cached", "_phone_named", "_phone_nomatch", "phone", "joined",
+                         "vid_hit", "replay", "busy", "vid_ok")}
+    b = None
+    if isinstance(base, dict):
+        b = {k: v for k, v in base.items()
+             if k not in ("peaks", "wave", "_phone_named", "_phone_nomatch", "phone", "cached")}
+    e = {"res": keep, "base": b, "meta": VC.summary(vk, keep, now, now), "t": now, "tv": now,
+         "td": now}
+    with _VID_LOCK:
+        VID_CACHE[vk] = e
+        if len(VID_CACHE) > VID_MAX:
+            for _k, _e in sorted(VID_CACHE.items(), key=lambda kv: kv[1].get("t", 0))[
+                    :len(VID_CACHE) - VID_MAX]:
+                VID_CACHE.pop(_k, None)
+    _vid_disk(vk, e)
+    return True
+
+
+def _replay_put(key, full):
+    now = time.time()
+    for k, (t, _) in list(_REPLAY.items()):
+        if now - t > _REPLAY_TTL:
+            _REPLAY.pop(k, None)
+    _REPLAY[key] = (now, full)
+
+
+def _replay_get(key):
+    v = _REPLAY.pop(key, None)
+    if v is None or time.time() - v[0] > _REPLAY_TTL:
+        return None
+    return dict(v[1])
+
+
+# ---- SPEED FIX 1, item 7: the admin's delete (and a peek/list to find the entry). Answered
+# only on the box itself (RL.is_local: loopback peer, no tunnel headers - ssh in, or ssh -L) or
+# with an admin key (ADDIFY_ADMIN_KEYS="name:sha256hex,..."; send X-Addify-Admin: <key>).
+# Anything else gets the same 404 an unknown path gets.
+def _admin_keys():
+    out = []
+    for item in (os.environ.get("ADDIFY_ADMIN_KEYS") or "").split(","):
+        hx = item.strip().rpartition(":")[2].strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", hx):
+            out.append(hx)
+    return out
+
+
+_ADMIN_KEYS = _admin_keys()
+
+
+def _admin_ok(h):
+    try:
+        if RL.is_local(h):
+            return True
+    except Exception:
+        pass
+    k = (h.headers.get("X-Addify-Admin") or "").strip()
+    if not k or not _ADMIN_KEYS:
+        return False
+    import hashlib, hmac
+    hx = hashlib.sha256(k.encode()).hexdigest()
+    ok = False
+    for w in _ADMIN_KEYS:
+        ok = hmac.compare_digest(hx, w) or ok
+    return ok
+
+
+def _admin_key_of(raw):
+    """A vkey ("tt:..."/"ig:...") as given, else the video key of a link (short links resolve)."""
+    raw = (raw or "").strip()
+    if re.fullmatch(r"(tt|ig):[A-Za-z0-9_-]{3,80}", raw):
+        return raw
+    return _vkey_for(raw) if raw else None
+
+
+def _admin_cache(q):
+    """GET /admin/cache?key=<vkey or link> -> that entry's row; without key -> the newest rows."""
+    raw = (q.get("key") or [""])[0]
+    if raw:
+        vk = _admin_key_of(raw)
+        with _VID_LOCK:
+            e = VID_CACHE.get(vk) if vk else None
+        return {"key": vk, "found": e is not None, "meta": (e or {}).get("meta"),
+                "expired": bool(e and VC.expired(e)),
+                "result": ({k: (e["res"].get(k)) for k in ("result", "base_song", "base_artist",
+                                                            "speed", "exact", "url")}
+                           if e else None)}
+    try:
+        n = max(1, min(500, int((q.get("n") or ["50"])[0])))
+    except ValueError:
+        n = 50
+    with _VID_LOCK:
+        rows = sorted(VID_CACHE.values(), key=lambda e: e.get("t", 0), reverse=True)[:n]
+    return {"count": len(VID_CACHE), "shorts": len(SHORT_MAP),
+            "rows": [e.get("meta") for e in rows]}
+
+
+def _admin_delete(raw):
+    """Drop one saved answer everywhere it could be served from: the video row, the URL rows
+    whose answer is that video, and its TikTok sound's row (or the sound cache would hand the
+    same wrong answer straight back)."""
+    vk = _admin_key_of(raw)
+    if not vk:
+        return {"ok": False, "error": "not a tiktok/instagram link or video key"}
+    with _VID_LOCK:
+        e = VID_CACHE.get(vk)
+    res = (e or {}).get("res") or {}
+    had = _vid_drop(vk, "admin")
+    du = 0
+    for ck, r in list(CACHE.items()):
+        if (r or {}).get("vkey") == vk or (VC.vkey_of(ck) == vk):
+            CACHE.pop(ck, None)
+            _FAIL_AT.pop(ck, None)
+            _disk_put("url", ck, None)
+            du += 1
+    sid = _corr_sid(res) if res else None
+    ds = 0
+    if sid and sid in SOUND_CACHE:
+        SOUND_CACHE.pop(sid, None)
+        _disk_put("sound", sid, None)
+        ds = 1
+    E.tlog("admin_delete", 0.0, vkey=vk, vid=had, urls=du, sounds=ds)
+    return {"ok": True, "key": vk, "deleted": {"vid": had, "urls": du, "sounds": ds}}
+
+
+def _answer_peek(key, link):
+    """True when _answer_get would answer (no dead check, no logging): the gate and the
+    limiter use it to decide that a request costs no slot."""
+    if key in _REPLAY:
+        return True
+    _c = _cache_get(key)
+    if _c is not None and _c.get("result") not in ("no_match", "error", "rate_limited",
+                                                   "uncertain"):
+        return True
+    if not VID_CACHE_ON:
+        return False
+    vk = _vkey_for(link)
+    with _VID_LOCK:
+        e = VID_CACHE.get(vk) if vk else None
+    return e is not None and not VC.expired(e)
+
+
+def _answer_get(key, link, half):
+    """SPEED FIX 1: an answer this engine already holds for this clip, shaped for `half`
+    ("base" | "edits" | "find"), or None. Order: the /edits half of a replay, the URL cache
+    (exactly as before, `cached` and all), then the video store.
+
+    NO UI STEP IS SKIPPED. A cached answer used to come back from /base whole, so the page
+    jumped from the naming dial to the card and never showed the exact-version step. Now a
+    /base hit for an answer that came out of a hunt answers the way a real /base does (the
+    phase-1 payload, edits_pending) and the /edits(/stream) the page sends next gets the
+    finished answer at once: every step plays, only the waiting is gone.
+
+    Free-scan counting is untouched: the page counts a scan when the answer is not `cached`
+    (crate.html finish()). URL-cache answers keep `cached` as before. Video-store answers do
+    not carry it, so they count exactly like the full scan they replace (same link again:
+    already counted on that phone; a new link: counted, as a full scan of it was)."""
+    if half != "base":
+        rp = _replay_get(key)
+        if rp is not None:
+            return rp
+    t0 = time.time()
+    via, ent = "url", None
+    c = _cache_get(key)
+    if c is not None and half != "edits" and c.get("result") in (
+            "no_match", "error", "rate_limited", "uncertain"):
+        # Konnor item 4, "never cache failures": a NEW scan never gets a remembered failure (the
+        # 120 s FAIL_TTL memo still answers the same scan's /edits fallback, as before)
+        E.tlog("cache_skip", 0.0, url=key, why="failure", result=c.get("result"))
+        CACHE.pop(key, None)             # consumed: this scan's own /edits must not read it
+        _FAIL_AT.pop(key, None)
+        c = None
+    if c is None:
+        if not VID_CACHE_ON:
+            return None
+        if half != "base" and key in SESSIONS:
+            # a fresh /base parked this clip's hunt (a miss, or nocache): it finishes the hunt,
+            # it never swaps in a saved answer for the scan it already started
+            return None
+        vk = _vkey_for(link)
+        ent = _vid_get(vk) if vk else None
+        if ent is None:
+            return None
+        c = dict(ent["res"])
+        c["vid_hit"] = True
+        c["vkey"] = vk
+        via = "vid"
+    c["replay"] = True
+    out = c
+    if half == "base":
+        if c.get("hunted"):
+            _replay_put(key, c)
+            out = VC.base_view(c, (ent or {}).get("base"))
+            out["edits_pending"] = True
+            for k in ("replay", "vid_hit", "vkey", "cached"):
+                if c.get(k) is not None:
+                    out[k] = c[k]
+        E.tlog("scan_path", time.time() - t0, url=key, path="cache", via=via,
+               vkey=c.get("vkey"), oscore=None, total=round(time.time() - t0, 3),
+               hunted=bool(c.get("hunted")))
+    elif half == "find":
+        E.tlog("scan_path", time.time() - t0, url=key, path="cache", via=via,
+               vkey=c.get("vkey"), oscore=None, total=round(time.time() - t0, 3))
+    return out
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
 # The legal/support pages (/privacy, /support, /terms). App Store Connect wants a privacy
@@ -1288,6 +1700,16 @@ def _phase1(url, key, t0):
         "url": key,
         "art": None,
     }
+    # SPEED FIX 1: the video this clip is, so the finished answer can be saved under it and the
+    # page can keep its device copy under the same key (the link's own id, else the one
+    # get_source resolved; a short link was resolved by _answer_get before this ran)
+    try:
+        _vk = _vkey_for(url, network=False) or (
+            ("tt:%s" % src["video_id"]) if src.get("video_id") else None)
+        if _vk:
+            res["vkey"] = _vk
+    except Exception:
+        pass
 
     # ---- WHO MADE THE SOUND, at zero network cost. The richer block below
     # (_creator_attach / creator_check.py) resolves this from the sound page; these four
@@ -2173,6 +2595,8 @@ def _phase1(url, key, t0):
                "res": res, "worth": worth, "comment_links": comment_links,
                "reupload": reup}
         ctx["correction"] = _corr          # CORRECTIONS 2026-09-29 (None almost always)
+        # SPEED FIX 1: what this /base answered, so a replay can answer the same way
+        ctx["base_view"] = {k: v for k, v in res.items() if k not in ("peaks", "wave")}
         if getattr(E, "SEEK_MOFF", False):
             # CRATE_SEEK_MOFF: where the clip sits in each song Shazam placed it in, from the
             # probes' own track offsets (plain numbers; the hunt reads it, nothing else does)
@@ -4545,6 +4969,7 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
                        not in ("0", "false", "no", "off"))
 
 
+
 def _phase2(ctx, on_cand=None):
     """EXPAND - the slow half. Now that the song has a name, go hunt every version of it
     on SoundCloud and YouTube and compare each against the clip's actual audio (same
@@ -5653,8 +6078,11 @@ def _phase2(ctx, on_cand=None):
         _write_figs(res)
         _similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only
         res["edits_pending"] = False
+        res["hunted"] = True             # SPEED FIX 1: a replay of this answer shows the hunt step
         res["secs"] = round(time.time() - t0, 1)
         E.tlog("request_done", time.time() - t0, url=key, outcome="hunt")   # APPLYALL 2026-09-29
+        E.tlog("scan_path", time.time() - t0, url=key, path="full", oscore=None,
+               total=round(time.time() - t0, 2))
         if _corr_res is not None:
             # CORRECTIONS 2026-09-29: the answer says it came from a correction; a refused
             # one says why. last_check goes back onto the entry (corrections.py list shows
@@ -5693,6 +6121,11 @@ def _phase2(ctx, on_cand=None):
             # the downloader is degraded; the next scan of this clip does the real work)
             _cache_put(key, res)
             _sound_cache_put(src, res)       # answer the SOUND, not just this clip
+            _vid_put(key, res, ctx.get("base_view"))     # SPEED FIX 1: and the VIDEO
+        else:
+            res["vid_ok"] = False
+            E.tlog("vid_skip", 0.0, url=key, vkey=res.get("vkey"),
+                   why="hunt_budget" if res.get("hunt_budget") else "correction_transient")
         return res
     finally:
         E.CAND_HOOK = _prev_cand_hook
@@ -5743,6 +6176,9 @@ def _phase2(ctx, on_cand=None):
 # that PARKS its session logs nothing: its hunt is still to come.
 def _log_done(key, t0, outcome, **extra):
     E.tlog("request_done", time.time() - t0, url=key, outcome=outcome, **extra)
+    # SPEED FIX 2: every scan logs its path and total; these never reached a hunt
+    E.tlog("scan_path", time.time() - t0, url=key, path=outcome, oscore=None,
+           total=round(time.time() - t0, 2))
 
 
 def _p1(url, key):
@@ -5781,7 +6217,9 @@ def identify_base(url):
     key = url.split("?")[0]
     if _NOCACHE.pop(key, None):
         _cache_drop(key)
-    _c = _cache_get(key)
+        _c = None                        # nocache: redo the work, no layer is skipped
+    else:
+        _c = _answer_get(key, url, "base")      # SPEED FIX 1 (the URL cache first, as before)
     if _c is not None:
         return _c
     old = SESSIONS.pop(key, None)
@@ -5793,6 +6231,7 @@ def identify_base(url):
     elif ctx:
         _cache_put(key, res)             # nothing more to find - this IS the answer
         _sound_cache_put(ctx.get("src") or {}, res)
+        _vid_put(key, res)               # SPEED FIX 1
         _cleanup((ctx.get("src") or {}).get("tmp"))
     return res
 
@@ -5803,7 +6242,9 @@ def identify_edits(url):
     key = url.split("?")[0]
     if _NOCACHE.pop(key, None):
         _cache_drop(key)
-    _c = _cache_get(key)
+        _c = None
+    else:
+        _c = _answer_get(key, url, "edits")     # SPEED FIX 1
     if _c is not None:
         return _c
     ctx = SESSIONS.pop(key, None)
@@ -5824,7 +6265,9 @@ def _edits_job(url, on_cand):
     key = url.split("?")[0]
     if _NOCACHE.pop(key, None):
         _cache_drop(key)
-    _c = _cache_get(key)
+        _c = None
+    else:
+        _c = _answer_get(key, url, "edits")     # SPEED FIX 1
     if _c is not None:
         return _c
     ctx = SESSIONS.pop(key, None)
@@ -5838,6 +6281,7 @@ def _edits_job(url, on_cand):
         if not ctx.get("worth"):          # named it, nothing left to hunt for
             _cache_put(key, res)
             _sound_cache_put(ctx.get("src") or {}, res)
+            _vid_put(key, res)            # SPEED FIX 1
             _cleanup((ctx.get("src") or {}).get("tmp"))
             return res
     try:
@@ -5852,7 +6296,9 @@ def identify(url):
     key = url.split("?")[0]
     if _NOCACHE.pop(key, None):
         _cache_drop(key)
-    _c = _cache_get(key)
+        _c = None
+    else:
+        _c = _answer_get(key, url, "find")      # SPEED FIX 1
     if _c is not None:
         return _c
     res, ctx = _p1(url, key)   # APPLYALL 2026-09-29
@@ -5861,6 +6307,7 @@ def identify(url):
     if not ctx.get("worth"):             # named it, nothing left to hunt for
         _cache_put(key, res)
         _sound_cache_put(ctx.get("src") or {}, res)
+        _vid_put(key, res)               # SPEED FIX 1
         _cleanup((ctx.get("src") or {}).get("tmp"))
         return res
     try:
@@ -8703,6 +9150,12 @@ def _parked_base(key):
     if time.time() - pb[0] > EDITS_RESERVE_S or key not in SESSIONS:
         _PARKED_BASE.pop(key, None)
         return None
+    if (pb[1] or {}).get("result") != "found":
+        # SPEED FIX 1 (Konnor item 4, measured in the lab 2026-10-07): a /base that answered
+        # no_match while parking a hunt (a caption seed, no song) was handed to every rescan of
+        # the clip for EDITS_RESERVE_S as a "joined" answer - a remembered failure. The page
+        # never runs that hunt, so a rescan starts fresh (_base_owner drops the old slot).
+        return None
     return pb[1]
 
 
@@ -8758,6 +9211,11 @@ def _unstore(key, res, sid=None):
     CACHE.pop(key, None)
     _FAIL_AT.pop(key, None)
     _disk_put("url", key, None)
+    _vk = (res or {}).get("vkey")                  # SPEED FIX 1: and out of the video store
+    if _vk and _vk in VID_CACHE:
+        _vid_drop(_vk, "unstore")
+    if isinstance(res, dict):
+        res["vid_ok"] = False
     ex = ((res or {}).get("exact") or {}).get("url")
     for s_, v in list(SOUND_CACHE.items()):
         if s_ == sid or (v.get("base_song") == (res or {}).get("base_song")
@@ -9188,6 +9646,10 @@ class H(BaseHTTPRequestHandler):
                    # phone's ShazamKit (docs/SHAZAMKIT-ON-DEVICE.md)
                    "phone_probes": P.health(),
                    "does": ["tiktok", "instagram", "soundcloud", "youtube"]}
+            if not VID_CACHE_ON:
+                # SPEED FIX 1 kill switch reaches the phones too: the page stops answering from
+                # its device copies (only sent when OFF, so /health is unchanged by default)
+                _hb["vid_cache"] = False
             # FAST-NAME 9 / 10: page behaviour, only when one is on
             if PAGE_FAST_POLL or PAGE_LIVE_ROWS:
                 _hb["features"] = {"fast_poll": PAGE_FAST_POLL, "live_rows": PAGE_LIVE_ROWS}
@@ -9242,6 +9704,26 @@ class H(BaseHTTPRequestHandler):
                 code, body = 502, {"ok": False, "error": "Search failed on our side. (%s)"
                                                          % str(e)[:80]}
             return self._send(code, body)
+        if u.path == "/vkey":
+            # SPEED FIX 1, item 5: the video key of a link, for the page's device copy. One
+            # Location hop the first time a short link is seen, then a dict lookup. No scan,
+            # no Shazam, no audio, no slot.
+            _vq = parse_qs(u.query)
+            _vl, _ = RL.scan_link((_vq.get("url") or [""])[0])
+            if not _vl:
+                return self._send(400, {"error": "pass ?url=<a tiktok or instagram link>"})
+            try:
+                return self._send(200, {"vkey": _vkey_for(_vl)})
+            except Exception:
+                return self._send(200, {"vkey": None})
+        if u.path in ("/admin/cache", "/admin/cache/delete"):
+            # SPEED FIX 1, item 7 (local or admin key only; otherwise an unknown path)
+            if not _admin_ok(self):
+                return self._send(404, {"error": "not found"})
+            _aq = parse_qs(u.query)
+            if u.path == "/admin/cache/delete":
+                return self._send(200, _admin_delete((_aq.get("key") or [""])[0]))
+            return self._send(200, _admin_cache(_aq))
         if u.path == "/fixes":
             # X-TO-FIX 2026-09-29: which of these clips now have a correction. The page asks
             # on open with the links the user X'd, to say "we found the exact version".
@@ -9281,7 +9763,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "origin not allowed"})
             if forced and not RL.forced_ok(self):
                 forced = False               # nocache evicts everyone's answer: testers only
-            if not forced and _cache_get(_key) is not None:
+            if not forced and _answer_peek(_key, link):    # SPEED FIX 1: the video store too
                 _paid = "cache"
             elif u.path in ("/edits", "/edits/stream") and _key in SESSIONS:
                 _paid = "session"
@@ -9380,16 +9862,18 @@ class H(BaseHTTPRequestHandler):
         t_arr = time.time()
         forced = (q.get("nocache") or [""])[0] in ("1", "true", "yes")
         edits = path in ("/edits", "/edits/stream")
-        if not forced and _cache_get(key) is not None:
-            # a cache hit costs no slot and joins nothing
-            if path == "/edits/stream":
-                return self._sse(link)
-            fn = {"/base": identify_base, "/edits": identify_edits}.get(path, identify)
+        if not forced:
+            # a cache hit costs no slot and joins nothing. SPEED FIX 1: the URL cache, then the
+            # video store; a /base hit answers like a real /base and its /edits half follows
             try:
-                res = fn(link)
-            except Exception as e:
-                res = {"result": "error", "error": str(e)[:200]}
-            return self._send(200, res)
+                _hit = _answer_get(key, link, "base" if path == "/base" else
+                                   ("find" if path == "/find" else "edits"))
+            except Exception:
+                _hit = None
+            if _hit is not None:
+                if path == "/edits/stream":
+                    return self._sse(link, job=lambda oc, _h=_hit: _h)
+                return self._send(200, _hit)
         if path == "/base":
             with _FLIGHTS_LOCK:
                 hf = _FLIGHTS.get(("hunt", key))
@@ -9560,6 +10044,17 @@ class H(BaseHTTPRequestHandler):
                                  _ra)
         if u.path == "/review/note" and not RL.internal_ok(self):   # APPLYALL 2026-09-29
             return self._send(404, {"error": "not found"})
+        if u.path == "/admin/cache/delete":
+            # SPEED FIX 1, item 7: the delete, as a POST too ({"key": "<vkey or link>"})
+            if not _admin_ok(self):
+                return self._send(404, {"error": "not found"})
+            try:
+                _n = int(self.headers.get("Content-Length") or 0)
+                _b = json.loads(self.rfile.read(_n).decode() or "{}") if 0 < _n < 65536 else {}
+            except Exception:
+                _b = {}
+            return self._send(200, _admin_delete((_b or {}).get("key") or
+                                                 (parse_qs(u.query).get("key") or [""])[0]))
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > 32 * 1024 * 1024:
             return self._send(400, {"error": "bad body size"})

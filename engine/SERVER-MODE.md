@@ -34,3 +34,17 @@ So the server runs plain repo HEAD, and a ship reaches it with
 - The proofs, all offline: `server-kit/tests/mac_paths.py <new engine> <previous engine>` (the Mac
   paths are unchanged), `test_pacer.py`, `test_gate.py`, `test_starve.py` (the server paths work),
   and this folder's `test_*.py`. deploy-head.sh runs them on the box before it switches.
+
+## Speed fix 1 (2026-10-07): ON by default on every machine, each with a kill switch
+
+Not server-mode switches: these run on the Mac too. Off switches and knobs:
+
+| variable | file | what it does |
+|---|---|---|
+| `CRATE_VID_CACHE=0` | server.py, vidcache.py | turns off the video-keyed answer store (fix 1): no lookups, no saves, and `/health` says `vid_cache: false`, so the page stops answering from its device copies too |
+| `CRATE_VID_TTL_DAYS` (90), `CRATE_VID_EPOCH` (`vid1`), `CRATE_VID_MAX` (20000), `CRATE_VID_DEAD_RECHECK_S` (3600) | vidcache.py, server.py | lifetime from creation; bump the epoch to drop every saved answer at once; size cap; how often a saved upload's page is re-checked (oEmbed 404 = gone) |
+| `ADDIFY_ADMIN_KEYS` (`name:sha256hex,...`) | server.py | `/admin/cache` (peek, list) and `/admin/cache/delete` answer only on the box (loopback, no tunnel headers) or with `X-Addify-Admin: <key>` |
+
+Pre-warm a list of links (run on the box): `/opt/addify/venv/bin/python prewarm.py --file links.txt`.
+Delete one saved answer (on the box): `curl -X POST -d '{"key":"<link or tt:/ig: key>"}' http://127.0.0.1:8788/admin/cache/delete`.
+Tests: `test_vidcache.py`, `test_vid_server.py`.

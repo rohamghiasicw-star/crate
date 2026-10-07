@@ -1347,6 +1347,9 @@ def _tt_id(url):
     return m.group(1) if m else None
 
 
+SHORT_LOOKUP = None      # SPEED FIX 1: server.py sets it (short link -> resolved link, or None)
+
+
 def _fast_full(url):
     """FAST-NAME 1 (CRATE_FAST_RESOLVE) -> (full_url, how).
 
@@ -1360,6 +1363,15 @@ def _fast_full(url):
     today's resolve()."""
     if _tt_id(url):
         return url.split("?")[0], "id"
+    # SPEED FIX 1: a short link the server already resolved (server.SHORT_MAP, filled from this
+    # same function's answer) costs no second hop
+    if SHORT_LOOKUP is not None:
+        try:
+            _m = SHORT_LOOKUP(url)
+        except Exception:
+            _m = None
+        if _m and _tt_id(_m):
+            return _m, "map"
     if not HAVE_CFFI:
         return resolve(url), "follow"
     u = url
