@@ -2286,8 +2286,79 @@ var engineUp=null, engineInfo=null;
 // server-kit: only the one-server engine lists verified rows on /progress while a hunt runs
 // (its /health carries a "server" block). The Mac never sets this, so nothing changes there.
 var LATE_ROWS=false;
+/* CALL-RETRY 2026-10-08 (Konnor on the Alex call, 42:14: "I'll try to scan and it'll just say
+   couldn't load or you're not on Wi-Fi, but we are ... it will work after I say retry").
+   ONE FAILED REQUEST IS NOT "OFFLINE". The page used to turn any single failed fetch (or a
+   body that was not JSON) into engine_down and the "You're offline" card. The usual cause on a
+   phone is not the Wi-Fi: iOS reclaims an app's sockets while it is suspended (Apple TN2277),
+   so the first request after the app comes back (a share from TikTok, or Retry) can die on a
+   connection that no longer exists, and a scan in flight dies the same way when the user
+   switches back to TikTok mid-scan (server logs 2026-09-30..10-08: 29 scan answers the engine
+   could not deliver because the phone had already hung up, and for 16 of them the same clip
+   was asked for again within 2 min). Caddy also
+   answers 502 with an empty body for the ~0.5 s an engine restart takes.
+   So scan-path GETs retry quietly before any card shows:
+   - a request that lived through a trip to the background, or failed within 3 s of coming
+     back, waits until the page is visible and goes again (up to 3 times);
+   - any other network failure, or a 502/503/504 without a JSON body, goes again after 0.4,
+     1.2 and 2.5 s; when the phone itself says it has no network it waits up to 8 s for it.
+   Every retried call is a GET the engine already de-duplicates by clip (a /base for a clip
+   in flight joins it, a finished one answers from its cache, an /edits with ?scan= gets that
+   hunt's result), so a retry never starts a second scan. A server that answers with JSON,
+   busy and rate_limited included, is never retried here: those cards are unchanged.
+   Only after that does the card show, and it says which one it is: navigator.onLine false
+   is "You're offline", anything else is "Couldn't reach Addify". */
+var NET={hiddenAt:0, shownAt:0, warm:false}, NET_BACKOFF=[400,1200,2500];
+function netSleep(ms){return new Promise(function(ok){setTimeout(ok,ms);});}
+function netVisible(){if(!document.hidden) return Promise.resolve();
+  return new Promise(function(ok){var f=function(){if(document.hidden) return;
+    document.removeEventListener('visibilitychange',f); ok();};
+    document.addEventListener('visibilitychange',f);});}
+function netOnline(ms){if(navigator.onLine!==false) return Promise.resolve(true);
+  return new Promise(function(ok){var done=false, to=setTimeout(function(){fin(false);},ms);
+    function on(){fin(true);}
+    function fin(v){if(done) return; done=true; clearTimeout(to); window.removeEventListener('online',on); ok(v);}
+    window.addEventListener('online',on);});}
+function netOffline(){return navigator.onLine===false;}
+function downResult(){return {result:'engine_down', offline:netOffline()};}
+// fetch + JSON with the quiet retries above. Resolves the parsed body (null for a non-2xx when
+// o.okOnly, as /health always read it); rejects only once the retries are spent.
+function netJSON(u,o){o=o||{}; var tries=0, resumes=0;
+  function hard(e){var x=new Error('unreadable answer'); x.hard=true; x.cause=e; return x;}
+  function attempt(){var t0=Date.now();
+    return fetch(u,o.init||{}).then(function(r){
+      if(r.status===502||r.status===503||r.status===504){
+        return r.text().then(function(tx){var j=null; try{j=JSON.parse(tx);}catch(e){}
+          if(j===null){var x=new Error('http '+r.status); x.transient=true; throw x;}
+          return o.okOnly?null:j;});}
+      if(o.okOnly&&!r.ok) return null;
+      return r.json().catch(function(e){if(e&&e.name==='SyntaxError') throw hard(e); throw e;});
+    }).catch(function(e){
+      if(e&&e.hard) throw e;                   // a server that answered something unreadable: as before
+      if(o.alive&&!o.alive()) throw e;         // the scan was cancelled: nothing is waiting for this
+      var resumed=document.hidden||t0<=NET.hiddenAt||(NET.shownAt&&Date.now()-NET.shownAt<3000);
+      if(resumed&&resumes<3){resumes++;
+        return netVisible().then(function(){return netSleep(250);}).then(attempt);}
+      if(tries<NET_BACKOFF.length){var wait=NET_BACKOFF[tries++];
+        return netOnline(8000).then(function(on){if(!on) throw e; return netSleep(wait);}).then(attempt);}
+      throw e;});}
+  return attempt();}
+// Back from the background: one cheap /health opens a fresh connection before the user (or a
+// share from TikTok) asks for a scan. Fire and forget; it changes no state on the page.
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden){NET.hiddenAt=Date.now(); return;}
+  var away=NET.hiddenAt?Date.now()-NET.hiddenAt:0; NET.shownAt=Date.now();
+  if(away<5000||NET.warm) return; NET.warm=true;
+  fetch(ENGINE+'/health',{cache:'no-store'}).then(function(){},function(){}).then(function(){NET.warm=false;});});
+// The offline card promises the scan runs "the second you're back": the network coming back
+// while that card is still on screen is that second.
+window.addEventListener('online',function(){
+  if(busy||!lastResult||lastResult.result!=='engine_down') return;
+  if(document.getElementById('app').getAttribute('data-state')!=='locked') return;
+  var rb=document.getElementById('retrybtn'); if(rb) rb.click();});
+var RELOADING=false;   // the stale-shell guard below is reloading the page onto the new build
 function checkEngine(){if(engineUp===true) return Promise.resolve(true);
-  return fetch(ENGINE+'/health').then(function(r){return r.ok?r.json():null;})
+  return netJSON(ENGINE+'/health',{okOnly:true})
     .then(function(j){
       if(j) engineInfo=j;
       if(j&&j.server) LATE_ROWS=true;
@@ -2310,7 +2381,11 @@ function checkEngine(){if(engineUp===true) return Promise.resolve(true);
           sessionStorage.setItem('addify-reloaded-for', j.build);
           var _pu=curURL||urlEl.value||''; if(_pu) sessionStorage.setItem('addify-pending',_pu);
         }catch(e){}
-        location.reload(); return false;}
+        // CALL-RETRY: the scan screen stays up while the page reloads (call() answers
+        // 'moved'). Returning plain false here painted "You're offline" and queued the scan
+        // for the second or so before the new page replaced it.
+        // A reload that failed leaves this page up: it asks once more after 20 s.
+        RELOADING=true; location.reload(); setTimeout(function(){location.reload();},20000); return false;}
       var o=!!j; engineUp=o?true:null; return o;})
     .catch(function(){engineUp=null; return false;});}
 function call(path,url,opt){
@@ -2319,11 +2394,13 @@ function call(path,url,opt){
   // scan runs there, with a phone that will answer its probes.
   return (opt&&opt.guard?originGuard(url):Promise.resolve(false)).then(function(moved){
   if(moved) return {result:'moved'};
-  return checkEngine().then(function(up){if(!up) return {result:'engine_down'};
+  return checkEngine().then(function(up){if(!up) return RELOADING?{result:'moved'}:downResult();
   var kit=(opt&&opt.kit)?kitStart():'';
   var sq=(opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'';
-  return fetch(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq).then(function(r){return r.json();})
-    .catch(function(){engineUp=null;return {result:'engine_down'};})
+  // CALL-RETRY: the same URL (same kit id) on every retry, so a /base that did reach the
+  // engine is joined, not started again, and its phone probes keep their session
+  return netJSON(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq,{alive:opt&&opt.alive})
+    .catch(function(){engineUp=null;return downResult();})
     // BELIEVABLE REPLAY: a replayed /base lands at a human pace (REPLAY_NAME_MS)
     .then(function(d){return (path==='/base'&&d&&d.replay)?replayHold(t0,replayMs(REPLAY_NAME_MS)).then(function(){return d;}):d;})
     .then(function(d){if(kit) kitStop(); return d;});});});}
@@ -4355,7 +4432,7 @@ function mainVersion(d){
    result without a song, so a "TikTok is busy" card (own1, a TikTok rate limit, not a miss)
    sat under a header saying the song was not found. Only a real miss says "No match". */
 function endTitle(d){var r=d&&d.result;
-  return r==='rate_limited'?'Try again soon':r==='engine_down'?'Offline':
+  return r==='rate_limited'?'Try again soon':r==='engine_down'?(d.offline?'Offline':'Try again soon'):
          r==='error'?'Link not readable':'No match';}
 function setEndTitle(d){var t=document.getElementById('matchttl'); if(t) t.textContent=endTitle(d);}
 function renderResult(d,partial){
@@ -4393,7 +4470,13 @@ function renderResult(d,partial){
     if(_rtb) _rtb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
     return;}
   if(d.result==='engine_down'){ setEndTitle(d);
-    result.innerHTML=errCard('sat',"You're offline",'No stress. We kept your scan.<br>It’ll run the second you’re back.',
+    // CALL-RETRY: the page only reaches this card after the quiet retries in netJSON, and it
+    // only says "offline" when the phone says so (navigator.onLine). A server that did not
+    // answer while the phone is online gets its own words, not "You're offline" (Konnor: "it
+    // says you're not on Wi-Fi, but we are"). Button and queue are unchanged.
+    result.innerHTML=errCard('sat',d.offline?"You're offline":"Couldn't reach Addify",
+      d.offline?'No stress. We kept your scan.<br>It’ll run the second you’re back online.'
+               :'Addify didn’t answer just now. We kept your scan.<br>Tap Try again.',
       (curURL?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
         '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
     var rb=document.getElementById('retrybtn');
@@ -6131,7 +6214,7 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  return call('/base',p.url,{kit:true,guard:true}).then(function(d){
+  return call('/base',p.url,{kit:true,guard:true,alive:function(){return tok===scanTok;}}).then(function(d){   // CALL-RETRY: no retry for a cancelled scan
     if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
     if(d&&d.result==='moved') return;  // NAMING 2026-09-30: the page is moving to the app's engine with this link
     if(KIT_MOVED&&d&&(d.result==='rate_limited'||d.result==='engine_down'||d.result==='error')){
@@ -6903,7 +6986,7 @@ function sendListen(blob){
   headline('Finding song'); say('Building the audio fingerprint');
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
   fetch(ENGINE+'/listen',{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
-    .then(function(r){return r.json();}).catch(function(){return {result:'engine_down'};})
+    .then(function(r){return r.json();}).catch(function(){return downResult();})   // CALL-RETRY: offline vs no answer (a POST: not retried)
     .then(function(d){
       if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
       setWindow(null, d&&d.clip_secs);
