@@ -118,6 +118,12 @@ except Exception:                                    # never take the server dow
 
 PORT = int(os.environ.get("PORT", "8788"))
 CACHE = {}
+# CAPACITY 2026-10-08 (Alex call, "500 people on the app at once"): CACHE had no size cap, so
+# one long-lived process grew by one full answer (about 10 KB, peaks/wave/candidates included)
+# per scanned link until the next restart. Past ADDIFY_CACHE_MAX answers the oldest ones go
+# (insertion order). An evicted answer is only a cache miss: the video store (VID_MAX) and the
+# disk rows still hold it. 0 = no cap (the old behaviour). Today's processes hold a few dozen.
+CACHE_MAX = max(0, int(os.environ.get("ADDIFY_CACHE_MAX", "20000") or 0))
 _NOCACHE = {}      # key -> True, set by the handler when ?nocache=1 is present
 # A FAILURE IS NOT AN ANSWER, SO IT DOES NOT GET CACHED FOREVER.
 # `no_match` on this engine is very often transient: Shazam stalls in bursts, TikTok
@@ -228,6 +234,23 @@ def _cache_get(key):
     return out
 
 
+_CACHE_TRIM_LOCK = threading.Lock()
+
+
+def _cache_trim():
+    """CAPACITY 2026-10-08: hold CACHE at ADDIFY_CACHE_MAX answers, oldest out first."""
+    if CACHE_MAX <= 0 or len(CACHE) <= CACHE_MAX:
+        return
+    with _CACHE_TRIM_LOCK:
+        while len(CACHE) > CACHE_MAX:
+            try:
+                k = next(iter(CACHE))
+            except (StopIteration, RuntimeError):   # emptied, or resized under us: next put
+                break
+            CACHE.pop(k, None)
+            _FAIL_AT.pop(k, None)
+
+
 def _cache_put(key, res):
     if _phone_unconfirmed(res):
         return
@@ -240,6 +263,7 @@ def _cache_put(key, res):
         _FAIL_AT[key] = time.time()
     else:
         _FAIL_AT.pop(key, None)
+    _cache_trim()
     # only a real answer survives a restart; anything else replaces (deletes) the old row
     if res.get("result") == "found":
         _disk_put("url", key, res)
@@ -8872,6 +8896,51 @@ def _cpu_psi():
     return 0.0
 
 
+def _proc_facts(proc="/proc"):
+    """CAPACITY 2026-10-08: this process's own load facts for /health (server only), so
+    addify-health.sh can alert on them instead of someone finding them by hand: the FD leak
+    (623 CLOSE-WAIT after 78 min, fixed in 7125e63) was found that way. Linux /proc only;
+    a fact that cannot be read is None. Never names a peer, a path or a URL."""
+    out = {"rss_mb": None, "fds": None, "close_wait": None,
+           "threads": threading.active_count(), "cache": len(CACHE),
+           "sessions": len(SESSIONS), "vid_cache": len(VID_CACHE),
+           "sound_cache": len(SOUND_CACHE)}
+    try:
+        with open(proc + "/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    out["rss_mb"] = round(int(line.split()[1]) / 1024.0, 1)
+                    break
+    except Exception:
+        pass
+    socks = set()
+    try:
+        names = os.listdir(proc + "/self/fd")
+        out["fds"] = len(names)
+        for n in names:
+            try:
+                t = os.readlink(proc + "/self/fd/" + n)
+            except OSError:
+                continue
+            if t.startswith("socket:["):
+                socks.add(t[8:-1])
+    except Exception:
+        return out
+    cw = 0
+    for tab in (proc + "/net/tcp", proc + "/net/tcp6"):
+        try:
+            with open(tab) as f:
+                next(f, None)
+                for line in f:
+                    p = line.split()
+                    if len(p) > 9 and p[3] == "08" and p[9] in socks:   # 08 = CLOSE_WAIT
+                        cw += 1
+        except Exception:
+            continue
+    out["close_wait"] = cw
+    return out
+
+
 class _ScanGate(object):
     def __init__(self, slots):
         self.slots = slots
@@ -9676,6 +9745,10 @@ class H(BaseHTTPRequestHandler):
                 _hb["server"] = {"gate": GATE.snapshot() if GATE is not None else None,
                                  "pace": _FS.pace_stats(),
                                  "sessions": len(SESSIONS)}
+                try:                     # CAPACITY 2026-10-08: additive, see _proc_facts
+                    _hb["server"]["proc"] = _proc_facts()
+                except Exception:
+                    pass
             return self._send(200, _hb)
         if u.path == "/probes/next":
             if RL.MODE != "off" and not RL.probe_ok(
