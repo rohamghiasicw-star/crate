@@ -82,13 +82,14 @@ class CacheCap(unittest.TestCase):
 
 class _Req(S.H):
     """The handler without a socket: do_GET writes into a buffer."""
-    def __init__(self, path):
+    def __init__(self, path, headers=None):
         self.path = path
         self.command = "GET"
         self.request_version = "HTTP/1.1"
         self.requestline = "GET %s HTTP/1.1" % path
         self.client_address = ("127.0.0.1", 0)
-        self.headers = {}
+        # addify-health.sh asks on the box itself: http://127.0.0.1:8788/health
+        self.headers = {"Host": "127.0.0.1:8788"} if headers is None else headers
         self.wfile = io.BytesIO()
         self.close_connection = True
 
@@ -145,6 +146,17 @@ class ProcFacts(unittest.TestCase):
         self.assertEqual(b["server"]["proc"]["cache"], len(S.CACHE))
         blob = json.dumps(b["server"]["proc"])
         self.assertNotIn("http", blob)               # no URL, peer or path leaks into it
+
+    def test_public_health_never_shows_them(self):
+        """Through Caddy (proxy headers, public Host) /health keeps gate/pace but not proc:
+        load and answer counts stay on the box (verifier 2026-10-08)."""
+        r = _Req("/health", headers={"Host": "161-35-185-80.sslip.io",
+                                      "CF-Connecting-IP": "203.0.113.9", "X-Real-IP": "203.0.113.9"})
+        r.do_GET()
+        b = r.body()
+        self.assertTrue(b.get("ok"))
+        self.assertIn("gate", b["server"])
+        self.assertNotIn("proc", b["server"])
 
     def test_a_broken_fact_never_breaks_health(self):
         real = S._proc_facts

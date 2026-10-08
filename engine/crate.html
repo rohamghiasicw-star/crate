@@ -2325,15 +2325,20 @@ function downResult(){return {result:'engine_down', offline:netOffline()};}
 // o.okOnly, as /health always read it); rejects only once the retries are spent.
 function netJSON(u,o){o=o||{}; var tries=0, resumes=0;
   function hard(e){var x=new Error('unreadable answer'); x.hard=true; x.cause=e; return x;}
-  function attempt(){var t0=Date.now();
-    return fetch(u,o.init||{}).then(function(r){
+  function attempt(){var t0=Date.now(), init=o.init||{}, tm=0;
+    // o.timeout (the /health probe only): a phone on a network that drops packets silently
+    // would otherwise wait out WebKit's own timeout on every quiet retry (verifier 2026-10-08).
+    // Never set on /base or /edits: a real scan can run for over a minute without a byte.
+    if(o.timeout&&window.AbortController){var ctl=new AbortController();
+      init=Object.assign({},init,{signal:ctl.signal}); tm=setTimeout(function(){ctl.abort();},o.timeout);}
+    return fetch(u,init).then(function(r){
       if(r.status===502||r.status===503||r.status===504){
         return r.text().then(function(tx){var j=null; try{j=JSON.parse(tx);}catch(e){}
           if(j===null){var x=new Error('http '+r.status); x.transient=true; throw x;}
           return o.okOnly?null:j;});}
       if(o.okOnly&&!r.ok) return null;
       return r.json().catch(function(e){if(e&&e.name==='SyntaxError') throw hard(e); throw e;});
-    }).catch(function(e){
+    }).then(function(v){clearTimeout(tm); return v;},function(e){clearTimeout(tm); throw e;}).catch(function(e){
       if(e&&e.hard) throw e;                   // a server that answered something unreadable: as before
       if(o.alive&&!o.alive()) throw e;         // the scan was cancelled: nothing is waiting for this
       var resumed=document.hidden||t0<=NET.hiddenAt||(NET.shownAt&&Date.now()-NET.shownAt<3000);
@@ -2353,12 +2358,12 @@ document.addEventListener('visibilitychange',function(){
 // The offline card promises the scan runs "the second you're back": the network coming back
 // while that card is still on screen is that second.
 window.addEventListener('online',function(){
-  if(busy||!lastResult||lastResult.result!=='engine_down') return;
+  if(busy||!curURL||!lastResult||lastResult.result!=='engine_down') return;   // no link (listen mode): Try again would only close the card
   if(document.getElementById('app').getAttribute('data-state')!=='locked') return;
   var rb=document.getElementById('retrybtn'); if(rb) rb.click();});
 var RELOADING=false;   // the stale-shell guard below is reloading the page onto the new build
 function checkEngine(){if(engineUp===true) return Promise.resolve(true);
-  return netJSON(ENGINE+'/health',{okOnly:true})
+  return netJSON(ENGINE+'/health',{okOnly:true,timeout:8000})
     .then(function(j){
       if(j) engineInfo=j;
       if(j&&j.server) LATE_ROWS=true;

@@ -9745,10 +9745,11 @@ class H(BaseHTTPRequestHandler):
                 _hb["server"] = {"gate": GATE.snapshot() if GATE is not None else None,
                                  "pace": _FS.pace_stats(),
                                  "sessions": len(SESSIONS)}
-                try:                     # CAPACITY 2026-10-08: additive, see _proc_facts
-                    _hb["server"]["proc"] = _proc_facts()
-                except Exception:
-                    pass
+                if RL.is_local(self):    # CAPACITY 2026-10-08: additive, see _proc_facts. Box-only
+                    try:                 # (addify-health.sh asks on 127.0.0.1): the public /health
+                        _hb["server"]["proc"] = _proc_facts()   # never shows load or answer counts
+                    except Exception:
+                        pass
             return self._send(200, _hb)
         if u.path == "/probes/next":
             if RL.MODE != "off" and not RL.probe_ok(
