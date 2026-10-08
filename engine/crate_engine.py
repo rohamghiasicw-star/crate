@@ -7462,8 +7462,31 @@ def _run_search(spec):
     return _run_search_raw(spec)
 
 
+def _yt_api_rows(prefix, q):
+    """OFFICIAL YOUTUBE DATA API SEARCH (call-ytapi 2026-10-08, yt_api.py, CRATE_YT_API_SEARCH,
+    default OFF): a "ytsearchN:" spec answered by search.list + videos.list. -> rows in this
+    function's caller's shape, or None to run today's yt-dlp search. Metadata only: the
+    candidate audio still comes from dl_clip. Never raises."""
+    try:
+        import yt_api
+        if not yt_api.enabled():
+            return None
+        n = int(re.sub(r"\D", "", prefix) or 5)
+        t0 = time.time()
+        rows, why = yt_api.search(q, n)
+        tlog("yt_api_search", time.time() - t0, n=(len(rows) if rows is not None else None),
+             why=why, used=yt_api.used_today())
+        return rows
+    except Exception:
+        return None
+
+
 def _run_search_raw(spec):
     prefix, src, q = spec
+    if prefix.startswith("ytsearch"):
+        rows = _yt_api_rows(prefix, q)
+        if rows is not None:
+            return rows
     out = None
     if SPEED_INPROC_SEARCH:
         try:
