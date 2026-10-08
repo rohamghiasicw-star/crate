@@ -74,7 +74,10 @@ struct UnreachableView: View {
             Image(systemName: "waveform.slash")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(Color(red: 0.36, green: 0.29, blue: 0.91))
-            Text("Can't reach Addify")
+            /* CALL-RETRY: "check your internet" only when the phone said it has none. An engine
+               that did not answer while the Wi-Fi is fine is not the user's connection
+               (Konnor: "it says you're not on Wi-Fi, but we are"). */
+            Text(bridge.offline ? "You're offline" : "Can't reach Addify")
                 .font(.title2.weight(.semibold))
             #if DEBUG
             Text(EngineConfig.baseURL.absoluteString)
@@ -83,7 +86,8 @@ struct UnreachableView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
             #endif
-            Text("Check your internet connection and try again.")
+            Text(bridge.offline ? "Check your internet connection and try again."
+                                : "Addify didn't answer. Try again in a moment.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
