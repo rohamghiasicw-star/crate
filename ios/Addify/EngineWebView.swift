@@ -61,6 +61,8 @@ struct EngineWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         let bridge: EngineBridge
         var seenReloadToken = 0
+        /* CALL-RETRY: quiet reloads spent on the current page load (see failed()). */
+        var quietRetries = 0
 
         init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -70,6 +72,7 @@ struct EngineWebView: UIViewRepresentable {
 
         func load(_ wv: WKWebView) {
             bridge.pageReady = false
+            quietRetries = 0
             var req = URLRequest(url: EngineConfig.baseURL)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
             wv.load(req)
@@ -129,24 +132,54 @@ struct EngineWebView: UIViewRepresentable {
             let onEngine = isEngineOrigin(webView.url)
             bridge.pageReady = onEngine
             if onEngine {
+                quietRetries = 0
                 bridge.unreachable = false
+                bridge.offline = false
                 bridge.flushPending()
             }
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            failed(error)
+            failed(error, in: webView)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            failed(error)
+            failed(error, in: webView)
         }
 
-        private func failed(_ error: Error) {
+        /* CALL-RETRY 2026-10-08 (Konnor, Alex call 42:14: "it'll just say couldn't load or you're
+           not on Wi-Fi, but we are ... it will work after I say retry"). iOS reclaims a suspended
+           app's sockets (Apple TN2277), so the first page load after the app comes back (a share
+           from TikTok loads /share?url=, the stale-shell reload, a reload after WebKit killed the
+           content process) can die with -1005 "network connection lost" on a connection that no
+           longer exists, and the very next try works. Those codes get two quiet reloads of the
+           SAME engine URL (0.5 s, then 1.5 s) before "Can't reach Addify" shows. Only engine
+           URLs are retried, so a share keeps its link. The phone being offline is told apart
+           from the engine not answering, and the screen says which (UnreachableView). */
+        static let transientCodes: Set<Int> = [NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
+                                               NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
+                                               NSURLErrorDNSLookupFailed, NSURLErrorSecureConnectionFailed]
+        static let offlineCodes: Set<Int> = [NSURLErrorNotConnectedToInternet, NSURLErrorDataNotAllowed,
+                                             NSURLErrorInternationalRoamingOff, NSURLErrorCallIsActive]
+
+        private func failed(_ error: Error, in webView: WKWebView) {
             let e = error as NSError
             /* -999 is our own cancel from decidePolicyFor, not an outage. */
             if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
+            if e.domain == NSURLErrorDomain, Self.transientCodes.contains(e.code), quietRetries < 2,
+               let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL, isEngineOrigin(failing) {
+                quietRetries += 1
+                let delay = quietRetries == 1 ? 0.5 : 1.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak webView] in
+                    guard let wv = webView else { return }
+                    var req = URLRequest(url: failing)
+                    req.cachePolicy = .reloadIgnoringLocalCacheData
+                    wv.load(req)
+                }
+                return
+            }
             bridge.pageReady = false
+            bridge.offline = e.domain == NSURLErrorDomain && Self.offlineCodes.contains(e.code)
             bridge.unreachable = true
         }
 

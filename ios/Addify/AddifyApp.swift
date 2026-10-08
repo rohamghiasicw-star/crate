@@ -34,8 +34,11 @@ struct AddifyApp: App {
                     if phase == .active {
                         bridge.drainInbox()
                         /* Same reason as launch: a phone that sat in a pocket for an hour
-                           comes back to a hostname that no longer resolves. */
-                        Task { await EngineConfig.resolveFromDirectory() }
+                           comes back to a hostname that no longer resolves.
+                           CALL-RETRY: coming back to "Can't reach Addify" is the moment to try
+                           again, so the user does not have to tap it (resolve, then reload). */
+                        if bridge.unreachable { bridge.retryResolvingFirst() }
+                        else { Task { await EngineConfig.resolveFromDirectory() } }
                     }
                 }
         }
