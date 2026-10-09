@@ -38,7 +38,8 @@ ops/prescan/prescan.sh --dry-run --list my-links.txt            # prints every s
 ops/prescan/prescan.sh --list my-links.txt                      # test box only
 ops/prescan/prescan.sh --max 15                                 # trending_sounds.py picks the links
 ops/prescan/prescan.sh --max 15 --push-live                     # and import the answers on live
-ops/prescan/prescan.sh --attach 20261009T061220Z [--push-live]  # re-attach after a dropped terminal
+ops/prescan/prescan.sh --attach 20261009T061220Z [--push-live]  # re-attach after a dropped terminal,
+                                                                # or push a finished run later
 ```
 
 Flags: `--gap S` (5), `--idle-wait S` (600), `--force` (rescan links the test box already saved),
@@ -102,5 +103,9 @@ up as busy / no_match / `shazam_partial` answers, and those are never saved.
   cache, and a sound-cache replay is not saved under the new video's key (`_vid_replayed`), so it
   exports nothing new. Rows keyed by sound (`kind: "snd"`) carry that sound's answer instead, once
   the sound-persist change is deployed on both boxes.
+- The test box's Shazam pacing (`CRATE_SHAZAM_PACE_N=18` per 61 s, the kit default) is more than
+  its own IP is given: the 2026-10-09 smoke runs took 4 and 11 Shazam 429s, and those scans end
+  `shazam_partial` or `rate_limited`, which are never saved. Live runs at 35 with relays. Until the
+  test box's pacing matches its IP (or it gets its own relays), most pre-scans will not confirm.
 - `--since` defaults to this run's start on the box's clock: rows saved by an earlier run are not
   re-exported unless you pass an earlier `--since`.

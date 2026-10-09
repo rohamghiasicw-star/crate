@@ -14,6 +14,9 @@
 #
 # bash 3.2 compatible (macOS /bin/bash). See README.md next to this file.
 set -u -o pipefail
+# The whole body is one { } block: bash parses it before running anything, so updating this
+# file (git pull, an edit) while a run is polling cannot change what the running copy executes.
+{
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -87,6 +90,7 @@ case "$IDLE_WAIT" in ''|*[!0-9.]*) die "--idle-wait needs a number" ;; esac
 [ -f "$KEY" ] || die "no ssh key at $KEY"
 [ -d "$TOOLS" ] || die "no tools dir $TOOLS"
 TOOLS="$(cd "$TOOLS" && pwd)"
+[ -z "$ATTACH" ] || [ "$DRY" -eq 0 ] || die "--attach and --dry-run do not mix"
 [ -z "$ATTACH" ] || case "$ATTACH" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;; *) die "--attach wants a run id like 20261009T060000Z" ;; esac
 
 SSHO="-i $KEY -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=4"
@@ -124,8 +128,10 @@ if [ -n "$PRE" ]; then
 fi
 has() { echo "$PRE" | grep -q "^has=$1\$"; }
 
-# ---------------------------------------------------------------- which tools
+# ---------------------------------------------------------------- which tools (not on --attach)
 SHIP=""                                    # local files to copy into the run folder
+LAUNCH=""
+if [ -z "$ATTACH" ]; then
 PREWARM="$APP/prewarm.py"
 if ! has prewarm.py; then
   [ -f "$TOOLS/prewarm.py" ] || die "no prewarm.py on the box or in $TOOLS"
@@ -151,6 +157,7 @@ if [ -n "$LIST" ]; then RUN_ARGS="$RUN_ARGS --list $BOX_WD/list.txt"; else RUN_A
 [ "$FORCE" -eq 1 ] && RUN_ARGS="$RUN_ARGS --force"
 [ -n "$SINCE" ] && RUN_ARGS="$RUN_ARGS --since $SINCE"
 LAUNCH="cd $BOX_WD || exit 1; setsid -f runuser -u addify -- sh -c '$PY $BOX_WD/prescan_box.py $RUN_ARGS > $BOX_WD/run.log 2>&1; echo \$? > $BOX_WD/exit.code' </dev/null >/dev/null 2>&1"
+fi
 LIVE_IMPORT="d=\$(mktemp -d /tmp/addify-prescan.XXXXXX) && trap 'rm -rf \"\$d\"' EXIT && cat > \"\$d/rows.jsonl\" && $PY $APP/vid_transfer.py import --in \"\$d/rows.jsonl\" --base http://127.0.0.1:8788"
 
 if [ "$DRY" -eq 1 ]; then
@@ -226,9 +233,9 @@ done
 trap - INT
 say "test box run finished, exit $CODE"
 
-for f in report.json prewarm.jsonl export.jsonl list.txt run.log; do
-  scp -q $SSHO "root@$TEST_HOST:$BOX_WD/$f" "$OUT/$f" 2>/dev/null || true
-done
+# one ssh stream for all of them (a missing file is skipped, the rest still arrive)
+tssh "cd $BOX_WD && for f in report.json prewarm.jsonl export.jsonl list.txt run.log; do [ -f \$f ] && echo \$f; done | tar cf - -T -" \
+  | tar xf - -C "$OUT" 2>/dev/null || true
 [ -f "$OUT/report.json" ] || die "no report.json came back (box exit $CODE); see $OUT/run.log"
 [ "$CODE" = "0" ] || { /usr/bin/python3 -c 'import json,sys; print("box error:", json.load(open(sys.argv[1])).get("error"))' "$OUT/report.json"; }
 
@@ -267,3 +274,4 @@ echo
 say "artifacts: $OUT (report.md, report.json, prewarm.jsonl, export.jsonl, run.log)"
 [ "$CODE" = "0" ] || exit 2
 exit 0
+}

@@ -484,7 +484,11 @@ def cmd_render(a):
         why = ""
         if x.get("status") != "saved":
             skips = [v.get("why") for v in lg.get("vid_log") or [] if v.get("stage") == "vid_skip"]
-            why = ", ".join(str(w) for w in skips) or (x.get("why_not") or "")
+            why = ", ".join(str(w) for w in skips)
+            if not why and x.get("result") and x.get("result") != "found":
+                # the engine returns early on these (no vid_skip row); vidcache.confirmed's name
+                why = "result_%s%s" % (x["result"], (" (busy: %s)" % x["busy"]) if x.get("busy") else "")
+            why = why or (x.get("why_not") or "")
         lines.append("| %d | %s | %s | %s | %s | %s | %s | %s | %s |" % (
             i + 1, x.get("status"), x.get("secs", ""),
             _cell(x.get("song") or (x.get("meta") or {}).get("song")),
