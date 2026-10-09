@@ -301,6 +301,15 @@ def _corr_want(store, key, res):
     return None
 
 
+def _vid_corr_agrees(store, vk, r):
+    """Does a video answer carry exactly the correction the file wants for it? (the video's own
+    key first, then the clip/sound rule: the test _corr_sync drops a saved row on). Used by
+    /admin/vid/import, so an answer a user corrected is never brought back."""
+    ce = store.by_key.get(vk)
+    want = ce["right_url"] if ce is not None else _corr_want(store, r.get("url") or "", r)
+    return want == (r.get("correction") or {}).get("url")
+
+
 def _corr_sync(store):
     """Drop cached answers whose correction no longer matches the file: new fixes, changed
     fixes and removed fixes alike. A kept row is exactly one the file agrees with."""
@@ -666,6 +675,13 @@ def _vid_replayed(res):
                 or r.get("replay"))
 
 
+# what a saved row never carries (the scan's own transient marks); /admin/vid/import strips
+# the same keys, so an imported row is shaped exactly like one this engine saved itself
+_VID_RES_DROP = ("cached", "_phone_named", "_phone_nomatch", "phone", "joined", "vid_hit",
+                 "replay", "busy", "vid_ok")
+_VID_BASE_DROP = ("peaks", "wave", "_phone_named", "_phone_nomatch", "phone", "cached")
+
+
 def _vid_put(key, res, base=None):
     """Save a finished answer under its video key when it is confirmed (VC.confirmed) and the
     server stands behind it (never a phone-named one, never a replayed one). Marks
@@ -688,13 +704,10 @@ def _vid_put(key, res, base=None):
     if not ok:
         return False
     now = time.time()
-    keep = {k: v for k, v in r.items()
-            if k not in ("cached", "_phone_named", "_phone_nomatch", "phone", "joined",
-                         "vid_hit", "replay", "busy", "vid_ok")}
+    keep = {k: v for k, v in r.items() if k not in _VID_RES_DROP}
     b = None
     if isinstance(base, dict):
-        b = {k: v for k, v in base.items()
-             if k not in ("peaks", "wave", "_phone_named", "_phone_nomatch", "phone", "cached")}
+        b = {k: v for k, v in base.items() if k not in _VID_BASE_DROP}
     e = {"res": keep, "base": b, "meta": VC.summary(vk, keep, now, now), "t": now, "tv": now,
          "td": now}
     with _VID_LOCK:
@@ -811,6 +824,240 @@ def _admin_delete(raw):
         ds = 1
     E.tlog("admin_delete", 0.0, vkey=vk, vid=had, urls=du, sounds=ds)
     return {"ok": True, "key": vk, "deleted": {"vid": had, "urls": du, "sounds": ds}}
+
+
+# ---- PRESCAN TRANSFER 2026-10-09: answers a test box pre-scanned, brought into this engine.
+# POST /admin/vid/import, body = JSON lines from `vid_transfer.py export` (one kv row each:
+# {"kind": "vid"|"short"|"snd", "k", "epoch", "t", "v"}). OFF unless CRATE_VID_IMPORT=1, and
+# even then answered only on the box itself (RL.is_local: loopback peer, no tunnel/proxy
+# headers, a local Host). With the flag off the path does not exist: the request takes the same
+# route an unknown path always took. Every row is re-checked with the rules this engine applies
+# to its own saves (VC.confirmed, VC.expired, VC.VID_EPOCH, never phone-named or replayed, the
+# corrections file; a "snd" row also the sound cache's keep rules, and only into an engine that
+# runs the lasting sound store, CRATE_SND_PERSIST=1) and keeps its ORIGINAL created time, so an
+# import never extends the 90 days and never replaces a row this engine holds that is as new or
+# newer (or that it cannot date).
+VID_IMPORT_ON = (os.environ.get("CRATE_VID_IMPORT") or "").strip() == "1"
+VID_IMPORT_MAX_BYTES = 5 * 1024 * 1024
+VID_IMPORT_MAX_ROWS = 2000
+_VID_IMPORT_SKEW_S = 300.0      # a created time further than this in the future is refused
+_VK_SHAPE = re.compile(r"^(?:tt:\d{6,25}|ig:[A-Za-z0-9_-]{5,80})$")
+_SID_SHAPE = re.compile(r"^\d{6,25}$")
+# what _sound_cache_put strips (clip-specific bits) plus the scan's transient marks
+_SND_DROP = ("peaks", "wave", "thumb", "handle", "desc", "secs") + _VID_RES_DROP
+
+
+def _disk_row_t(kind, key, code_epoch=False):
+    """Created time of this engine's stored row, or None. Video-store kinds carry VC.VID_EPOCH;
+    code_epoch=True reads a url/sound row under this build's code md5 instead."""
+    if not PERSIST_CACHE:
+        return None
+    try:
+        with _DISK_LOCK:
+            db = _disk_open()
+            if db is None:
+                return None
+            row = db.execute("SELECT t FROM kv WHERE kind=? AND k=? AND epoch=?",
+                             (kind, key, _DISK["epoch"] if code_epoch else VC.VID_EPOCH)
+                             ).fetchone()
+        return float(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def _newer_or_same(have_t, t):
+    """-> the refusal for a row this engine already holds at least as new, else None."""
+    if have_t is None:
+        return None
+    if have_t > t:
+        return "exists_newer"
+    if have_t == t:
+        return "exists_same"
+    return None
+
+
+def _vid_import_vid(k, v, t, now):
+    if not _VK_SHAPE.match(k):
+        return False, "bad_key"
+    if not isinstance(v, dict) or not isinstance(v.get("res"), dict):
+        return False, "bad_value"
+    res = v["res"]
+    if res.get("vkey") != k:
+        return False, "vkey_mismatch"
+    ok, why = VC.confirmed(res)          # the same gate _vid_put and _vid_get apply
+    if not ok:
+        return False, "unconfirmed_" + why
+    if _vid_replayed(res):
+        return False, "replayed"
+    if _phone_unconfirmed(res):
+        return False, "phone_named"
+    if not _vid_corr_agrees(CORR, k, res):
+        return False, "correction"
+    keep = {kk: vv for kk, vv in res.items() if kk not in _VID_RES_DROP}
+    b = v.get("base")
+    b = {kk: vv for kk, vv in b.items() if kk not in _VID_BASE_DROP} if isinstance(b, dict) \
+        else None
+
+    def _when(x):                        # verified / dead-checked: never before t, never future
+        try:
+            x = float(x)
+        except (TypeError, ValueError):
+            return t
+        return t if x != x else min(max(x, t), now)
+    tv, td = _when(v.get("tv")), _when(v.get("td"))
+    why = _newer_or_same(_disk_row_t("vid", k), t)
+    if why:
+        return False, why
+    e = {"res": keep, "base": b, "meta": VC.summary(k, keep, t, tv), "t": t, "tv": tv, "td": td}
+    with _VID_LOCK:      # memory and disk together, so a scan saving this video meanwhile wins
+        have = VID_CACHE.get(k)
+        why = _newer_or_same(float(have.get("t") or 0) if have is not None else None, t)
+        if why:
+            return False, why
+        VID_CACHE[k] = e
+        if len(VID_CACHE) > VID_MAX:
+            for _k, _e in sorted(VID_CACHE.items(), key=lambda kv: kv[1].get("t", 0))[
+                    :len(VID_CACHE) - VID_MAX]:
+                VID_CACHE.pop(_k, None)
+        _vid_disk(k, e)                  # _disk_put("vid", k, ..., t=e["t"]): created time kept
+    return True, "ok"
+
+
+def _vid_import_short(k, v, t):
+    if not (VC.is_short(k) and VC.short_norm(k) == k):
+        return False, "bad_key"
+    full = v.get("full") if isinstance(v, dict) else None
+    if not isinstance(full, str) or len(full) > 2048 or not VC.vkey_of(full):
+        return False, "bad_value"
+    why = _newer_or_same(_disk_row_t("short", k), t)
+    if why:
+        return False, why
+    with _VID_LOCK:
+        if k in SHORT_MAP and not PERSIST_CACHE:     # no stored time to compare: keep ours
+            return False, "exists_same" if SHORT_MAP[k] == full else "exists_undated"
+        if len(SHORT_MAP) > VID_MAX * 2:
+            SHORT_MAP.clear()
+        SHORT_MAP[k] = full
+        _disk_put("short", k, {"full": full}, t=t)
+    return True, "ok"
+
+
+def _snd_api():
+    """The lasting sound store (CRATE_SND_PERSIST, the prescan sound change: SND_T, _SND_LOCK,
+    _snd_confirmed, _snd_trim) when this build has it AND it is on, else None. A "snd" row is
+    only brought into an engine that keeps "snd" rows with their own 90 days; anywhere else it
+    is refused ("snd_store_off"), never half-kept in a dict that forgets its age."""
+    g = globals()
+    if not g.get("SND_PERSIST"):
+        return None
+    if any(n not in g for n in ("SND_T", "_SND_LOCK", "_snd_confirmed", "_snd_trim")):
+        return None
+    return g
+
+
+def _vid_import_snd(k, v, t):
+    """A confirmed answer keyed by TikTok SOUND id: the bar the sound store applies to its own
+    "snd" saves (_snd_confirmed: VC.confirmed, not replayed, not phone-named, the credited sound
+    IS the audio), the sound's correction rule (_corr_sync), its original created time."""
+    api = _snd_api()
+    if api is None:
+        return False, "snd_store_off"
+    if not _SID_SHAPE.match(k):
+        return False, "bad_key"
+    if not isinstance(v, dict):
+        return False, "bad_value"
+    res = v["res"] if isinstance(v.get("res"), dict) else v
+    ok, why = api["_snd_confirmed"](res)
+    if not ok:
+        return False, (why if why in ("replayed", "phone_named", "sound_mismatch")
+                       else "unconfirmed_" + why)
+    _sid = _corr_sid(res)
+    if _sid is not None and _sid != k:
+        return False, "sid_mismatch"
+    ce = CORR.by_sid.get(k)              # the rule _corr_sync applies to SOUND_CACHE
+    if (ce["right_url"] if ce is not None else None) != (res.get("correction") or {}).get("url"):
+        return False, "correction"
+    keep = {kk: vv for kk, vv in res.items() if kk not in _SND_DROP}
+    snd_t, lock = api["SND_T"], api["_SND_LOCK"]
+    have = [x for x in (_disk_row_t("snd", k), _disk_row_t("sound", k, code_epoch=True))
+            if x is not None]
+    why = _newer_or_same(max(have) if have else None, t)
+    if why:
+        return False, why
+    with lock:           # memory and disk together, so a scan saving this sound meanwhile wins
+        m = snd_t.get(k)
+        why = _newer_or_same(float(m.get("t") or 0) if m is not None else None, t)
+        if why:
+            return False, why
+        if m is None and k in SOUND_CACHE and not have:
+            return False, "exists_undated"           # ours, with no time to compare: keep it
+        SOUND_CACHE.pop(k, None)
+        SOUND_CACHE[k] = keep
+        snd_t[k] = {"t": t, "td": 0.0}               # first hit re-checks the upload (_snd_load)
+        api["_snd_trim"]()
+        _disk_put("snd", k, {"res": keep, "meta": VC.summary("snd:" + k, keep, t, t)}, t=t)
+    return True, "ok"
+
+
+def _vid_import_row(row, now):
+    """-> (ok, why, kind) for one exported row."""
+    if not isinstance(row, dict):
+        return False, "bad_row", None
+    kind, k = row.get("kind"), row.get("k")
+    if kind not in ("vid", "short", "snd"):
+        return False, "bad_kind", None
+    if not isinstance(k, str) or not k or len(k) > 512:
+        return False, "bad_key", kind
+    if row.get("epoch") != VC.VID_EPOCH:
+        return False, "epoch", kind
+    try:
+        t = float(row.get("t"))
+    except (TypeError, ValueError):
+        return False, "bad_time", kind
+    if t != t or t <= 0 or t > now + _VID_IMPORT_SKEW_S:
+        return False, "bad_time", kind
+    if VC.expired({"t": t}, now):
+        return False, "expired", kind
+    if kind == "short":
+        ok, why = _vid_import_short(k, row.get("v"), t)
+    elif kind == "snd":
+        ok, why = _vid_import_snd(k, row.get("v"), t)
+    else:
+        ok, why = _vid_import_vid(k, row.get("v"), t, now)
+    return ok, why, kind
+
+
+def _vid_import(body):
+    """-> (http code, {accepted, rejected, reasons, accepted_kinds}) for a JSON-lines body."""
+    t0 = time.time()
+    if not VID_CACHE_ON:
+        return 409, {"error": "the video store is off (CRATE_VID_CACHE=0)"}
+    if len(body) > VID_IMPORT_MAX_BYTES:
+        return 413, {"error": "body too large", "max_bytes": VID_IMPORT_MAX_BYTES}
+    try:
+        lines = [ln for ln in body.decode("utf-8").splitlines() if ln.strip()]
+    except UnicodeDecodeError:
+        return 400, {"error": "body is not utf-8"}
+    if len(lines) > VID_IMPORT_MAX_ROWS:
+        return 413, {"error": "too many rows", "max_rows": VID_IMPORT_MAX_ROWS}
+    CORR.poll()         # a correction added since the last request is honoured first
+    out = {"accepted": 0, "rejected": 0, "reasons": {}, "accepted_kinds": {}}
+    for ln in lines:
+        try:
+            row = json.loads(ln)
+        except ValueError:
+            ok, why, kind = False, "bad_json", None
+        else:
+            ok, why, kind = _vid_import_row(row, time.time())
+        if ok:
+            out["accepted"] += 1
+            out["accepted_kinds"][kind] = out["accepted_kinds"].get(kind, 0) + 1
+        else:
+            out["rejected"] += 1
+            out["reasons"][why] = out["reasons"].get(why, 0) + 1
+    E.tlog("vid_import", time.time() - t0, accepted=out["accepted"], rejected=out["rejected"],
+           reasons=out["reasons"], kinds=out["accepted_kinds"])
+    return 200, out
 
 
 def _answer_peek(key, link):
@@ -10135,6 +10382,29 @@ class H(BaseHTTPRequestHandler):
                 _b = {}
             return self._send(200, _admin_delete((_b or {}).get("key") or
                                                  (parse_qs(u.query).get("key") or [""])[0]))
+        if u.path == "/admin/vid/import" and VID_IMPORT_ON:
+            # PRESCAN TRANSFER: flag off = this branch never runs (the unknown-path route below,
+            # byte for byte as before). Flag on: the box itself only, else the /review 404.
+            try:
+                _loc = RL.is_local(self)
+            except Exception:
+                _loc = False
+            if not _loc:
+                return self._send(404, {"error": "not found"})
+            try:
+                _n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                _n = -1
+            if _n <= 0:
+                return self._send(400, {"error": "bad body size"})
+            if _n > VID_IMPORT_MAX_BYTES:       # refused before a byte of it is read
+                return self._send(413, {"error": "body too large",
+                                        "max_bytes": VID_IMPORT_MAX_BYTES})
+            try:
+                _code, _out = _vid_import(self.rfile.read(_n))
+            except Exception as e:
+                _code, _out = 500, {"error": "import failed: %s" % type(e).__name__}
+            return self._send(_code, _out)
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > 32 * 1024 * 1024:
             return self._send(400, {"error": "bad body size"})
