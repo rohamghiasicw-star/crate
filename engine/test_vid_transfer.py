@@ -369,6 +369,28 @@ class SoundStore(Base):
         hit = S._sound_cache_get({"sound_id": SID, "sound_match_core": 1.0})
         self.assertEqual((hit or {}).get("base_song"), "Heart Attack")
 
+    def test_snd_saved_by_a_scan_round_trips(self):
+        # the sound store's own save path (a scan's _sound_cache_put), aged, exported, wiped,
+        # imported: the same answer and the same created time come back
+        S._sound_cache_put({"sound_id": SID, "sound_match_core": 1.0}, answer())
+        old = time.time() - 3 * DAY
+        with S._DISK_LOCK:
+            db().execute("UPDATE kv SET t=? WHERE kind='snd'", (old,))
+            db().commit()
+        src = disk_row("snd", SID)
+        self.assertIsNotNone(src)
+        dbfile = os.path.join(os.environ["CRATE_PERSIST_DIR"], "results.sqlite")
+        rows = [r for r in VT.export_rows(dbfile) if r["kind"] == "snd"]
+        self.assertEqual([(r["k"], r["t"]) for r in rows], [(SID, old)])
+        S._sound_drop(SID)
+        self.assertIsNone(disk_row("snd", SID))
+        out = self.imp(rows)
+        self.assertEqual(out["accepted_kinds"], {"snd": 1})
+        dst = disk_row("snd", SID)
+        self.assertEqual(dst[:2], src[:2])
+        self.assertEqual(json.loads(dst[2])["res"], json.loads(src[2])["res"])
+        self.assertEqual(S.SND_T[SID]["t"], old)
+
     def test_snd_rules(self):
         out = self.imp([snd_row("7600000000000000001", sound_mismatch=True),
                         snd_row("7600000000000000002", sound_match_core=0.2),
