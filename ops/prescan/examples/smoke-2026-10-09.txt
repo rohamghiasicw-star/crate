@@ -1,0 +1,8 @@
+# Smoke list, 2026-10-09: five current TikTok videos on ORIGINAL sounds (music.original = true
+# on each video page's own data). Found on tiktok.com/tag/spedupsongs and the sound page
+# tiktok.com/music/original-sound-tiwa-7683032126865869601 (762K videos).
+https://www.tiktok.com/@yukii_music0/video/7693784479382523157   # "Basics In Behavior (Blue) [Speed Up]", 2026-10-08, sound "âm thanh gốc - Yukii Music"
+https://www.tiktok.com/@02h.bia/video/7694495291931626760         # "ECLIPSER - Speed-Up", 2026-10-09, sound "original sound"
+https://www.tiktok.com/@sp3d_up/video/7691064901766352141         # "nightcore/Monster" (Skillet), 2026-09-29, sound "original sound"
+https://www.tiktok.com/@_spedupdav/video/7693291498078588212      # speed song, 2026-10-05, sound "original sound - Davx"
+https://www.tiktok.com/@cedandpat/video/7691758824352402740       # 2026-10-01, 1.6M plays, sound "original sound - tiwa"

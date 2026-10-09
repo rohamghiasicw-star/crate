@@ -1,0 +1,8 @@
+# Second smoke list, 2026-10-09, run with --gap 75: links 1 and 5 of smoke-2026-10-09.txt again
+# (both skipped as shazam_partial while the test box took Shazam 429s), plus three more current
+# videos on ORIGINAL sounds (music.original = true on each video page's own data).
+https://www.tiktok.com/@yukii_music0/video/7693784479382523157   # rerun: Basics In Behavior (Blue) [Speed Up]
+https://www.tiktok.com/@cedandpat/video/7691758824352402740       # rerun: sound "original sound - tiwa"
+https://www.tiktok.com/@deefleek1/video/7684005731837693192       # 2026-09-10, 978K plays, sound "original sound" by MR FLEEK (755.8K videos)
+https://www.tiktok.com/@lofysong0/video/7694319917574786335       # 2026-10-08, "Treat You Better" lyrics edit, sound "original sound"
+https://www.tiktok.com/@matriz.audios/video/7694236948923256085   # 2026-10-08, "Toyoki" speed song, sound "original sound - user_^"
