@@ -142,6 +142,171 @@ SOUND_CACHE = {}          # tiktok sound id -> a finished result for that sound
 _NO_SOUND_CACHE = set()
 SOUND_CACHE_MAX = 4000
 
+# ------------------------------------------------ SOUND ANSWERS THAT LAST (prescan, 2026-10-09)
+# Roham 2026-10-09: "ORIGINAL AUDIOS WILL BE YOUR BREAD AND BUTTER". A TikTok original sound is
+# one audio file every video on it plays, so one confirmed answer per sound answers all of them.
+# Today that answer dies on every deploy (the "sound" rows carry the code-md5 epoch) and with
+# everything else once 4000 sounds are held (clear()). CRATE_SND_PERSIST=1:
+#   * an answer the sound cache keeps that ALSO passes the video store's bar (_snd_confirmed:
+#     VC.confirmed, not replayed, not phone-named) is written as kind "snd" too: VC.VID_EPOCH,
+#     its created time, VC.VID_TTL_S, exactly like a "vid" row, so a deploy no longer wipes it;
+#   * "snd" rows load back into SOUND_CACHE at start (epoch, TTL and the keep rules re-checked);
+#   * past CRATE_SND_MAX sounds (default 20000) the OLDEST go, one at a time, not all of them;
+#   * a hit on a "snd" answer expires at 90 days and drops once its crowned upload is gone
+#     (the video store's dead check, at most once per VID_DEAD_RECHECK_S per sound);
+#   * a /base answered by the sound cache replays at a human pace like the video store does
+#     (base view + edits_pending, the /edits half from _REPLAY): see _snd_replay_base.
+# Every guard stays: sound_match_core / sound_mismatch on read and write, corrections drop the
+# sound (and its "snd" row), ?nocache=1 skips it, phone-named answers are never stored.
+# Off (the default) nothing here runs except _sound_drop's delete of a "snd" row, which is a
+# no-op on a store that never had one.
+SND_PERSIST = E._speed_flag("CRATE_SND_PERSIST", False)
+SND_MAX = max(1, int(os.environ.get("CRATE_SND_MAX", "20000") or 20000))
+SND_T = {}     # sid -> {"t": created, "td": last dead check}: the answers that are "snd" rows
+_SND_LOCK = threading.Lock()
+
+
+def _snd_confirmed(res):
+    """-> (ok, why): may this sound answer last 90 days? The video store's own bar."""
+    ok, why = VC.confirmed(res)
+    if not ok:
+        return False, why
+    if _vid_replayed(res):
+        return False, "replayed"
+    if _phone_unconfirmed(res):
+        return False, "phone_named"
+    if not _corr_sound_ok(res):        # the credited sound must BE the clip's audio
+        return False, "sound_mismatch"
+    return True, "ok"
+
+
+def _sound_drop(sid):
+    """Take one sound's answer out of memory and off disk (both the "sound" and "snd" rows)."""
+    SOUND_CACHE.pop(sid, None)
+    SND_T.pop(sid, None)
+    _disk_put("sound", sid, None)
+    _disk_put("snd", sid, None)
+
+
+def _snd_trim():
+    """Hold SOUND_CACHE at SND_MAX: the oldest put goes first (a put re-inserts its sound, so
+    dict order is put order). Memory only, like the video store: the newest rows reload."""
+    while len(SOUND_CACHE) > SND_MAX:
+        try:
+            sid = next(iter(SOUND_CACHE))
+        except (StopIteration, RuntimeError):     # emptied, or resized under us: next put
+            break
+        SOUND_CACHE.pop(sid, None)
+        SND_T.pop(sid, None)
+
+
+def _snd_put(sid, keep, res):
+    ok, why = _snd_confirmed(res)
+    now = time.time()
+    with _SND_LOCK:
+        SOUND_CACHE.pop(sid, None)
+        SOUND_CACHE[sid] = keep
+        if ok:
+            SND_T[sid] = {"t": now, "td": now}
+        else:
+            SND_T.pop(sid, None)
+        _snd_trim()
+    _disk_put("sound", sid, keep, t=now)      # one created time for both rows of this put
+    if ok:
+        _disk_put("snd", sid, {"res": keep, "meta": VC.summary("snd:" + sid, keep, now, now)},
+                  t=now)
+    else:
+        # a newer answer the store does not stand behind replaces the older one on disk too,
+        # so a restart serves what memory served
+        _disk_put("snd", sid, None)
+    E.tlog("snd_store" if ok else "snd_skip", 0.0, sid=sid, why=why)
+    return ok
+
+
+_SID_SHAPE = re.compile(r"^\d{6,25}$")
+
+
+def _snd_import(k, v, t, now=None):
+    """One exported "snd" row ({"res": answer, "meta": ...}, created time t) into this engine,
+    for POST /admin/vid/import. -> (ok, why). The same rules as a save of its own: the flag,
+    the epoch/TTL (checked by the caller on the row, again here on t), _snd_confirmed (the
+    store's bar and the sound guard), the corrections file, never over a row this engine holds
+    that is as new or newer. Keeps the ORIGINAL created time: an import never extends 90 days."""
+    now = time.time() if now is None else now
+    if not SND_PERSIST:
+        return False, "snd_off"
+    if not isinstance(k, str) or not _SID_SHAPE.match(k):
+        return False, "bad_key"
+    res = v.get("res") if isinstance(v, dict) else None
+    if not isinstance(res, dict):
+        return False, "bad_value"
+    try:
+        t = float(t)
+    except (TypeError, ValueError):
+        return False, "bad_time"
+    if t != t or t <= 0 or t > now + 300.0:
+        return False, "bad_time"
+    if VC.expired({"t": t}, now):
+        return False, "expired"
+    ok, why = _snd_confirmed(res)
+    if not ok:
+        return False, (why if why in ("replayed", "phone_named", "sound_mismatch")
+                       else "unconfirmed_" + why)
+    e = CORR.by_sid.get(k)
+    if (e["right_url"] if e is not None else None) != (res.get("correction") or {}).get("url"):
+        return False, "correction"
+    keep = {kk: vv for kk, vv in res.items()
+            if kk not in ("peaks", "wave", "thumb", "handle", "desc", "secs", "cached")}
+    have = None
+    try:
+        with _DISK_LOCK:
+            db = _disk_open()
+            if db is not None:
+                row = db.execute("SELECT MAX(t) FROM kv WHERE k=? AND ((kind='snd' AND epoch=?) "
+                                 "OR (kind='sound' AND epoch=?))",
+                                 (k, VC.VID_EPOCH, _DISK["epoch"])).fetchone()
+                have = float(row[0]) if row and row[0] is not None else None
+    except Exception:
+        have = None
+    with _SND_LOCK:
+        m = SND_T.get(k)
+        if m is not None:
+            have = max(have or 0.0, float(m.get("t") or 0))
+        elif k in SOUND_CACHE and have is None:
+            return False, "exists_newer"       # held, created time unknown: never replace it
+        if have is not None and have >= t:
+            return False, "exists_newer" if have > t else "exists_same"
+        SOUND_CACHE.pop(k, None)
+        SOUND_CACHE[k] = keep
+        SND_T[k] = {"t": t, "td": 0.0}
+        _snd_trim()
+    _disk_put("snd", k, {"res": keep, "meta": VC.summary("snd:" + k, keep, t, t)}, t=t)
+    E.tlog("snd_import", 0.0, sid=k)
+    return True, "ok"
+
+
+def _snd_alive(sid, hit):
+    """A "snd" answer's 90 days and its upload, checked on a hit. -> False when it was dropped."""
+    m = SND_T.get(sid)
+    if m is None:
+        return True                    # an answer this process holds without a "snd" row
+    if VC.expired(m):
+        _sound_drop(sid)
+        E.tlog("snd_drop", 0.0, sid=sid, why="expired")
+        return False
+    exu = ((hit or {}).get("exact") or {}).get("url")
+    now = time.time()
+    if exu and now - float(m.get("td") or 0) > VID_DEAD_RECHECK_S:
+        t0 = time.time()
+        dead = _source_is_dead(exu)
+        E.tlog("snd_dead_check", time.time() - t0, sid=sid, dead=dead)
+        if dead:
+            _sound_drop(sid)
+            E.tlog("snd_drop", 0.0, sid=sid, why="dead_source")
+            return False
+        m["td"] = now
+    return True
+
 
 def _sound_cache_get(src):
     """A finished answer for this clip's SOUND, if another clip already resolved it.
@@ -166,6 +331,8 @@ def _sound_cache_get(src):
         return None
     hit = SOUND_CACHE.get(sid)
     if not hit:
+        return None
+    if SND_PERSIST and not _snd_alive(sid, hit):
         return None
     out = dict(hit)
     out["cached"] = True
@@ -208,12 +375,16 @@ def _sound_cache_put(src, res):
     if (src.get("sound_match_core") is not None
             and src["sound_match_core"] < E.CORE_KEEP) or src.get("sound_mismatch"):
         return
-    if len(SOUND_CACHE) > SOUND_CACHE_MAX:
+    if not SND_PERSIST and len(SOUND_CACHE) > SOUND_CACHE_MAX:
         SOUND_CACHE.clear()
     # strip the clip-specific bits: the waveform, thumbnail and handle belong to the
     # video that was scanned, not to the sound every other video shares.
     keep = {k: v for k, v in res.items()
             if k not in ("peaks", "wave", "thumb", "handle", "desc", "secs", "cached")}
+    if SND_PERSIST:
+        # oldest-first eviction at SND_MAX, and a "snd" row when the answer is confirmed
+        _snd_put(sid, keep, res)
+        return
     SOUND_CACHE[sid] = keep
     _disk_put("sound", sid, keep)
 
@@ -317,16 +488,14 @@ def _corr_sync(store):
         sid = _corr_sid(r)    # every other video on this sound was served the same answer
         if want and sid and sid in SOUND_CACHE and \
                 ((SOUND_CACHE[sid].get("correction") or {}).get("url") != want):
-            SOUND_CACHE.pop(sid, None)
-            _disk_put("sound", sid, None)
+            _sound_drop(sid)      # prescan: the "snd" row too
             ds += 1
     for sid, r in list(SOUND_CACHE.items()):
         e = store.by_sid.get(sid)
         want = e["right_url"] if e is not None else None
         if want == ((r or {}).get("correction") or {}).get("url"):
             continue
-        SOUND_CACHE.pop(sid, None)
-        _disk_put("sound", sid, None)
+        _sound_drop(sid)      # prescan: the "snd" row too
         ds += 1
     dv = 0
     for vk, e in list(globals().get("VID_CACHE", {}).items()):    # SPEED FIX 1
@@ -418,9 +587,10 @@ def _disk_open():
     # SPEED FIX 1: the url/sound rows keep their rule (code md5 + PERSIST_TTL). The video rows
     # ("vid": confirmed answers, "short": short link -> resolved link) carry VC.VID_EPOCH and
     # live VC.VID_TTL_S from when they were made, so a deploy no longer empties them.
-    db.execute("DELETE FROM kv WHERE kind NOT IN ('vid', 'short') AND (epoch != ? OR t < ?)",
+    # prescan 2026-10-09: "snd" (a confirmed answer by TikTok sound id) is a video-rule row too
+    db.execute("DELETE FROM kv WHERE kind NOT IN ('vid', 'short', 'snd') AND (epoch != ? OR t < ?)",
                (_DISK["epoch"], time.time() - PERSIST_TTL))
-    db.execute("DELETE FROM kv WHERE kind IN ('vid', 'short') AND (epoch != ? OR t < ?)",
+    db.execute("DELETE FROM kv WHERE kind IN ('vid', 'short', 'snd') AND (epoch != ? OR t < ?)",
                (VC.VID_EPOCH, time.time() - VC.VID_TTL_S))
     db.commit()
     _DISK["db"] = db
@@ -440,7 +610,7 @@ def _disk_put(kind, key, val, t=None):
             else:
                 # SPEED FIX 1: video rows carry their own epoch and their CREATED time, so a
                 # re-verify never extends the 90 days
-                ep = VC.VID_EPOCH if kind in ("vid", "short") else _DISK["epoch"]
+                ep = VC.VID_EPOCH if kind in ("vid", "short", "snd") else _DISK["epoch"]
                 db.execute("INSERT OR REPLACE INTO kv VALUES (?,?,?,?,?)",
                            (kind, key, ep, time.time() if t is None else float(t),
                             json.dumps({k: v for k, v in val.items() if k != "cached"})))
@@ -493,7 +663,59 @@ def _disk_load():
     except Exception:
         pass
     E.tlog("persist_cache_load", 0.0, urls=nu, sounds=ns, vids=nv, shorts=len(SHORT_MAP))
+    if SND_PERSIST:
+        ns = _snd_load()
     return nu, ns
+
+
+def _snd_load():
+    """CRATE_SND_PERSIST: the "snd" rows back into SOUND_CACHE, beside the "sound" rows the
+    loader above already restored, in one oldest-first order (so _snd_trim evicts the oldest).
+    Each row is re-checked: its epoch and 90 days (the query), the store's bar and the sound
+    guard (_snd_confirmed). A row that fails is deleted. A "sound" row newer than the "snd" row
+    of the same sound is the newer answer and wins. -> how many sounds SOUND_CACHE holds."""
+    nk = nr = 0
+    try:
+        now = time.time()
+        with _DISK_LOCK:
+            db = _disk_open()
+            rows = db.execute("SELECT k, t, v FROM kv WHERE kind='snd' AND epoch=? AND t>=? "
+                              "ORDER BY t DESC LIMIT ?",
+                              (VC.VID_EPOCH, now - VC.VID_TTL_S, SND_MAX)).fetchall()
+            st = dict(db.execute("SELECT k, t FROM kv WHERE kind='sound' AND epoch=?",
+                                 (_DISK["epoch"],)).fetchall())
+        ent = {sid: (float(st.get(sid) or 0.0), val, False)
+               for sid, val in SOUND_CACHE.items()}
+        bad = []
+        for k, t, v in rows:
+            try:
+                res = json.loads(v).get("res")
+            except Exception:
+                res = None
+            ok, why = _snd_confirmed(res) if isinstance(res, dict) else (False, "bad_value")
+            if not ok:
+                bad.append((k, why))
+                continue
+            cur = ent.get(k)
+            if cur is None or float(t) >= cur[0]:
+                ent[k] = (float(t), res, True)
+                nk += 1
+        for k, why in bad:
+            _disk_put("snd", k, None)
+            E.tlog("snd_drop", 0.0, sid=k, why="load_" + why)
+            nr += 1
+        with _SND_LOCK:
+            SOUND_CACHE.clear()
+            SND_T.clear()
+            for sid, (t, val, is_snd) in sorted(ent.items(), key=lambda kv: kv[1][0]):
+                SOUND_CACHE[sid] = val
+                if is_snd:
+                    SND_T[sid] = {"t": t, "td": 0.0}
+            _snd_trim()
+    except Exception:
+        pass
+    E.tlog("snd_load", 0.0, snd=len(SND_T), kept=nk, refused=nr, sounds=len(SOUND_CACHE))
+    return len(SOUND_CACHE)
 
 
 def _cache_drop(key):
@@ -806,8 +1028,7 @@ def _admin_delete(raw):
     sid = _corr_sid(res) if res else None
     ds = 0
     if sid and sid in SOUND_CACHE:
-        SOUND_CACHE.pop(sid, None)
-        _disk_put("sound", sid, None)
+        _sound_drop(sid)      # prescan: the "snd" row too
         ds = 1
     E.tlog("admin_delete", 0.0, vkey=vk, vid=had, urls=du, sounds=ds)
     return {"ok": True, "key": vk, "deleted": {"vid": had, "urls": du, "sounds": ds}}
@@ -891,6 +1112,32 @@ def _answer_get(key, link, half):
     elif half == "find":
         E.tlog("scan_path", time.time() - t0, url=key, path="cache", via=via,
                vkey=c.get("vkey"), oscore=None, total=round(time.time() - t0, 3))
+    return out
+
+
+def _snd_replay_base(key, res):
+    """CRATE_SND_PERSIST: a /base the sound cache answered, shaped like a video-store replay.
+
+    Without this the sound cache handed /base the whole finished answer with no `replay` and
+    edits_pending False, so the page (crate.html call(), REPLAY_NAME_MS hold only on d.replay;
+    onBase renderResult(d, d.edits_pending)) put the card up at once and never ran the
+    exact-version step. Now: `replay` on, and an answer that came out of a hunt goes out as
+    its phase-1 view with edits_pending, its finished half parked in _REPLAY for the /edits
+    (or /edits/stream) the page sends next, which _answer_get hands over first. The page's
+    REPLAY_NAME_MS / REPLAY_HUNT_MS holds then make 0 to 100 a 6-8 s scan. `cached` stays as
+    it was (the page does not count a sound-cache answer as a scan, before or after)."""
+    c = dict(res)
+    c["replay"] = True
+    out = c
+    if c.get("hunted"):
+        _replay_put(key, c)
+        out = VC.base_view(c, None)
+        out["edits_pending"] = True
+        for k in ("replay", "cached", "from_sound_cache", "vkey"):
+            if c.get(k) is not None:
+                out[k] = c[k]
+    E.tlog("snd_replay", 0.0, url=key, sid=c.get("from_sound_cache"),
+           hunted=bool(c.get("hunted")))
     return out
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "crate.html")
@@ -2218,6 +2465,14 @@ def _phase1(url, key, t0):
         for k in ("clip_secs", "peaks", "wave", "thumb", "handle", "desc"):
             if res.get(k) is not None:
                 _sc[k] = res[k]
+        if SND_PERSIST:
+            # prescan: the answer names THIS clip's link and video, not the first one's on
+            # the sound (both rode along in the saved answer)
+            for k in ("url", "vkey"):
+                if res.get(k) is not None:
+                    _sc[k] = res[k]
+                else:
+                    _sc.pop(k, None)
         _sc["secs"] = round(time.time() - t0, 1)
         _prog_set(key, 44, "Known sound")
         E.tlog("sound_cache_hit", time.time() - t0, sid=src.get("sound_id"))
@@ -6256,6 +6511,8 @@ def identify_base(url):
     if old:
         _cleanup((old.get("src") or {}).get("tmp"))
     res, ctx = _p1(url, key)   # APPLYALL 2026-09-29
+    if SND_PERSIST and ctx is None and (res or {}).get("from_sound_cache"):
+        return _snd_replay_base(key, res)     # prescan: the sound cache replays like a vid hit
     if ctx and ctx.get("worth"):
         SESSIONS[key] = ctx              # /edits will finish it and free the audio
     elif ctx:
@@ -9295,8 +9552,7 @@ def _unstore(key, res, sid=None):
     for s_, v in list(SOUND_CACHE.items()):
         if s_ == sid or (v.get("base_song") == (res or {}).get("base_song")
                          and ((v.get("exact") or {}).get("url") == ex)):
-            SOUND_CACHE.pop(s_, None)
-            _disk_put("sound", s_, None)
+            _sound_drop(s_)      # prescan: the "snd" row too
 
 
 def _sweep_tmp():
