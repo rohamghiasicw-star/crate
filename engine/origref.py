@@ -6,13 +6,23 @@ inside the engine while a scan runs (the speed windows alone 3.3-8.0 s), because
 the scan competes for the one interpreter. Run as a short-lived subprocess it has a core of its
 own. server.py calls `run()` (which spawns this file); the functions below are the measurement.
 
-usage (what server.py runs): origref.py <clip.wav> <preview url> <tmp dir> <label>
-prints one JSON object. Audio: the preview and the two aligned segments are written in <tmp>
-(the scan's own temp dir) and removed before it exits; nothing is kept."""
+usage (what server.py runs): origref.py <clip.wav> <preview url> <work dir> <label>
+prints one JSON object.
+
+AUDIO IS NEVER LEFT ON DISK (hard-rules.md, Retention). `run()` makes a private work dir for
+each check INSIDE the scan's temp dir, the child writes every file there (the preview, the two
+aligned segments, and verify's own mkstemp decodes: the child points tempfile at the work dir),
+the child runs in its own process group so a timeout kills it AND its ffmpeg / fpcalc children,
+and the work dir is removed in a finally on every path (answer, error, timeout). Review
+2026-10-07 D5: subprocess.run(timeout=) SIGKILLed only the child, its finally blocks never ran,
+and verify's decodes of the user's clip stayed in the system TMPDIR."""
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -110,20 +120,55 @@ def measure(audio, url, tmp, label):
     return out
 
 
+def _kill_group(p):
+    """The child and everything it started (ffmpeg, fpcalc): its own process group."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError:
+        try:
+            p.kill()
+        except OSError:
+            pass
+    try:
+        p.wait(timeout=5)
+    except Exception:
+        pass
+
+
 def run(audio, url, tmp, label, timeout=20.0):
     """Measure in a child process (see the module note). -> the measure() dict, or a dict with
-    `why` when the child failed or ran past `timeout` (the child is killed; the scan's temp dir,
-    where it wrote, is removed with the scan)."""
+    `why` when the child failed or ran past `timeout`. The child writes only into a private
+    work dir made here (inside the scan's `tmp` when it exists); a timeout kills the child's
+    whole process group, and the work dir is removed before this returns, on every path."""
     t0 = time.time()
+    work, p = None, None
     try:
-        p = subprocess.run([sys.executable, os.path.join(HERE, "origref.py"), audio, url, tmp,
-                            label], capture_output=True, timeout=timeout, check=False,
-                           cwd=HERE)
-        out = json.loads((p.stdout or b"{}").decode("utf-8", "replace").strip().splitlines()[-1])
+        base = tmp if (tmp and os.path.isdir(tmp)) else None
+        work = tempfile.mkdtemp(prefix="oref_%s_" % label, dir=base)
+        p = subprocess.Popen([sys.executable, os.path.join(HERE, "origref.py"), audio, url, work,
+                              label], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             cwd=HERE, start_new_session=True)
+        try:
+            so, _ = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(p)
+            raise
+        out = json.loads((so or b"{}").decode("utf-8", "replace").strip().splitlines()[-1])
     except subprocess.TimeoutExpired:
         out = {"src": label, "why": "worker_timeout"}
     except Exception as ex:
         out = {"src": label, "why": "worker %s" % type(ex).__name__}
+    finally:
+        if p is not None:
+            if p.poll() is None:
+                _kill_group(p)
+            try:
+                if p.stdout is not None:
+                    p.stdout.close()
+            except OSError:
+                pass
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
     out["t_proc"] = round(time.time() - t0, 2)
     return out
 
@@ -134,4 +179,7 @@ if __name__ == "__main__":
     if len(a) != 4:
         print(json.dumps({"why": "usage"}))
         sys.exit(2)
+    # every temp file this process makes (verify's mkstemp decodes included) goes in the work
+    # dir run() removes; an explicit tempdir makes mkstemp fail rather than fall back to /tmp
+    tempfile.tempdir = a[2]
     print(json.dumps(measure(a[0], a[1], a[2], a[3])))
