@@ -1,0 +1,35 @@
+# Read-only: prints the App Store review state of Addify's versions. Changes nothing in
+# App Store Connect. Runs only on a push to the asc-status branch.
+name: App Store review status (read only)
+on:
+  push:
+    branches: [asc-status]
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install -q pyjwt cryptography requests
+      - env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          ISS: ${{ secrets.ASC_ISSUER_ID }}
+          P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 - <<'PY'
+          import os, time, jwt, requests
+          now = int(time.time())
+          tok = jwt.encode({"iss": os.environ["ISS"], "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"},
+                           os.environ["P8"], algorithm="ES256", headers={"kid": os.environ["KID"]})
+          h = {"Authorization": "Bearer " + tok}
+          base = "https://api.appstoreconnect.apple.com/v1"
+          r = requests.get(base + "/apps/6815190677/appStoreVersions?limit=5", headers=h)
+          print("versions", r.status_code)
+          for v in r.json().get("data", []):
+              a = v["attributes"]
+              print("VERSION", a.get("versionString"), "| appStoreState:", a.get("appStoreState"),
+                    "| appVersionState:", a.get("appVersionState"), "| created:", a.get("createdDate"))
+          r = requests.get(base + "/reviewSubmissions?filter[app]=6815190677&limit=5", headers=h)
+          print("submissions", r.status_code)
+          for v in r.json().get("data", []):
+              a = v["attributes"]
+              print("SUBMISSION", a.get("state"), "| submitted:", a.get("submittedDate"), "| platform:", a.get("platform"))
+          PY
