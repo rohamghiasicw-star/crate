@@ -52,7 +52,9 @@ def hit(off, moff):
 
 
 CLEAN_REF = {"src": "itunes", "confirm": True, "speed": 0.9998, "confident": True,
-             "aligned": True, "fp": 0.74, "slope_delta": 0.05, "overlap_s": 18.0}
+             "aligned": True, "fp": 0.74, "slope_delta": 0.05, "overlap_s": 18.0,
+             "bass_delta": 0.1,
+             "meter": {"eq_low": 0.1, "eq_hi": -0.3, "tail": 0.01, "mod": 0.2, "wcc": 0.95}}
 
 
 def done(v):
@@ -152,9 +154,51 @@ class CreatorBeforeDecision(Base):
         self.assertIn("caption_names_edit", d["vetoes"])
 
     def test_a_failed_lookup_is_not_pending(self):
-        d = S._orig_decide(make_ctx(creator_h=(_Ex(), done({"ok": False}))))
+        ctx = make_ctx(creator_h=(_Ex(), done({"ok": False})))
+        ctx["src"]["desc"] = "date night #fyp"           # the clip's own caption was read
+        d = S._orig_decide(ctx)
         self.assertEqual(d["vetoes"], [])
         self.assertTrue(d["fast"])
+
+    def test_a_failed_lookup_on_a_clip_with_no_caption_vetoes(self):
+        # review 2026-10-07 (low): embed-fetched clip, no oEmbed caption, lookup ok=False:
+        # there is no text at all to read, which is not "no edit word"
+        d = S._orig_decide(make_ctx(creator_h=(_Ex(), done({"ok": False}))))
+        self.assertIn("creator_failed", d["vetoes"])
+        self.assertFalse(d["fast"])
+
+    def test_raw_owner_tags_the_tag_set_misses_veto(self):
+        ev = {"ok": True, "origin_tags": ["8daudio", "fyp"], "origin_edit_tags": []}
+        d = S._orig_decide(make_ctx(creator_h=(_Ex(), done(ev))))
+        self.assertIn("owner_tags_edit", d["vetoes"])
+
+    def test_lost_evidence_vetoes(self):
+        # review 2026-10-07 (low): tikwm refused the comments, so hint_texts is empty; that is
+        # not "no edit word in the comments"
+        t = S.E.ScanTally()
+        t.lost("tikwm comments: refused 3 times")
+        d = S._orig_decide(make_ctx(_scan_tally=t))
+        self.assertIn("evidence_lost", d["vetoes"])
+        self.assertFalse(d["fast"])
+        t2 = S.E.ScanTally()
+        t2.lost("sound page: 0 hints")
+        tok = S.E.SCAN_TALLY.set(t2)                   # the cold path: the request's tally
+        try:
+            d = S._orig_decide(make_ctx())
+        finally:
+            S.E.SCAN_TALLY.reset(tok)
+        self.assertIn("evidence_lost", d["vetoes"])
+
+    def test_a_ref_without_the_edit_meter_is_not_fast(self):
+        # review D1: fp / slope clean but nothing else read (what the old worker returned)
+        ref = {k: v for k, v in CLEAN_REF.items() if k not in ("meter", "bass_delta")}
+        d = S._orig_decide(make_ctx(oref_fut=done(ref)))
+        self.assertFalse(d["clean_ref"])
+        self.assertFalse(d["fast"])
+        d = S._orig_decide(make_ctx(oref_fut=done(dict(CLEAN_REF, meter=dict(
+            CLEAN_REF["meter"], tail=0.19, mod=0.95)))))
+        self.assertIn("ref_reverb", d["vetoes"])
+        self.assertFalse(d["fast"])
 
     def test_the_credit_reads_hyphenated_edit_words(self):
         ctx = make_ctx()
@@ -166,7 +210,7 @@ class CreatorBeforeDecision(Base):
         d = S._orig_decide(make_ctx(oref_fut=done(dict(CLEAN_REF, fp=0.66,
                                                        slope_delta=0.208))))
         self.assertEqual(d["vetoes"], [])
-        self.assertGreaterEqual(d["score"], 80)
+        self.assertLess(d["score"], 80)              # review D1: no partial credit any more
         self.assertFalse(d["fast"])
 
 

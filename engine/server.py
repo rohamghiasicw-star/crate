@@ -5069,10 +5069,50 @@ FAST_SHADOW_RATE = float(os.environ.get("CRATE_FAST_SHADOW", "0.10") or 0)
 ORIG_REF_WAIT_S = float(os.environ.get("CRATE_ORIG_REF_WAIT_S", "3.0") or 3.0)
 
 
+def _tallies_lost(*tallies):
+    """Pieces of evidence this scan lost (E.ScanTally.ev_lost), over the distinct tallies given:
+    the /base half that parked the hunt and the request's own (the cold /edits and /find path
+    runs phase 1 under the request's tally)."""
+    seen, n = set(), 0
+    for t in tallies:
+        if t is None or id(t) in seen:
+            continue
+        seen.add(id(t))
+        try:
+            n += int(t.snapshot().get("ev_lost") or 0)
+        except Exception:
+            pass
+    return n
+
+
+class _TallySum(object):
+    """Several E.ScanTally read as one (each distinct tally counted once), for _hunt_starved."""
+
+    def __init__(self, *tallies):
+        seen, self.parts = set(), []
+        for t in tallies:
+            if t is not None and id(t) not in seen:
+                seen.add(id(t))
+                self.parts.append(t)
+
+    def snapshot(self):
+        out = {"dl": 0, "killed": 0, "ev_lost": 0, "ev_why": []}
+        for t in self.parts:
+            s_ = t.snapshot()
+            for k in ("dl", "killed", "ev_lost"):
+                out[k] += int(s_.get(k) or 0)
+            out["ev_why"] += list(s_.get("ev_why") or [])
+        return out
+
+
 def _orig_inputs(ctx):
     """What phase 1 already knows, in fastorig's terms (no new measurement here)."""
     src, fp, res = ctx.get("src") or {}, ctx.get("fp") or {}, ctx.get("res") or {}
     return {"shazam_reliable": bool(ctx.get("shazam_reliable")),
+            # REVIEW 2026-10-07: a scan that lost evidence (a comment page tikwm refused, a
+            # sound-page lane that missed its wall) reads "no edit word" where it read nothing;
+            # unsure means the full hunt (and the job() starve guard then judges it as today)
+            "evidence_lost": _tallies_lost(ctx.get("_scan_tally"), E.SCAN_TALLY.get()),
             "base_uncertain": res.get("base_uncertain"), "shazam_partial": res.get("shazam_partial"),
             "from_caption": res.get("from_caption"), "from_credit": res.get("from_credit"),
             "rendition": res.get("rendition") or fp.get("rendition"),
@@ -5239,10 +5279,18 @@ def _orig_decide(ctx):
                                 if _hangs else 0.0)
             if _ev is None and _hangs and not _ch[1].done():
                 x["creator_pending"] = True
+            elif _ev is None and _hangs and not (x.get("desc") or "").strip():
+                # REVIEW 2026-10-07: the lookup finished but failed (embed 503 backoff) on a
+                # clip with no caption of its own: no text at all to read, so not "no edit"
+                x["creator_failed"] = True
         _ev = _ev or {}
         x["desc"] = " ".join(t for t in (x.get("desc"), _ev.get("caption"),
                                          _ev.get("origin_desc")) if t)
-        x["owner_edit_tags"] = list(_ev.get("origin_edit_tags") or [])
+        # the owner's edit tags, plus any raw caption / owner tag the edit-word check names
+        # (creator_check's tag set holds only "8d", not "8daudio"; review D2)
+        x["owner_edit_tags"] = list(_ev.get("origin_edit_tags") or []) + [
+            t for t in list(_ev.get("caption_tags") or []) + list(_ev.get("origin_tags") or [])
+            if isinstance(t, str) and FO.AUDIO_EDIT.search("#" + t)]
     d = FO.decide(x)
     d["secs"] = round(time.time() - t0, 3)
     ctx["oscore"] = d["score"]
@@ -5253,8 +5301,9 @@ def _orig_decide(ctx):
            covered=d.get("covered"), clean_ref=d.get("clean_ref"), clip_secs=x.get("clip_secs"),
            ref={k: _r.get(k) for k in ("src", "title", "why", "confirm", "speed", "confident",
                                         "aligned", "align_fp", "overlap_s", "at", "fp", "core",
-                                        "arr", "slope_delta", "bass_delta", "vspeed", "t_lookup",
-                                        "t_fetch", "t_speed", "t_total") if k in _r},
+                                        "arr", "slope_delta", "bass_delta", "vspeed", "meter",
+                                        "meter_why", "t_lookup", "t_fetch", "t_speed",
+                                        "t_total", "t_proc") if k in _r},
            nbase=len(FO.base_hits(x)), slope=FO.align_slope(FO.base_hits(x)),
            early_ref=bool(ctx.get("oref_early")),
            bh=[[h.get("off"), h.get("span"), h.get("moff"), h.get("fs"), h.get("ts")]

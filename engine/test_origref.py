@@ -1,4 +1,6 @@
 """Offline tests for SPEED FIX 2's studio check (origref.py), review 2026-10-07:
+  D1  the edit meter tells a plain copy of the studio recording from the 1.0x edits that read
+      inside the fp / slope clean band (bass shelf, flat reverb, echo, 8D pan + echo);
   D5  a check killed at its timeout leaves no audio on disk (the child, its ffmpeg / fpcalc and
       verify's own temp decodes all lived in a work dir that is removed on every path).
 Synthetic audio only (numpy), made in a temp dir removed at exit; no network, no Shazam.
@@ -65,6 +67,105 @@ def song(seed=1, secs=30.0, sr=SR):
     return 0.5 * x / np.max(np.abs(x))
 
 
+def shelf(x, gain_db, f0=100.0, sr=SR):
+    """Zero-phase low shelf (+gain_db below f0)."""
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1.0 / sr)
+    g = 10 ** (gain_db / 20.0)
+    return np.fft.irfft(X * (1 + (g - 1) / (1 + (f / f0) ** 4)), len(x))
+
+
+def convolve(x, ir):
+    nf = 1
+    while nf < len(x) + len(ir):
+        nf *= 2
+    return np.fft.irfft(np.fft.rfft(x, nf) * np.fft.rfft(ir, nf), nf)[:len(x)]
+
+
+def reverb(x, rt60, wet, seed=3, sr=SR):
+    rng = np.random.default_rng(seed)
+    L = int(min(3.0, 1.2 * rt60) * sr)
+    t = np.arange(L) / sr
+    ir = rng.standard_normal(L) * 10 ** (-3 * t / rt60)
+    ir[:int(0.01 * sr)] = 0
+    y = convolve(x, ir / np.sqrt(np.sum(ir ** 2)))
+    return (1 - wet) * x + wet * y * np.std(x) / np.std(y)
+
+
+def echo(x, ms, gain=0.35, sr=SR):
+    d = int(ms / 1000.0 * sr)
+    y = x.copy()
+    for k in (1, 2, 3):
+        y[k * d:] += (gain ** k) * x[:-k * d]
+    return y
+
+
+def eight_d(x, hz=0.125, sr=SR):
+    """Autopan (constant power) with a short echo, summed to mono as the engine hears it."""
+    th = (np.pi / 4) * (1 + np.sin(2 * np.pi * hz * np.arange(len(x)) / sr))
+    left, right = x * np.cos(th), x * np.sin(th)
+    return echo(0.5 * (left + right), 60, 0.3)
+
+
+def codec_noise(x, db=-45.0, seed=9):
+    """A stand-in for codec loss: broadband noise well under the music."""
+    return x + np.random.default_rng(seed).standard_normal(len(x)) * np.std(x) * 10 ** (db / 20.0)
+
+
+def meter_case(clip_fx, seed=1, offset_s=4.0, mis_s=0.07):
+    """The studio track, and a clip of it with clip_fx applied, cut at a chromaprint-quantised
+    misalignment (the meter must re-align it)."""
+    s = song(seed)
+    c = clip_fx(s)
+    a0 = int((offset_s + mis_s) * SR)
+    xc = c[a0:a0 + 16 * SR]
+    xp = codec_noise(s[int(offset_s * SR):int(offset_s * SR) + 16 * SR], -50.0, seed + 1)
+    return OR.edit_meter(xc, xp, SR)
+
+
+def vetoes_of(m):
+    return FO.meter_vetoes({"aligned": True, "bass_delta": 0.0, "meter": m})
+
+
+class EditMeterD1(unittest.TestCase):
+    def test_a_plain_copy_reads_clean(self):
+        for seed in (1, 2, 3):
+            m = meter_case(lambda s: codec_noise(s), seed=seed)
+            self.assertIsNotNone(m)
+            self.assertEqual(vetoes_of(m), [], (seed, m))
+            self.assertLess(abs(m["lag_ms"] + 70.0), 1.0, m)     # re-aligned to the sample
+
+    def test_a_level_change_alone_reads_clean(self):
+        m = meter_case(lambda s: codec_noise(0.5 * s))
+        self.assertEqual(vetoes_of(m), [], m)
+
+    def test_a_mild_bass_shelf_is_caught(self):
+        for g in (3.0, 5.0):
+            m = meter_case(lambda s, g=g: codec_noise(shelf(s, g)))
+            self.assertIn("ref_bass", vetoes_of(m), (g, m))
+
+    def test_flat_reverb_is_caught(self):
+        for rt, wet in ((0.6, 0.2), (1.0, 0.3), (1.5, 0.4)):
+            m = meter_case(lambda s, rt=rt, wet=wet: codec_noise(reverb(s, rt, wet)))
+            v = vetoes_of(m)
+            self.assertTrue({"ref_reverb", "ref_8d"} & set(v), (rt, wet, m))
+
+    def test_echo_is_caught(self):
+        for ms in (120, 250):
+            m = meter_case(lambda s, ms=ms: codec_noise(echo(s, ms)))
+            self.assertIn("ref_reverb", vetoes_of(m), (ms, m))
+
+    def test_8d_pan_and_echo_is_caught(self):
+        m = meter_case(lambda s: codec_noise(eight_d(s)))
+        self.assertTrue({"ref_reverb", "ref_8d"} & set(vetoes_of(m)), m)
+
+    def test_too_short_or_silent_is_unread(self):
+        s = song(1)
+        self.assertIsNone(OR.edit_meter(s[:3 * SR], s[:3 * SR], SR))
+        z = np.zeros(16 * SR)
+        self.assertIsNone(OR.edit_meter(z, z, SR))
+
+
 def _wav(x, path, sr=SR):
     y = (np.clip(x, -1, 1) * 32767).astype("<i2")
     with wave.open(path, "wb") as w:
@@ -107,6 +208,7 @@ class NoAudioLeftD5(unittest.TestCase):
         out = OR.run(self.clip, self.pv, scan_tmp, "itunes", timeout=60)
         self.__class__.t_full = time.time() - t0
         self.assertTrue(out.get("aligned"), out)
+        self.assertIsNotNone(out.get("meter"), out)
         self.assertEqual(self._left(scan_tmp), [])
 
     def test_a_check_killed_at_any_point_leaves_no_audio(self):

@@ -28,7 +28,11 @@ def clean():
                      hit(6.0, 7.06, fs=0.035, ts=0.035, title="Heart Attack", sid="669692322",
                          rate=0.85)],
             "ref": {"confirm": True, "speed": 0.9998, "confident": True, "aligned": True,
-                    "fp": 0.74, "slope_delta": 0.05}}
+                    "fp": 0.74, "slope_delta": 0.05, "bass_delta": 0.1, "meter": dict(METER)}}
+
+
+# the edit meter on a plain original against its own studio preview (origref.edit_meter)
+METER = {"eq_low": 0.1, "eq_hi": -0.3, "tail": 0.01, "mod": 0.2, "wcc": 0.95}
 
 
 class Clean(unittest.TestCase):
@@ -114,6 +118,12 @@ class Clean(unittest.TestCase):
         x["ref"]["slope_delta"] = 0.3
         self.assertFalse(FO.decide(x)["fast"])
 
+    def test_no_partial_credit(self):
+        # review D1: the old 6-point bands (fp 0.62-0.70, |EQ| 0.20-0.40) are gone
+        for fp, sd in ((0.66, 0.05), (0.74, 0.30), (0.63, 0.38)):
+            p = FO.ref_points({"confirm": True, "aligned": True, "fp": fp, "slope_delta": sd})
+            self.assertEqual(p["ref_fp"] if fp < FO.REF_FP_STRONG else p["ref_eq"], 0, (fp, sd))
+
     def test_partial_credit_never_opens_the_fast_path(self):
         # review 2026-10-07: a 1.0x reverb or mild bass-boost edit Shazam names in steady
         # windows reads fp 0.62-0.70 / |EQ| 0.20-0.40 on the located stretch (reverb alone 0.208)
@@ -142,6 +152,101 @@ class Clean(unittest.TestCase):
     def test_the_counter_speed_hits_of_the_sweep_do_not_count(self):
         # a 0.85x probe naming the song is the sweep doing its job, not a second song
         self.assertNotIn("second_song", FO.vetoes(clean()))
+
+
+class ReviewD1(unittest.TestCase):
+    """Review 2026-10-07 D1: 1.0x mild bass boost, flat reverb / echo and 8D renders read fp and
+    slope INSIDE the clean band (the reviewer's measured ranges below), so before the fix they
+    went fast. The edit meter's readings (measured with origref.aligned on the same renders,
+    meter_lab.py) veto them; a ref with no meter is not clean."""
+    CASES = (
+        # (name, fp, slope, bass_delta, meter overrides, expected veto)
+        ("+3 dB shelf", 0.93, 0.11, 0.68, {"eq_low": 1.48}, "ref_bass"),
+        ("+5 dB shelf", 0.92, 0.186, 1.2, {"eq_low": 2.57}, "ref_bass"),
+        ("flat reverb 0.6 s", 0.91, -0.095, 0.27, {"tail": 0.068, "mod": 0.69}, "ref_reverb"),
+        ("flat reverb 1.0 s", 0.886, 0.18, 0.37, {"tail": 0.193, "mod": 0.95}, "ref_reverb"),
+        ("echo 120 ms", 0.858, -0.17, -0.32, {"tail": 0.283, "mod": 0.95}, "ref_reverb"),
+        ("8D pan + echo", 0.839, -0.099, -0.01, {"tail": 0.11, "mod": 1.01}, "ref_8d"),
+    )
+
+    def test_mild_edits_inside_the_clean_band_never_go_fast(self):
+        for name, fp, sd, bd, mo, veto in self.CASES:
+            x = clean()
+            x["ref"].update(fp=fp, slope_delta=sd, bass_delta=bd)
+            x["ref"]["meter"] = dict(METER, **mo)
+            d = FO.decide(x)
+            self.assertIn(veto, d["vetoes"], name)
+            self.assertFalse(d["clean_ref"], name)
+            self.assertFalse(d["fast"], name)
+
+    def test_the_old_reading_without_a_meter_is_not_clean(self):
+        # exactly what the pre-fix code sent fast: fp / slope clean, nothing else read
+        for name, fp, sd, bd, _mo, _v in self.CASES:
+            x = clean()
+            x["ref"] = {"confirm": True, "speed": 0.9998, "confident": True, "aligned": True,
+                        "fp": fp, "slope_delta": sd}
+            d = FO.decide(x)
+            self.assertFalse(d["clean_ref"], name)
+            self.assertFalse(d["fast"], name)
+        x = clean()
+        x["ref"]["meter"] = None                    # the meter could not be read
+        self.assertFalse(FO.decide(x)["fast"])
+        x = clean()
+        x["ref"]["meter"] = dict(METER, tail=None)
+        self.assertFalse(FO.decide(x)["fast"])
+
+    def test_verify_bass_delta_alone_vetoes(self):
+        x = clean()
+        x["ref"]["bass_delta"] = 1.6
+        self.assertIn("ref_bass", FO.decide(x)["vetoes"])
+
+    def test_meter_inside_its_bands_stays_fast(self):
+        x = clean()
+        x["ref"]["meter"] = dict(METER, eq_low=-FO.REF_BASS_DB, tail=FO.REF_TAIL_MAX,
+                                 mod=FO.REF_MOD_DB)
+        self.assertTrue(FO.decide(x)["fast"])
+
+    def test_meter_is_read_only_on_the_located_stretch(self):
+        x = clean()
+        x["ref"].update(aligned=False, meter=dict(METER, tail=0.9))
+        self.assertNotIn("ref_reverb", FO.vetoes(x))
+
+
+class ReviewD2(unittest.TestCase):
+    """Review 2026-10-07 D2: run-together hashtags and 8D spellings did not veto."""
+    VETO = ("#8daudio", "#8daudio #fyp", "8daudio", "#8Daudio", "#8dmusic", "#8dsongs",
+            "#8dsound", "8D audio", "8D-audio", "#8d_audio", "#8d", "#slowedreverb",
+            "slowedreverb", "#spedup", "spedup", "#bassboosted", "bassboosted", "#reverb",
+            "#slowedandreverb", "slowedandreverb", "#spedupversion", "spedupversion",
+            "sped  up", "lofi version", "lo-fi", "#lofi", "speeded up", "pitch up",
+            "boosted bass", "nightcoreedit", "ultraslowed", "best part looped", "extended mix",
+            "slowed + reverb")
+    PLAIN = ("Heart Attack", "superspeed upgrade", "my remixer friend", "slowly",
+             "flipped my car", "48d left", "#148daysleft", "8days", "#fyp #foryou #heartattack",
+             "nuts (feat. rainy bear)", "Freaky Friday", "speedrun")
+
+    def test_table(self):
+        for t in self.VETO:
+            self.assertTrue(FO.AUDIO_EDIT.search(t), t)
+            x = clean()
+            x["desc"] = t
+            self.assertIn("caption_names_edit", FO.decide(x)["vetoes"], t)
+            x = clean()
+            x["hints"] = ["omg " + t]
+            self.assertIn("comments_name_edit", FO.decide(x)["vetoes"], t)
+        for t in self.PLAIN:
+            self.assertFalse(FO.AUDIO_EDIT.search(t), t)
+
+    def test_owner_tags_and_lost_evidence_veto(self):
+        x = clean()
+        x["owner_edit_tags"] = ["8daudio"]
+        self.assertIn("owner_tags_edit", FO.decide(x)["vetoes"])
+        x = clean()
+        x["evidence_lost"] = 1
+        self.assertIn("evidence_lost", FO.decide(x)["vetoes"])
+        x = clean()
+        x["creator_failed"] = True
+        self.assertIn("creator_failed", FO.decide(x)["vetoes"])
 
 
 class Vetoes(unittest.TestCase):
