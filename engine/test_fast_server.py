@@ -549,25 +549,55 @@ class Item1MeasureByDefault(Base):
         S.FAST_ORIGINAL = "measure"
         ctx = make_ctx()
         self.assertEqual(self._phase2_until_the_hunt(ctx), "HUNT")
-        self.assertTrue(ctx["_fast_would"]["fast"])          # it WOULD have gone fast
+        d = ctx["_fast_measure_fut"].result(timeout=5)
+        self.assertTrue(d["fast"])                           # it WOULD have gone fast
         self.assertNotIn(KEY, S.CACHE)                       # but nothing fast was saved
         self.assertNotIn(VK, S.VID_CACHE)
+
+    def test_measure_never_holds_the_hunt(self):
+        S.FAST_ORIGINAL = "measure"
+        S.ORIG_REF_WAIT_S = 1.5
+        ctx = make_ctx(oref_fut=Future())                    # a studio check still running
+        t0 = time.time()
+        self.assertEqual(self._phase2_until_the_hunt(ctx), "HUNT")
+        self.assertLess(time.time() - t0, 0.5)               # the hunt started at once
+        d = ctx["_fast_measure_fut"].result(timeout=5)       # the decision still lands
+        self.assertFalse(d["fast"])
+        self.assertGreaterEqual(d["secs"], 1.4)              # after the same window "on" waits
 
     def test_control_on_still_answers_fast(self):
         S.FAST_ORIGINAL = "on"
         out = self._phase2_until_the_hunt(make_ctx())
         self.assertTrue(out["fast_original"])
 
-    def _run_p2(self, full):
+    def _run_p2(self, full, fut=None):
+        fut = fut or done({"score": 100, "fast": True, "secs": 0.2})
+
         def fake(ctx, on_cand=None):
-            ctx["_fast_would"] = {"score": 100, "fast": True}
+            ctx["_fast_measure_fut"] = fut
             return full
         S._phase2 = fake
         ctx = make_ctx()
         out = S._p2(ctx)
         self.assertIs(out, full)                    # the user gets the full answer, untouched
-        self.assertNotIn("_fast_would", ctx)
-        return tlog_rows("fast_measure")[-1]
+        self.assertNotIn("_fast_measure_fut", ctx)
+        rows = tlog_rows("fast_measure")
+        return rows[-1] if rows else None
+
+    def test_a_decision_still_running_logs_when_it_lands(self):
+        fut = Future()
+        n0 = len(tlog_rows("fast_measure"))
+        self._run_p2(full_edit(speed="as posted", exact=None, candidates=[]), fut)
+        self.assertEqual(len(tlog_rows("fast_measure")), n0)    # nothing yet, and no wait
+        fut.set_result({"score": 95, "fast": True, "secs": 2.9})
+        row = tlog_rows("fast_measure")[-1]
+        self.assertTrue(row["agree"])
+        self.assertEqual(row["score"], 95)
+
+    def test_a_decision_that_said_full_logs_no_comparison(self):
+        n0 = len(tlog_rows("fast_measure"))
+        self._run_p2(full_edit(), done({"score": 40, "fast": False}))
+        self.assertEqual(len(tlog_rows("fast_measure")), n0)
 
     def test_measure_logs_a_crown_the_fast_path_would_have_missed(self):
         row = self._run_p2(full_edit(speed="as posted", exact={

@@ -5059,8 +5059,9 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
 # REVIEW 2026-10-15 (item 1): the DEFAULT IS measure, not on. The A/B on the test box never
 # saw the fast path fire (its Shazam was partial on 26 of 34 decisions), so no fast answer has
 # been checked against real traffic, and a gate clip (kelthraxx) was never scored. In measure
-# mode a scan the fast path WOULD have answered runs the full hunt as today and logs
-# fast_measure (does the full answer match the fast one: agree / why, _fast_disagrees). Turn
+# mode the decision runs on its own thread (_orig_measure_start: the hunt never waits for it),
+# the full hunt runs as today, and a scan the fast path WOULD have answered logs fast_measure
+# (does the full answer match the fast one: agree / why, _fast_disagrees). Turn
 # it on (CRATE_FAST_ORIGINAL=on) only after the five-clip gate passes twice in ABAB order on a
 # backend whose Shazam is not partial, with at least one real plain original taking the fast
 # path and agreeing, and fast_measure reading agree on real traffic.
@@ -5273,10 +5274,11 @@ def _oref_log_unread(fut, key, why):
         pass
 
 
-def _orig_decide(ctx):
-    """Score this clip (fastorig.decide), log it, and keep it on ctx for the scan_path row."""
+def _orig_decide(ctx, x=None):
+    """Score this clip (fastorig.decide), log it, and keep it on ctx for the scan_path row.
+    `x` = _orig_inputs(ctx) already read (measure mode reads it before the hunt starts)."""
     t0 = time.time()
-    x = _orig_inputs(ctx)
+    x = _orig_inputs(ctx) if x is None else x
     _f = ctx.pop("oref_fut", None)
     if FO.needs_ref(x) or (FAST_ORIGINAL == "measure" and not FO.vetoes(x)):
         if _f is None:
@@ -5685,18 +5687,19 @@ def _phase2(ctx, on_cand=None):
         res["base_song"], res["base_artist"] = _rd.get("of_song"), _rd.get("of_artist")
     # SPEED FIX 2: a plain original skips the hunt (fastorig.py). Never on the safety net's
     # own hunt, and only when the score clears ORIGINAL_FAST_MIN with no veto.
-    if FAST_ORIGINAL != "off" and not ctx.get("shadow"):
+    if FAST_ORIGINAL == "on" and not ctx.get("shadow"):
         try:
             _od = _orig_decide(ctx)
         except Exception as _ox:
             _od = None
             E.tlog("orig_score", 0.0, url=key, error=str(_ox)[:160])
         if _od is not None and _od["fast"]:
-            if FAST_ORIGINAL == "on":
-                return _fast_original_finish(ctx, _od)
-            # measure (the default, review 2026-10-15 item 1): the full hunt below runs exactly
-            # as today; _p2 logs whether its answer is the one the fast path would have given
-            ctx["_fast_would"] = _od
+            return _fast_original_finish(ctx, _od)
+    elif FAST_ORIGINAL == "measure" and not ctx.get("shadow"):
+        # measure (the default, review 2026-10-15 item 1): the same decision, taken on its own
+        # thread, so the full hunt below starts NOW and runs exactly as without speed fix 2;
+        # the user waits for nothing. _p2 logs how the hunt's answer compares (fast_measure).
+        _orig_measure_start(ctx)
     # ---- THE SPEED REFERENCE HUNT STARTS NOW, NOT AFTER THE EDIT HUNT ----
     # The fallback arm of the speed measurement below needs only base_title, base_artist
     # and src["audio"], all of which were settled at phase1_done - yet it did not begin
@@ -6918,25 +6921,53 @@ def _p2(ctx, on_cand=None):
     return r
 
 
-def _fast_measure_log(ctx, full):
-    """CRATE_FAST_ORIGINAL=measure (review 2026-10-15 item 1): this scan's fast decision said
-    "fast", the full hunt ran instead, and this row says whether the full answer is the one the
-    fast path would have given (agree), or why not (_fast_disagrees: a crown, a speed, a
-    mashup, a failed hunt). It is the real-traffic check the fast path has never had. Logging
-    only: the answer the user gets is the full hunt's, untouched."""
-    d = ctx.pop("_fast_would", None)
-    if d is None:
-        return
+def _orig_measure_start(ctx):
+    """CRATE_FAST_ORIGINAL=measure: the fast decision "on" would take (same inputs, same
+    ORIG_REF_WAIT_S window for the studio check and the creator lookup), on its own thread.
+    Its inputs are read HERE, before the hunt touches anything (and while this thread still
+    holds the scan's tallies); the waiting happens off the user's path. The future goes on
+    ctx for _p2 (_fast_measure_log)."""
     try:
-        r = full or {}
-        why = _fast_disagrees(r)
-        ex = r.get("exact") or {}
-        E.tlog("fast_measure", time.time() - (ctx.get("t0") or time.time()), url=ctx.get("key"),
-               agree=why is None, why=why, score=d.get("score"), result=r.get("result"),
-               speed=r.get("speed"), base=(r.get("base_song") or "")[:80],
-               crown=(ex.get("title") or "")[:80], crown_url=(ex.get("url") or "")[:200],
-               vspeed=ex.get("vspeed"), core=ex.get("core"), fp=ex.get("fp"),
-               unsure=bool(r.get("unsure")), hunt_budget=bool(r.get("hunt_budget")))
+        x = _orig_inputs(ctx)
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            ctx["_fast_measure_fut"] = ex.submit(_orig_decide, ctx, x)
+        finally:
+            ex.shutdown(wait=False)       # its one job still runs; no idle thread is kept
+    except Exception as _ox:
+        E.tlog("orig_score", 0.0, url=ctx.get("key"), error=str(_ox)[:160])
+
+
+def _fast_measure_log(ctx, full):
+    """CRATE_FAST_ORIGINAL=measure (review 2026-10-15 item 1): when this scan's fast decision
+    said "fast", the full hunt ran anyway, and this row says whether the full answer is the
+    one the fast path would have given (agree), or why not (_fast_disagrees: a crown, a speed,
+    a mashup, a not-sure list, a failed hunt). It is the real-traffic check the fast path has
+    never had. A callback on the decision (no wait: a decision still running logs when it
+    lands). Logging only: the answer the user gets is the full hunt's, untouched."""
+    f = ctx.pop("_fast_measure_fut", None)
+    if f is None:
+        return
+    key, t0 = ctx.get("key"), ctx.get("t0") or time.time()
+
+    def _cb(fut):
+        try:
+            d = fut.result()
+            if not d or not d.get("fast"):
+                return
+            r = full or {}
+            why = _fast_disagrees(r)
+            ex = r.get("exact") or {}
+            E.tlog("fast_measure", time.time() - t0, url=key, agree=why is None, why=why,
+                   score=d.get("score"), result=r.get("result"), speed=r.get("speed"),
+                   base=(r.get("base_song") or "")[:80], crown=(ex.get("title") or "")[:80],
+                   crown_url=(ex.get("url") or "")[:200], vspeed=ex.get("vspeed"),
+                   core=ex.get("core"), fp=ex.get("fp"), unsure=bool(r.get("unsure")),
+                   hunt_budget=bool(r.get("hunt_budget")), decide_s=d.get("secs"))
+        except Exception:
+            pass
+    try:
+        f.add_done_callback(_cb)
     except Exception:
         pass
 
