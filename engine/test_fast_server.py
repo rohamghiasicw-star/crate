@@ -260,8 +260,9 @@ class SafetyNet(Base):
         for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
             self.assertNotIn("fast_original", r)
             self.assertEqual(r["exact"]["url"], CROWN)
-        self.assertTrue(any(r.get("why") == "fast_shadow" for r in tlog_rows("vid_drop")))
-        self.assertTrue(tlog_rows("fast_replace"))
+        # (review 2026-10-15 item 3: a checked fast answer never entered the video store, so
+        # there was no fast video row to drop; the hunt's answer filled the empty row)
+        self.assertIn("vid", tlog_rows("fast_replace")[-1]["put"])
         # and every link form of the video now replays the hunt's answer
         f = S._answer_get("https://www.tiktok.com/@a/video/7677334644819250463",
                           "https://www.tiktok.com/@a/video/7677334644819250463", "find")
@@ -276,7 +277,8 @@ class SafetyNet(Base):
         _join_shadow()
         self.assertFalse(res["vid_ok"])
         self.assertTrue(res["uncached"])
-        self.assertTrue(S.VID_CACHE[VK]["res"]["fast_original"])     # the server keeps it
+        # the net agreed, so the server's video row now holds it (review 2026-10-15 item 3)
+        self.assertTrue(S.VID_CACHE[VK]["res"]["fast_original"])
 
     def test_an_unchecked_fast_answer_is_kept_on_the_phone_as_today(self):
         S.FAST_SHADOW_RATE = 0.0
@@ -297,8 +299,12 @@ class SafetyNet(Base):
                      full_edit(correction={"url": "u", "ok": False})):
             self.setUp()
             self._run(full)
-            for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+            for r in (S.CACHE[KEY], S.SOUND_CACHE[SID]):
                 self.assertTrue(r.get("fast_original"), full)
+            if full is agree:      # only a real agreement promotes it to the video store
+                self.assertTrue(S.VID_CACHE[VK]["res"].get("fast_original"))
+            else:                  # an inconclusive net never does (review 2026-10-15 item 3)
+                self.assertNotIn(VK, S.VID_CACHE, full)
 
     def test_a_phone_named_scan_never_reaches_the_shared_stores(self):
         class _Ph(object):
@@ -387,9 +393,10 @@ class SafetyNet(Base):
             S, "STARVE_HUNT_S", old[3]))
 
     def _assert_fast_kept(self):
-        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID]):
             self.assertTrue(r.get("fast_original"))
             self.assertIsNone(r.get("exact"))
+        self.assertNotIn(VK, S.VID_CACHE)      # a net that could not conclude never promotes it
 
     def test_d4_lost_phase1_evidence_never_lets_the_shadow_replace(self):
         self._guards()
@@ -469,6 +476,305 @@ class VideoStoreReadCheck(Base):
     def test_a_confirmed_row_still_replays(self):
         S._vid_put(KEY, full_edit())
         self.assertIsNotNone(S._vid_get(VK, check_dead=False))
+
+
+# ---------------------------------------------------------------- REVIEW 2026-10-15 fix round
+KEL = "Wouldn't Believe flipp (prod.kelthraxx)"
+
+
+def devput_keeps(d):
+    """crate.html devPut + devSoftOK, as read 2026-10-15: what a phone keeps of answer d."""
+    if not d or d.get("dev_hit") or not d.get("vkey") or not d.get("base_song") \
+            or d.get("result") != "found":
+        return "not kept"
+    soft = not (d.get("vid_ok") or d.get("vid_hit"))
+    if soft:
+        bad = any(d.get(k) for k in ("edits_pending", "busy", "listen", "hunt_starved",
+                                     "uncached", "hunt_budget", "shazam_partial", "replay",
+                                     "cached", "rate_limited"))
+        if bad or (d.get("correction") or {}).get("ok") is False:
+            return "not kept"
+        return "soft"
+    return "confirmed"
+
+
+class _Stop(Exception):
+    pass
+
+
+class Item1MeasureByDefault(Base):
+    """Blocking item 1: the fast path ships OFF (measure) until the gate passes on a backend
+    whose Shazam is not partial; measure mode logs how the fast answer compares."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self._mode, self._pre, self._lyr = S.FAST_ORIGINAL, S.SPEED_PREFETCH_REFS, S._lyric_lane_on
+
+    def tearDown(self):
+        S.FAST_ORIGINAL, S.SPEED_PREFETCH_REFS, S._lyric_lane_on = self._mode, self._pre, self._lyr
+        Base.tearDown(self)
+
+    def _import_mode(self, value):
+        import subprocess
+        env = dict(os.environ)
+        env.pop("CRATE_FAST_ORIGINAL", None)
+        if value is not None:
+            env["CRATE_FAST_ORIGINAL"] = value
+        env["CRATE_TIMING"] = os.path.join(TMP, "tlog_sub.jsonl")
+        out = subprocess.run([sys.executable, "-c", "import server; print('MODE=' + server.FAST_ORIGINAL)"],
+                             cwd=HERE, env=env, capture_output=True, text=True, timeout=120)
+        line = [ln for ln in out.stdout.splitlines() if ln.startswith("MODE=")]
+        self.assertTrue(line, out.stderr[-500:])
+        return line[-1][5:]
+
+    def test_the_default_is_measure_not_on(self):
+        self.assertEqual(self._import_mode(None), "measure")
+        self.assertEqual(self._import_mode("bogus"), "measure")
+        self.assertEqual(self._import_mode("on"), "on")
+
+    def _phase2_until_the_hunt(self, ctx):
+        """The real _phase2 up to the first step of the full hunt (stopped there)."""
+        S.SPEED_PREFETCH_REFS = False
+
+        def stop(*a, **k):
+            raise _Stop()
+        S._lyric_lane_on = stop
+        ctx.update(edit_label=None, mdir=None)
+        try:
+            return S._phase2(ctx)
+        except _Stop:
+            return "HUNT"
+
+    def test_measure_runs_the_full_hunt_on_a_clip_that_would_go_fast(self):
+        S.FAST_ORIGINAL = "measure"
+        ctx = make_ctx()
+        self.assertEqual(self._phase2_until_the_hunt(ctx), "HUNT")
+        self.assertTrue(ctx["_fast_would"]["fast"])          # it WOULD have gone fast
+        self.assertNotIn(KEY, S.CACHE)                       # but nothing fast was saved
+        self.assertNotIn(VK, S.VID_CACHE)
+
+    def test_control_on_still_answers_fast(self):
+        S.FAST_ORIGINAL = "on"
+        out = self._phase2_until_the_hunt(make_ctx())
+        self.assertTrue(out["fast_original"])
+
+    def _run_p2(self, full):
+        def fake(ctx, on_cand=None):
+            ctx["_fast_would"] = {"score": 100, "fast": True}
+            return full
+        S._phase2 = fake
+        ctx = make_ctx()
+        out = S._p2(ctx)
+        self.assertIs(out, full)                    # the user gets the full answer, untouched
+        self.assertNotIn("_fast_would", ctx)
+        return tlog_rows("fast_measure")[-1]
+
+    def test_measure_logs_a_crown_the_fast_path_would_have_missed(self):
+        row = self._run_p2(full_edit(speed="as posted", exact={
+            "url": "https://soundcloud.com/jakoe745/wouldnt-believe-flipp", "title": KEL,
+            "core": 0.99, "fp": 0.9, "vspeed": 1.0}))
+        self.assertFalse(row["agree"])
+        self.assertTrue(row["why"].startswith("crowned"))
+        self.assertEqual(row["crown"], KEL)
+
+    def test_measure_logs_agreement_on_a_plain_original(self):
+        row = self._run_p2(full_edit(speed="as posted", exact=None, candidates=[]))
+        self.assertTrue(row["agree"])
+        self.assertIsNone(row["why"])
+
+    def test_a_vetoed_clip_still_logs_its_studio_reading(self):
+        ctx = make_ctx()
+        ctx["res"]["shazam_partial"] = True             # the test box's usual veto
+        d = S._orig_decide(ctx)
+        self.assertFalse(d["fast"])
+        rows = tlog_rows("orig_ref_unread")
+        self.assertTrue(rows)
+        self.assertIn("shazam_partial", rows[-1]["unread"])
+        self.assertEqual(rows[-1]["ref"]["fp"], CLEAN_REF["fp"])
+
+
+class Item2AnyCrownDisagrees(Base):
+    def test_table(self):
+        posted = dict(speed="as posted", candidates=[{"url": CROWN}])
+        cases = [
+            (full_edit(exact={"url": "u1", "title": KEL, "core": 1.0, "vspeed": 1.0}, **posted),
+             True),
+            (full_edit(exact={"url": "u2", "title": "Heart Attack (Party Edit)", "core": 1.0,
+                              "vspeed": 1.0}, **posted), True),
+            (full_edit(exact={"url": "u3", "title": "Heart Attack", "core": 1.0, "vspeed": 1.0},
+                       **posted), True),                           # even the official upload
+            (full_edit(exact={"url": "u4"}, **posted), True),       # a crown with no title
+            (full_edit(exact=None, unsure=True, weak_exact=0.55, **posted), True),
+            (full_edit(exact=None, crown_rejected="title says slowed", **posted), True),
+            (full_edit(exact=None, speed="as posted", candidates=[]), False),   # the only agree
+        ]
+        for full, differs in cases:
+            self.assertEqual(S._fast_disagrees(full) is not None, differs, full)
+
+    def test_an_as_posted_crown_replaces_the_fast_answer(self):
+        kel = full_edit(speed="as posted", exact={
+            "url": "https://soundcloud.com/jakoe745/wouldnt-believe-flipp", "title": KEL,
+            "core": 0.99, "fp": 0.9, "vspeed": 1.0})
+        S._phase2 = lambda sctx, on_cand=None: kel
+        S.FAST_SHADOW_RATE = 1.0
+        S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        _join_shadow()
+        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+            self.assertEqual(r["exact"]["title"], KEL)
+            self.assertNotIn("fast_original", r)
+        self.assertFalse(tlog_rows("fast_shadow")[-1]["agree"])
+
+
+class Item3NoPhoneCopyWhileChecked(Base):
+    OTHER = "https://www.tiktok.com/@a/video/7677334644819250463"
+
+    def setUp(self):
+        Base.setUp(self)
+        self.gate = threading.Event()
+
+    def tearDown(self):
+        self.gate.set()
+        _join_shadow()
+        put_corrections([])
+        Base.tearDown(self)
+
+    def _start(self, full):
+        def slow_phase2(sctx, on_cand=None):
+            self.gate.wait(10)                 # the net's hunt is still running
+            return full
+        S._phase2 = slow_phase2
+        S.FAST_SHADOW_RATE = 1.0
+        self.ctx = make_ctx()
+        return S._fast_original_finish(self.ctx, {"score": 100, "parts": {}})
+
+    def _finish(self):
+        self.gate.set()
+        _join_shadow()
+
+    def test_no_link_to_the_video_gets_a_phone_keepable_copy_during_the_hunt(self):
+        res = self._start(full_edit())
+        self.assertEqual(devput_keeps(res), "not kept")
+        self.assertNotIn(VK, S.VID_CACHE)              # not in the video store up front
+        # the same video through a new share link (TikTok mints one per share)
+        self.assertIsNone(S._answer_get(self.OTHER, self.OTHER, "base"))
+        self.assertIsNone(S._answer_get(self.OTHER, self.OTHER, "edits"))
+        # the same link again: a URL replay, which no phone keeps
+        self.assertEqual(devput_keeps(S._answer_get(KEY, KEY, "find")), "not kept")
+        self._finish()
+        self.assertEqual(S.VID_CACHE[VK]["res"]["exact"]["url"], CROWN)   # the net's answer
+
+    def test_an_agreeing_net_promotes_it_to_the_video_store(self):
+        self._start(full_edit(speed="as posted", exact=None, candidates=[]))
+        self.assertNotIn(VK, S.VID_CACHE)
+        self._finish()
+        self.assertTrue(S.VID_CACHE[VK]["res"]["fast_original"])
+        self.assertNotIn("uncached", S.VID_CACHE[VK]["res"])
+        self.assertEqual(tlog_rows("fast_shadow")[-1]["confirmed"], "stored")
+        e = S._answer_get(self.OTHER, self.OTHER, "find")
+        self.assertTrue(e["vid_hit"])                  # now checked: phones may keep it
+
+    def test_agreement_after_the_starve_guard_unstored_it_writes_nothing(self):
+        res = self._start(full_edit(speed="as posted", exact=None, candidates=[]))
+        S._unstore(KEY, res, SID)                      # job()'s guard, right after the return
+        self._finish()
+        self.assertNotIn(VK, S.VID_CACHE)
+        self.assertEqual(tlog_rows("fast_shadow")[-1]["confirmed"], "url_row_changed")
+
+    def test_agreement_after_a_correction_was_filed_writes_nothing(self):
+        self._start(full_edit(speed="as posted", exact=None, candidates=[]))
+        put_corrections([{"url": KEY, "right_url": RIGHT, "right_title": "R", "added_by": "t",
+                          "added_at": 1}])
+        self._finish()
+        self.assertNotIn(VK, S.VID_CACHE)
+
+    def test_agreement_never_overwrites_a_newer_video_row(self):
+        self._start(full_edit(speed="as posted", exact=None, candidates=[]))
+        newer = full_edit(speed="slowed ~0.90x")
+        S._vid_put(KEY, newer)                         # another link's full scan, meanwhile
+        self._finish()
+        self.assertEqual(S.VID_CACHE[VK]["res"]["speed"], "slowed ~0.90x")
+        self.assertEqual(tlog_rows("fast_shadow")[-1]["confirmed"], "vid_row_newer")
+
+
+class _FakeGate(object):
+    def __init__(self):
+        self.out, self.released = [], []
+
+    def try_acquire(self, path="", key="", headroom=1):
+        self.out.append("tok%d" % len(self.out))
+        return self.out[-1]
+
+    def release(self, tok):
+        self.released.append(tok)
+
+    def hand(self, tok, thread):
+        pass
+
+
+class Item4NoAudioLeftWhenTheNetCannotStart(Base):
+    def setUp(self):
+        Base.setUp(self)
+        self._gate, self._mk, self._thread = S.GATE, S.tempfile.mkdtemp, S.threading.Thread
+        self.made = []
+        mk = self._mk
+
+        def rec(*a, **k):
+            p = mk(*a, **k)
+            self.made.append(p)
+            return p
+        S.tempfile.mkdtemp = rec
+        S.GATE = _FakeGate()
+        S.FAST_SHADOW_RATE = 1.0
+
+    def tearDown(self):
+        S.GATE, S.tempfile.mkdtemp, S.threading.Thread = self._gate, self._mk, self._thread
+        Base.tearDown(self)
+
+    def _shadow_dirs(self):
+        return [p for p in self.made if os.path.basename(p).startswith("shadow_")]
+
+    def test_thread_start_failure_deletes_the_copy_and_releases_the_slot(self):
+        base = self._thread
+
+        class NoThreads(base):
+            def start(self):
+                if self.name == "fast-shadow":
+                    raise RuntimeError("can't start new thread")
+                return base.start(self)
+        S.threading.Thread = NoThreads
+        res = S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        S.threading.Thread = base
+        dirs = self._shadow_dirs()
+        self.assertEqual(len(dirs), 1)
+        self.assertFalse(os.path.exists(dirs[0]))              # the clip's copy is gone
+        self.assertEqual(S.GATE.released, S.GATE.out)          # the slot came back
+        row = tlog_rows("fast_shadow")[-1]
+        self.assertFalse(row["ran"])
+        self.assertEqual(row["why"], "start RuntimeError")
+        # the user still gets the answer, saved as an unchecked fast answer (as today)
+        self.assertTrue(res["fast_original"])
+        self.assertTrue(res["vid_ok"])
+        self.assertFalse(res.get("uncached"))
+        self.assertTrue(S.VID_CACHE[VK]["res"]["fast_original"])
+
+    def test_a_failed_copy_deletes_the_dir_and_releases_the_slot(self):
+        ctx = make_ctx()
+        os.remove(ctx["src"]["audio"])                         # the copy will fail
+        S._fast_original_finish(ctx, {"score": 100, "parts": {}})
+        dirs = self._shadow_dirs()
+        self.assertEqual(len(dirs), 1)
+        self.assertFalse(os.path.exists(dirs[0]))
+        self.assertEqual(S.GATE.released, S.GATE.out)
+        self.assertTrue(tlog_rows("fast_shadow")[-1]["why"].startswith("prep "))
+
+    def test_control_a_net_that_runs_cleans_up_and_releases(self):
+        S._phase2 = lambda sctx, on_cand=None: full_edit()
+        S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        _join_shadow()
+        dirs = self._shadow_dirs()
+        self.assertEqual(len(dirs), 1)
+        self.assertFalse(os.path.exists(dirs[0]))
+        self.assertEqual(S.GATE.released, S.GATE.out)
 
 
 if __name__ == "__main__":

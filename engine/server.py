@@ -2664,10 +2664,14 @@ def _phase1(url, key, t0):
                         ctx["oref_fut"] = _oref_early["fut"]    # already running since the name
                         ctx["oref_early"] = True
                     else:
+                        _oref_log_unread(_oref_early.get("fut"), key, "other_song")
                         _ox = ThreadPoolExecutor(max_workers=1)
                         ctx["oref_fut"] = _ox.submit(_orig_ref, src, res.get("preview_url"),
                                                      base_title, base_artist)
                         _ox.shutdown(wait=False)
+                else:
+                    _oref_log_unread(_oref_early.get("fut"), key,
+                                     "vetoed " + ",".join(str(v) for v in FO.vetoes(_oi)[:6]))
             except Exception:
                 pass
         if getattr(E, "SEEK_MOFF", False):
@@ -5052,15 +5056,23 @@ SPEED_PREFETCH_REFS = (os.environ.get("CRATE_PREFETCH_REFS", "1").strip().lower(
 # a licensed track gets today), and the page's exact-version dial runs to 100 on it. Below the
 # threshold, or on any veto, the hunt below runs exactly as before. CRATE_FAST_ORIGINAL=off
 # turns it off; =measure logs the score on every hunt and always runs the full hunt.
+# REVIEW 2026-10-15 (item 1): the DEFAULT IS measure, not on. The A/B on the test box never
+# saw the fast path fire (its Shazam was partial on 26 of 34 decisions), so no fast answer has
+# been checked against real traffic, and a gate clip (kelthraxx) was never scored. In measure
+# mode a scan the fast path WOULD have answered runs the full hunt as today and logs
+# fast_measure (does the full answer match the fast one: agree / why, _fast_disagrees). Turn
+# it on (CRATE_FAST_ORIGINAL=on) only after the five-clip gate passes twice in ABAB order on a
+# backend whose Shazam is not partial, with at least one real plain original taking the fast
+# path and agreeing, and fast_measure reading agree on real traffic.
 # Safety net (item 4): CRATE_FAST_SHADOW (0.10) of fast answers run the full hunt in the
 # background on a copy of the clip, never shown to that scan, logged as fast_shadow. When it
 # finds an edit, its answer replaces the saved fast answer (_fast_replace, logged fast_replace).
 import fastorig as FO
 import origref as OR
 import random as _random
-FAST_ORIGINAL = (os.environ.get("CRATE_FAST_ORIGINAL") or "on").strip().lower()
+FAST_ORIGINAL = (os.environ.get("CRATE_FAST_ORIGINAL") or "measure").strip().lower()
 if FAST_ORIGINAL not in ("on", "measure", "off"):
-    FAST_ORIGINAL = "on"
+    FAST_ORIGINAL = "measure"            # an unknown value never turns the fast answer on
 FAST_SHADOW_RATE = float(os.environ.get("CRATE_FAST_SHADOW", "0.10") or 0)
 # The hunt never waits longer than this for the studio check: past it the scan runs the full
 # hunt (a late check is logged, never used). Measured in the lab: the check alone takes 1.4-1.6 s
@@ -5234,6 +5246,33 @@ _fp_partial = OR.fp_partial          # the measurement itself lives in origref.p
 _orig_aligned = OR.aligned
 
 
+_OREF_LOG_KEYS = ("src", "title", "why", "confirm", "speed", "confident", "aligned", "align_fp",
+                  "overlap_s", "at", "fp", "core", "arr", "slope_delta", "bass_delta", "vspeed",
+                  "meter", "meter_why", "t_lookup", "t_fetch", "t_speed", "t_total", "t_proc")
+
+
+def _oref_log_unread(fut, key, why):
+    """REVIEW 2026-10-15 (item 1): a studio check that started at the first name but is never
+    read (phase 1 vetoed the clip, e.g. shazam_partial, or the final song is not the one it
+    measured) still logs its reading when it lands, as orig_ref_unread, so every clip with an
+    early check shows what the clean-band numbers said. A callback, no wait; decides nothing."""
+    if fut is None:
+        return
+    t0 = time.time()
+
+    def _cb(f):
+        try:
+            r = f.result() or {}
+        except Exception as e:
+            r = {"why": type(e).__name__}
+        E.tlog("orig_ref_unread", time.time() - t0, url=key, unread=str(why)[:120],
+               ref={k: r.get(k) for k in _OREF_LOG_KEYS if k in r})
+    try:
+        fut.add_done_callback(_cb)
+    except Exception:
+        pass
+
+
 def _orig_decide(ctx):
     """Score this clip (fastorig.decide), log it, and keep it on ctx for the scan_path row."""
     t0 = time.time()
@@ -5291,6 +5330,9 @@ def _orig_decide(ctx):
         x["owner_edit_tags"] = list(_ev.get("origin_edit_tags") or []) + [
             t for t in list(_ev.get("caption_tags") or []) + list(_ev.get("origin_tags") or [])
             if isinstance(t, str) and FO.AUDIO_EDIT.search("#" + t)]
+    else:
+        _oref_log_unread(_f, ctx.get("key"),
+                         "vetoed " + ",".join(str(v) for v in FO.vetoes(x)[:6]))
     d = FO.decide(x)
     d["secs"] = round(time.time() - t0, 3)
     ctx["oscore"] = d["score"]
@@ -5312,8 +5354,14 @@ def _orig_decide(ctx):
 
 
 def _fast_disagrees(full):
-    """The safety net's question: did the full hunt find an EDIT where the fast path said
-    original? -> reason string or None."""
+    """The safety net's question: is the full hunt's answer a DIFFERENT answer from the fast
+    one ("the named recording, normal speed, no upload of this exact version found")?
+    -> reason string or None.
+    REVIEW 2026-10-15 (item 2): ANY crown disagrees, edit word in its title or not. The fast
+    card says no upload of this version was found, so a separate as-posted upload the hunt
+    crowns (the gate clip kelthraxx: "Wouldn't Believe flipp (prod.kelthraxx)", or a
+    "(Party Edit)") is exactly what the fast answer missed. So does a "not sure" list or a
+    withheld crown: the full path would have shown that, not "no upload found"."""
     r = full or {}
     if r.get("result") != "found":
         return "full_%s" % (r.get("result") or "none")
@@ -5331,82 +5379,167 @@ def _fast_disagrees(full):
                 return "crown at %.3fx" % float(ex.get("vspeed"))
         except (TypeError, ValueError):
             pass
+        if ex.get("url") or ex.get("title"):
+            return "crowned %s" % (ex.get("title") or ex.get("url"))[:80]
+    if r.get("unsure") or r.get("weak_exact") or r.get("crown_rejected"):
+        return "not sure: %s" % str(r.get("crown_rejected") or r.get("weak_exact") or "")[:60]
     return None
 
 
 def _fast_shadow(ctx, snap_res, d):
     """Item 4: for FAST_SHADOW_RATE of fast answers, the full hunt on a copy of the clip, in
     the background. Never shown to the scan that asked, holds a gate slot only when one is free
-    with one more to spare, logs fast_shadow. When it finds an EDIT where the fast path said
-    original, its answer REPLACES the saved fast one (_fast_replace) through the same guarded
-    saves a full scan uses; agreeing, failing or budget-cut hunts change nothing. The copy is
-    deleted when it ends (transient, like the clip itself)."""
+    with one more to spare, logs fast_shadow. When its answer DIFFERS from the fast one
+    (_fast_disagrees), its answer REPLACES the saved fast one (_fast_replace) through the same
+    guarded saves a full scan uses; failing, starved or budget-cut hunts change nothing. The
+    copy is deleted when it ends (transient, like the clip itself).
+    REVIEW 2026-10-15 (items 3, 4): this only PREPARES the net and returns it (or None when
+    this answer is not checked). The caller saves the fast answer first, then starts it with
+    _fast_shadow_start, so (a) the net can never write before the fast answer is saved, and
+    (b) a checked fast answer is never put in the video store up front (a replay from there
+    reaches a phone as a confirmed 90-day copy); the net puts it there only when it agrees.
+    Everything from the temp dir to the thread start is guarded: on any failure the copy is
+    deleted and the slot released (_fast_shadow_abort)."""
     if FAST_SHADOW_RATE <= 0 or _random.random() >= FAST_SHADOW_RATE:
-        return False
+        return None
     key = ctx.get("key")
     tok = None
     if GATE is not None:
         tok = GATE.try_acquire(path="shadow", key=key, headroom=1)
         if tok is None:
             E.tlog("fast_shadow", 0.0, url=key, ran=False, why="no_free_slot")
-            return False
-    import copy
-    import shutil
-    src = ctx.get("src") or {}
-    tmp2 = tempfile.mkdtemp(prefix="shadow_")
+            return None
+    tmp2 = None
     try:
+        import copy
+        import shutil
+        src = ctx.get("src") or {}
+        tmp2 = tempfile.mkdtemp(prefix="shadow_")
         a2 = os.path.join(tmp2, "a.wav")
         shutil.copyfile(src["audio"], a2)
+        # read HERE, on the request thread: FS.PHONE is a context value the shadow thread does
+        # not inherit, so inside it _phone_unconfirmed would always say "not phone-named"
+        saveable = not _phone_unconfirmed(snap_res)
+        # REVIEW 2026-10-07 D4: the tallies the server's starve guard judges a user's hunt on
+        # (the /base half that parked this hunt, and the request's own, which carries phase 1
+        # on the cold /edits and /find path). Read here: a new thread does not inherit them.
+        base_tallies = (ctx.get("_scan_tally"), E.SCAN_TALLY.get())
+        sctx = dict(ctx)
+        sctx.update(src=dict(src, audio=a2, tmp=tmp2), res=copy.deepcopy(snap_res),
+                    key="%s#shadow" % key, shadow=True, t0=time.time())
+        return {"ctx": ctx, "sctx": sctx, "tok": tok, "tmp": tmp2, "d": d, "key": key,
+                "saveable": saveable, "base_tallies": base_tallies}
     except Exception as ex:
-        _cleanup(tmp2)
+        _fast_shadow_abort(tok, tmp2, key, "prep %s" % type(ex).__name__)
+        return None
+
+
+def _fast_shadow_abort(tok, tmp2, key, why):
+    """A safety net that will not run: its copy of the clip is deleted, its slot released."""
+    if tmp2:
+        try:
+            _cleanup(tmp2)
+        except Exception:
+            pass
+    if tok is not None and GATE is not None:
+        try:
+            GATE.release(tok)
+        except Exception:
+            pass
+    E.tlog("fast_shadow", 0.0, url=key, ran=False, why=why)
+
+
+def _fast_shadow_start(sh, res):
+    """Start the net _fast_shadow prepared, AFTER the fast answer `res` is saved. -> True when
+    its thread runs. Never raises: on any failure (RuntimeError "can't start new thread" when
+    threads run out) the copy is deleted, the slot released, it is logged, and False comes
+    back, so the caller treats the answer as unchecked."""
+    try:
+        import copy
+        fast_copy = copy.deepcopy(res)    # the fast answer as saved, for the video store later
+        threading.Thread(target=_fast_shadow_run, args=(sh, fast_copy, res), daemon=True,
+                         name="fast-shadow").start()
+        return True
+    except Exception as ex:
+        _fast_shadow_abort(sh.get("tok"), sh.get("tmp"), sh.get("key"),
+                           "start %s" % type(ex).__name__)
+        return False
+
+
+def _fast_shadow_run(sh, fast_copy, url_row):
+    ctx, sctx, tok, d = sh["ctx"], sh["sctx"], sh["tok"], sh["d"]
+    key, tmp2 = sh["key"], sh["tmp"]
+    t0 = time.time()
+    own = E.ScanTally()                 # this hunt's own downloads, nobody else's
+    ttok = E.SCAN_TALLY.set(own)
+    try:
+        if tok is not None:
+            GATE.hand(tok, threading.current_thread())
+        full = _phase2(sctx)
+        why = _fast_disagrees(full)
+        ex = (full or {}).get("exact") or {}
+        starved = _shadow_starved(own, sh["base_tallies"], t0, full)
+        healthy = (not starved and (full or {}).get("result") == "found"
+                   and not full.get("hunt_budget")
+                   and (full.get("correction") or {}).get("ok", True))
+        confirmed = None
+        # a different answer is acted on; full_no_match / full_error may be a throttled hunt
+        # and prove nothing, and a budget-cut hunt, a refused correction, or a hunt the
+        # server's starve guards would refuse (downloads killed at the wall, evidence lost, a
+        # slow hunt with no crown: D4) is not what a full scan saves either
+        if why and sh["saveable"] and healthy:
+            _fast_replace(ctx, full)
+        elif why is None and sh["saveable"] and healthy:
+            confirmed = _fast_confirm(ctx, fast_copy, url_row)
+        E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=why is None,
+               why=why, score=d.get("score"), speed=(full or {}).get("speed"),
+               crown=(ex.get("title") or "")[:80], vspeed=ex.get("vspeed"),
+               core=ex.get("core"), fp=ex.get("fp"), starved=starved, confirmed=confirmed)
+    except Exception as ex:
+        E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=None,
+               why="error %s" % str(ex)[:120])
+    finally:
+        E.SCAN_TALLY.reset(ttok)
         if tok is not None:
             GATE.release(tok)
-        E.tlog("fast_shadow", 0.0, url=key, ran=False, why="copy %s" % type(ex).__name__)
-        return False
-    # read HERE, on the request thread: FS.PHONE is a context value the shadow thread does not
-    # inherit, so inside it _phone_unconfirmed would always say "not phone-named"
-    saveable = not _phone_unconfirmed(snap_res)
-    # REVIEW 2026-10-07 D4: the tallies the server's starve guard judges a user's hunt on (the
-    # /base half that parked this hunt, and the request's own, which carries phase 1 on the
-    # cold /edits and /find path). Read here: a new thread does not inherit contextvars.
-    base_tallies = (ctx.get("_scan_tally"), E.SCAN_TALLY.get())
-    sctx = dict(ctx)
-    sctx.update(src=dict(src, audio=a2, tmp=tmp2), res=copy.deepcopy(snap_res),
-                key="%s#shadow" % key, shadow=True, t0=time.time())
+        _cleanup(tmp2)
 
-    def run():
-        t0 = time.time()
-        own = E.ScanTally()                 # this hunt's own downloads, nobody else's
-        ttok = E.SCAN_TALLY.set(own)
-        try:
-            if tok is not None:
-                GATE.hand(tok, threading.current_thread())
-            full = _phase2(sctx)
-            why = _fast_disagrees(full)
-            ex = (full or {}).get("exact") or {}
-            starved = _shadow_starved(own, base_tallies, t0, full)
-            E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=why is None,
-                   why=why, score=d.get("score"), speed=(full or {}).get("speed"),
-                   crown=(ex.get("title") or "")[:80], vspeed=ex.get("vspeed"),
-                   core=ex.get("core"), fp=ex.get("fp"), starved=starved)
-            # a found edit is acted on; full_no_match / full_error may be a throttled hunt and
-            # prove nothing, and a budget-cut hunt, a refused correction, or a hunt the server's
-            # starve guards would refuse (downloads killed at the wall, evidence lost, a slow
-            # hunt with no crown: D4) is not what a full scan saves either
-            if why and saveable and not starved and (full or {}).get("result") == "found" \
-                    and not full.get("hunt_budget") \
-                    and (full.get("correction") or {}).get("ok", True):
-                _fast_replace(ctx, full)
-        except Exception as ex:
-            E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=None,
-                   why="error %s" % str(ex)[:120])
-        finally:
-            E.SCAN_TALLY.reset(ttok)
-            if tok is not None:
-                GATE.release(tok)
-            _cleanup(tmp2)
-    threading.Thread(target=run, daemon=True, name="fast-shadow").start()
-    return True
+
+def _late_correction(ctx, full):
+    """A correction on file NOW for this clip that the hunt did not run with -> True (also on
+    a lookup error: unsure means nothing is written). The fast path never runs with one, so it
+    was filed while the net's hunt ran."""
+    key, src = ctx.get("key"), ctx.get("src") or {}
+    sid = src.get("sound_id")
+    try:
+        late = CORR.match(ctx.get("url") or key, video_id=src.get("video_id"),
+                          sound_id=(sid if _corr_sound_ok(src) else None))
+    except Exception:
+        return True
+    return late is not None and ((late.get("right_url") or "") !=
+                                 (((full or {}).get("correction") or {}).get("url") or ""))
+
+
+def _fast_confirm(ctx, fast_copy, url_row):
+    """REVIEW 2026-10-15 (item 3): the net's hunt AGREED with a checked fast answer, which so
+    far lived only in the URL and sound rows (never the video store: a replay from it reaches a
+    phone as a confirmed 90-day copy). Now it goes in the video store, as an unchecked fast
+    answer does, but only when nothing newer happened meanwhile: this link's URL row is still
+    this very answer (not unstored by the starve guard, dropped by a correction, or replaced by
+    a nocache rescan), the video row is still empty, and no correction is on file. -> what
+    happened (str), for the fast_shadow row."""
+    key = ctx.get("key")
+    vk = (fast_copy or {}).get("vkey")
+    if not (VID_CACHE_ON and vk):
+        return "no_vkey"
+    if CACHE.get(key) is not url_row:
+        return "url_row_changed"
+    if _late_correction(ctx, None):
+        return "late_correction"
+    with _VID_LOCK:
+        if vk in VID_CACHE:
+            return "vid_row_newer"
+    return "stored" if _vid_put(key, fast_copy, ctx.get("base_view")) else "not_stored"
 
 
 def _shadow_starved(own, base_tallies, t0, full):
@@ -5442,16 +5575,7 @@ def _fast_replace(ctx, full):
     scan hunts with the correction."""
     key, src = ctx.get("key"), ctx.get("src") or {}
     vk, sid = full.get("vkey"), src.get("sound_id")
-    try:
-        late = CORR.match(ctx.get("url") or key, video_id=src.get("video_id"),
-                          sound_id=(sid if _corr_sound_ok(src) else None))
-    except Exception:
-        late = {"why": "match error"}          # unsure: the hunt's answer is not written
-    if late is not None and ((late.get("right_url") or "") !=
-                             ((full.get("correction") or {}).get("url") or "")):
-        late = True
-    else:
-        late = False
+    late = _late_correction(ctx, full)        # unsure (a lookup error) counts as late too
     dropped = []
     for ck, r in list(CACHE.items()):
         r = r or {}
@@ -5508,20 +5632,25 @@ def _fast_original_finish(ctx, d):
     E.tlog("request_done", time.time() - t0, url=key, outcome="fast")
     E.tlog("scan_path", time.time() - t0, url=key, path="fast", oscore=d["score"],
            total=round(time.time() - t0, 2), ovetoes=[])
+    # REVIEW 2026-10-15 (items 3, 4): whether the safety net checks this answer is settled
+    # BEFORE it is saved, and the net starts only AFTER the saves (it can never write first).
+    try:
+        sh = _fast_shadow(ctx, snap, d)
+    except Exception:
+        sh = None                         # the safety net must never cost the user the answer
     _cache_put(key, res)
     _sound_cache_put(src, res)
-    _vid_put(key, res, ctx.get("base_view"))
-    try:
-        shadowed = _fast_shadow(ctx, snap, d)
-    except Exception:
-        shadowed = False                  # the safety net must never cost the user the answer
-    if shadowed:
+    started = _fast_shadow_start(sh, res) if sh is not None else False
+    if not started:
+        _vid_put(key, res, ctx.get("base_view"))     # an unchecked fast answer: as today
+    else:
         # SAME PHONE, SAME ANSWER (b268ff6) and the safety net: the server can replace this
-        # answer when its hunt finds an edit (_fast_replace), but a copy on the phone cannot be
-        # recalled. So a fast answer the net is checking is not kept on the phone at all (no
-        # confirmed copy: vid_ok False; no soft copy: uncached, which devSoftOK refuses); the
-        # next scan of it asks the server, which has the checked answer. The server's own rows
-        # are untouched (stored above, before this flag).
+        # answer when its hunt finds a different one (_fast_replace), but a copy on a phone
+        # cannot be recalled. So a fast answer the net is checking is kept on no phone: not
+        # this one (no confirmed copy: vid_ok False; no soft copy: uncached, which devSoftOK
+        # refuses), and not one that opens the same video through another link while the net
+        # runs, because it is NOT in the video store (whose replays carry vid_hit, which
+        # devPut keeps as confirmed). The net puts it there when it agrees (_fast_confirm).
         res["vid_ok"] = False
         res["uncached"] = True
     return res
@@ -5562,8 +5691,12 @@ def _phase2(ctx, on_cand=None):
         except Exception as _ox:
             _od = None
             E.tlog("orig_score", 0.0, url=key, error=str(_ox)[:160])
-        if _od is not None and _od["fast"] and FAST_ORIGINAL == "on":
-            return _fast_original_finish(ctx, _od)
+        if _od is not None and _od["fast"]:
+            if FAST_ORIGINAL == "on":
+                return _fast_original_finish(ctx, _od)
+            # measure (the default, review 2026-10-15 item 1): the full hunt below runs exactly
+            # as today; _p2 logs whether its answer is the one the fast path would have given
+            ctx["_fast_would"] = _od
     # ---- THE SPEED REFERENCE HUNT STARTS NOW, NOT AFTER THE EDIT HUNT ----
     # The fallback arm of the speed measurement below needs only base_title, base_artist
     # and src["audio"], all of which were settled at phase1_done - yet it did not begin
@@ -6777,10 +6910,35 @@ def _p1(url, key):
 def _p2(ctx, on_cand=None):
     """_phase2, plus request_done when it raises (its own success path logs "hunt")."""
     try:
-        return _phase2(ctx, on_cand=on_cand)
+        r = _phase2(ctx, on_cand=on_cand)
     except Exception:
         _log_done(ctx.get("key"), ctx.get("t0") or time.time(), "error")
         raise
+    _fast_measure_log(ctx, r)
+    return r
+
+
+def _fast_measure_log(ctx, full):
+    """CRATE_FAST_ORIGINAL=measure (review 2026-10-15 item 1): this scan's fast decision said
+    "fast", the full hunt ran instead, and this row says whether the full answer is the one the
+    fast path would have given (agree), or why not (_fast_disagrees: a crown, a speed, a
+    mashup, a failed hunt). It is the real-traffic check the fast path has never had. Logging
+    only: the answer the user gets is the full hunt's, untouched."""
+    d = ctx.pop("_fast_would", None)
+    if d is None:
+        return
+    try:
+        r = full or {}
+        why = _fast_disagrees(r)
+        ex = r.get("exact") or {}
+        E.tlog("fast_measure", time.time() - (ctx.get("t0") or time.time()), url=ctx.get("key"),
+               agree=why is None, why=why, score=d.get("score"), result=r.get("result"),
+               speed=r.get("speed"), base=(r.get("base_song") or "")[:80],
+               crown=(ex.get("title") or "")[:80], crown_url=(ex.get("url") or "")[:200],
+               vspeed=ex.get("vspeed"), core=ex.get("core"), fp=ex.get("fp"),
+               unsure=bool(r.get("unsure")), hunt_budget=bool(r.get("hunt_budget")))
+    except Exception:
+        pass
 
 
 def identify_base(url):
