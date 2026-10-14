@@ -22,6 +22,9 @@ Scenarios (each in a fresh browser context; the steps inside one scenario share 
   D  confirmed answer (vid_ok) is a normal 90-day copy (no soft flag), replayed even 13 h later
   E  never kept: the base half (hunt failed, edits_pending), a busy hunt, a no_match, a crown with
      exact.fp 0.0; plus direct devPut probes for every devSoftOK exclusion
+     I1 (FREEZE-FIX): a busy hunt INSIDE the 4 s budget leaves the page ready for the next scan (busy
+     false, Find it enabled, next scan reaches /base) with the same busy card, one log entry, one
+     bridge post and no scan counted
   F  counting: a soft replay moves the free-scan counter exactly as a confirmed replay does
 
 usage:
@@ -33,7 +36,7 @@ usage:
 there (the rescan goes to /base), which proves the fix is what makes A pass.
 exit 0 = all pass (or, with --expect-old, A failed as expected); 1 = not; 2 = harness error.
 """
-import argparse, asyncio, json, math, os, subprocess, sys, time
+import argparse, asyncio, hashlib, json, math, os, subprocess, sys, time
 from urllib.parse import urlparse, parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -152,6 +155,17 @@ FINAL_JS = r"""(need) => {
   if(window.HUNT_ON) return false;
   if(need && !R.querySelector('a.trk')) return false;
   return true;}"""
+
+BUSY_FACTS = r"""() => {
+  var R=document.getElementById('result');
+  return {busy:window.busy, gobtn_disabled:document.getElementById('gobtn').hasAttribute('disabled'),
+    hunt_on:!!window.HUNT_ON, state:document.getElementById('app').getAttribute('data-state'),
+    card:R?R.innerText.replace(/\s+/g,' ').trim():'', used:localStorage.getItem('addify-scans-life'),
+    n:window.__n, kept:Object.keys(JSON.parse(localStorage.getItem('addify-vid-v1')||'{}'))};
+}"""
+COUNT_JS = r"""() => { window.__n={logScan:0,postBridge:0,useScan:0};
+  ['logScan','postBridge','useScan'].forEach(function(k){ var f=window[k];
+    window[k]=function(){ window.__n[k]++; return f.apply(this,arguments); }; }); }"""
 
 SETTLED_JS = r"""() => {
   var a=document.getElementById('app'); return a.getAttribute('data-state')==='locked' && !window.busy && !window.HUNT_ON;}"""
@@ -415,7 +429,7 @@ async def run_all(html, only, R):
             cases = [
                 ("E1", "the base half (hunt failed, edits_pending answer on screen)", plan_hunt(None, 0.4, "fail")),
                 # the busy answer lands after the 4 s HUNT_BUDGET_MS (real hunts take longer than 4 s);
-                # one inside the budget hits a pre-existing hang, recorded as INFO I1 below
+                # one inside the budget is E2b + I1 below
                 ("E2", "a busy hunt (rate_limited + busy, after the hunt budget)", plan_hunt(BUSY, 5.0)),
                 ("E3", "a no_match", {"base": NOMATCH, "final": NOMATCH}),
                 ("E4", "a crown scored by a dead fpcalc (exact.fp 0.0, vid_ok false)", plan_hunt(final_fp0(), 0.4)),
@@ -432,21 +446,45 @@ async def run_all(html, only, R):
                         not f["store"] and n["/base"] == 1,
                         "store keys=%s title=%r rescan=%s errors=%s" % (list(f["store"]), f["title"], n, ctx.errors[:2]))
                 await ctx.close()
-            # KNOWN GAP, not part of this change (same on 0a3efaf): a busy hunt that answers INSIDE the
-            # 4 s budget takes settle()'s `if(huntBusy){ ... finalize(null); return; }`, which returns
-            # before finish(), so busy stays true, Find it stays disabled and the next scan is dropped
-            ctx, pg, eng = await context({SHORT["AAA"]: plan_hunt(BUSY, 0.4), SHORT["BBB"]: plan_hunt(final_unsure())})
-            await scan(pg, SHORT["AAA"])
-            await pg.wait_for_timeout(12000)
-            st = await pg.evaluate("()=>({busy:window.busy, gobtn_disabled:document.getElementById('gobtn').hasAttribute('disabled'),"
-                                   " kept:Object.keys(JSON.parse(localStorage.getItem('addify-vid-v1')||'{}'))})")
+            # I1 (FREEZE-FIX 2026-10-14, an INFO until then): a busy hunt that answers INSIDE the 4 s budget took
+            # settle()'s `if(huntBusy){ ... finalize(null); return; }`, which returned before finish(), so busy
+            # stayed true, Find it stayed disabled and the next scan was dropped (0 /base calls) until the app
+            # was reopened. The reference is the busy card drawn when the same answer lands AFTER the budget
+            # (E2's path, which always released the page): the in-budget card must read the same.
+            async def busy_scan(hold):
+                ctx, pg, eng = await context({SHORT["AAA"]: plan_hunt(BUSY, hold),
+                                              SHORT["BBB"]: plan_hunt(final_unsure())}, store=True)
+                await pg.evaluate(COUNT_JS)
+                await scan(pg, SHORT["AAA"])
+                await pg.wait_for_timeout(12000)
+                return ctx, pg, eng, await pg.evaluate(BUSY_FACTS)
+            ctx, pg, eng, ref = await busy_scan(5.0)
+            await ctx.close()
+            ctx, pg, eng, st = await busy_scan(0.4)
             m = eng.mark()
-            await pg.evaluate("(u)=>{nav('idle'); run(u);}", SHORT["BBB"])
-            await pg.wait_for_timeout(2500)
-            R.check("E2b", "not kept: a busy hunt inside the hunt budget", not st["kept"], st)
-            R.info("I1", "KNOWN GAP (pre-existing): busy hunt inside the 4 s budget leaves the page busy",
-                   "busy=%s gobtn_disabled=%s next scan /base calls=%d" % (st["busy"], st["gobtn_disabled"],
-                                                                         len(eng.hits(m, "/base"))))
+            await pg.evaluate("(u)=>{nav('idle'); urlEl.value=u; run(u);}", SHORT["BBB"])
+            t_next = time.time()
+            try:
+                _, nf = await final(pg, t_next, timeout=15000)
+                next_title = nf["title"]
+            except Exception as e:
+                next_title = "no card (%s)" % type(e).__name__
+            nb = len(eng.hits(m, "/base"))
+            R.check("E2b", "not kept: a busy hunt inside the hunt budget", not st["kept"], {"kept": st["kept"]})
+            R.check("I1a", "busy hunt inside the 4 s budget leaves the page ready (busy false, Find it enabled)",
+                    st["busy"] is False and not st["gobtn_disabled"],
+                    "busy=%s gobtn_disabled=%s" % (st["busy"], st["gobtn_disabled"]))
+            R.check("I1b", "the next scan after it runs: one /base call and its card settles",
+                    nb == 1 and next_title == SONG, "next scan /base calls=%d card=%r errors=%s" % (nb, next_title, ctx.errors[:2]))
+            R.check("I1c", "same busy card as a busy answer after the budget (text unchanged, no tracker)",
+                    st["card"] == ref["card"] and SONG in st["card"] and not st["hunt_on"] and st["state"] == "locked",
+                    "card=%r len=%d sha1=%s same_as_after_budget=%s hunt_on=%s state=%s" % (
+                        st["card"][:90], len(st["card"]), hashlib.sha1(st["card"].encode("utf-8")).hexdigest()[:12],
+                        st["card"] == ref["card"], st["hunt_on"], st["state"]))
+            R.check("I1d", "busy scan: one log entry, one bridge post, no scan counted (unchanged by the fix)",
+                    st["n"] == {"logScan": 1, "postBridge": 1, "useScan": 0} and st["used"] in (None, "0"),
+                    "in budget calls=%s used=%s | after budget calls=%s used=%s" % (
+                        st["n"], st["used"], ref["n"], ref["used"]))
             await ctx.close()
             # direct probes of devPut: each payload is the valid unsure answer plus ONE exclusion
             ctx, pg, eng = await context({})

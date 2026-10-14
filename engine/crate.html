@@ -6467,7 +6467,16 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
               try{renderResult(dshow,false);}catch(e){renderResult(d,false);}
               // server-kit: the hunt came back busy (server gate / Shazam / starved) during pgDone():
               // the named song is final, drawn without the tracker, as the 90 s cap draws it
-              if(huntBusy){ HUNT_ON=false; try{renderResult(dd,false);}catch(e){} finalize(null); return; }
+              // FREEZE-FIX 2026-10-14: this return skips finish(), which is what clears `busy` and
+              // re-enables Find it, so the page stayed busy and run() dropped every later scan until
+              // the app was reopened. Release the page here exactly as goHome() does for a cancelled
+              // scan. Nothing else from finish() runs: the card, the count (no useScan) and the one
+              // log entry and bridge post (finalize above) are the same as before. Only while this
+              // scan still owns the page (a listen scan can take it over with busy set).
+              if(huntBusy){ HUNT_ON=false; try{renderResult(dd,false);}catch(e){} finalize(null);
+                if(tok===scanTok){ busy=false; document.getElementById('gobtn').removeAttribute('disabled');
+                  if(typeof syncFormAction==='function') syncFormAction(); }
+                return; }
               try{var _r=document.getElementById('result'), _s=_r.querySelector('.sect');
                 if(_lrows){ var _ll=document.createElement('div'); _ll.className='list'; _ll.id='livelist';
                   _ll.style.marginTop='11px'; if(_s) _s.parentNode.insertBefore(_ll,_s); else _r.appendChild(_ll); livePaint(''); }}catch(e){}
