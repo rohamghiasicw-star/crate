@@ -2543,7 +2543,15 @@ function endHunt(){ if(HUNT){ try{HUNT.abort();}catch(e){} HUNT=null; } }
 var REPLAY_NAME_MS=[2600,3500], REPLAY_HUNT_MS=[3200,4500];
 function replayMs(r){return r[0]+Math.round(Math.random()*(r[1]-r[0]));}
 function replayHold(since,ms){var w=ms-(performance.now()-since); return new Promise(function(res){setTimeout(res,Math.max(0,w));});}
-var DEV_VID='addify-vid-v1', DEV_LINKS='addify-vid-links', DEV_TTL=90*864e5, DEV_MAX=40, DEV_REPLAY=null;
+/* SAME PHONE, SAME ANSWER (Konnor 2026-10-14: "the second time I scan it, it's not doing the
+   speed thing ... when I'm filming UGC videos"). The engine keeps only confirmed answers (his
+   item 4), so a "not sure" list was hunted again on every rescan: live tlog 10-14, one reel
+   scanned 3 times in 4 minutes, 66 s then 51 s, both vid_skip unsure, the third abandoned.
+   This phone now also keeps a finished answer the engine would not keep, as a SOFT copy, for
+   DEV_SOFT_TTL: a rescan inside that window replays exactly what this phone already showed.
+   Nothing is shared (the engine's store is untouched), an X drops it like any copy, a confirmed
+   answer replaces it, and after the window the clip is scanned for real again. */
+var DEV_VID='addify-vid-v1', DEV_LINKS='addify-vid-links', DEV_TTL=90*864e5, DEV_SOFT_TTL=12*36e5, DEV_MAX=40, DEV_REPLAY=null;
 function devKeyOf(u){u=String(u||'');
   var m=u.match(/tiktok\.com\/(?:[^?#]*\/)?(?:video|photo)\/(\d{6,25})/i)||u.match(/tiktok\.com\/v\/(\d{6,25})/i);
   if(m) return 'tt:'+m[1];
@@ -2555,7 +2563,8 @@ function devIsShort(u){return /^https?:\/\/(vt|vm)\.tiktok\.com\/[A-Za-z0-9]+/i.
 function devAll(){return lsGet(DEV_VID,'{}')||{};}
 function devSave(s){try{localStorage.setItem(DEV_VID,JSON.stringify(s)); return true;}catch(e){return false;}}
 function devGet(vk){var s=devAll(), e=vk?s[vk]:null; if(!e||!e.res) return null;
-  if(Date.now()-(e.t||0)>DEV_TTL){delete s[vk]; devSave(s); return null;}
+  if(Date.now()-(e.t||0)>(e.soft?DEV_SOFT_TTL:DEV_TTL)){delete s[vk]; devSave(s); return null;}
+  if(e.soft) return e;   // SAME PHONE, SAME ANSWER: kept on purpose, inside its window
   // a "not sure" list or a withheld crown is never replayed (the engine stopped keeping them
   // 2026-10-07): a copy saved before that is dropped and the clip is scanned for real
   if(e.res.unsure||e.res.crown_rejected||e.res.weak_exact){delete s[vk]; devSave(s); return null;}
@@ -2566,15 +2575,35 @@ function devLink(u,vk){if(!u||!vk) return; var m=lsGet(DEV_LINKS,'{}')||{}; m[de
 function devKeyFor(u){return devKeyOf(u)||(lsGet(DEV_LINKS,'{}')||{})[devLinkKey(u)]||null;}
 function devPut(u,d){
   try{
-    if(!d||d.dev_hit||!d.vkey||!d.base_song||d.result!=='found'||!(d.vid_ok||d.vid_hit)) return;
-    var s=devAll(); if(s[d.vkey]&&!d.vid_ok) return;   // a replay never renews its own 90 days
+    if(devOff()) return;   // the engine's kill switch stops this phone's copies too (no vid_ok while it is off)
+    if(!d||d.dev_hit||!d.vkey||!d.base_song||d.result!=='found') return;
+    var soft=!(d.vid_ok||d.vid_hit);
+    if(soft&&!devSoftOK(d)) return;
+    var s=devAll(), now=Date.now(), cur=s[d.vkey];
+    // a replay never renews its own 90 days; the engine's own confirmed answer replaces a soft copy
+    if(cur&&!d.vid_ok&&!(d.vid_hit&&cur.soft)) return;
     var r=JSON.parse(JSON.stringify(d)); delete r.replay; delete r.phone;
-    s[d.vkey]={t:Date.now(),res:r};
-    var ks=Object.keys(s).sort(function(a,b){return (s[a].t||0)-(s[b].t||0);});
-    while(ks.length>DEV_MAX){delete s[ks.shift()];}
-    while(!devSave(s)&&ks.length>1){delete s[ks.shift()];}   // storage full: oldest go first
+    s[d.vkey]=soft?{t:now,res:r,soft:1}:{t:now,res:r};
+    Object.keys(s).forEach(function(k){if(s[k].soft&&now-(s[k].t||0)>DEV_SOFT_TTL) delete s[k];});   // past their window
+    // over DEV_MAX or storage full: soft copies go before confirmed ones, oldest first, never this one
+    var ks=Object.keys(s).filter(function(k){return k!==d.vkey;}).sort(function(a,b){
+      return ((s[b].soft?1:0)-(s[a].soft?1:0))||((s[a].t||0)-(s[b].t||0));});
+    while(ks.length&&Object.keys(s).length>DEV_MAX){delete s[ks.shift()];}
+    while(!devSave(s)&&ks.length){delete s[ks.shift()];}
     devLink(u,d.vkey);
   }catch(e){}}
+// SAME PHONE, SAME ANSWER: a soft copy is only a finished answer this phone was shown that the
+// engine left out of its store for its confidence alone. Never the first half of a scan (edits
+// still pending), a busy or listen answer, a replay, a crown scored by a dead fpcalc (fp 0.0,
+// see vidcache.confirmed), or an answer the engine says the next scan must redo: a hunt short of
+// CPU (uncached, from _unstore), one the hunt budget cut short (hunt_budget), a name given while
+// Shazam was throttled (shazam_partial), or a correction it could not download.
+function devSoftOK(d){
+  if(d.edits_pending||d.busy||d.listen||d.hunt_starved||d.uncached||d.hunt_budget||d.shazam_partial
+     ||d.replay||d.cached||d.rate_limited) return false;
+  if(d.correction&&d.correction.ok===false) return false;
+  var ex=d.exact; if(ex&&ex.fp!=null&&Number(ex.fp)===0) return false;
+  return true;}
 function devDrop(u){var vk=devKeyFor(u); if(!vk) return; var s=devAll(); if(s[vk]){delete s[vk]; devSave(s);}}
 function devOff(){   // the engine's kill switch (CRATE_VID_CACHE=0 puts vid_cache:false on /health), remembered
   try{ if(engineInfo){ var off=engineInfo.vid_cache===false;
@@ -6319,7 +6348,7 @@ function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){maste
         var finalize=function(fd){
           HUNT_ON=false;                      // TRACKER 2026-09-29
           if(huntPollU===scanURL) huntEnd();  // PROGRESS 2026-09-29: the hunt is over, so is its poll
-          devPut(scanURL,fd);                 // SPEED FIX 1: the phone's copy (confirmed answers only)
+          devPut(scanURL,fd);                 // SPEED FIX 1: the phone's copy (a soft one when not confirmed)
           if(scanFinal) return; scanFinal=true;
           clearTimeout(lateCap);
           if(!(fd&&fd.base_song)) fd=d;

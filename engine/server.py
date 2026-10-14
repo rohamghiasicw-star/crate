@@ -9291,6 +9291,7 @@ def _unstore(key, res, sid=None):
         _vid_drop(_vk, "unstore")
     if isinstance(res, dict):
         res["vid_ok"] = False
+        res["uncached"] = True     # SAME PHONE, SAME ANSWER: the phone keeps no soft copy either
     ex = ((res or {}).get("exact") or {}).get("url")
     for s_, v in list(SOUND_CACHE.items()):
         if s_ == sid or (v.get("base_song") == (res or {}).get("base_song")
