@@ -31,6 +31,13 @@ VK = "tt:7677334644819250463"
 KEY = "https://vt.tiktok.com/ZSbUAbSbM/"
 SID = "7677334611222956831"
 CROWN = "https://soundcloud.com/someone/heart-attack-sped-up"
+RIGHT = "https://soundcloud.com/x/right-one"
+import corrections as CX     # noqa: E402
+
+
+def put_corrections(entries):
+    CX._write_entries(entries, os.environ["ADDIFY_CORRECTIONS"])
+    S.CORR.poll(force=True)
 
 
 def tlog_rows(stage):
@@ -260,6 +267,23 @@ class SafetyNet(Base):
                           "https://www.tiktok.com/@a/video/7677334644819250463", "find")
         self.assertEqual(f["exact"]["url"], CROWN)
 
+    def test_a_checked_fast_answer_is_not_kept_on_the_phone(self):
+        # the net can replace the server's rows; a phone copy could not be recalled
+        S._phase2 = lambda sctx, on_cand=None: full_edit(speed="as posted", exact=None,
+                                                         candidates=[])
+        S.FAST_SHADOW_RATE = 1.0
+        res = S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        _join_shadow()
+        self.assertFalse(res["vid_ok"])
+        self.assertTrue(res["uncached"])
+        self.assertTrue(S.VID_CACHE[VK]["res"]["fast_original"])     # the server keeps it
+
+    def test_an_unchecked_fast_answer_is_kept_on_the_phone_as_today(self):
+        S.FAST_SHADOW_RATE = 0.0
+        res = S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        self.assertTrue(res["vid_ok"])
+        self.assertFalse(res.get("uncached"))
+
     def test_the_shadow_hunt_gets_the_creator_block(self):
         ev = {"ok": True, "clip_creator": "poster", "sound_owner": "editz",
               "third_party_edit": True}
@@ -301,6 +325,136 @@ class SafetyNet(Base):
         S._vid_put(KEY, newer)
         S._fast_replace(ctx, full_edit(unsure=True, weak_exact=0.5))   # not storable
         self.assertEqual(S.VID_CACHE[VK]["res"]["speed"], "slowed ~0.90x")
+
+    # ---- review 2026-10-07 D3: _fast_replace never overwrites a newer or corrected answer
+    def _corrected(self):
+        return full_edit(speed="as posted", exact={"url": RIGHT, "title": "Heart Attack (right)",
+                                                   "core": 1.0, "fp": 0.9, "vspeed": 1.0},
+                         correction={"url": RIGHT, "ok": True}, candidates=[{"url": RIGHT}])
+
+    def _put_all(self, res):
+        S._cache_put(KEY, res)
+        S._sound_cache_put(make_ctx()["src"], res)
+        S._vid_put(KEY, res)
+
+    def tearDown(self):
+        put_corrections([])
+        Base.tearDown(self)
+
+    def test_d3_a_corrected_answer_saved_during_the_hunt_survives(self):
+        ctx = make_ctx()
+        S._fast_original_finish(ctx, {"score": 100, "parts": {}})
+        put_corrections([{"url": KEY, "right_url": RIGHT, "right_title": "R", "added_by": "t",
+                          "added_at": 1}])                   # _corr_sync drops the fast rows
+        self._put_all(self._corrected())                     # the corrected rescan saves
+        S._fast_replace(ctx, full_edit())                    # the shadow (ran with no fix)
+        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+            self.assertEqual(r["exact"]["url"], RIGHT)
+        self.assertEqual(S._cache_get(KEY)["exact"]["url"], RIGHT)
+
+    def test_d3_a_correction_filed_with_no_rescan_yet_writes_nothing(self):
+        ctx = make_ctx()
+        S._fast_original_finish(ctx, {"score": 100, "parts": {}})
+        put_corrections([{"url": KEY, "right_url": RIGHT, "right_title": "R", "added_by": "t",
+                          "added_at": 1}])
+        S.CORR.poll(force=True)
+        S._fast_replace(ctx, full_edit())
+        self.assertNotIn(KEY, S.CACHE)
+        self.assertNotIn(SID, S.SOUND_CACHE)
+        self.assertNotIn(VK, S.VID_CACHE)
+        self.assertTrue(any(r.get("late_corr") for r in tlog_rows("fast_replace")))
+
+    def test_d3_a_newer_nocache_answer_is_kept_in_all_three_stores(self):
+        ctx = make_ctx()
+        S._fast_original_finish(ctx, {"score": 100, "parts": {}})
+        newer = full_edit(speed="slowed ~0.90x", exact={"url": "https://soundcloud.com/n/newer",
+                                                       "title": "Heart Attack (newer)",
+                                                       "core": 1.0, "fp": 0.9, "vspeed": 0.9})
+        self._put_all(newer)
+        S._fast_replace(ctx, full_edit())
+        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+            self.assertEqual(r["exact"]["url"], "https://soundcloud.com/n/newer")
+
+    # ---- review 2026-10-07 D4: the safety net applies the server's starve guards
+    def _guards(self, **kw):
+        old = (S.STARVE_EVIDENCE, S.STARVE_MIN_KILLS, S.STARVE_FRAC, S.STARVE_HUNT_S)
+        S.STARVE_EVIDENCE = kw.get("ev", 1)
+        S.STARVE_MIN_KILLS = kw.get("kills", 12)
+        S.STARVE_FRAC = 0.8
+        S.STARVE_HUNT_S = kw.get("slow", 150.0)
+        self.addCleanup(lambda: setattr(S, "STARVE_EVIDENCE", old[0]) or setattr(
+            S, "STARVE_MIN_KILLS", old[1]) or setattr(S, "STARVE_FRAC", old[2]) or setattr(
+            S, "STARVE_HUNT_S", old[3]))
+
+    def _assert_fast_kept(self):
+        for r in (S.CACHE[KEY], S.SOUND_CACHE[SID], S.VID_CACHE[VK]["res"]):
+            self.assertTrue(r.get("fast_original"))
+            self.assertIsNone(r.get("exact"))
+
+    def test_d4_lost_phase1_evidence_never_lets_the_shadow_replace(self):
+        self._guards()
+        base = S.E.ScanTally()
+        base.lost("tikwm comments: refused 3 times")        # lost in /base, as in the real flow
+        S.FAST_SHADOW_RATE = 1.0
+
+        def fake_phase2(sctx, on_cand=None):
+            return full_edit()
+        S._phase2 = fake_phase2
+        ctx = make_ctx(_scan_tally=base)
+        res = S._fast_original_finish(ctx, {"score": 100, "parts": {}})
+        _join_shadow()
+        # (the user's own scan: job()'s guard would also unstore the fast answer; the point
+        # here is that the shadow does not write its starved crown)
+        for st in (S.CACHE.get(KEY), S.SOUND_CACHE.get(SID),
+                   (S.VID_CACHE.get(VK) or {}).get("res")):
+            self.assertNotEqual(((st or {}).get("exact") or {}).get("url"), CROWN)
+        self.assertTrue(res.get("fast_original"))
+        self.assertTrue(any(r.get("starved") for r in tlog_rows("fast_shadow")))
+
+    def test_d4_the_request_tally_counts_on_the_cold_path(self):
+        self._guards()
+        req = S.E.ScanTally()
+        req.lost("sound page: 0 hints")
+        S.FAST_SHADOW_RATE = 1.0
+        S._phase2 = lambda sctx, on_cand=None: full_edit()
+        tok = S.E.SCAN_TALLY.set(req)
+        try:
+            S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        finally:
+            S.E.SCAN_TALLY.reset(tok)
+        _join_shadow()
+        self._assert_fast_kept()
+
+    def test_d4_a_shadow_whose_downloads_died_does_not_replace(self):
+        self._guards()
+        S.FAST_SHADOW_RATE = 1.0
+
+        def starving_phase2(sctx, on_cand=None):
+            t = S.E.SCAN_TALLY.get()
+            for _ in range(14):
+                t.download(killed=True)
+            return full_edit()
+        S._phase2 = starving_phase2
+        S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        _join_shadow()
+        self._assert_fast_kept()
+
+    def test_d4_a_slow_shadow_with_no_crown_does_not_replace(self):
+        self._guards(slow=0.05)
+        S.FAST_SHADOW_RATE = 1.0
+
+        def slow_phase2(sctx, on_cand=None):
+            time.sleep(0.2)
+            return full_edit(exact=None, candidates=[])        # "sped up", no crown
+        S._phase2 = slow_phase2
+        S._fast_original_finish(make_ctx(), {"score": 100, "parts": {}})
+        _join_shadow()
+        self._assert_fast_kept()
+
+    def test_d4_control_a_healthy_shadow_still_replaces(self):
+        self._guards()
+        self._run(full_edit())
+        self.assertEqual(S.CACHE[KEY]["exact"]["url"], CROWN)
 
 
 class VideoStoreReadCheck(Base):

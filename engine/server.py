@@ -5366,27 +5366,34 @@ def _fast_shadow(ctx, snap_res, d):
     # read HERE, on the request thread: FS.PHONE is a context value the shadow thread does not
     # inherit, so inside it _phone_unconfirmed would always say "not phone-named"
     saveable = not _phone_unconfirmed(snap_res)
+    # REVIEW 2026-10-07 D4: the tallies the server's starve guard judges a user's hunt on (the
+    # /base half that parked this hunt, and the request's own, which carries phase 1 on the
+    # cold /edits and /find path). Read here: a new thread does not inherit contextvars.
+    base_tallies = (ctx.get("_scan_tally"), E.SCAN_TALLY.get())
     sctx = dict(ctx)
     sctx.update(src=dict(src, audio=a2, tmp=tmp2), res=copy.deepcopy(snap_res),
                 key="%s#shadow" % key, shadow=True, t0=time.time())
 
     def run():
         t0 = time.time()
-        ttok = E.SCAN_TALLY.set(E.ScanTally())
+        own = E.ScanTally()                 # this hunt's own downloads, nobody else's
+        ttok = E.SCAN_TALLY.set(own)
         try:
             if tok is not None:
                 GATE.hand(tok, threading.current_thread())
             full = _phase2(sctx)
             why = _fast_disagrees(full)
             ex = (full or {}).get("exact") or {}
+            starved = _shadow_starved(own, base_tallies, t0, full)
             E.tlog("fast_shadow", time.time() - t0, url=key, ran=True, agree=why is None,
                    why=why, score=d.get("score"), speed=(full or {}).get("speed"),
                    crown=(ex.get("title") or "")[:80], vspeed=ex.get("vspeed"),
-                   core=ex.get("core"), fp=ex.get("fp"))
+                   core=ex.get("core"), fp=ex.get("fp"), starved=starved)
             # a found edit is acted on; full_no_match / full_error may be a throttled hunt and
-            # prove nothing, and a budget-cut hunt or a refused correction is not what a full
-            # scan saves either
-            if why and saveable and (full or {}).get("result") == "found" \
+            # prove nothing, and a budget-cut hunt, a refused correction, or a hunt the server's
+            # starve guards would refuse (downloads killed at the wall, evidence lost, a slow
+            # hunt with no crown: D4) is not what a full scan saves either
+            if why and saveable and not starved and (full or {}).get("result") == "found" \
                     and not full.get("hunt_budget") \
                     and (full.get("correction") or {}).get("ok", True):
                 _fast_replace(ctx, full)
@@ -5402,6 +5409,23 @@ def _fast_shadow(ctx, snap_res, d):
     return True
 
 
+def _shadow_starved(own, base_tallies, t0, full):
+    """The server's guards on a user's hunt (job(): _hunt_starved, then the STARVE_HUNT_S slow
+    rule), applied to the safety net's hunt. -> why (str) when its answer must not be saved,
+    else None. `own` is the shadow's own tally (its downloads), `base_tallies` the request's
+    (phase 1's lost evidence: the shadow runs phase 2 only, so its own tally never sees it)."""
+    try:
+        starved, why, _facts = _hunt_starved(own, _TallySum(*(base_tallies or ())))
+    except Exception as ex:
+        return "guard error %s" % type(ex).__name__     # unsure: never replace
+    if starved:
+        return why or "starved"
+    r = full or {}
+    if STARVE_HUNT_S > 0 and time.time() - t0 > STARVE_HUNT_S and not r.get("exact"):
+        return "slow hunt, no crown"
+    return None
+
+
 def _fast_replace(ctx, full):
     """The safety net's hunt found an EDIT where the fast path said original. The fast answer
     leaves every store that still holds it (this link's URL row and rows a sound hit copied,
@@ -5410,9 +5434,24 @@ def _fast_replace(ctx, full):
     video, any link to it, or another video on its sound gets the hunt's answer instead of the
     fast one. Only rows still holding a fast answer are dropped: a newer full answer stays. If
     the hunt's answer is not one the video store keeps, the stale video row is still gone.
-    A copy a phone already saved (vid_ok) cannot be recalled from here."""
+    A copy a phone already saved (vid_ok) cannot be recalled from here.
+    REVIEW 2026-10-07 D3: a store is written only where its row was a fast answer just dropped
+    here, or is empty; a row still present is newer (a nocache rescan, a corrected scan) and
+    stays. A correction on file now (the fast path never runs with one, so it was filed while
+    the hunt ran, and the hunt never saw it) wins outright: nothing is written, and the next
+    scan hunts with the correction."""
     key, src = ctx.get("key"), ctx.get("src") or {}
     vk, sid = full.get("vkey"), src.get("sound_id")
+    try:
+        late = CORR.match(ctx.get("url") or key, video_id=src.get("video_id"),
+                          sound_id=(sid if _corr_sound_ok(src) else None))
+    except Exception:
+        late = {"why": "match error"}          # unsure: the hunt's answer is not written
+    if late is not None and ((late.get("right_url") or "") !=
+                             ((full.get("correction") or {}).get("url") or "")):
+        late = True
+    else:
+        late = False
     dropped = []
     for ck, r in list(CACHE.items()):
         r = r or {}
@@ -5431,11 +5470,21 @@ def _fast_replace(ctx, full):
         SOUND_CACHE.pop(sid, None)
         _disk_put("sound", sid, None)
         dropped.append("sound")
-    _cache_put(key, full)
-    _sound_cache_put(src, full)
-    _vid_put(key, full, ctx.get("base_view"))
-    E.tlog("fast_replace", 0.0, url=key, vkey=vk, sound=sid, dropped=dropped,
-           vid_ok=bool(full.get("vid_ok")))
+    put = []
+    if not late:
+        if key not in CACHE:
+            _cache_put(key, full)
+            put.append("url")
+        if sid and sid not in SOUND_CACHE:
+            _sound_cache_put(src, full)
+            put.append("sound")
+        with _VID_LOCK:
+            vid_free = bool(vk) and vk not in VID_CACHE
+        if vid_free:
+            _vid_put(key, full, ctx.get("base_view"))
+            put.append("vid")
+    E.tlog("fast_replace", 0.0, url=key, vkey=vk, sound=sid, dropped=dropped, put=put,
+           late_corr=late, vid_ok=bool(full.get("vid_ok")))
 
 
 def _fast_original_finish(ctx, d):
@@ -5463,9 +5512,18 @@ def _fast_original_finish(ctx, d):
     _sound_cache_put(src, res)
     _vid_put(key, res, ctx.get("base_view"))
     try:
-        _fast_shadow(ctx, snap, d)
+        shadowed = _fast_shadow(ctx, snap, d)
     except Exception:
-        pass                              # the safety net must never cost the user the answer
+        shadowed = False                  # the safety net must never cost the user the answer
+    if shadowed:
+        # SAME PHONE, SAME ANSWER (b268ff6) and the safety net: the server can replace this
+        # answer when its hunt finds an edit (_fast_replace), but a copy on the phone cannot be
+        # recalled. So a fast answer the net is checking is not kept on the phone at all (no
+        # confirmed copy: vid_ok False; no soft copy: uncached, which devSoftOK refuses); the
+        # next scan of it asks the server, which has the checked answer. The server's own rows
+        # are untouched (stored above, before this flag).
+        res["vid_ok"] = False
+        res["uncached"] = True
     return res
 
 
