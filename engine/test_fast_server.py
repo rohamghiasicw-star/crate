@@ -807,5 +807,47 @@ class Item4NoAudioLeftWhenTheNetCannotStart(Base):
         self.assertEqual(S.GATE.released, S.GATE.out)
 
 
+class PreShipOrefLimits(unittest.TestCase):
+    """Pre-ship review 2026-10-15: at most CRATE_OREF_MAX studio checks at once, and the Deezer
+    preview must really be on a dzcdn.net host."""
+
+    def test_third_concurrent_check_is_skipped_not_queued(self):
+        gate, started, real = threading.Event(), [], S.OR.run
+        def slow(audio, url, tmp, label):
+            started.append(label); gate.wait(5); return {"src": label, "ok": True}
+        S.OR.run = slow
+        try:
+            out = {}
+            ts = [threading.Thread(target=lambda i=i: out.__setitem__(i, S._orig_ref_one("a", "t", "u", "L%d" % i)))
+                  for i in range(2)]
+            [t.start() for t in ts]
+            for _ in range(50):
+                if len(started) == 2:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(S._orig_ref_one("a", "t", "u", "L9"), {"src": "L9", "why": "oref_busy"})
+            gate.set(); [t.join(5) for t in ts]
+            self.assertEqual(sorted(started), ["L0", "L1"])
+            self.assertTrue(all(v.get("ok") for v in out.values()))
+            # slots come back: the next check runs
+            gate.set()
+            self.assertTrue(S._orig_ref_one("a", "t", "u", "L3").get("ok"))
+        finally:
+            S.OR.run = real
+
+    def test_slot_released_when_the_check_raises(self):
+        real = S.OR.run
+        def boom(*a):
+            raise RuntimeError("x")
+        S.OR.run = boom
+        try:
+            for _ in range(4):
+                with self.assertRaises(RuntimeError):
+                    S._orig_ref_one("a", "t", "u", "L")
+        finally:
+            S.OR.run = real
+        self.assertTrue(S._OREF_SLOTS.acquire(blocking=False)); S._OREF_SLOTS.release()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

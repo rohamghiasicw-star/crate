@@ -2094,7 +2094,9 @@ def _phase1(url, key, t0):
         # a plain original (1.0x, steady skew, no edit word: fastorig.early_ok); phase 1's end
         # takes it only when the final song and the clip audio are the ones it measured.
         try:
-            if FAST_ORIGINAL == "off" or not FO.early_ok(h):
+            # a licensed sound can never go fast (every route to hunting it carries a veto), so
+            # the check would be work nobody reads (pre-ship review 2026-10-15)
+            if FAST_ORIGINAL == "off" or not src.get("is_original") or not FO.early_ok(h):
                 return
             with _dec["lock"]:
                 if _oref_early:
@@ -5176,15 +5178,30 @@ def _deezer_studio(song, artist):
         if not L._close(t, song) or (artist and not L._close(who, artist)):
             continue
         pv = r.get("preview") or ""
-        if pv.startswith("https://") and ".dzcdn.net/" in pv:
+        try:
+            _host = urlparse(pv).hostname or ""
+        except Exception:
+            _host = ""
+        if pv.startswith("https://") and _host.endswith(".dzcdn.net"):
             return pv, t
     return None
+
+
+# At most CRATE_OREF_MAX studio checks at once, box-wide (pre-ship review 2026-10-15: a burst of
+# short scans could stack ~20 children, ~3.4 GB, inside the 6 GB unit limit). A skipped check
+# reads as "not clean", so the fast path falls back to the full hunt; measure mode logs it.
+_OREF_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("CRATE_OREF_MAX", "2") or 2)))
 
 
 def _orig_ref_one(audio, tmp, url, label):
     """One studio preview against the clip, measured in a child process (origref.py): inside
     the engine, beside a running scan, the same work took 4-13 s instead of 1.4-1.6 s."""
-    return OR.run(audio, url, tmp, label)
+    if not _OREF_SLOTS.acquire(blocking=False):
+        return {"src": label, "why": "oref_busy"}
+    try:
+        return OR.run(audio, url, tmp, label)
+    finally:
+        _OREF_SLOTS.release()
 
 
 def _orig_ref(src, url, song=None, artist=None, links_fut=None):
