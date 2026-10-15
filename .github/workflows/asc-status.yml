@@ -1,5 +1,6 @@
-# Read-only: prints the App Store review state of Addify's versions. Changes nothing in
-# App Store Connect. Runs only on a push to the asc-status branch.
+# Read-only: prints the App Store review state of Addify and everything attached to the
+# submission (build, review details, age rating, IAP/subscription states). GET requests only;
+# changes nothing in App Store Connect. Runs only on a push to the asc-status branch.
 name: App Store review status (read only)
 on:
   push:
@@ -15,21 +16,67 @@ jobs:
           P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           python3 - <<'PY'
-          import os, time, jwt, requests
+          import os, time, json, jwt, requests
           now = int(time.time())
-          tok = jwt.encode({"iss": os.environ["ISS"], "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"},
+          tok = jwt.encode({"iss": os.environ["ISS"], "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"},
                            os.environ["P8"], algorithm="ES256", headers={"kid": os.environ["KID"]})
-          h = {"Authorization": "Bearer " + tok}
-          base = "https://api.appstoreconnect.apple.com/v1"
-          r = requests.get(base + "/apps/6815190677/appStoreVersions?limit=5", headers=h)
-          print("versions", r.status_code)
-          for v in r.json().get("data", []):
-              a = v["attributes"]
-              print("VERSION", a.get("versionString"), "| appStoreState:", a.get("appStoreState"),
-                    "| appVersionState:", a.get("appVersionState"), "| created:", a.get("createdDate"))
-          r = requests.get(base + "/reviewSubmissions?filter[app]=6815190677&limit=5", headers=h)
-          print("submissions", r.status_code)
-          for v in r.json().get("data", []):
-              a = v["attributes"]
-              print("SUBMISSION", a.get("state"), "| submitted:", a.get("submittedDate"), "| platform:", a.get("platform"))
+          H = {"Authorization": "Bearer " + tok}
+          B = "https://api.appstoreconnect.apple.com"
+          APP = "6815190677"
+          def get(path):
+              r = requests.get(B + path, headers=H, timeout=30)
+              try: j = r.json()
+              except Exception: j = {}
+              if r.status_code >= 300:
+                  print("  !", r.status_code, path, json.dumps(j.get("errors", ""))[:300])
+              return j
+          def attrs(o, keys=None):
+              a = o.get("attributes", {}) or {}
+              return {k: a.get(k) for k in (keys or a.keys())}
+          print("== app"); print(attrs(get(f"/v1/apps/{APP}").get("data", {}), ["name", "bundleId", "primaryLocale", "contentRightsDeclaration"]))
+          print("== versions")
+          vs = get(f"/v1/apps/{APP}/appStoreVersions?limit=5").get("data", [])
+          for v in vs:
+              print(" ", v["id"], attrs(v, ["versionString", "appStoreState", "appVersionState", "releaseType", "createdDate", "reviewType"]))
+          v = vs[0] if vs else None
+          if v:
+              vid = v["id"]
+              print("== build on the version")
+              b = get(f"/v1/appStoreVersions/{vid}/build").get("data")
+              if b: print(" ", attrs(b, ["version", "uploadedDate", "processingState", "expired", "usesNonExemptEncryption", "minOsVersion"]))
+              else: print("  NO BUILD ATTACHED")
+              print("== review detail (contact / demo account; secrets not printed)")
+              d = get(f"/v1/appStoreVersions/{vid}/appStoreReviewDetail").get("data")
+              if d:
+                  a = d.get("attributes", {})
+                  print(" ", {k: a.get(k) for k in ("contactFirstName", "contactLastName", "contactEmail", "demoAccountRequired")},
+                        "demoName set:", bool(a.get("demoAccountName")), "demoPassword set:", bool(a.get("demoAccountPassword")),
+                        "notes chars:", len(a.get("notes") or ""))
+              else: print("  NO REVIEW DETAIL")
+              print("== localizations")
+              for l in get(f"/v1/appStoreVersions/{vid}/appStoreVersionLocalizations").get("data", []):
+                  a = l.get("attributes", {})
+                  print(" ", a.get("locale"), "desc chars", len(a.get("description") or ""), "keywords", bool(a.get("keywords")), "support", a.get("supportUrl"), "privacy?", a.get("marketingUrl"))
+          print("== review submissions (+ items)")
+          for s in get(f"/v1/reviewSubmissions?filter[app]={APP}&limit=10&include=items").get("data", []):
+              print(" ", s["id"], attrs(s, ["state", "submittedDate", "platform"]))
+              for it in get(f"/v1/reviewSubmissions/{s['id']}/items").get("data", []):
+                  print("     item", attrs(it, ["state", "createdDate"]))
+          print("== app infos (age rating / categories)")
+          for ai in get(f"/v1/apps/{APP}/appInfos").get("data", []):
+              print(" ", ai["id"], attrs(ai, ["appStoreState", "state", "appStoreAgeRating", "brazilAgeRating", "kidsAgeBand"]))
+              ar = get(f"/v1/appInfos/{ai['id']}/ageRatingDeclaration").get("data")
+              if ar:
+                  a = ar.get("attributes", {})
+                  print("    age rating declaration, unanswered:", [k for k, x in a.items() if x is None])
+          print("== in-app purchases / subscriptions")
+          for g in get(f"/v1/apps/{APP}/subscriptionGroups?include=subscriptions").get("data", []):
+              print(" group", attrs(g, ["referenceName"]))
+              for sub in get(f"/v1/subscriptionGroups/{g['id']}/subscriptions").get("data", []):
+                  print("   sub", attrs(sub, ["name", "productId", "state", "subscriptionPeriod", "reviewNote"]))
+          for p in get(f"/v1/apps/{APP}/inAppPurchasesV2?limit=20").get("data", []):
+              print("   iap", attrs(p, ["name", "productId", "state", "inAppPurchaseType"]))
+          print("== beta review (TestFlight external)")
+          for s in get(f"/v1/betaAppReviewSubmissions?filter[build]=&limit=3").get("data", [])[:0]:
+              pass
           PY
