@@ -26,7 +26,13 @@ struct AddifyApp: App {
                 /* The engine hostname rotates while the app is closed, so the value
                    baked into the last launch is usually already dead. Resolve before the
                    web view is asked for anything. */
-                .task { await EngineConfig.resolveFromDirectory() }
+                /* BUILD 19: the lookup does not hold the first load (the web view loads at
+                   once), so when it lands after that load already failed, reload on what it
+                   found instead of leaving "Can't reach Addify" up until someone taps. */
+                .task {
+                    let found = await EngineConfig.resolveFromDirectory()
+                    if found != nil && bridge.unreachable { bridge.retry() }
+                }
                 .onChange(of: scenePhase) { phase in
                     bridge.isActive = (phase == .active)
                     /* The inbox is the guaranteed share path; drain it on every

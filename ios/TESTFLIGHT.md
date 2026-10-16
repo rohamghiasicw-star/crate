@@ -28,7 +28,7 @@ rotates and only another TestFlight build can fix it.
     cloudflared tunnel create addify
     cloudflared tunnel route dns addify addify.rghiasi.com
 
-`EngineConfig.defaultBaseURL` is already set to `https://addify.rghiasi.com`. Until the
+`EngineConfig.defaultBaseURL` is the live server `https://161-35-185-80.sslip.io` since build 19 (it was `https://addify.rghiasi.com`, which never resolved). Until the
 tunnel above exists, the app cannot reach an engine on first launch.
 
 Your Mac still has to be awake and running the engine for the app to work at all. That is

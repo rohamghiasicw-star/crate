@@ -63,6 +63,10 @@ struct EngineWebView: UIViewRepresentable {
         var seenReloadToken = 0
         /* CALL-RETRY: quiet reloads spent on the current page load (see failed()). */
         var quietRetries = 0
+        /* BUILD 19: the host load() last asked for, and how many times a failed load was moved
+           to a newer engine address (see failed()). */
+        var loadedHost: String?
+        var hostSwitches = 0
 
         init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -73,6 +77,7 @@ struct EngineWebView: UIViewRepresentable {
         func load(_ wv: WKWebView) {
             bridge.pageReady = false
             quietRetries = 0
+            loadedHost = EngineConfig.baseURL.host?.lowercased()
             var req = URLRequest(url: EngineConfig.baseURL)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
             wv.load(req)
@@ -166,6 +171,18 @@ struct EngineWebView: UIViewRepresentable {
             let e = error as NSError
             /* -999 is our own cancel from decidePolicyFor, not an outage. */
             if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
+            /* BUILD 19 (App Review 2.1(a), 2026-10-15: "an error message showed up right after
+               launch"). The first load starts before the directory lookup answers. If the engine
+               address changed while this load was running, load the current address instead of
+               showing "Can't reach Addify". Only for a load of the host load() last asked for,
+               and at most twice per launch, so it can never loop. */
+            if let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
+               let fh = failing.host?.lowercased(), fh == loadedHost,
+               let cur = EngineConfig.baseURL.host?.lowercased(), cur != fh, hostSwitches < 2 {
+                hostSwitches += 1
+                load(webView)
+                return
+            }
             if e.domain == NSURLErrorDomain, Self.transientCodes.contains(e.code), quietRetries < 2,
                let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL, isEngineOrigin(failing) {
                 quietRetries += 1
