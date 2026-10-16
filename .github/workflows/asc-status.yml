@@ -76,7 +76,7 @@ jobs:
                   print("   sub", attrs(sub, ["name", "productId", "state", "subscriptionPeriod", "reviewNote"]))
           for p in get(f"/v1/apps/{APP}/inAppPurchasesV2?limit=20").get("data", []):
               print("   iap", attrs(p, ["name", "productId", "state", "inAppPurchaseType"]))
-          print("== beta review (TestFlight external)")
-          for s in get(f"/v1/betaAppReviewSubmissions?filter[build]=&limit=3").get("data", [])[:0]:
-              pass
+          print("== latest builds")
+          for b in get(f"/v1/builds?filter[app]={APP}&sort=-uploadedDate&limit=4").get("data", []):
+              print(" ", attrs(b, ["version", "uploadedDate", "processingState", "expired"]))
           PY
