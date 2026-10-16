@@ -78,5 +78,15 @@ jobs:
               print("   iap", attrs(p, ["name", "productId", "state", "inAppPurchaseType"]))
           print("== latest builds")
           for b in get(f"/v1/builds?filter[app]={APP}&sort=-uploadedDate&limit=4").get("data", []):
-              print(" ", attrs(b, ["version", "uploadedDate", "processingState", "expired"]))
+              print(" ", b["id"], attrs(b, ["version", "uploadedDate", "processingState", "expired"]))
+              bd = get(f"/v1/builds/{b['id']}/buildBetaDetail").get("data")
+              if bd: print("    beta:", attrs(bd, ["internalBuildState", "externalBuildState", "autoNotifyEnabled"]))
+          print("== beta groups and testers (emails masked)")
+          def mask(e):
+              e = e or ""; u, _, d = e.partition("@"); return (u[:3] + "***@" + d) if d else e
+          for g in get(f"/v1/apps/{APP}/betaGroups?limit=20").get("data", []):
+              print(" group", g["id"], attrs(g, ["name", "isInternalGroup", "hasAccessToAllBuilds", "publicLinkEnabled"]))
+              for t in get(f"/v1/betaGroups/{g['id']}/betaTesters?limit=50").get("data", []):
+                  a = t.get("attributes", {})
+                  print("    tester", mask(a.get("email")), a.get("inviteType"), a.get("state"))
           PY
