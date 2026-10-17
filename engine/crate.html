@@ -7242,10 +7242,15 @@ document.addEventListener('visibilitychange',function(){
    opens the two sheets. NEWFLOW_ALL=true turns it on for everyone with one deploy.
    ============================================================ */
 var NEWFLOW_ALL=false;
-var NEWFLOW=NEWFLOW_ALL||(function(){try{return localStorage.getItem('addify-newflow')==='1';}catch(e){return false;}})();
+/* APP REVIEW 2.5.19 (guidelines revised 2026-10-17: no hidden, dormant or undocumented features).
+   The owner preview of the new screens answers ONLY on a master (owner) phone. Anyone else who
+   types addify-preview gets the normal "not a link" path, and a device that turned the preview
+   on before this keeps the current screens. */
+var NEWFLOW=NEWFLOW_ALL||(MASTER&&(function(){try{return localStorage.getItem('addify-newflow')==='1';}catch(e){return false;}})());
 var ONE_LEFT_DUE=false;
 function previewCode(raw){var c=String(raw||'').trim().toLowerCase();
   if(c!=='addify-preview'&&c!=='addify-preview-sheets') return false;
+  if(!MASTER) return false;   // APP REVIEW 2.5.19: owner phones only (see NEWFLOW above)
   urlEl.value='';
   if(c==='addify-preview-sheets'){NEWFLOW=true; oneLeftShow(true); return true;}
   var on=NEWFLOW_ALL||!(function(){try{return localStorage.getItem('addify-newflow')==='1';}catch(e){return false;}})();
