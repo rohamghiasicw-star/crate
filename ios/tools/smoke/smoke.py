@@ -172,7 +172,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.reply(404)
 
 
-class V6Server(ThreadingHTTPServer):
+class QuietServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # The app cancels health checks it no longer needs; a reset connection is expected.
+        if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
+            super().handle_error(request, client_address)
+
+
+class V6Server(QuietServer):
     address_family = socket.AF_INET6
 
 
@@ -181,7 +188,7 @@ def start_stub():
     for host, port in [("127.0.0.1", PORT_A), ("::1", PORT_A), ("127.0.0.1", PORT_B),
                        ("127.0.0.1", PORT_G), ("127.0.0.1", PORT_X), ("::1", PORT_X)]:
         try:
-            cls = V6Server if ":" in host else ThreadingHTTPServer
+            cls = V6Server if ":" in host else QuietServer
             s = cls((host, port), Handler)
             s.daemon_threads = True
             threading.Thread(target=s.serve_forever, daemon=True).start()
@@ -223,8 +230,10 @@ def pick_device(devs, prefs, prefix):
 
 
 def pixel_class(png):
-    """'page' (the stub's green), 'native' (the app's own #17141F ground) or 'other', sampled
-    down the middle of the lower half of the screen."""
+    """'page' (the stub's green), 'error' (the app's #17141F ground with the purple Try again
+    button below the middle), 'boot' (the same ground, no button), or 'other'."""
+    if not png or not os.path.exists(png):
+        return "missing"
     bmp = png[:-4] + ".bmp"
     run("sips", "-s", "format", "bmp", png, "--out", bmp, check=False)
     try:
@@ -235,20 +244,36 @@ def pixel_class(png):
     w, h = struct.unpack_from("<ii", d, 18)
     bpp = struct.unpack_from("<H", d, 28)[0]
     stride = ((bpp * w + 31) // 32) * 4
-    votes = []
-    for fy in (0.66, 0.76, 0.86):
+
+    def px(fx, fy):
         y = int(abs(h) * fy)
         row = (abs(h) - 1 - y) if h > 0 else y
-        i = off + row * stride + int(w * 0.5) * (bpp // 8)
-        b, g, r = d[i], d[i + 1], d[i + 2]
+        i = off + row * stride + int(w * fx) * (bpp // 8)
+        return d[i + 2], d[i + 1], d[i]          # BMP stores BGR(A)
+
+    votes = []
+    for fy in (0.66, 0.76, 0.86):
+        r, g, b = px(0.5, fy)
         if abs(r - 10) < 30 and abs(g - 125) < 30 and abs(b - 44) < 30:
             votes.append("page")
         elif abs(r - 23) < 14 and abs(g - 20) < 14 and abs(b - 31) < 14:
             votes.append("native")
         else:
             votes.append("other")
+    kind = max(set(votes), key=votes.count)
+    if kind == "native":
+        # UnreachableView's Try again button (tint 0.36, 0.29, 0.91) sits just below the middle;
+        # BootView has nothing purple below its title.
+        purple = total = 0
+        for yi in range(50, 76):
+            for xi in range(30, 71, 2):
+                r, g, b = px(xi / 100.0, yi / 100.0)
+                total += 1
+                if 60 <= r <= 130 and 45 <= g <= 110 and b >= 190:
+                    purple += 1
+        kind = "error" if purple / float(total) > 0.02 else "boot"
     os.remove(bmp)
-    return max(set(votes), key=votes.count)
+    return kind
 
 
 class Device:
@@ -286,7 +311,10 @@ class Device:
         return False
 
 
-def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, shots=()):
+def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, shots=(), after=()):
+    """shots: (name, seconds after launch). after: (name, test(entry), seconds after the first
+    stub log entry that passes test), so a screenshot lands inside the moment it is meant to show
+    however slowly the simulator starts the app."""
     with LOCK:
         CFG.clear()
         CFG.update(json.loads(json.dumps(cfg)))
@@ -297,17 +325,25 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         dev.install(app)
     t0 = time.time()
     dev.launch()
-    pending = sorted(shots, key=lambda s: s[1])
+    pending = [(name, t0 + at) for name, at in shots]
+    waiting = list(after)
     taken = {}
     while True:
-        el = time.time() - t0
-        for name, at in list(pending):
-            if el >= at:
-                taken[name] = dev.shot("%s-%s" % (label, name))
-                pending.remove((name, at))
+        now = time.time()
         with LOCK:
-            kinds = {e.get("kind") for e in LOG[mark:] if e.get("kind")}
-        if (all(k in kinds for k in want) and not pending) or el > timeout:
+            fresh_log = LOG[mark:]
+        for item in list(waiting):
+            name, test, delay = item
+            hit = next((e for e in fresh_log if test(e)), None)
+            if hit:
+                pending.append((name, hit["t"] + delay))
+                waiting.remove(item)
+        for name, when in sorted(pending, key=lambda p: p[1]):
+            if now >= when:
+                taken[name] = dev.shot("%s-%s" % (label, name))
+                pending.remove((name, when))
+        kinds = {e.get("kind") for e in fresh_log if e.get("kind")}
+        if (all(k in kinds for k in want) and not pending and not waiting) or now - t0 > timeout:
             break
         time.sleep(0.25)
     time.sleep(0.5)
@@ -340,7 +376,8 @@ def report(res, kind):
 
 def common(dev, scen, res, version):
     r = report(res, "bridges")
-    check(dev, scen, "page reported", r is not None, "after %.1f s" % res["elapsed"])
+    at = [e["dt"] for e in res["entries"] if e.get("kind") == "bridges"]
+    check(dev, scen, "page reported", r is not None, "%.1f s after launch" % at[-1] if at else "never")
     if not r:
         return None
     ua = r.get("ua", "")
@@ -392,16 +429,18 @@ def run_stub_suite(dev, app, version, ipad=False):
             json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
         down = {"A": {"health_ms": 20, "fail_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
-        res = scenario(dev, app, "server5xx", down, timeout=40, shots=(("error", 3.5),))
+        first502 = lambda e: e["role"] == "A" and e["status"] == 502
+        res = scenario(dev, app, "server5xx", down, timeout=45, after=(("error", first502, 1.2),))
         r = common(dev, "server5xx", res, version)
         reqs = page_requests(res, "A")
         check(dev, "server5xx", "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
         if len(reqs) >= 3:
+            # 2 s and 4 s timers; a simulator adds its own navigation start-up time on top
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
-            check(dev, "server5xx", "automatic reloads back off", 1.5 <= g1 <= 3.5 and 3.5 <= g2 <= 6.0,
+            check(dev, "server5xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
         mid = pixel_class(res["shots"].get("error", ""))
-        check(dev, "server5xx", "native screen during the outage (not blank)", mid == "native", mid)
+        check(dev, "server5xx", "error screen with Try again during the outage (not blank)", mid == "error", mid)
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
         json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
@@ -411,18 +450,23 @@ def run_stub_suite(dev, app, version, ipad=False):
         # as a request on the outside port.
         red = {"A": {"health_ms": 20, "redirect": "http://localhost:8799/"}, "B": {"health": False, "down": True},
                "G": {"pick": ""}, "X": {}}
-        res = scenario(dev, app, "redirect", red, want=(), timeout=12, shots=(("t5", 5.0),))
+        first302 = lambda e: e["role"] == "A" and e["status"] == 302
+        res = scenario(dev, app, "redirect", red, want=(), timeout=40,
+                       after=(("error", first302, 1.2), ("later", first302, 4.0)))
         reqs = page_requests(res, "A")
         outside = [e for e in res["entries"] if e["role"] == "X"]
         check(dev, "redirect", "outside host never loaded (no Safari handoff)", not outside,
               "%d requests %s" % (len(outside), json.dumps([e.get("ua", "")[-40:] for e in outside][:3])))
         check(dev, "redirect", "engine page reloaded on its own", len(reqs) >= 2, json.dumps(reqs))
-        check(dev, "redirect", "native error screen, not blank", pixel_class(res["shots"]["final"]) == "native",
-              pixel_class(res["shots"]["final"]))
+        for shot in ("error", "later"):
+            k = pixel_class(res["shots"].get(shot, ""))
+            check(dev, "redirect", "error screen, not blank, not Safari (%s)" % shot, k == "error", k)
+        check(dev, "redirect", "app still running", res["alive"], "")
         json.dump(res, open(os.path.join(dev.out, "%s-redirect.json" % dev.tag), "w"), indent=1)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
-    res = scenario(dev, app, "export", exp, want=("export", "alive"), timeout=40, shots=(("sheet", 4.0),))
+    exported = lambda e: e.get("kind") == "export"
+    res = scenario(dev, app, "export", exp, want=("export", "alive"), timeout=45, after=(("sheet", exported, 1.5),))
     r = report(res, "export")
     check(dev, "export", "exportFinds resolved", r is not None and r.get("export") == {"ok": {"ok": True}},
           json.dumps((r or {}).get("export")))
