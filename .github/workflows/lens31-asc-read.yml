@@ -1,0 +1,140 @@
+# Review simulation, lane lens-3.1 (Guideline 3.1 payments). READ ONLY.
+# Every App Store Connect call below is requests.get. Nothing is written to App Store Connect.
+# This branch holds only this file, so no iOS workflow can start from a push here.
+# The repo is public, so the full dump is encrypted to the auditor's public key (the same key
+# the asc-status branch uses); only counts and states are printed in clear.
+name: lens-3.1 App Store Connect read (GET only)
+on:
+  push:
+    branches: [review-sim-lens-3.1]
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: pip install -q pyjwt cryptography requests
+      - name: GET-only dump, encrypted
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          ISS: ${{ secrets.ASC_ISSUER_ID }}
+          P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 - <<'PY'
+          import os, time, json, base64, collections, jwt, requests
+          from cryptography.fernet import Fernet
+          from cryptography.hazmat.primitives import hashes, serialization
+          from cryptography.hazmat.primitives.asymmetric import padding
+          PUB = b"""-----BEGIN PUBLIC KEY-----
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvFOlWMiHcK1lwPt9yLRU
+          Js8fLL8jJNwiIC9Lig8MiKy3yYCc7l6bys2fdLgmSiz45CSG/hTpHullz8SZr1Mh
+          VZQTgE2VIpAzDvL7heLPzWQzZLf7bwxm/xFmPb7lyjzPImtIsjtWr92ZqyuyBGIt
+          pmDURitRxcSiBtKJJQTMATsdWpYRt6OaM9UL2hBXk8n6ZpOHgdTwejEdTKEeqaxw
+          Hssnuoo4p5ZItRhoZbW6osDM2xkRbja0pOIhGfb5vRNLaHuyEng5+O0dmo+tMmKe
+          X3NXsy/7psPfmGhQTOCoJuwH5SVLjgzjqRF17V+WgKfujFvRq1h75vLGXxnM5M3O
+          MGyRmGSC0XA7RXDrZuy/o60H47mlMuonGj6MuBf82lMVGbNqWkjiL3ygmefO2VCr
+          6ebHz8oFFuZ+buy+r6UnjVNi2FzyelmY4M2QGP1dNgNEvjvgKcByhSimuo/Hecxc
+          3y0j/lSNinXAW/jljkeEGzrus71iy2b9v43j0VTycUC/AgMBAAE=
+          -----END PUBLIC KEY-----
+          """
+          now = int(time.time())
+          tok = jwt.encode({"iss": os.environ["ISS"], "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"},
+                           os.environ["P8"], algorithm="ES256", headers={"kid": os.environ["KID"]})
+          H = {"Authorization": "Bearer " + tok}
+          B = "https://api.appstoreconnect.apple.com"
+          APP = "6815190677"
+          D = collections.OrderedDict()
+          D["_read_at_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+          CALLS = collections.Counter()
+          def strip(o):
+              if isinstance(o, dict):
+                  return {k: strip(v) for k, v in o.items() if k not in ("links", "uploadOperations")}
+              if isinstance(o, list):
+                  return [strip(x) for x in o]
+              return o
+          def g(path):
+              CALLS["GET"] += 1
+              r = requests.get(B + path, headers=H, timeout=30)
+              try: j = r.json()
+              except Exception: j = {}
+              if r.status_code >= 300:
+                  print("  !", r.status_code, path.split("?")[0])
+                  return {"_status": r.status_code, "_errors": j.get("errors")}
+              return strip(j)
+          def data(j):
+              return j.get("data") if isinstance(j, dict) else None
+          def allpages(path):
+              out = []; p = path; n = 0
+              while p and n < 10:
+                  CALLS["GET"] += 1; n += 1
+                  r = requests.get(B + p, headers=H, timeout=30)
+                  try: j = r.json()
+                  except Exception: j = {}
+                  if r.status_code >= 300:
+                      print("  !", r.status_code, p.split("?")[0])
+                      return {"_status": r.status_code, "rows": out}
+                  out += strip(j.get("data") or [])
+                  nxt = (j.get("links") or {}).get("next")
+                  p = nxt.replace(B, "") if nxt else None
+              return {"rows": out}
+          D["app"] = g(f"/v1/apps/{APP}")
+          D["eula"] = g(f"/v1/apps/{APP}/endUserLicenseAgreement")
+          vers = g(f"/v1/apps/{APP}/appStoreVersions?limit=5"); D["versions"] = vers
+          vs = data(vers) or []
+          if vs:
+              vid = vs[0]["id"]
+              D["version_build"] = g(f"/v1/appStoreVersions/{vid}/build")
+              rd = g(f"/v1/appStoreVersions/{vid}/appStoreReviewDetail")
+              a = (data(rd) or {}).get("attributes") or {}
+              if "demoAccountPassword" in a: a["demoAccountPassword"] = bool(a["demoAccountPassword"])
+              if a.get("contactPhone"): a["contactPhone"] = str(a["contactPhone"])[:4] + "***"
+              D["review_detail"] = rd
+              if data(rd): D["review_attachments"] = g(f"/v1/appStoreReviewDetails/{data(rd)['id']}/appStoreReviewAttachments")
+              D["version_localizations"] = g(f"/v1/appStoreVersions/{vid}/appStoreVersionLocalizations")
+          D["appinfos"] = []
+          for ai in data(g(f"/v1/apps/{APP}/appInfos")) or []:
+              D["appinfos"].append({"info": ai, "localizations": g(f"/v1/appInfos/{ai['id']}/appInfoLocalizations")})
+          D["review_submissions"] = []
+          for s in data(g(f"/v1/reviewSubmissions?filter[app]={APP}&limit=10")) or []:
+              D["review_submissions"].append({"submission": s, "items": g(f"/v1/reviewSubmissions/{s['id']}/items")})
+          D["promoted_purchases_app"] = g(f"/v1/apps/{APP}/promotedPurchases?limit=50")
+          D["iaps"] = g(f"/v1/apps/{APP}/inAppPurchasesV2?limit=20")
+          D["subscription_groups"] = []
+          for gr in data(g(f"/v1/apps/{APP}/subscriptionGroups")) or []:
+              entry = {"group": gr, "localizations": g(f"/v1/subscriptionGroups/{gr['id']}/subscriptionGroupLocalizations"), "subs": []}
+              for sub in data(g(f"/v1/subscriptionGroups/{gr['id']}/subscriptions")) or []:
+                  sid = sub["id"]
+                  prices = allpages(f"/v1/subscriptions/{sid}/prices?limit=200&include=territory")
+                  plan = collections.Counter(((r.get("attributes") or {}).get("planType") or "none") for r in prices.get("rows", []))
+                  usa = [r for r in prices.get("rows", []) if (((r.get("relationships") or {}).get("territory") or {}).get("data") or {}).get("id") == "USA"]
+                  entry["subs"].append({"sub": sub,
+                      "localizations": g(f"/v1/subscriptions/{sid}/subscriptionLocalizations"),
+                      "review_screenshot": g(f"/v1/subscriptions/{sid}/appStoreReviewScreenshot"),
+                      "price_rows": len(prices.get("rows", [])), "price_plan_types": dict(plan), "price_rows_usa": usa,
+                      "price_usa_points": g(f"/v1/subscriptions/{sid}/prices?filter[territory]=USA&include=subscriptionPricePoint,territory"),
+                      "intro_offers_first": g(f"/v1/subscriptions/{sid}/introductoryOffers?filter[territory]=USA&include=territory"),
+                      "promoted_purchase": g(f"/v1/subscriptions/{sid}/promotedPurchase"),
+                      "images": g(f"/v1/subscriptions/{sid}/images"),
+                      "offer_codes": g(f"/v1/subscriptions/{sid}/offerCodes"),
+                      "win_back_offers": g(f"/v1/subscriptions/{sid}/winBackOffers"),
+                      "promo_offers": g(f"/v1/subscriptions/{sid}/promotionalOffers"),
+                      "plan_availabilities": g(f"/v1/subscriptions/{sid}/planAvailabilities")})
+              D["subscription_groups"].append(entry)
+          print("== lens-3.1 read: sections (values are in the encrypted blob)")
+          for k2, v2 in D.items():
+              if k2.startswith("_"): continue
+              print(" ", k2, ("error %s" % v2.get("_status")) if isinstance(v2, dict) and "_status" in v2 else "read")
+          for e in D["subscription_groups"]:
+              for s in e["subs"]:
+                  a = s["sub"].get("attributes") or {}
+                  print("  sub", a.get("productId"), a.get("state"), "price rows", s["price_rows"], "plan types", s["price_plan_types"])
+          print("  GET calls:", CALLS["GET"])
+          blob = json.dumps(D, default=str).encode()
+          k = Fernet.generate_key()
+          ct = Fernet(k).encrypt(blob).decode()
+          pub = serialization.load_pem_public_key(PUB)
+          wk = base64.b64encode(pub.encrypt(k, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))).decode()
+          print("AUDITKEY " + wk)
+          for i in range(0, len(ct), 900):
+              print("AUDITBLOB " + ct[i:i + 900])
+          print("AUDITEND", len(ct))
+          PY
