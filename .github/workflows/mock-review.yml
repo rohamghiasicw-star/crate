@@ -32,8 +32,8 @@ defaults:
     shell: bash --noprofile --norc -eo pipefail {0}
 
 env:
-  MR_SCANS: '0'
-  MR_IPAD_SCAN: '0'
+  MR_SCANS: '1'
+  MR_IPAD_SCAN: '1'
   MR_NO_IDLE: '1'
   MR_RESULT_TIMEOUT: '150'
   ENGINE: https://161-35-185-80.sslip.io
@@ -161,6 +161,14 @@ jobs:
       - name: iPhone - install and cold launch (shots at 2, 5, 10, 20 s)
         run: mockreview/scripts/sim.sh launch "$IPHONE_UDID" iphone app/Addify.app
 
+      # A fresh iPad took 9 minutes to boot in run 41177602972. Boot it while the iPhone walk
+      # runs (after the iPhone launch shots, so their timing is not disturbed).
+      - name: iPad - boot a fresh device in the background
+        run: |
+          nohup mockreview/scripts/sim.sh device iPad "$IPAD_NAME" "$IPAD_TYPE" "$RUNTIME_ID" \
+            > "$MR_OUT/ipad-udid.txt" 2>>"$MR_OUT/host-ipad-boot.log" &
+          echo "iPad boot started"
+
       - name: iPhone - reviewer path
         timeout-minutes: 30
         run: mockreview/scripts/sim.sh uitest "$IPHONE_UDID" iphone testIPhoneReviewerPath "$SAMPLE_1"
@@ -177,8 +185,11 @@ jobs:
       - name: iPad - fresh device
         if: always()
         run: |
+          for i in $(seq 1 120); do grep -qE '^[0-9A-F-]{36}$' "$MR_OUT/ipad-udid.txt" 2>/dev/null && break; sleep 5; done
+          udid=$(grep -E '^[0-9A-F-]{36}$' "$MR_OUT/ipad-udid.txt" | tail -1)
+          [ -n "$udid" ] || { echo "the iPad simulator never came up"; cat "$MR_OUT/host-ipad-boot.log"; exit 1; }
+          xcrun simctl bootstatus "$udid" -b >/dev/null
           xcrun simctl shutdown "${IPHONE_UDID:-none}" 2>/dev/null || true
-          udid=$(mockreview/scripts/sim.sh device iPad "$IPAD_NAME" "$IPAD_TYPE" "$RUNTIME_ID" | tail -1)
           echo "IPAD_UDID=$udid" >> "$GITHUB_ENV"
 
       - name: iPad - install and cold launch (shots at 2, 5, 10, 20 s)
@@ -202,9 +213,38 @@ jobs:
         if: always()
         run: python3 mockreview/scripts/summarize.py "$MR_OUT"
 
-      - uses: actions/upload-artifact@v4
+      # Small JPEG copies of every screenshot, so the light artifact downloads in seconds.
+      - name: Screenshot previews
         if: always()
+        run: |
+          mkdir -p "$MR_OUT/preview"
+          for f in "$MR_OUT"/*.png; do
+            [ -f "$f" ] || continue
+            sips -s format jpeg -s formatOptions 72 -Z 1100 "$f" --out "$MR_OUT/preview/$(basename "${f%.png}").jpg" >/dev/null 2>&1 || true
+          done
+          ls "$MR_OUT/preview" | wc -l
+
+      - name: Upload the report (steps, previews, accessibility dumps, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: mock-review-${{ github.run_number }}
-          path: out
+          path: |
+            out
+            !out/*.png
+            !out/*.mp4
+            !out/*.xcresult
+            !out/*-device.log
+          retention-days: 14
+
+      - name: Upload the evidence (full screenshots, videos, device logs, xcresult)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-review-${{ github.run_number }}-evidence
+          path: |
+            out/*.png
+            out/*.mp4
+            out/*.xcresult
+            out/*-device.log
           retention-days: 14

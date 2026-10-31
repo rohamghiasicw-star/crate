@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import ObjectiveC
+import Vision
 
 /* =====================================================================================
    ADDIFY MOCK APP REVIEW
@@ -175,6 +176,9 @@ final class ReviewerUITests: XCTestCase {
         if cfg.scans {
             if pasteAndMaybeScan() { waitForResult(stepName: "scan-result") }
             goHome()
+        } else {
+            dismissKeyboard()
+            layoutCheck("layout-home-keyboard-closed")
         }
         profile()
         paywall(short: true)
@@ -258,14 +262,16 @@ final class ReviewerUITests: XCTestCase {
                 return
             }
             tr.tap()
-            let away = safari.wait(for: .runningForeground, timeout: 8)
-            Thread.sleep(forTimeInterval: 4)
+            Thread.sleep(forTimeInterval: 6)
+            let st = safari.state
+            let away = st != .notRunning && st != .unknown
             let sa = shot("try-reel-away")
             log.line("onboarding-try-reel", away ? "INFO" : "WARN", shot: sa,
-                     away ? "'Try it on a reel' opened Safari (no TikTok app on this device)" : "tapped 'Try it on a reel', Safari did not come up")
+                     away ? "'Try it on a reel' left Addify for Safari (\(stateName(st))): no TikTok app on this device"
+                          : "tapped 'Try it on a reel', Safari did not start")
             app.activate()
-            _ = app.wait(for: .runningForeground, timeout: 8)
-            let back = waitForText(["Not set up yet", "Paste a link instead"], timeout: 8)
+            _ = app.wait(for: .runningForeground, timeout: 10)
+            let back = waitForText(["Not set up yet", "Paste a link instead"], timeout: 25)
             log.line("onboarding-2", back != nil ? "PASS" : "FAIL", shot: shot("try-reel-back"),
                      back != nil ? "back in Addify on screen 3" : "back in Addify but screen 3 never showed")
         } else {
@@ -291,6 +297,47 @@ final class ReviewerUITests: XCTestCase {
         log.line("onboarding-3", field != nil ? "PASS" : "FAIL", shot: s3, "tapped 'Paste a link instead'")
         log.line("home", field != nil ? "PASS" : "FAIL", shot: s4,
                  "link box \(field != nil ? "present" : "missing"); counter '\(pill)'; keyboard \(app.keyboards.firstMatch.exists ? "up" : "down")")
+        layoutCheck("layout-link-box-focused")
+    }
+
+    /// Anything a reviewer sees cut off at the window edge. iOS zooms a web page in when an
+    /// input with a font under 16 px takes focus, and crate.html's link box is 14 px with no
+    /// maximum-scale in the viewport, so this is checked with the box focused and again later.
+    func layoutCheck(_ step: String) {
+        let win = app.windows.firstMatch.frame
+        var cut: [String] = []
+        var seen: [String] = []
+        let probes: [(String, Bool, [XCUIElement.ElementType])] = [
+            ("scans left", false, [.staticText, .button]),
+            ("Clip link", true, [.textField]),
+            ("Paste link from clipboard", true, [.button]),
+            ("Scan", true, [.button]),
+            ("You", true, [.button]),
+        ]
+        for (label, exact, types) in probes {
+            guard let e = waitForElement(label, exact: exact, types: types, timeout: 1) else { continue }
+            let f = e.frame
+            seen.append("\(label) \(Int(f.minX))-\(Int(f.maxX))")
+            if f.maxX > win.maxX + 1 || f.minX < win.minX - 1 {
+                cut.append("'\(label)' spans x \(Int(f.minX))-\(Int(f.maxX)), window \(Int(win.minX))-\(Int(win.maxX))")
+            }
+        }
+        let s = shot(step)
+        log.line(step, cut.isEmpty ? "PASS" : "FAIL", shot: s,
+                 cut.isEmpty ? "nothing cut off at the window edge (\(seen.joined(separator: ", ")); window \(Int(win.width)) pt)"
+                             : "cut off at the window edge: " + cut.joined(separator: "; "))
+    }
+
+    /// The keyboard covers the tab bar. A reviewer closes it with the check mark on the bar
+    /// above the keyboard (the web view's form accessory) or by tapping the page.
+    func dismissKeyboard() {
+        guard app.keyboards.firstMatch.exists else { return }
+        if let done = waitForElement("Done", exact: true, types: [.button], timeout: 1.5) {
+            done.tap()
+        } else if let t = waitForElement("Share a reel into Addify", exact: false, types: [.staticText], timeout: 1.5) {
+            t.tap()
+        }
+        Thread.sleep(forTimeInterval: 1.0)
     }
 
     /// Paste the sample link. With scans on, the page's own Paste button reads the clipboard,
@@ -310,22 +357,42 @@ final class ReviewerUITests: XCTestCase {
             log.line("paste-button", "FAIL", shot: shot("no-paste-button"), "no in-page Paste button next to the link box")
             return typeAndSubmit(field)
         }
+        /* WHILE iOS SHOWS THE PASTE CALLOUT THE PAGE IS FROZEN. navigator.clipboard.readText()
+           parks the web content process until the user answers, so every accessibility query
+           hangs (run 41177602972: 6 minutes, kAXErrorIPCTimeout). From the tap until the
+           callout is answered this walk only takes screenshots, reads them with on-device text
+           recognition, and taps by screen position. Frames are read before the tap. */
+        let fieldFrame = field.frame
+        let btnFrame = pbtn.frame
+        let screen = springboard.frame
         pbtn.tap()
-        let callout = waitForCallout(timeout: 6)
-        if let c = callout {
-            let s = shot("paste-callout")
-            c.tap()
-            log.line("paste-callout", "PASS", shot: s, "iOS showed its Paste callout and it was tapped (clipboard: '\(clip)')")
-            if let a = systemAlertInfo(timeout: 2) {
-                let sa = shot("paste-permission")
-                log.line("paste-permission", "WARN", shot: sa, "iOS asked before pasting: \(a)")
-                tapAlertButton(preferring: ["Allow Paste", "Allow"])
+        Thread.sleep(forTimeInterval: 1.8)
+        var answered = false
+        for attempt in 1...3 {
+            let img = XCUIScreen.main.screenshot()
+            let s = saveShot(img, "paste-callout-\(attempt)")
+            let words = ocr(img, screenWidth: screen.width)
+            let bubbles = words.filter { $0.text.trimmingCharacters(in: .whitespaces) == "Paste" && $0.rect.midY < fieldFrame.minY }
+            if let b = bubbles.first {
+                tapScreen(CGPoint(x: b.rect.midX, y: b.rect.midY))
+                log.line("paste-callout", "PASS", shot: s,
+                         "iOS showed its Paste callout at (\(Int(b.rect.midX)), \(Int(b.rect.midY))) and it was tapped (clipboard: '\(clip)')")
+                answered = true
+                break
             }
-        } else {
-            let s = shot("paste-no-callout")
-            log.line("paste-callout", "FAIL", shot: s, "tapped Paste, no iOS Paste callout appeared within 6 s")
+            if attempt == 3 {
+                log.line("paste-callout", "FAIL", shot: s,
+                         "no Paste callout found on screen after tapping Paste (text seen: \(words.prefix(12).map { $0.text }))")
+                tapScreen(CGPoint(x: screen.width / 2, y: max(60, btnFrame.minY - 200)))   // dismiss whatever is up
+            }
+            Thread.sleep(forTimeInterval: 1.2)
         }
         Thread.sleep(forTimeInterval: 1.5)
+        if answered, let a = systemAlertInfo(timeout: 1.5) {
+            let sa = shot("paste-permission")
+            log.line("paste-permission", "WARN", shot: sa, "iOS asked before pasting: \(a)")
+            tapAlertButton(preferring: ["Allow Paste", "Allow"])
+        }
         if cfg.scans {
             let started = waitForText(["Finding song", "Reading the clip", "Find another song", "reading audio"], timeout: 6)
             let s = shot("paste-started")
@@ -356,6 +423,7 @@ final class ReviewerUITests: XCTestCase {
         log.line("typed-link", ok ? "PASS" : "FAIL", shot: s,
                  "link box value '\(v.prefix(60))'; 'Find it' button \(findIt ? "visible" : "missing")")
         clearField(field)
+        dismissKeyboard()
         return ok
     }
 
@@ -442,6 +510,7 @@ final class ReviewerUITests: XCTestCase {
     }
 
     func goHome() {
+        dismissKeyboard()
         for label in ["Back", "Back to home", "Find another song"] {
             if let b = waitForElement(label, exact: true, types: [.button], timeout: 1) { b.tap(); break }
         }
@@ -451,9 +520,12 @@ final class ReviewerUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         let ok = waitForElement("Clip link", exact: true, types: [.textField], timeout: 6) != nil
         log.line("home-again", ok ? "PASS" : "FAIL", shot: shot("home-again"), ok ? "back on home" : "could not get back to home")
+        dismissKeyboard()
+        layoutCheck("layout-home-keyboard-closed")
     }
 
     func otherTabs() {
+        dismissKeyboard()
         for (tab, name) in [("Search", "tab-search"), ("Finds", "tab-finds")] {
             guard let b = waitForElement(tab, exact: true, types: [.button], timeout: 5) else {
                 log.line(name, "FAIL", shot: shot(name + "-missing"), "no '\(tab)' tab")
@@ -472,6 +544,7 @@ final class ReviewerUITests: XCTestCase {
     }
 
     func profile() {
+        dismissKeyboard()
         guard let you = waitForElement("You", exact: true, types: [.button], timeout: 6) else {
             log.line("profile", "FAIL", shot: shot("no-you-tab"), "no 'You' tab (the Review Notes call it Profile)")
             return
@@ -609,6 +682,7 @@ final class ReviewerUITests: XCTestCase {
     /// Answered "Don't Allow" on purpose: it records the prompt wording and the denied path
     /// without sending audio to the server.
     func listenMode() {
+        dismissKeyboard()
         if let home = waitForElement("Home", exact: true, types: [.button], timeout: 5) { home.tap() }
         Thread.sleep(forTimeInterval: 1)
         if let f = waitForElement("Clip link", exact: true, types: [.textField], timeout: 4) {
@@ -644,6 +718,7 @@ final class ReviewerUITests: XCTestCase {
     /// selects on a long press, a page that pinch-zooms, links that open a Safari preview.
     /// crate.html sets no user-select, no touch-callout and no maximum-scale.
     func webTells() {
+        dismissKeyboard()
         if let home = waitForElement("Home", exact: true, types: [.button], timeout: 5) { home.tap() }
         Thread.sleep(forTimeInterval: 1.2)
         if let t = waitForElement("Share a reel into Addify", exact: false, types: [.staticText], timeout: 4) {
@@ -703,6 +778,7 @@ final class ReviewerUITests: XCTestCase {
     /// "Export finds" builds a blob: link with a download attribute. The web view has no
     /// download handling, so this records what a reviewer actually gets.
     func exportFinds() {
+        dismissKeyboard()
         if let you = waitForElement("You", exact: true, types: [.button], timeout: 5) { you.tap() }
         Thread.sleep(forTimeInterval: 1.2)
         guard let ex = waitForElement("Export finds", exact: false, types: [.button], timeout: 5) else {
@@ -737,6 +813,7 @@ final class ReviewerUITests: XCTestCase {
         log.line("relaunch", bad || loaded == nil ? "FAIL" : (onb ? "WARN" : "PASS"), shot: s,
                  bad ? "'Can't reach Addify' on the second launch" : loaded == nil ? "nothing loaded on the second launch" :
                  onb ? "onboarding showed again on the second launch" : "second launch opens on home")
+        if !bad && loaded != nil { layoutCheck("layout-home-fresh-launch") }
     }
 
     func finish() {
@@ -796,18 +873,6 @@ final class ReviewerUITests: XCTestCase {
         return e.exists ? e.label : nil
     }
 
-    /// The iOS edit-menu "Paste" that WebKit raises for navigator.clipboard.readText().
-    func waitForCallout(timeout: TimeInterval) -> XCUIElement? {
-        let t0 = Date()
-        repeat {
-            for e in [app.menuItems["Paste"], app.buttons["Paste"], springboard.menuItems["Paste"], springboard.buttons["Paste"]] {
-                if e.exists { return e }
-            }
-            Thread.sleep(forTimeInterval: 0.5)
-        } while Date().timeIntervalSince(t0) < timeout
-        return nil
-    }
-
     func systemAlertInfo(timeout: TimeInterval) -> String? {
         let a = springboard.alerts.firstMatch
         guard a.waitForExistence(timeout: timeout) else { return nil }
@@ -825,16 +890,40 @@ final class ReviewerUITests: XCTestCase {
 
     @discardableResult
     func shot(_ name: String) -> String {
+        saveShot(XCUIScreen.main.screenshot(), name)
+    }
+
+    @discardableResult
+    func saveShot(_ s: XCUIScreenshot, _ name: String) -> String {
         shotN += 1
         let file = String(format: "%@-%@-%02d-%@.png", cfg.device, log.phase, shotN, name)
-        let s = XCUIScreen.main.screenshot()
         do { try s.pngRepresentation.write(to: cfg.out.appendingPathComponent(file)) }
         catch { print("MR| could not write \(file): \(error)") }
-        let a = XCTAttachment(screenshot: s)
-        a.name = file
-        a.lifetime = .keepAlways
-        add(a)
         return file
+    }
+
+    struct Word { let text: String; let rect: CGRect }
+
+    /// On-device text recognition over a screenshot. Rects are in screen points.
+    func ocr(_ s: XCUIScreenshot, screenWidth: CGFloat) -> [Word] {
+        guard let cg = s.image.cgImage, cg.width > 0 else { return [] }
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.usesLanguageCorrection = false
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
+        let k = screenWidth / CGFloat(cg.width)
+        let w = CGFloat(cg.width) * k, h = CGFloat(cg.height) * k
+        return (req.results ?? []).compactMap { obs in
+            guard let top = obs.topCandidates(1).first else { return nil }
+            let bb = obs.boundingBox
+            return Word(text: top.string,
+                        rect: CGRect(x: bb.minX * w, y: (1 - bb.maxY) * h, width: bb.width * w, height: bb.height * h))
+        }
+    }
+
+    /// Tap a point in screen coordinates without asking the app for its element tree.
+    func tapScreen(_ p: CGPoint) {
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: p.x, dy: p.y)).tap()
     }
 
     @discardableResult

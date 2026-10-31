@@ -43,7 +43,7 @@ cmd_device() {
 
 cmd_launch() {
   local udid=$1 dev=$2 app=$3
-  xcrun simctl io "$udid" recordVideo --codec=h264 --force "$OUT/$dev-video.mp4" >/dev/null 2>"$OUT/$dev-video.err" &
+  xcrun simctl io "$udid" recordVideo --codec=hevc --force "$OUT/$dev-video.mp4" >/dev/null 2>"$OUT/$dev-video.err" &
   echo $! > "$OUT/pids/$dev-video"
   xcrun simctl spawn "$udid" log stream --style compact --level info \
     --predicate 'process == "Addify" OR (process CONTAINS "WebContent") OR (process CONTAINS "Networking")' \
@@ -54,12 +54,17 @@ cmd_launch() {
   note "installed $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist" 2>/dev/null) ($(plutil -extract CFBundleVersion raw "$app/Info.plist" 2>/dev/null)) on $dev"
   hostshot "$udid" "$dev-launch-00-homescreen.png"
   local t0; t0=$(now)
-  # Cold launch, the same as tapping the icon on a fresh install.
-  xcrun simctl launch "$udid" "$BUNDLE" > "$OUT/$dev-launch.txt" 2>&1 || note "launch FAILED: $(cat "$OUT/$dev-launch.txt")"
+  # Cold launch, the same as tapping the icon on a fresh install. simctl launch can take many
+  # seconds to return on a first launch, so it runs in the background and the shots keep time.
+  ( xcrun simctl launch "$udid" "$BUNDLE" > "$OUT/$dev-launch.txt" 2>&1; rc=$?
+    echo "returned after $(python3 -c "import time; print(round(time.time()-$t0,1))") s, exit $rc" >> "$OUT/$dev-launch.txt" ) &
+  local lp=$!
   for t in 2 5 10 20; do
     sleep_until "$t0" "$t"
     hostshot "$udid" "$dev-launch-$(printf %02d "$t")s.png"
   done
+  wait "$lp" 2>/dev/null || true
+  note "simctl launch: $(tr '\n' ' ' < "$OUT/$dev-launch.txt")"
   xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -i addify > "$OUT/$dev-launch-processes.txt" || true
 }
 
