@@ -115,7 +115,8 @@
     inputs: [...document.querySelectorAll('input,textarea')].map(i => (i.id || '') + '=' + String(i.value || '').length).join(','),
     fz: window.__fz ? {t0: window.__fz.t0, posts: window.__fz.posts.length, store: window.__fz.store.length, errs: window.__fz.errs.slice(-5), rej: window.__fz.rej.slice(-5),
                        nErr: window.__fz.errs.length, nRej: window.__fz.rej.length, opens: window.__fz.opens.length, mut: window.__fz.mut,
-                       hist: window.__fz.hist.length, grants: window.__fz.proGrants.length, gum: window.__fz.gum} : null,
+                       hist: window.__fz.hist.length, grants: window.__fz.proGrants.length, gum: window.__fz.gum,
+                       opensTail: window.__fz.opens.slice(-6)} : null,
   };
   if (full) {
     const over = [];

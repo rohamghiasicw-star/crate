@@ -222,6 +222,7 @@ class Walk:
         self.pending_posts = []
         self.n_escapes = 0
         self.n_downloads = 0
+        self.open_log = []           # the page's own open records (window.open, link clicks), kept across navigations
 
     # ----- bookkeeping
     def rel(self):
@@ -340,7 +341,12 @@ class Walk:
                 if main:
                     self.n_escapes += 1
                     self.events.append({"k": "escape", "url": url[:300], "via": via, "t": self.rel(), "cands": self.trigger_candidates()})
-                    return await route.abort()
+                    await route.abort()
+                    try:
+                        self.merge_opens(await asyncio.wait_for(self.page.evaluate("()=>window.__fz?window.__fz.opens.slice(-8):[]"), timeout=3))
+                    except Exception:
+                        pass
+                    return
                 return await route.fulfill(status=200, content_type="text/html", body="<html><body style='background:#000'></body></html>")
             rt = req.resource_type
             if rt == "image":
@@ -383,13 +389,20 @@ class Walk:
             except Exception:
                 pass
 
+    def merge_opens(self, recs):
+        for r in recs or []:
+            key = (r.get("t"), r.get("url"))
+            if not any((x.get("t"), x.get("url")) == key for x in self.open_log[-60:]):
+                self.open_log.append(r)
+        self.open_log = self.open_log[-80:]
+
     def trigger_candidates(self):
         out = []
         if self.doing is not None:
             out.append(dict(self.doing, _i=len(self.actions), _now=True))
         for i in range(len(self.actions) - 1, max(-1, len(self.actions) - 4), -1):
             out.append(dict(self.actions[i], _i=i))
-        return [{k: v for k, v in c.items() if k in ("a", "k", "l", "t", "ext", "href", "tag", "hk", "hl", "hext", "hit2", "submit", "_i", "_now", "text", "pt", "gap")} for c in out]
+        return [{k: v for k, v in c.items() if k in ("a", "k", "l", "t", "ext", "href", "tag", "hk", "hl", "hext", "hit2", "submit", "_i", "_now", "text", "pt", "gap", "h2k", "h2l")} for c in out]
 
     def last_action_ref(self):
         if not self.actions:
@@ -444,9 +457,10 @@ class Walk:
             elif k == "escape":
                 if opens is None:
                     try:
-                        opens = await asyncio.wait_for(self.page.evaluate("()=>window.__fz?window.__fz.opens.slice(-12):[]"), timeout=6)
+                        self.merge_opens(await asyncio.wait_for(self.page.evaluate("()=>window.__fz?window.__fz.opens.slice(-12):[]"), timeout=6))
                     except Exception:
-                        opens = []
+                        pass
+                    opens = self.open_log
                 self.classify_escape(e, snap, opens)
             elif k == "external_fetch":
                 self.fail("external_request", urlsplit(e["url"]).hostname or "?", e, snap)
@@ -474,6 +488,7 @@ class Walk:
             self.orphan_since, self.deadend_since, self.loading_since = {}, None, {}
         if fz.get("grants") or snap.get("fzpro"):
             self.pro_granted = True
+        self.merge_opens(fz.get("opensTail"))
         ne, nr = fz.get("nErr", 0), fz.get("nRej", 0)
         if ne > self.errs_seen[0]:
             for x in (fz.get("errs") or [])[-(ne - self.errs_seen[0]):]:
@@ -630,6 +645,9 @@ class Walk:
 
         def ext_like(k, l, x):
             return bool(x) or bool(EXT_LABEL.search(l or "")) or (k or "") in ("#ob-try", "#pfcancel", "#playerout")
+        if rec is None and e["via"] == "popup":
+            self.info("escape_unattributed", "%s (no page open record left to match)" % host)
+            return
         if a is None:
             self.fail("escape_unintended", "%s|no-tap" % host, "left the app for %s via %s with no tap in the 3 s before it (page open record %s); recent actions %s" % (url[:160], e["via"], rec, json.dumps(cands)[:300]), snap)
             return
@@ -639,10 +657,9 @@ class Walk:
             self.info("escape_after_key", "%s -> %s" % (a.get("k"), host))
             return
         if t == "double_tap":
-            h2 = a.get("hit2") or ""
-            k2, l2 = (h2.split("|", 1) + [""])[:2] if h2 else ("", "")
+            k2, l2 = a.get("h2k") or "", a.get("h2l") or ""
             second = rec is not None and a.get("pt") and rec["t"] >= a["pt"] + 1000 * (a.get("gap") or 0.1) - 25
-            if second and k2 and k2 != k1 and not ext_like(k1, l1, x1):
+            if second and k2 and (k2, l2) != (k1, l1) and not ext_like(k1, l1, x1):
                 self.fail("escape_unintended", "%s|double_tap:%s->%s" % (host, norm_msg(l1 or k1)[:30], norm_msg(l2 or k2)[:30]),
                           "a double tap on %r (%s) left the app for %s: the first tap changed the screen and the second landed on %r (%s), which opened it" % (l1, k1, url[:160], l2, k2), snap)
                 return
@@ -758,20 +775,21 @@ class Walk:
             if not replay:
                 a["gap"] = round(self.rng.uniform(0.07, 0.14), 3)
             await asyncio.sleep(a.get("gap", 0.1))
-            hit = await p.evaluate("([x,y])=>{const e=document.elementFromPoint(x,y); if(!e) return null; const c=e.closest('button,a,[data-fzc],[role=button],input'); return c? (c.id?'#'+c.id:c.tagName.toLowerCase())+'|'+(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40):null}", [x, y])
+            h2 = None
+            try:
+                h2 = await p.evaluate(HIT_JS, [x, y])
+            except Exception:
+                pass
             a["k1"], a["l1"] = a.get("k"), a.get("l")
-            a["hit2"] = hit
-            if hit:
-                a["l1"] = "%s then %s" % (a.get("l"), hit.split("|", 1)[-1])
+            if h2:
+                a.update(h2k=h2["k"], h2l=h2["l"], h2ext=h2["ext"], hit2="%s|%s" % (h2["k"], h2["l"]))
+                a["l1"] = "%s then %s" % (a.get("l"), h2["l"])
             await p.touchscreen.tap(x, y)
         elif t == "tap_xy":
             try:
-                h = await p.evaluate("""([x,y])=>{const e=document.elementFromPoint(x,y); if(!e) return null;
-                    const c=e.closest('a[href],button,[data-fzc],[role=button],input')||e; let ext=false;
-                    try{ if(c.tagName==='A'&&c.href) ext=new URL(c.href).host!==location.host; }catch(_){}
-                    return {k:(c.id?'#'+c.id:c.tagName.toLowerCase()), l:(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40), ext:ext, now:Date.now()};}""", [x, y])
+                h = await p.evaluate(HIT_JS, [x, y])
                 if h:
-                    a.update(k=h["k"], l=h["l"], ext=h["ext"], pt=h.get("now"))
+                    a.update(k=h["k"], l=h["l"], ext=h["ext"], hk=h["k"], hl=h["l"], hext=h["ext"], pt=h.get("now"))
             except Exception:
                 pass
             await p.touchscreen.tap(x, y)
@@ -891,11 +909,13 @@ class Walk:
                     if fingerprint(before, tk) == fingerprint(snap, tk) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads) \
                             and (snap.get("fz") or {}).get("posts") == (before.get("fz") or {}).get("posts") \
                             and (snap.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store") \
-                            and (snap.get("fz") or {}).get("gum") == (before.get("fz") or {}).get("gum"):
+                            and (snap.get("fz") or {}).get("gum") == (before.get("fz") or {}).get("gum") \
+                            and (snap.get("fz") or {}).get("opens") == (before.get("fz") or {}).get("opens"):
                         await asyncio.sleep(0.7)
                         again = await self.probe()
                         if again and fingerprint(again, tk) == fingerprint(before, tk) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads) \
-                                and (again.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store"):
+                                and (again.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store") \
+                                and (again.get("fz") or {}).get("opens") == (before.get("fz") or {}).get("opens"):
                             self.fail("control_does_nothing", "%s|%s" % (screen_of(before), a.get("k")),
                                       "tapped %r (%s) on %s: no change on screen, no request, no dialog, no native call within 1.3s" % (a.get("l"), a.get("k"), screen_of(before)), before)
                         snap = again or snap
