@@ -336,21 +336,72 @@ extension ReviewerUITests {
             return
         }
         tapEl(tr)
-        let inSafari = safari.wait(for: .runningForeground, timeout: 10)
+        // Safari's state is unreliable on the simulator (run 41189222058 showed TikTok on screen
+        // while XCUITest said "background"), so the breadcrumb or OCR also counts as away.
+        var inSafari = false
+        let t0 = Date()
+        while Date().timeIntervalSince(t0) < 10 {
+            if safari.state == .runningForeground || (try? springboard.buttons["breadcrumb"].snapshot()) != nil { inSafari = true; break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         Thread.sleep(forTimeInterval: 4)
-        let sa = shot(step + "-away")
-        let words = ocr(XCUIScreen.main.screenshot(), screenWidth: springboard.frame.width).map { $0.text }.joined(separator: " ")
+        let img = XCUIScreen.main.screenshot()
+        let sa = saveShot(img, step + "-away")
+        let words = ocr(img, screenWidth: springboard.frame.width).map { $0.text }.joined(separator: " ")
         let tiktok = words.lowercased().contains("tiktok")
+        if tiktok { inSafari = true }
         log.line(step + "-away", inSafari ? "INFO" : "WARN", shot: sa,
                  inSafari ? "left Addify for Safari (\(tiktok ? "TikTok page on screen" : "no TikTok text read")): this device has no TikTok app"
-                          : "Safari did not come to the front in 10 s (state \(stateName(safari.state)))")
-        // Back the way a person does it: the status-bar breadcrumb, else the app switcher.
-        let crumb = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Addify'")).firstMatch
-        if frameOf(crumb) != nil { tapEl(crumb) } else { app.activate() }
-        _ = app.wait(for: .runningForeground, timeout: 10)
-        let back = waitForText(expectBack, timeout: 8)
+                          : "nothing left Addify in 10 s (Safari state \(stateName(safari.state)))")
+        returnToAddify(step)
+        let back = waitForText(expectBack, timeout: 25)
         log.line(step + "-back", back != nil ? "PASS" : "FAIL", shot: shot(step + "-back"),
-                 back != nil ? "back in Addify on '\(back!)'" : "back in Addify but the onboarding never moved on")
+                 back != nil ? "back in Addify on '\(back!)'" : "back in Addify but the onboarding never moved on (screen: \(onbScreenName()))")
+    }
+
+    /// Back to Addify the way a person does it (the status-bar breadcrumb, else the app
+    /// switcher), and record whether iOS had terminated it in the background: a cold relaunch
+    /// shows the launch screen colour (LaunchBackground, about rgb 10,10,15) before BootView.
+    func returnToAddify(_ step: String) {
+        let crumb = springboard.buttons["breadcrumb"]
+        if !tapEl(crumb) {
+            let named = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Addify'")).firstMatch
+            if !tapEl(named) { app.activate() }
+        }
+        var relaunch = false
+        var samples: [String] = []
+        let t0 = Date()
+        while Date().timeIntervalSince(t0) < 3.5 {
+            let px = centerPixel(XCUIScreen.main.screenshot())
+            samples.append("\(px.0),\(px.1),\(px.2)")
+            if px.0 <= 14 && px.1 <= 13 && px.2 <= 20 && px.2 >= px.0 { relaunch = true }
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        _ = app.wait(for: .runningForeground, timeout: 10)
+        // The native boot screen only shows from launch until the first page load.
+        var bootAgain = false
+        let t1 = Date()
+        while Date().timeIntervalSince(t1) < 4 {
+            if (try? app.activityIndicators.firstMatch.snapshot()) != nil || sees("Still connecting") { bootAgain = true; break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        if relaunch || bootAgain {
+            log.line(step + "-relaunch", "FAIL", shot: shot(step + "-relaunch"),
+                     "coming back to Addify \(relaunch ? "showed the launch screen" : "showed the native boot screen again"): iOS had terminated the app while it was in the background, so it cold-started (center pixels \(samples.prefix(6).joined(separator: " ")))")
+            _ = waitForText(["Find the exact song", "Clip link", "Pin Addify", "Not set up yet", "You're all set", "reach Addify"], timeout: 30)
+        }
+    }
+
+    /// RGB of the screen centre.
+    func centerPixel(_ s: XCUIScreenshot) -> (Int, Int, Int) {
+        guard let cg = s.image.cgImage else { return (-1, -1, -1) }
+        let w = 1, h = 1
+        var px = [UInt8](repeating: 0, count: 4)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return (-1, -1, -1) }
+        let x = cg.width / 2, y = cg.height / 2
+        ctx.draw(cg, in: CGRect(x: -x, y: -(cg.height - y - 1), width: cg.width, height: cg.height))
+        return (Int(px[0]), Int(px[1]), Int(px[2]))
     }
 
     /// mode doubleTap: XCUIElement.doubleTap(). mode twoTaps: two coordinate taps 0.15 s apart.
@@ -792,8 +843,7 @@ extension ReviewerUITests {
         Thread.sleep(forTimeInterval: 20)
         let s1 = shot("bg-springboard")
         let alertWhileAway = systemAlertInfo(timeout: 1)
-        app.activate()
-        _ = app.wait(for: .runningForeground, timeout: 10)
+        returnToAddify("bg-scan")
         Thread.sleep(forTimeInterval: 1)
         var promptNote = "no system prompt"
         if let a = systemAlertInfo(timeout: 3) {
@@ -909,8 +959,7 @@ extension ReviewerUITests {
                  arrived ? "Addify came to the front \(Int(Date().timeIntervalSince(t0))) s after the tap\(notes.isEmpty ? "" : " (" + notes.joined(separator: "; ") + ")")"
                          : "Addify did not come to the front within 20 s (\(notes.joined(separator: "; ")))")
         if !arrived {
-            app.activate()
-            _ = app.wait(for: .runningForeground, timeout: 10)
+            returnToAddify("share")
             log.line("share-inbox", "INFO", shot: shot("share-after-activate"), "opened Addify by hand: the inbox should start the scan now")
         }
         let out = waitScanOutcome("share-scan")
