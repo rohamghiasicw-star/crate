@@ -1,0 +1,55 @@
+{
+ "invalid_link_400": {
+  "status": 400,
+  "json": {
+   "error": "pass ?url=<a tiktok or instagram link>"
+  },
+  "src": "engine/server.py:10631-10633 (RL.scan_link refuses look-alike hosts)"
+ },
+ "limit_429ish": {
+  "status": 200,
+  "headers": {
+   "Retry-After": "120"
+  },
+  "json": {
+   "result": "rate_limited",
+   "busy": "limit",
+   "limit": "scan",
+   "retry_after": 120,
+   "error": "You started a lot of new scans in a short time. Try again in about 2 min."
+  },
+  "src": "engine/ratelimit.py:550-556 limited_body, sent 200 in-band by server.py:10154-10170 _limited"
+ },
+ "busy_gate": {
+  "status": 200,
+  "json": {
+   "result": "rate_limited",
+   "busy": "gate",
+   "retry_after": 20,
+   "error": "Addify is busy right now. Try again in a minute."
+  },
+  "src": "engine/server.py:1575-1581 _busy_result"
+ },
+ "handler_error": {
+  "status": 200,
+  "json": {
+   "result": "error",
+   "error": "internal error"
+  },
+  "src": "engine/server.py do_POST/do_GET catch-all: 200 {result:error, error:str(e)}"
+ },
+ "caddy_502": {
+  "status": 502,
+  "text": "",
+  "src": "crate.html:2298-2299 (Caddy answers 502 with an empty body during an engine restart)"
+ },
+ "no_match_fields": {
+  "src": "engine/server.py:2615-2619: result=found only with base_song, else no_match; exact None, candidates [], decisive False"
+ },
+ "listen_found_fields": {
+  "src": "engine/server.py:7142-7160 identify_mic"
+ },
+ "progress_hunt_fields": {
+  "src": "engine/server.py:1194-1216 _hunt_view (q,d,c,b,k,hu,hw,wr,st) and 1069-1085 _prog_named"
+ }
+}

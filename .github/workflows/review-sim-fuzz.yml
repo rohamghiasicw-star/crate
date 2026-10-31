@@ -1,0 +1,223 @@
+# web-fuzz lane of the Addify App Review simulation. Harness only: it serves crate.html from
+# release-next (pinned 9049251, hash-checked) against a mock engine and fuzzes the UI in
+# Playwright WebKit. It never talks to the live server or the test box.
+# Output privacy (public repo): per-job results are encrypted with a per-run key kept in the
+# Actions cache; the final bundle is sealed to the lane's RSA public key. Logs carry counts only.
+name: review-sim-fuzz
+on:
+  push:
+    branches: [review-sim-fuzz]
+    paths: ['review-sim/fuzz/run-config.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: review-sim-fuzz
+  cancel-in-progress: false
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  prep:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      minparts: ${{ steps.plan.outputs.minparts }}
+      cfg: ${{ steps.plan.outputs.cfg }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: plan
+        run: python review-sim/fuzz/plan.py >> "$GITHUB_OUTPUT"
+      - run: pip install -q cryptography==48.0.0
+      - run: |
+          mkdir -p runkey wrapped
+          python review-sim/fuzz/seal.py newkey runkey/key
+          python review-sim/fuzz/seal.py wrap review-sim/fuzz/fuzz-pub.pem runkey/key wrapped/run.key
+      - uses: actions/cache/save@v4
+        with:
+          path: runkey
+          key: fuzzkey-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runkey-wrapped
+          path: wrapped
+          retention-days: 7
+
+  run:
+    needs: prep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        job: ${{ fromJson(needs.prep.outputs.matrix) }}
+    env:
+      CFG: ${{ needs.prep.outputs.cfg }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash review-sim/fuzz/fetch_page.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-webkit-1.60.0-${{ runner.os }}
+      - run: |
+          pip install -q -r review-sim/fuzz/requirements.txt
+          python -m playwright install --with-deps webkit > /dev/null
+      - uses: actions/cache/restore@v4
+        with:
+          path: runkey
+          key: fuzzkey-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: mock engine
+        run: |
+          cd review-sim/fuzz
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 2 -subj /CN=127.0.0.1 2>/dev/null
+          nohup python mock_engine.py 8443 cert.pem key.pem > "$GITHUB_WORKSPACE/mock.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sk https://127.0.0.1:8443/__mock/ping > /dev/null && break; sleep 0.25; done
+          curl -sk https://127.0.0.1:8443/__mock/ping > /dev/null
+      - name: fuzz
+        run: |
+          mkdir -p out
+          cd review-sim/fuzz
+          J='${{ toJson(matrix.job) }}'
+          KIND=$(echo "$J" | python -c 'import json,sys;print(json.load(sys.stdin)["kind"])')
+          I=$(echo "$J" | python -c 'import json,sys;print(json.load(sys.stdin)["i"])')
+          N=$(echo "$J" | python -c 'import json,sys;print(json.load(sys.stdin)["n"])')
+          C() { echo "$CFG" | python -c "import json,sys;print(json.load(sys.stdin)['$1'])"; }
+          if [ "$KIND" = walk ]; then
+            python fuzz.py walks --shard "$I" --shards "$N" --walks "$(C walks_per_shard)" --actions "$(C actions)" \
+              --conc "$(C conc)" --walk-timeout "$(C walk_timeout)" --max-minutes "$(C max_minutes)" --out "$GITHUB_WORKSPACE/out" \
+              > "$GITHUB_WORKSPACE/out/run.log" 2>&1 || echo "fuzz exited $?"
+          else
+            python sweep.py --shard "$I" --shards "$N" --conc "$(C sweep_conc)" --depth "$(C sweep_depth)" \
+              --max-taps "$(C sweep_max_taps)" --max-minutes "$(C sweep_minutes)" --out "$GITHUB_WORKSPACE/out" \
+              > "$GITHUB_WORKSPACE/out/run.log" 2>&1 || echo "sweep exited $?"
+          fi
+          grep -E "^(shard|sweep) done" "$GITHUB_WORKSPACE/out/run.log" || echo "no done line"
+      - name: seal
+        if: always()
+        run: |
+          mkdir -p blob out
+          cp mock.log out/ 2>/dev/null || true
+          J='${{ toJson(matrix.job) }}'
+          NAME=$(echo "$J" | python -c 'import json,sys;d=json.load(sys.stdin);print("%s-%03d" % (d["kind"], d["i"]))')
+          python review-sim/fuzz/seal.py enc runkey/key out "blob/$NAME.bin"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.NAME }}
+          path: blob
+          retention-days: 7
+
+  minimize:
+    needs: [prep, run]
+    if: always() && needs.prep.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        part: ${{ fromJson(needs.prep.outputs.minparts) }}
+    env:
+      CFG: ${{ needs.prep.outputs.cfg }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash review-sim/fuzz/fetch_page.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-webkit-1.60.0-${{ runner.os }}
+      - run: |
+          pip install -q -r review-sim/fuzz/requirements.txt
+          python -m playwright install --with-deps webkit > /dev/null
+      - uses: actions/cache/restore@v4
+        with:
+          path: runkey
+          key: fuzzkey-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-[0-9][0-9][0-9]"
+          path: blobs
+          merge-multiple: true
+      - name: decrypt + aggregate
+        run: |
+          mkdir -p in out
+          for f in blobs/walk-*.bin blobs/sweep-*.bin; do [ -f "$f" ] || continue; python review-sim/fuzz/seal.py dec runkey/key "$f" "in/$(basename "$f" .bin)"; done
+          python review-sim/fuzz/aggregate.py in out/agg.json --traces 3
+      - name: mock engine
+        run: |
+          cd review-sim/fuzz
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 2 -subj /CN=127.0.0.1 2>/dev/null
+          nohup python mock_engine.py 8443 cert.pem key.pem > "$GITHUB_WORKSPACE/out/mock-min.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sk https://127.0.0.1:8443/__mock/ping > /dev/null && break; sleep 0.25; done
+      - name: minimize
+        run: |
+          C() { echo "$CFG" | python -c "import json,sys;print(json.load(sys.stdin)['$1'])"; }
+          cd review-sim/fuzz
+          python minimize.py "$GITHUB_WORKSPACE/out/agg.json" --part ${{ matrix.part }} --parts "$(C min_parts)" --conc "$(C min_conc)" \
+            --budget "$(C min_budget)" --max-minutes "$(C min_minutes)" --out "$GITHUB_WORKSPACE/out" > "$GITHUB_WORKSPACE/out/min.log" 2>&1 || echo "minimize exited $?"
+          tail -n 1 "$GITHUB_WORKSPACE/out/min.log"
+      - name: seal
+        if: always()
+        run: |
+          mkdir -p blob
+          [ "${{ matrix.part }}" = "0" ] || rm -f out/agg.json
+          python review-sim/fuzz/seal.py enc runkey/key out "blob/min-${{ matrix.part }}.bin"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: min-${{ matrix.part }}
+          path: blob
+          retention-days: 7
+
+  report:
+    needs: [prep, run, minimize]
+    if: always() && needs.prep.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q cryptography==48.0.0
+      - uses: actions/cache/restore@v4
+        with:
+          path: runkey
+          key: fuzzkey-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{walk,sweep}-*"
+          path: blobs
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "min-*"
+          path: blobs
+          merge-multiple: true
+      - name: bundle
+        run: |
+          mkdir -p in final
+          for f in blobs/*.bin; do python review-sim/fuzz/seal.py dec runkey/key "$f" "in/$(basename "$f" .bin)"; done
+          python review-sim/fuzz/aggregate.py in final/agg.json --traces 2
+          cp -r in final/raw
+          python review-sim/fuzz/seal.py seal review-sim/fuzz/fuzz-pub.pem final sealed
+          ls -la sealed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-sealed
+          path: sealed
+          retention-days: 14

@@ -1,0 +1,82 @@
+{
+ "health": {
+  "how": "recorded",
+  "note": "test box /health 2026-10-31 09:06 UTC, trimmed to the fields crate.html reads; build replaced by the mock's stamp"
+ },
+ "base_version_match": {
+  "how": "recorded",
+  "note": "test box /base https://www.tiktok.com/@bouch.szn/video/7651437319941066005, 2026-10-31T09:10:01Z (video-store replay: replay+vid_hit set)"
+ },
+ "done_version_match": {
+  "how": "recorded",
+  "note": "test box /edits/stream done event, same scan, +1.1s after the stream opened"
+ },
+ "edits_version_match": {
+  "how": "recorded",
+  "note": "test box /edits?scan= fallback answer for the same scan id"
+ },
+ "progress_version_match": {
+  "how": "recorded",
+  "note": "test box /progress answers polled while /base ran"
+ },
+ "base_version_match_short": {
+  "how": "recorded",
+  "note": "test box /base https://vt.tiktok.com/ZSXWjGrqT/, 2026-10-31T09:10:21Z (video-store replay: replay+vid_hit set)"
+ },
+ "done_version_match_short": {
+  "how": "recorded",
+  "note": "test box /edits/stream done event, same scan, +1.1s after the stream opened"
+ },
+ "edits_version_match_short": {
+  "how": "recorded",
+  "note": "test box /edits?scan= fallback answer for the same scan id"
+ },
+ "progress_version_match_short": {
+  "how": "recorded",
+  "note": "test box /progress answers polled while /base ran"
+ },
+ "base_busy_shazam": {
+  "how": "recorded",
+  "note": "test box /base https://www.tiktok.com/@kyks.edits7/video/7648736728290790688, 2026-10-31T09:10:35Z, answered in 16.6s"
+ },
+ "progress_busy_shazam": {
+  "how": "recorded",
+  "note": "test box /progress answers polled while that /base ran"
+ },
+ "base_busy_shazam_2": {
+  "how": "recorded",
+  "note": "test box /base https://www.tiktok.com/@kyks.edits7/video/7648736728290790688, 2026-10-31T09:14:33Z, answered in 19.6s"
+ },
+ "progress_busy_shazam_2": {
+  "how": "recorded",
+  "note": "test box /progress answers polled while that /base ran"
+ },
+ "base_removed": {
+  "how": "recorded",
+  "note": "test box /base https://www.tiktok.com/@addify.review.test/video/7000000000000000001, 2026-10-31T09:11:16Z, answered in 17.4s"
+ },
+ "progress_removed": {
+  "how": "recorded",
+  "note": "test box /progress answers polled while that /base ran"
+ },
+ "trending": {
+  "how": "recorded",
+  "note": "test box /trending 2026-10-31"
+ },
+ "search_results": {
+  "how": "recorded",
+  "note": "test box /search?q=slowed 2026-10-31"
+ },
+ "search_empty": {
+  "how": "recorded",
+  "note": "test box /search?q=xqzvbnmplkw 2026-10-31"
+ },
+ "vkey_short": {
+  "how": "recorded",
+  "note": "test box /vkey for https://vt.tiktok.com/ZSXWjGrqT/"
+ },
+ "from_code": {
+  "how": "from-code",
+  "note": "exact shapes copied from the engine source at release-next 9049251"
+ }
+}

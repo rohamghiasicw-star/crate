@@ -1,0 +1,74 @@
+{
+ "ok": true,
+ "q": "slowed",
+ "mode": "vibe",
+ "results": [
+  {
+   "title": "worry",
+   "artist": "LONOWN",
+   "version": "super slowed",
+   "url": "https://www.youtube.com/watch?v=lCKU-tI-upI",
+   "src": "youtube",
+   "art": "https://i.ytimg.com/vi/lCKU-tI-upI/mqdefault.jpg",
+   "plays": 67565440,
+   "confidence": "possible",
+   "why": "upload title has: slowed (no artist named, uploader shown)"
+  },
+  {
+   "title": "GATA ONLY",
+   "artist": "vibe hunter",
+   "version": "slowed",
+   "url": "https://www.youtube.com/watch?v=nkjEQ5QORuE",
+   "src": "youtube",
+   "art": "https://i.ytimg.com/vi/nkjEQ5QORuE/mqdefault.jpg",
+   "plays": 42398137,
+   "confidence": "possible",
+   "why": "upload title has: slowed (no artist named, uploader shown)"
+  },
+  {
+   "title": "Cool for the Summer",
+   "artist": "Lxminal.wav",
+   "version": "slowed + remix",
+   "url": "https://soundcloud.com/lxminal-615308974/cool-for-the-summer-hardstyle-remix-slowed",
+   "src": "soundcloud",
+   "art": "https://i1.sndcdn.com/artworks-gMzjLqvKHCKq5gyY-ojspmg-t200x200.png",
+   "plays": 7774795,
+   "confidence": "possible",
+   "why": "upload title has: slowed (no artist named, uploader shown)"
+  },
+  {
+   "title": "Arctic Monkeys",
+   "artist": "505",
+   "version": "slowed",
+   "url": "https://soundcloud.com/exulansism/505-slowed-arctic-monkeys",
+   "src": "soundcloud",
+   "art": "https://i1.sndcdn.com/artworks-000302621382-044f21-t200x200.jpg",
+   "plays": 38150840,
+   "confidence": "possible",
+   "why": "upload title has: slowed"
+  },
+  {
+   "title": "lady gaga",
+   "artist": "poker face",
+   "version": "slowed + reverb",
+   "url": "https://www.youtube.com/watch?v=ZP-KMvYzg5s",
+   "src": "youtube",
+   "art": "https://i.ytimg.com/vi/ZP-KMvYzg5s/mqdefault.jpg",
+   "plays": 14850966,
+   "confidence": "possible",
+   "why": "upload title has: slowed"
+  },
+  {
+   "title": "Phantom",
+   "artist": "EsDeeKid & Rico Ace",
+   "version": "slowed + reverb",
+   "url": "https://www.youtube.com/watch?v=ObI-6nBm1Zc",
+   "src": "youtube",
+   "art": "https://i.ytimg.com/vi/ObI-6nBm1Zc/mqdefault.jpg",
+   "plays": 7999220,
+   "confidence": "possible",
+   "why": "upload title has: slowed"
+  }
+ ],
+ "elapsed_ms": 3398
+}

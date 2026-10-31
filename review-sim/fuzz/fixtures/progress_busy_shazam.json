@@ -1,0 +1,44 @@
+[
+ [
+  0.0,
+  {
+   "pct": 0.0,
+   "label": ""
+  }
+ ],
+ [
+  1.45,
+  {
+   "pct": 6.0,
+   "label": "Reading the clip"
+  }
+ ],
+ [
+  2.96,
+  {
+   "pct": 29.3,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  5.49,
+  {
+   "pct": 35.7,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  10.04,
+  {
+   "pct": 38.9,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  11.62,
+  {
+   "pct": 42.0,
+   "label": "Building the fingerprint"
+  }
+ ]
+]

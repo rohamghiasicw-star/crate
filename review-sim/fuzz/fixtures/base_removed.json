@@ -1,0 +1,8 @@
+{
+ "status": 200,
+ "secs": 17.43,
+ "json": {
+  "result": "error",
+  "error": "tiktok video is unavailable (deleted or private)"
+ }
+}

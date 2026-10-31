@@ -1,0 +1,33 @@
+{
+ "ok": true,
+ "service": "crate engine",
+ "name": "Addify engine",
+ "build": "__BUILD__",
+ "phone_probes": {
+  "on": true,
+  "v": 1,
+  "conc": 2,
+  "sr": 16000,
+  "max_secs": 12.0,
+  "hunt": true
+ },
+ "does": [
+  "tiktok",
+  "instagram",
+  "soundcloud",
+  "youtube"
+ ],
+ "features": {
+  "fast_poll": true,
+  "live_rows": true
+ },
+ "server": {
+  "gate": {
+   "slots": 2,
+   "busy": 0,
+   "running": 0,
+   "reserved": 0,
+   "queue": 0
+  }
+ }
+}

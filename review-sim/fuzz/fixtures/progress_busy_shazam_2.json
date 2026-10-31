@@ -1,0 +1,51 @@
+[
+ [
+  0.0,
+  {
+   "pct": 42.0,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  1.59,
+  {
+   "pct": 24.0,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  3.18,
+  {
+   "pct": 34.5,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  7.92,
+  {
+   "pct": 35.7,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  9.49,
+  {
+   "pct": 38.9,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  14.21,
+  {
+   "pct": 40.6,
+   "label": "Building the fingerprint"
+  }
+ ],
+ [
+  15.77,
+  {
+   "pct": 42.0,
+   "label": "Building the fingerprint"
+  }
+ ]
+]

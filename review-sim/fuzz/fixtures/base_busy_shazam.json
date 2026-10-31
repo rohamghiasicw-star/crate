@@ -1,0 +1,12 @@
+{
+ "status": 200,
+ "secs": 16.58,
+ "json": {
+  "result": "rate_limited",
+  "busy": "shazam",
+  "retry_after": 20,
+  "url": "https://www.tiktok.com/@kyks.edits7/video/7648736728290790688",
+  "error": "Addify is busy right now. Try again in a minute.",
+  "secs": 15.5
+ }
+}
