@@ -90,3 +90,148 @@ jobs:
                   a = t.get("attributes", {})
                   print("    tester", mask(a.get("email")), a.get("inviteType"), a.get("state"))
           PY
+      - name: Audit detail (GET only; full output encrypted because this repo is public)
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          ISS: ${{ secrets.ASC_ISSUER_ID }}
+          P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 - <<'PY'
+          # Metadata dump for the mock App Review audit (2026-10-31). Every call below is requests.get.
+          # The repo is public, so the full dump is encrypted to the auditor's public key; only
+          # states and counts are printed in clear.
+          import os, time, json, base64, collections, jwt, requests
+          from cryptography.fernet import Fernet
+          from cryptography.hazmat.primitives import hashes, serialization
+          from cryptography.hazmat.primitives.asymmetric import padding
+          PUB = b"""-----BEGIN PUBLIC KEY-----
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvFOlWMiHcK1lwPt9yLRU
+          Js8fLL8jJNwiIC9Lig8MiKy3yYCc7l6bys2fdLgmSiz45CSG/hTpHullz8SZr1Mh
+          VZQTgE2VIpAzDvL7heLPzWQzZLf7bwxm/xFmPb7lyjzPImtIsjtWr92ZqyuyBGIt
+          pmDURitRxcSiBtKJJQTMATsdWpYRt6OaM9UL2hBXk8n6ZpOHgdTwejEdTKEeqaxw
+          Hssnuoo4p5ZItRhoZbW6osDM2xkRbja0pOIhGfb5vRNLaHuyEng5+O0dmo+tMmKe
+          X3NXsy/7psPfmGhQTOCoJuwH5SVLjgzjqRF17V+WgKfujFvRq1h75vLGXxnM5M3O
+          MGyRmGSC0XA7RXDrZuy/o60H47mlMuonGj6MuBf82lMVGbNqWkjiL3ygmefO2VCr
+          6ebHz8oFFuZ+buy+r6UnjVNi2FzyelmY4M2QGP1dNgNEvjvgKcByhSimuo/Hecxc
+          3y0j/lSNinXAW/jljkeEGzrus71iy2b9v43j0VTycUC/AgMBAAE=
+          -----END PUBLIC KEY-----
+          """
+          now = int(time.time())
+          tok = jwt.encode({"iss": os.environ["ISS"], "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"},
+                           os.environ["P8"], algorithm="ES256", headers={"kid": os.environ["KID"]})
+          H = {"Authorization": "Bearer " + tok}
+          B = "https://api.appstoreconnect.apple.com"
+          APP = "6815190677"
+          D = collections.OrderedDict()
+          def strip(o):
+              if isinstance(o, dict):
+                  return {k: strip(v) for k, v in o.items() if k not in ("links", "uploadOperations")}
+              if isinstance(o, list):
+                  return [strip(x) for x in o]
+              return o
+          def g(path):
+              r = requests.get(B + path, headers=H, timeout=30)
+              try: j = r.json()
+              except Exception: j = {}
+              if r.status_code >= 300:
+                  print("  !", r.status_code, path.split("?")[0], json.dumps(j.get("errors", ""))[:200])
+                  return {"_status": r.status_code, "_errors": j.get("errors")}
+              return strip(j)
+          def data(j):
+              return j.get("data") if isinstance(j, dict) else None
+          def first_ok(*paths):
+              j = {}
+              for p in paths:
+                  j = g(p)
+                  if "_status" not in j: return j
+              return j
+          D["app"] = g(f"/v1/apps/{APP}")
+          D["eula"] = g(f"/v1/apps/{APP}/endUserLicenseAgreement")
+          vers = g(f"/v1/apps/{APP}/appStoreVersions?limit=5"); D["versions"] = vers
+          vs = data(vers) or []
+          if vs:
+              vid = vs[0]["id"]
+              vb = g(f"/v1/appStoreVersions/{vid}/build"); D["version_build"] = vb
+              rd = g(f"/v1/appStoreVersions/{vid}/appStoreReviewDetail")
+              a = (data(rd) or {}).get("attributes") or {}
+              if "demoAccountPassword" in a: a["demoAccountPassword"] = bool(a["demoAccountPassword"])
+              if a.get("contactPhone"): a["contactPhone"] = str(a["contactPhone"])[:4] + "***"
+              D["review_detail"] = rd
+              if data(rd): D["review_attachments"] = g(f"/v1/appStoreReviewDetails/{data(rd)['id']}/appStoreReviewAttachments")
+              locs = g(f"/v1/appStoreVersions/{vid}/appStoreVersionLocalizations"); D["version_localizations"] = locs
+              D["screenshots"] = {}; D["previews"] = {}
+              for l in data(locs) or []:
+                  lid, loc = l["id"], l["attributes"]["locale"]
+                  sets = g(f"/v1/appStoreVersionLocalizations/{lid}/appScreenshotSets")
+                  D["screenshots"][loc] = [{"set": s, "shots": g(f"/v1/appScreenshotSets/{s['id']}/appScreenshots")} for s in data(sets) or []]
+                  psets = g(f"/v1/appStoreVersionLocalizations/{lid}/appPreviewSets")
+                  D["previews"][loc] = [{"set": s, "previews": g(f"/v1/appPreviewSets/{s['id']}/appPreviews")} for s in data(psets) or []]
+              b = data(vb)
+              if b:
+                  D["build"] = first_ok(f"/v1/builds/{b['id']}?include=buildBundles,appEncryptionDeclaration",
+                                        f"/v1/builds/{b['id']}?include=buildBundles", f"/v1/builds/{b['id']}")
+          D["appinfos"] = []
+          for ai in data(g(f"/v1/apps/{APP}/appInfos")) or []:
+              aid = ai["id"]
+              D["appinfos"].append({"info": ai,
+                  "localizations": g(f"/v1/appInfos/{aid}/appInfoLocalizations"),
+                  "age": g(f"/v1/appInfos/{aid}/ageRatingDeclaration"),
+                  "primaryCategory": g(f"/v1/appInfos/{aid}/primaryCategory"),
+                  "primarySubcategoryOne": g(f"/v1/appInfos/{aid}/primarySubcategoryOne"),
+                  "secondaryCategory": g(f"/v1/appInfos/{aid}/secondaryCategory")})
+          D["review_submissions"] = []
+          for s in data(g(f"/v1/reviewSubmissions?filter[app]={APP}&limit=10")) or []:
+              items = first_ok(f"/v1/reviewSubmissions/{s['id']}/items?include=appStoreVersion,appCustomProductPageVersion,appStoreVersionExperiment,appEvent",
+                               f"/v1/reviewSubmissions/{s['id']}/items")
+              D["review_submissions"].append({"submission": s, "items": items})
+          D["subscription_groups"] = []
+          for gr in data(g(f"/v1/apps/{APP}/subscriptionGroups")) or []:
+              entry = {"group": gr, "localizations": g(f"/v1/subscriptionGroups/{gr['id']}/subscriptionGroupLocalizations"), "subs": []}
+              for sub in data(g(f"/v1/subscriptionGroups/{gr['id']}/subscriptions")) or []:
+                  sid = sub["id"]
+                  intro = g(f"/v1/subscriptions/{sid}/introductoryOffers?include=territory&limit=200")
+                  summ = collections.Counter(); usa = None
+                  for o in data(intro) or []:
+                      oa = o.get("attributes") or {}
+                      terr = (((o.get("relationships") or {}).get("territory") or {}).get("data") or {}).get("id")
+                      summ[json.dumps([oa.get("duration"), oa.get("offerMode"), oa.get("numberOfPeriods"), oa.get("startDate"), oa.get("endDate")])] += 1
+                      if terr == "USA": usa = oa
+                  allp = g(f"/v1/subscriptions/{sid}/prices?limit=1")
+                  entry["subs"].append({"sub": sub,
+                      "localizations": g(f"/v1/subscriptions/{sid}/subscriptionLocalizations"),
+                      "price_usa": g(f"/v1/subscriptions/{sid}/prices?filter[territory]=USA&include=subscriptionPricePoint,territory"),
+                      "price_territories": ((allp.get("meta") or {}).get("paging") or {}).get("total"),
+                      "intro_summary": dict(summ), "intro_usa": usa, "intro_total": len(data(intro) or []),
+                      "review_screenshot": g(f"/v1/subscriptions/{sid}/appStoreReviewScreenshot"),
+                      "availability": g(f"/v1/subscriptions/{sid}/subscriptionAvailability"),
+                      "promo_offers": g(f"/v1/subscriptions/{sid}/promotionalOffers")})
+              D["subscription_groups"].append(entry)
+          D["iaps"] = g(f"/v1/apps/{APP}/inAppPurchasesV2?limit=20")
+          D["price_schedule"] = g(f"/v1/apps/{APP}/appPriceSchedule?include=baseTerritory,manualPrices")
+          D["manual_prices"] = g(f"/v1/appPriceSchedules/{APP}/manualPrices?include=appPricePoint,territory&limit=5")
+          av = g(f"/v1/apps/{APP}/appAvailabilityV2"); D["availability"] = av
+          if data(av):
+              rows = data(g(f"/v2/appAvailabilities/{data(av)['id']}/territoryAvailabilities?limit=200&include=territory")) or []
+              def terr(r): return (((r.get("relationships") or {}).get("territory") or {}).get("data") or {}).get("id")
+              D["territories"] = {"total": len(rows),
+                                  "available": sorted(terr(r) or "?" for r in rows if (r.get("attributes") or {}).get("available")),
+                                  "unavailable": sorted(terr(r) or "?" for r in rows if not (r.get("attributes") or {}).get("available")),
+                                  "sample": rows[:2]}
+          print("== audit detail: what was read (values are in the encrypted blob)")
+          for k2, v2 in D.items():
+              print(" ", k2, ("error %s" % v2.get("_status")) if isinstance(v2, dict) and "_status" in v2 else "read")
+          for loc, sets in (D.get("screenshots") or {}).items():
+              for s in sets:
+                  print("  screenshots", loc, (s["set"].get("attributes") or {}).get("screenshotDisplayType"), len(data(s["shots"]) or []))
+          for loc, sets in (D.get("previews") or {}).items():
+              print("  preview sets", loc, len(sets))
+          blob = json.dumps(D, default=str).encode()
+          k = Fernet.generate_key()
+          ct = Fernet(k).encrypt(blob).decode()
+          pub = serialization.load_pem_public_key(PUB)
+          wk = base64.b64encode(pub.encrypt(k, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))).decode()
+          print("AUDITKEY " + wk)
+          for i in range(0, len(ct), 900):
+              print("AUDITBLOB " + ct[i:i + 900])
+          print("AUDITEND", len(ct))
+          PY
