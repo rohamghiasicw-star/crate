@@ -385,7 +385,11 @@ class Walk:
         # errors raised in the page
         for e in list(self.events):
             k = e["k"]
-            if k == "pageerror":
+            if k in ("pageerror", "console_error") and re.search(r"due to access control checks", e["msg"]):
+                # WebKit's wording for a same-origin fetch cancelled by a navigation or reload (the page only
+                # fetches its own origin, so this is never real CORS): noted, not a failure
+                self.info("fetch_cancelled_by_navigation", e["msg"][:120])
+            elif k == "pageerror":
                 self.fail("js_uncaught", norm_msg(e["msg"])[:90], e["msg"], snap)
             elif k == "console_error":
                 if not re.search(r"Failed to load resource|net::|NetworkError|cancelled|aborted|Load failed", e["msg"], re.I):
@@ -569,7 +573,7 @@ class Walk:
             fresh = [c for c in ctl if (screen_of(snap) + "::" + c["k"]) not in self.coverage]
             pool = fresh if fresh and r.random() < 0.6 else ctl
             c = r.choice(pool)
-            a.update(k=c["k"], l=c["l"], x=c["x"], y=c["y"], ext=c["ext"], href=c["href"], tag=c["t"], cur=c["cur"], inp=c["inp"])
+            a.update(k=c["k"], l=c["l"], x=c["x"], y=c["y"], ext=c["ext"], href=c["href"], tag=c["t"], cur=c["cur"] or c.get("sel"), inp=c["inp"])
         elif kind == "type":
             c = r.choice(inputs)
             bucket = r.choices(list(CORPUS), weights=[45, 15, 10, 6, 6, 18] if c["k"] != "#sq" else [8, 4, 10, 4, 2, 72])[0]
@@ -579,7 +583,7 @@ class Walk:
             vp = self.page.viewport_size
             a.update(x=r.randint(2, vp["width"] - 2), y=r.randint(2, vp["height"] - 2))
         elif kind == "visibility":
-            a.update(ms=r.choice([300, 900, 2500, 6000, 9000]))
+            a.update(ms=r.choice([300, 900, 2500, 6000]))
         elif kind == "wait":
             a.update(ms=r.randint(400, 3500))
         elif kind == "long_wait":
@@ -587,7 +591,7 @@ class Walk:
         elif kind == "share_in":
             a.update(text=r.choice(VALID + BROKEN[:4]))
         elif kind == "offline":
-            a.update(ms=r.randint(1500, 9000))
+            a.update(ms=r.randint(1500, 6000))
         elif kind == "scroll":
             a.update(dy=r.choice([-900, -400, 300, 700, 1500]), x=r.randint(20, 400), y=r.randint(150, 800))
         elif kind == "key":
@@ -701,6 +705,13 @@ class Walk:
             await self.setup()
             await asyncio.sleep(0.6)
             snap = await self.probe(full=True)
+            if self.script is not None:
+                # a replay starts where a person would: after the 1.4 s splash
+                for _ in range(16):
+                    if not snap or "splash" not in (snap.get("overlays") or []):
+                        break
+                    await asyncio.sleep(0.25)
+                    snap = await self.probe(full=True)
             await self.check(snap)
             n = self.cfg["n_actions"] if self.script is None else len(self.script)
             for i in range(n):
@@ -723,7 +734,7 @@ class Walk:
                 if a["a"] in ("tap", "double_tap") and before:
                     self.coverage.add(screen_of(before) + "::" + a.get("k", "?"))
                 if self.script is None:
-                    a["settle"] = round(self.rng.uniform(0.12, 0.45), 3)
+                    a["settle"] = round(self.rng.uniform(0.08, 0.32), 3)
                 await asyncio.sleep(a.get("settle") or 0.3)
                 self.pull_mock_log()
                 snap = await self.probe()
@@ -737,7 +748,7 @@ class Walk:
                     if fingerprint(before) == fingerprint(snap) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq) \
                             and (snap.get("fz") or {}).get("posts") == (before.get("fz") or {}).get("posts") \
                             and (snap.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store"):
-                        await asyncio.sleep(0.9)
+                        await asyncio.sleep(0.7)
                         again = await self.probe()
                         if again and fingerprint(again) == fingerprint(before) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq) \
                                 and (again.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store"):

@@ -25,26 +25,30 @@
     return !(s.visibility === 'hidden' || s.display === 'none' || +s.opacity === 0);
   };
   const controls = [], seen = new Set();
+  const big = W * H * 0.45;
   for (const el of document.querySelectorAll(SEL)) {
     if (seen.has(el)) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4 || r.bottom <= 1 || r.top >= H - 1 || r.right <= 1 || r.left >= W - 1) continue;
-    if (!shown(el)) continue;
+    const tag = el.tagName.toLowerCase();
+    // a large container with a backdrop or delegated listener is not a control (tap_xy still taps it)
+    if (r.width * r.height > big && !/^(button|a|input|textarea|select|summary)$/.test(tag)) continue;
+    if (el.closest('[hidden]')) continue;
     const x0 = Math.max(0, r.left), x1 = Math.min(W, r.right), y0 = Math.max(0, r.top), y1 = Math.min(H, r.bottom);
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     const hit = document.elementFromPoint(cx, cy);
     if (!hit || !(hit === el || el.contains(hit))) continue;
-    // a control nested in another control: keep the innermost one the tap lands on
-    let p = el.parentElement, nested = false;
-    while (p) { if (seen.has(p)) { nested = true; break; } p = p.parentElement; }
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || +cs.opacity === 0) continue;
     seen.add(el);
-    const tag = el.tagName.toLowerCase();
     const href = tag === 'a' ? (el.getAttribute('href') || '') : '';
     let ext = false;
     try { if (href && !href.startsWith('#') && !href.startsWith('javascript:')) ext = new URL(el.href).host !== location.host; } catch (e) {}
     const inp = (tag === 'input' && !/^(button|submit|checkbox|radio|range|file|color|image|reset)$/i.test(el.type || '')) || tag === 'textarea';
+    const sel = el.classList.contains('on') || el.classList.contains('sel') || el.classList.contains('active') ||
+                el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-current') === 'page';
     controls.push({k: keyOf(el), l: lab(el), t: tag, x: Math.round(cx), y: Math.round(cy), w: Math.round(r.width), h: Math.round(r.height),
-                   href: href.slice(0, 200), tg: el.getAttribute('target') || '', ext, inp,
+                   href: href.slice(0, 200), tg: el.getAttribute('target') || '', ext, inp, sel,
                    dis: !!(el.disabled || el.getAttribute('aria-disabled') === 'true'), cur: el.getAttribute('aria-current') === 'page',
                    st: (el.getAttribute('aria-checked') || '') + (el.getAttribute('aria-pressed') || '') + (el.getAttribute('aria-expanded') || '')});
   }
