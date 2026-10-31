@@ -185,6 +185,20 @@ jobs:
             -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
             2>&1 | tee export.log
 
+      # Xcode keeps the real reason for an export failure in its distribution logs, not on stdout.
+      # Only error-looking lines are kept, with tokens redacted, because this repo is public.
+      - name: Distribution log errors (on failure, redacted)
+        if: failure()
+        run: |
+          find "${TMPDIR:-/tmp}" /var/folders -maxdepth 7 -type d -name "*.xcdistributionlogs" 2>/dev/null | while read -r d; do
+            for f in "$d"/*.log; do
+              echo "== $(basename "$f")"
+              grep -iE "error|fail|denied|forbidden|unauthori|status code|401|403|agreement|role|permission|app group|capabilit|profile" "$f" \
+                | sed -E 's/eyJ[A-Za-z0-9._-]+/[jwt]/g; s/(Bearer|Authorization)[^,}]*/\1 [redacted]/g' | head -150
+            done
+          done > dist-errors.log 2>&1 || true
+          wc -l dist-errors.log
+
       - name: Always shred the key
         if: always()
         run: rm -rf ~/private_keys
@@ -197,4 +211,5 @@ jobs:
             keycheck.log
             archive.log
             export.log
+            dist-errors.log
           retention-days: 14
