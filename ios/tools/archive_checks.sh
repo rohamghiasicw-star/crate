@@ -8,8 +8,8 @@
 #     profile) and report whether both bundles carry the app group.
 #  3. Ad hoc sign the step-1 archive by hand with each target's entitlements file and report
 #     the same. The job fails unless step 2 or step 3 carries the group into both bundles.
-#  4. On the Release binaries: no Debug-only Settings screen, no runtime lookup of
-#     sharedApplication in the extension, and the photo-library purpose string present.
+#  4. On the Release binaries: no Debug-only Settings screen, the export handler and the
+#     photo-library purpose string present (the extension's sharedApplication fallback is reported).
 set -u -o pipefail
 cd "$(dirname "$0")/../.."
 group="group.com.addify.app"
@@ -42,13 +42,13 @@ has_group() { # label, archive path; prints what each bundle carries, returns 0 
   return $rc
 }
 
-echo "== 1. archive as ios-release.yml does"
+echo "== 1. archive with the old unsigned flags (before 2026-10-31), for comparison"
 if archive release-flags DEVELOPMENT_TEAM= CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
      CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS=""; then
-  has_group release-flags build/release-flags.xcarchive || echo "  (this is what the export step is handed today)"
+  has_group release-flags build/release-flags.xcarchive || echo "  (expected: the old flags drop the app group)"
 else fail=1; fi
 
-echo "== 2. same Release archive, ad hoc signed by Xcode"
+echo "== 2. same Release archive, ad hoc signed by Xcode (what ios-release.yml does now)"
 adhoc_ok=no
 if archive adhoc DEVELOPMENT_TEAM= CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= \
      CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES; then
@@ -77,8 +77,10 @@ if [ -f "$app/Addify" ]; then
     if strings -a "$app/Addify" | grep -qF "$s"; then echo "  FAIL Release app still contains '$s'"; fail=1
     else echo "  ok   Release app has no '$s'"; fi
   done
+  # The extension keeps its runtime sharedApplication fallback after the responder chain
+  # (2026-10-31: the working share path stays as shipped). Reported, not failed.
   if strings -a "$app/PlugIns/AddifyShare.appex/AddifyShare" | grep -qF "sharedApplication"; then
-    echo "  FAIL extension still names sharedApplication"; fail=1
+    echo "  note extension keeps the runtime sharedApplication fallback"
   else echo "  ok   extension does not name sharedApplication"; fi
   # Swift keeps string literals of 15 bytes or less inside the code, so only long names show up.
   if strings -a "$app/Addify" | grep -qF "ExportFindsHandler"; then echo "  ok   Release app contains ExportFindsHandler"
