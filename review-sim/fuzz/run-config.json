@@ -1,3 +1,3 @@
-{"label": "pilot6-openlog", "walk_shards": 2, "walks_per_shard": 24, "actions": 50, "conc": 11, "walk_timeout": 420, "max_minutes": 20,
- "sweep_shards": 1, "sweep_depth": 1, "sweep_max_taps": 60, "sweep_conc": 6, "sweep_minutes": 20, "sweep_only": "^t_",
- "min_parts": 1, "min_budget": 10, "min_conc": 4, "min_minutes": 15}
+{"label": "full-2", "walk_shards": 60, "walks_per_shard": 400, "actions": 50, "conc": 11, "walk_timeout": 420, "max_minutes": 95,
+ "sweep_shards": 2, "sweep_depth": 4, "sweep_max_taps": 1000, "sweep_conc": 6, "sweep_minutes": 170, "sweep_only": "",
+ "min_parts": 10, "min_budget": 24, "min_conc": 4, "min_minutes": 110}

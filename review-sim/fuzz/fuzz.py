@@ -89,10 +89,10 @@ SEED_JS = """(function(){ if (window.top !== window) return; try{
 
 
 HIT_JS = """([x,y])=>{const e=document.elementFromPoint(x,y); if(!e) return null;
-  const c=e.closest('a[href],button,[data-fzc],[role=button],input,textarea,summary')||e; let ext=false;
+  const m=e.closest('a[href],button,[data-fzc],[role=button],input,textarea,summary'); const c=m||e; let ext=false;
   try{ if(c.tagName==='A'&&c.getAttribute('href')&&!/^#/.test(c.getAttribute('href'))) ext=new URL(c.href).host!==location.host; }catch(_){}
   return {k:(c.id?'#'+c.id:c.tagName.toLowerCase()+(c.className&&typeof c.className==='string'?'.'+c.className.trim().split(/\\s+/)[0]:'')),
-          l:(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40), ext:ext, now:Date.now()};}"""
+          l:(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40), ext:ext, ctl:!!m, now:Date.now()};}"""
 
 
 def norm_msg(s):
@@ -402,7 +402,7 @@ class Walk:
             out.append(dict(self.doing, _i=len(self.actions), _now=True))
         for i in range(len(self.actions) - 1, max(-1, len(self.actions) - 4), -1):
             out.append(dict(self.actions[i], _i=i))
-        return [{k: v for k, v in c.items() if k in ("a", "k", "l", "t", "ext", "href", "tag", "hk", "hl", "hext", "hit2", "submit", "_i", "_now", "text", "pt", "gap", "h2k", "h2l")} for c in out]
+        return [{k: v for k, v in c.items() if k in ("a", "k", "l", "t", "ext", "href", "tag", "hk", "hl", "hext", "hit2", "submit", "_i", "_now", "text", "pt", "gap", "h2k", "h2l", "hctl")} for c in out]
 
     def last_action_ref(self):
         if not self.actions:
@@ -632,8 +632,9 @@ class Walk:
         cands = e.get("cands") or []
         a = None
         if rec is not None:
-            timed = [c for c in cands if c.get("pt")]
-            for c in timed:                              # newest first
+            # the action running when the page opened it: newest first over the whole walk, by the page clock
+            hist = ([dict(self.doing)] if self.doing is not None else []) + list(reversed(self.actions))
+            for c in [x for x in cands if x.get("pt")] + [x for x in hist if x.get("pt")]:
                 if c["pt"] <= rec["t"] + 60 and rec["t"] - c["pt"] < 3000:
                     a = c
                     break
@@ -643,7 +644,9 @@ class Walk:
                     a = c
                     break
 
-        def ext_like(k, l, x):
+        def ext_like(k, l, x, ctl=True):
+            if ctl is False:
+                return False                             # plain text or a container under the finger, not a control
             return bool(x) or bool(EXT_LABEL.search(l or "")) or (k or "") in ("#ob-try", "#pfcancel", "#playerout")
         if rec is None and e["via"] == "popup":
             self.info("escape_unattributed", "%s (no page open record left to match)" % host)
@@ -665,7 +668,7 @@ class Walk:
                 return
             t = "tap"                                     # both taps on the same control: judge it like one tap
         if t in ("tap", "tap_xy"):
-            if ext_like(k1, l1, x1):
+            if ext_like(k1, l1, x1, a.get("hctl")):
                 self.info("escape_intended", "%s -> %s" % ((l1 or k1)[:40], host))
             else:
                 self.fail("escape_unlabeled", "%s|%s" % (host, norm_msg(k1 or "?")[:40]),
@@ -764,7 +767,7 @@ class Walk:
             try:
                 h = await p.evaluate(HIT_JS, [x, y])
                 if h:
-                    a.update(hk=h["k"], hl=h["l"], hext=h["ext"], pt=h.get("now"))
+                    a.update(hk=h["k"], hl=h["l"], hext=h["ext"], hctl=h.get("ctl"), pt=h.get("now"))
             except Exception:
                 pass
         if t == "tap":
@@ -789,7 +792,7 @@ class Walk:
             try:
                 h = await p.evaluate(HIT_JS, [x, y])
                 if h:
-                    a.update(k=h["k"], l=h["l"], ext=h["ext"], hk=h["k"], hl=h["l"], hext=h["ext"], pt=h.get("now"))
+                    a.update(k=h["k"], l=h["l"], ext=h["ext"], hk=h["k"], hl=h["l"], hext=h["ext"], hctl=h.get("ctl"), pt=h.get("now"))
             except Exception:
                 pass
             await p.touchscreen.tap(x, y)
