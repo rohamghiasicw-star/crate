@@ -237,19 +237,20 @@ final class ShareViewController: UIViewController {
         return true
     }
 
-    /* The responder chain only. Both callers run once this controller is on screen (after
-       viewDidAppear, or from a tap on the card), so the chain reaches the application object.
-       The runtime lookup of UIApplication.sharedApplication that used to back this up is gone:
-       that property is marked unavailable to app extensions, and reaching it through the
-       runtime only hid the call from the compiler. If the chain ever comes up empty, openAddify
-       shows the card with its Open Addify button, and the inbox still holds the link. */
+    /* The responder chain first. If this controller is not in a window yet the chain stops
+       short of the application, so fall back to asking the class for its shared instance
+       through the runtime, the route reported working on iOS 18 in Apple Developer Forums
+       thread 779644 (April 2025). Same object either way. */
     private func hostApplication() -> UIApplication? {
         var responder: UIResponder? = self
         while let r = responder {
             if let application = r as? UIApplication { return application }
             responder = r.next
         }
-        return nil
+        let shared = NSSelectorFromString("sharedApplication")
+        guard UIApplication.responds(to: shared),
+              let obj = UIApplication.perform(shared)?.takeUnretainedValue() as? UIApplication else { return nil }
+        return obj
     }
 
     private func finish(error: Bool) {
