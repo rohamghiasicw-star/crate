@@ -34,6 +34,17 @@ jobs:
               a = o.get("attributes", {}) or {}
               return {k: a.get(k) for k in (keys or a.keys())}
           print("== app"); print(attrs(get(f"/v1/apps/{APP}").get("data", {}), ["name", "bundleId", "primaryLocale", "contentRightsDeclaration"]))
+          print("== bundle ids and capabilities (GET only)")
+          bj = get("/v1/bundleIds?filter[identifier]=com.addify.app,com.addify.app.share&include=bundleIdCapabilities&limit=10")
+          caps = {c["id"]: c for c in bj.get("included", []) if c.get("type") == "bundleIdCapabilities"}
+          for b in bj.get("data", []):
+              ids = [r["id"] for r in (b.get("relationships", {}).get("bundleIdCapabilities", {}).get("data") or [])]
+              print(" ", attrs(b, ["identifier"]).get("identifier"),
+                    sorted(caps[i]["attributes"].get("capabilityType") for i in ids if i in caps))
+              for i in ids:
+                  c = caps.get(i, {})
+                  if c.get("attributes", {}).get("capabilityType") == "APP_GROUPS":
+                      print("    APP_GROUPS settings:", json.dumps(c["attributes"].get("settings"))[:300])
           print("== versions")
           vs = get(f"/v1/apps/{APP}/appStoreVersions?limit=5").get("data", [])
           for v in vs:
