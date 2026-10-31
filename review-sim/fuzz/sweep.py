@@ -71,6 +71,18 @@ def anchors(device):
     A.append(("search", cfg(48, device, ONB), [tap("#tb-search"), typed("#sq", "slowed"), wait(2500)]))
     A.append(("profile", cfg(49, device, ONB), [tap("#tb-prof"), wait(600)]))
     A.append(("share_launch", cfg(50, device, None, share=link("version_match")), [wait(30000)]))
+    # targeted paths random walks rarely finish (each one is also a root for the tap sweep)
+    OUT = dict(ONB, **{"addify-scans-life": "5", "addify-scans-life-urls": json.dumps(["https://www.tiktok.com/@s/video/70000000000000000%02d" % i for i in range(5)])})
+    A.append(("t_listen_out_of_scans", cfg(60, device, OUT, {"mic": "granted"}, {"listen": "found"}), [tap("#go"), wait(21000)]))
+    A.append(("t_double_tap_onboarding", cfg(61, device), [{"a": "double_tap", "k": "#ob-next", "l": "Set it up", "gap": 0.11, "x": None, "y": None}, wait(1500)]))
+    A.append(("t_hidden_code", cfg(62, device, ONB), [typed("#url", "addify-master-letmein"), wait(1500)]))
+    A.append(("t_timeout_long", cfg(63, device, ONB), [typed("#url", link("timeout")), wait(72000)]))
+    A.append(("t_onb_replay_then_share_out", cfg(64, device, OUT), [tap("#tb-prof"), wait(500), tap("#pfhowto"), wait(500),
+                                                                     {"a": "share_in", "text": link("version_match")}, wait(2500)]))
+    A.append(("t_share_out_of_scans", cfg(65, device, OUT, share=link("version_match")), [wait(4000)]))
+    A.append(("t_export_with_finds", cfg(66, device, finds), [tap("#tb-prof"), wait(500), tap("#pfexp"), wait(1500)]))
+    A.append(("t_export_empty", cfg(67, device, ONB), [tap("#tb-prof"), wait(500), tap("#pfexp"), wait(1500)]))
+    A.append(("t_trending", cfg(68, device, ONB), [tap("#seeall"), wait(1500)]))
     return A
 
 

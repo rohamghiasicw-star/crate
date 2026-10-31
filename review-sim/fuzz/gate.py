@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pre-submit gate over an aggregate (aggregate.py output). Exit 1 if any blocking kind fired.
 
-  python3 gate.py agg.json [--allow kind,kind]
+  python3 gate.py agg.json [--allow kind,kind] [--quiet]
+  --quiet prints counts only (CI logs on a public repo); the full list is in the sealed bundle.
 
 BLOCK: anything App Review can hit by tapping around: leaving the app without asking, a hidden
 code answering, a crash, a dead end, a stuck screen, a sheet you cannot close, paid features
@@ -27,12 +28,14 @@ def main():
     print("walks %d, UI actions %d, sweep taps %d, unique failures %d" % (t.get("walks", 0), t.get("actions", 0),
                                                                         agg.get("sweep", {}).get("taps", 0), t.get("unique_failures", 0)))
     bad = 0
+    quiet = "--quiet" in sys.argv
     for s in agg["signatures"]:
         k = s["kind"]
         tag = "BLOCK" if k in BLOCK and k not in allow else "WARN" if k in WARN or k in allow else "INFO"
         if tag == "BLOCK":
             bad += 1
-        print("%-5s %4d walks %3d sweep  %s" % (tag, s["walks"], s.get("sweep_hits", 0), s["sig"][:150]))
+        if not quiet:
+            print("%-5s %4d walks %3d sweep  %s" % (tag, s["walks"], s.get("sweep_hits", 0), s["sig"][:150]))
     if t.get("harness_errors", 0) > max(5, t.get("walks", 0) // 100):
         print("FAIL: too many harness errors (%d): the run itself is not trustworthy" % t["harness_errors"])
         bad += 1

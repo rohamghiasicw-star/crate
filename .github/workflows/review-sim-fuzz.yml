@@ -119,7 +119,7 @@ jobs:
 
   minimize:
     needs: [prep, run]
-    if: always() && needs.prep.result == 'success'
+    if: ${{ !cancelled() && needs.prep.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
@@ -185,7 +185,7 @@ jobs:
 
   report:
     needs: [prep, run, minimize]
-    if: always() && needs.prep.result == 'success'
+    if: ${{ !cancelled() && needs.prep.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -221,3 +221,6 @@ jobs:
           name: final-sealed
           path: sealed
           retention-days: 14
+      - name: gate
+        # pre-submit gate: fails the run when any blocking signature fired (details only in the sealed bundle)
+        run: python review-sim/fuzz/gate.py final/agg.json --quiet
