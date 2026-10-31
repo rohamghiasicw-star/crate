@@ -22,13 +22,19 @@ final class EngineBridge: ObservableObject {
     /* CALL-RETRY: the last failed load said the PHONE has no network (-1009 and friends), as
        opposed to the engine not answering. UnreachableView picks its words from this. */
     @Published var offline = false
+    #if DEBUG
     @Published var showSettings = false
+    #endif
     @Published var toast: ResultPayload? = nil
     /* Bumped to make the web view reload from the (possibly new) engine base. */
     @Published var reloadToken = 0
 
     var isActive = true
     weak var webView: WKWebView?
+    /* True while the launch check (EngineWebView boot) is still choosing an address. A share
+       that arrives then waits and load() opens it on the chosen address, instead of being sent
+       to an address nobody checked yet and then replaced by the launch's own page load. */
+    var holdShares = false
 
     private var pendingLink: String? = nil
     private var lastDelivered: String? = nil
@@ -87,7 +93,7 @@ final class EngineBridge: ObservableObject {
     }
 
     func flushPending() {
-        guard let link = pendingLink, let wv = webView else { return }
+        guard let link = pendingLink, let wv = webView, !holdShares else { return }
         if pageReady {
             let json = jsString(link)
             let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));return true;}catch(e){return false;}})()"
@@ -105,15 +111,26 @@ final class EngineBridge: ObservableObject {
 
     private func loadShare(_ link: String) {
         guard let wv = webView else { return }
-        var comps = URLComponents(url: EngineConfig.baseURL, resolvingAgainstBaseURL: false)!
-        comps.path = "/share"
-        comps.queryItems = [URLQueryItem(name: "url", value: link)]
-        if let u = comps.url {
+        if let u = shareURL(link) {
             pendingLink = nil
             pageReady = false
             unreachable = false
             wv.load(URLRequest(url: u))
         }
+    }
+
+    /* <engine>/share?url=<link> on the address in use. */
+    func shareURL(_ link: String) -> URL? {
+        guard var comps = URLComponents(url: EngineConfig.baseURL, resolvingAgainstBaseURL: false) else { return nil }
+        comps.path = "/share"
+        comps.queryItems = [URLQueryItem(name: "url", value: link)]
+        return comps.url
+    }
+
+    /* For the launch's own page load: the share that waited while the address was chosen. */
+    func takePendingLink() -> String? {
+        defer { pendingLink = nil }
+        return pendingLink
     }
 
     /* JSON-encode a string for embedding in a JS expression. Never string-concatenate a

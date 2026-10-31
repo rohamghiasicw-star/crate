@@ -16,10 +16,10 @@ Read `engine/SHARE-SHEET.md` first for the share flow this implements.
 | `Addify/ContentView.swift` | Web view + native toast overlay + "Can't reach Addify" screen + Settings sheet (Settings is Debug-only since 1.0). |
 | `Addify/EngineWebView.swift` | The WKWebView and every delegate that makes the page work inside an app (see below). |
 | `Addify/EngineBridge.swift` | State shared between SwiftUI and the web view; delivers shared links into the page. |
-| `Addify/EngineConfig.swift` | Engine base URL (app-group UserDefaults, default = today's tunnel) + `/health` check. |
+| `Addify/EngineConfig.swift` | Engine addresses (the compiled-in allowlist), the launch check that picks one, `/health` check. |
 | `Addify/SharedInbox.swift` | The app-group contract. Compiled into BOTH targets. |
 | `Addify/ResultToast.swift` | Native "Match found" toast. |
-| `Addify/SettingsView.swift` | Engine URL field, Test, Reset. |
+| `Addify/SettingsView.swift` | Engine URL field, Test, Reset. Debug builds only. |
 | `Addify/ShazamProbe.swift` | On-device ShazamKit: answers the engine's Shazam probes (`addifyKit` handler, `SHSignatureGenerator` + `SHSession`). See `docs/SHAZAMKIT-ON-DEVICE.md`. |
 | `Addify/Info.plist`, `Addify.entitlements` | URL scheme `addify`, mic usage string, ATS, app group, `com.apple.developer.shazamkit` (needs the ShazamKit App Service on App ID `com.addify.app`). |
 | `Addify/Assets.xcassets` | App icon (white waveGlyph wave on brand purple `#6B5FE0`, 1024 RGB, no alpha) + launch colour. |
@@ -56,11 +56,16 @@ If Xcode refuses to open the hand-written project:
 
 ### Engine address
 
-`EngineConfig.defaultBaseURL` is the trycloudflare hostname that was live when this was
-written. Free tunnels rotate on every cloudflared restart, so it WILL go stale. Change it
-in-app (DEBUG BUILDS ONLY since 1.0, App Review 2.3.1/2.1; Release builds clear any old
-manual address at launch and use the automatic directory lookup): long-press the
-status-bar strip at the top of the screen for about a second, or open `addify://settings`.
+The app loads its page only from the addresses compiled into `EngineConfig.knownBaseURLs`,
+and its native bridges (`addify`, `addifyStore`, `addifyKit`, `exportFinds`) answer only a
+page on one of them. At launch it health-checks them all and loads the best-ranked one
+that answers; that check is the only code that writes the address in use. The directory
+gist can only move one of the compiled-in addresses to the front of the next launch check;
+any other host it names is ignored. A new address needs a new build.
+
+Debug builds only: Settings can pin a different address (Release builds compile no
+Settings screen and clear any old manual address at launch). Long-press the status-bar
+strip at the top of the screen for about a second, or open `addify://settings`.
 The unreachable screen also has a Settings button in Debug. Test
 GETs `/health` and accepts only `ok:true` with `service` either `"addify engine"` or
 `"crate engine"` (the old name stays accepted until every installed build knows the new one).
