@@ -46,20 +46,44 @@ struct MRConfig {
    time. Every wait in this file is explicit, so the implicit one is switched off. */
 enum Quiescence {
     static var done = false
+    static var report: [String] = []
     static func disable() {
-        guard !done, let cls = NSClassFromString("XCUIApplicationProcess") else { return }
+        guard !done else { return }
         done = true
-        let one = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:")
-        if let m = class_getInstanceMethod(cls, one) {
-            let b: @convention(block) (AnyObject, Bool) -> Void = { _, _ in }
-            method_setImplementation(m, imp_implementationWithBlock(b))
+        guard let cls = NSClassFromString("XCUIApplicationProcess") else {
+            report.append("XCUIApplicationProcess missing")
+            return
         }
-        let two = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:isPreEvent:")
-        if let m = class_getInstanceMethod(cls, two) {
-            let b: @convention(block) (AnyObject, Bool, Bool) -> Void = { _, _, _ in }
-            method_setImplementation(m, imp_implementationWithBlock(b))
+        /* Xcode 26/27: XCUIApplicationProcess asks shouldSkipPreEventQuiescence and
+           shouldSkipPostEventQuiescence before every query and event. Answer yes. */
+        var patched = false
+        let yes: @convention(block) (AnyObject) -> Bool = { _ in true }
+        for name in ["shouldSkipPreEventQuiescence", "shouldSkipPostEventQuiescence"] {
+            if let m = class_getInstanceMethod(cls, NSSelectorFromString(name)) {
+                let enc = method_getTypeEncoding(m).map { String(cString: $0) } ?? "?"
+                method_setImplementation(m, imp_implementationWithBlock(yes))
+                report.append("\(name) [\(enc)] -> YES")
+                patched = true
+            } else {
+                report.append("\(name) not found")
+            }
         }
-        print("MR| quiescence waits disabled")
+        /* Older XCTest: replace the wait itself. */
+        if !patched {
+            let one = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:")
+            if let m = class_getInstanceMethod(cls, one) {
+                let b: @convention(block) (AnyObject, Bool) -> Void = { _, _ in }
+                method_setImplementation(m, imp_implementationWithBlock(b))
+                report.append("waitForQuiescenceIncludingAnimationsIdle: -> no-op")
+            }
+            let two = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:isPreEvent:")
+            if let m = class_getInstanceMethod(cls, two) {
+                let b: @convention(block) (AnyObject, Bool, Bool) -> Void = { _, _, _ in }
+                method_setImplementation(m, imp_implementationWithBlock(b))
+                report.append("waitForQuiescenceIncludingAnimationsIdle:isPreEvent: -> no-op")
+            }
+        }
+        print("MR| quiescence: " + report.joined(separator: "; "))
     }
 }
 
@@ -185,7 +209,7 @@ final class ReviewerUITests: XCTestCase {
         app.activate()
         let ok = app.wait(for: .runningForeground, timeout: 20)
         log.line("attach", ok ? "PASS" : "FAIL", shot: nil,
-                 "state before activate: \(stateName(before)), after: \(stateName(app.state))")
+                 "state before activate: \(stateName(before)), after: \(stateName(app.state)); idle-wait patch: \(Quiescence.report.joined(separator: ", "))")
     }
 
     /// The Oct 15 rejection: "Can't reach Addify" right after launch on a fresh install.
@@ -292,6 +316,11 @@ final class ReviewerUITests: XCTestCase {
             let s = shot("paste-callout")
             c.tap()
             log.line("paste-callout", "PASS", shot: s, "iOS showed its Paste callout and it was tapped (clipboard: '\(clip)')")
+            if let a = systemAlertInfo(timeout: 2) {
+                let sa = shot("paste-permission")
+                log.line("paste-permission", "WARN", shot: sa, "iOS asked before pasting: \(a)")
+                tapAlertButton(preferring: ["Allow Paste", "Allow"])
+            }
         } else {
             let s = shot("paste-no-callout")
             log.line("paste-callout", "FAIL", shot: s, "tapped Paste, no iOS Paste callout appeared within 6 s")
