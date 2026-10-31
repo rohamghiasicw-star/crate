@@ -204,6 +204,7 @@ jobs:
                       "intro_summary": dict(summ), "intro_usa": usa, "intro_total": len(data(intro) or []),
                       "review_screenshot": g(f"/v1/subscriptions/{sid}/appStoreReviewScreenshot"),
                       "availability": g(f"/v1/subscriptions/{sid}/subscriptionAvailability"),
+                      "available_territories": ((g(f"/v1/subscriptionAvailabilities/{sid}/availableTerritories?limit=200").get("meta") or {}).get("paging") or {}).get("total"),
                       "promo_offers": g(f"/v1/subscriptions/{sid}/promotionalOffers")})
               D["subscription_groups"].append(entry)
           D["iaps"] = g(f"/v1/apps/{APP}/inAppPurchasesV2?limit=20")
@@ -217,6 +218,12 @@ jobs:
                                   "available": sorted(terr(r) or "?" for r in rows if (r.get("attributes") or {}).get("available")),
                                   "unavailable": sorted(terr(r) or "?" for r in rows if not (r.get("attributes") or {}).get("available")),
                                   "sample": rows[:2]}
+              statuses = collections.defaultdict(list)
+              for r in rows:
+                  for cs in (r.get("attributes") or {}).get("contentStatuses") or []:
+                      statuses[cs].append(terr(r) or "?")
+              D["territories"]["content_statuses"] = {k2: sorted(v2) for k2, v2 in statuses.items()}
+              for k2, v2 in sorted(statuses.items()): print("  territory status", k2, len(v2))
           print("== audit detail: what was read (values are in the encrypted blob)")
           for k2, v2 in D.items():
               print(" ", k2, ("error %s" % v2.get("_status")) if isinstance(v2, dict) and "_status" in v2 else "read")
