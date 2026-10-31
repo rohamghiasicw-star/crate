@@ -5558,7 +5558,7 @@ function openPaywall(){
       ps=Array.isArray(ps)?ps.filter(function(q){return q&&q.id&&q.price;}):[];
       if(!ps.length){noPlans(); return;}
       // the plan's name is StoreKit's display name, so the sheet and Apple's purchase sheet agree
-      b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||(q.period==='year'?'Yearly':q.period==='month'?'Monthly':''))+
+      b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+('Addify Plus'+(q.period==='year'?' Yearly':q.period==='month'?' Monthly':''))+
         '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
       [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
         if(busyBuy) return; busyBuy=true; pwMsg('');
