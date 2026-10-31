@@ -40,7 +40,104 @@ env:
   LIVE_HOST: 161-35-185-80.sslip.io
 
 jobs:
+  # Reads mockreview/path-run.env on a Linux runner (no macOS quota) and decides which jobs run.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      groups: ${{ steps.p.outputs.groups }}
+      devices: ${{ steps.p.outputs.devices }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: |
+          g=$(grep -E '^MR_GROUPS=' mockreview/path-run.env | cut -d= -f2-)
+          echo "groups=$g" >> "$GITHUB_OUTPUT"
+          d=0; for w in launch scans fresh tryreel taps largetext rotate store delete; do case " $g " in *" $w "*) d=1;; esac; done
+          echo "devices=$d" >> "$GITHUB_OUTPUT"
+          echo "groups: $g / device jobs: $d"
+
+  # StoreKit testing through xcodebuild does not apply the .storekit on the iOS 27 runtimes
+  # (run 41189222058: "[SKTestSession] Error saving configuration file", Apple FB22237318), and
+  # Apple's thread reports it working on the iOS 26.2 runtime. This job runs the same StoreKit
+  # walk on iOS 26.2 (macos-26 image), iPhone 17 Pro Max then iPad Air 11-inch (M3).
+  store26:
+    needs: plan
+    if: contains(needs.plan.outputs.groups, 'store26')
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      MR_OUT: ${{ github.workspace }}/out
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 26.2 if present (matches the iOS 26.2 runtime), else the newest
+        run: |
+          mkdir -p "$MR_OUT/inventory"
+          if [ -d /Applications/Xcode_26.2.app ]; then sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          else sudo xcode-select -s /Applications/Xcode.app/Contents/Developer; fi
+          { xcode-select -p; xcodebuild -version; xcrun simctl list runtimes; } | tee "$MR_OUT/inventory/store26-xcode.txt"
+      - name: Block the live server on this runner
+        run: |
+          echo "127.0.0.1 $LIVE_HOST" | sudo tee -a /etc/hosts
+          echo "::1 $LIVE_HOST" | sudo tee -a /etc/hosts
+          sudo dscacheutil -flushcache || true; sudo killall -HUP mDNSResponder || true; sleep 2
+          if curl -sS -m 8 -o /dev/null "https://$LIVE_HOST/health" 2>/dev/null; then echo "live host still answers: stopping"; exit 1; fi
+          echo "live host blocked"
+      - name: Build the StoreKit test-only project
+        run: |
+          set -o pipefail
+          curl -sSL -o /tmp/xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          unzip -q -o /tmp/xcodegen.zip -d /tmp/xcodegen
+          /tmp/xcodegen/xcodegen/bin/xcodegen generate --spec mockreview/store.yml --project mockreview
+          xcodebuild build-for-testing -project mockreview/AddifyStoreReview.xcodeproj -scheme StoreReview \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath srbuild 2>&1 | tee "$MR_OUT/store26-build.log" | tail -8
+      - name: StoreKit walk on iOS 26.2, iPhone then iPad
+        run: |
+          rt=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)['runtimes'] if x.get('platform')=='iOS' and x['version'].startswith('26.2') and x.get('isAvailable')]; print(r[-1]['identifier'] if r else '')")
+          [ -n "$rt" ] || { echo "no iOS 26.2 runtime on this image"; xcrun simctl list runtimes; exit 1; }
+          echo "runtime $rt" | tee -a "$MR_OUT/inventory/store26-xcode.txt"
+          set +e
+          for pair in "iphone|com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max" "ipad|com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3"; do
+            dev=${pair%%|*}; type=${pair#*|}
+            udid=$(mockreview/scripts/sim.sh device "$dev" "$dev" "$type" "$rt" | tail -1)
+            mockreview/scripts/sim.sh logstart "$udid" "$dev-ios26"
+            xcrun simctl io "$udid" recordVideo --codec=hevc --force "$MR_OUT/$dev-ios26-testStoreFlows.mp4" >/dev/null 2>&1 &
+            vp=$!
+            TEST_RUNNER_MR_OUT="$MR_OUT" TEST_RUNNER_MR_DEVICE="$dev-ios26" TEST_RUNNER_MR_SCANS=0 TEST_RUNNER_MR_ENGINE="$ENGINE" \
+            TEST_RUNNER_MR_NO_IDLE=1 TEST_RUNNER_MR_LIVE="$LIVE_HOST" \
+              xcodebuild test -project mockreview/AddifyStoreReview.xcodeproj -scheme StoreReview -derivedDataPath srbuild \
+                -destination "id=$udid" -only-testing:StoreUITests/ReviewerUITests/testStoreFlows \
+                -resultBundlePath "$MR_OUT/$dev-ios26-testStoreFlows.xcresult" 2>&1 \
+              | tee "$MR_OUT/$dev-ios26-testStoreFlows.xcodebuild.log" \
+              | grep --line-buffered -E '^MR\||Test Case|error:|\*\* TEST|SKTestSession'
+            kill -INT $vp 2>/dev/null; sleep 3
+            mockreview/scripts/sim.sh crashes "$dev-ios26"
+            mockreview/scripts/sim.sh stop "$dev-ios26"
+            xcrun simctl shutdown "$udid" 2>/dev/null
+          done
+          exit 0
+      - name: Summary and previews
+        if: always()
+        run: |
+          DEV=store26 python3 mockreview/scripts/summarize.py "$MR_OUT" || true
+          mv "$MR_OUT/SUMMARY.md" "$MR_OUT/SUMMARY-store26.md" 2>/dev/null || true
+          mkdir -p "$MR_OUT/preview"
+          for f in "$MR_OUT"/*.png; do [ -f "$f" ] || continue; sips -s format jpeg -s formatOptions 70 -Z 1000 "$f" --out "$MR_OUT/preview/$(basename "${f%.png}").jpg" >/dev/null 2>&1 || true; done
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: path-store26-${{ github.run_number }}
+          path: |
+            out
+            !out/*.png
+            !out/*.mp4
+            !out/*.xcresult
+            !out/*-device.log
+          retention-days: 14
+
   build-app:
+    needs: plan
+    if: needs.plan.outputs.devices == '1'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -102,7 +199,8 @@ jobs:
 
   review:
     name: review (${{ matrix.dev }})
-    needs: build-app
+    needs: [plan, build-app]
+    if: needs.plan.outputs.devices == '1'
     runs-on: xcode-27
     timeout-minutes: 175
     strategy:

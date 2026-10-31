@@ -14,6 +14,8 @@ import StoreKitTest
    test box) and StoreKitHandler / AddifyStore in EngineWebView.swift. Nothing here ships.
    ===================================================================================== */
 
+var storeLocal = false
+
 extension ReviewerUITests {
 
     @objc func testStoreFlows() {
@@ -25,6 +27,15 @@ extension ReviewerUITests {
 
         // 1. Products: names, prices, the trial line.
         if openPaywall("store-paywall") { paywallPlansCheck() }
+        /* Without the local configuration every purchase would go to Apple's sandbox, which asks
+           for an Apple ID sign-in. Signing in is off limits, so the purchase paths stop here. */
+        guard storeLocal else {
+            log.line("store-purchases", "SKIP", shot: nil, "the local StoreKit configuration did not apply on this runtime (SKTestSession logged 'Error saving configuration file'); buying would need a sandbox Apple ID sign-in, which this harness never does")
+            restoreAndRecord(step: "store-restore-sandbox")
+            closePaywall()
+            finish()
+            return
+        }
 
         // 2. The user cancels on Apple's sheet.
         if let s = session { s.disableDialogs = false }
@@ -157,10 +168,17 @@ extension ReviewerUITests {
         let ms = try? monthly.snapshot(), ys = try? yearly.snapshot()
         let m = ms.map { $0.label.replacingOccurrences(of: "\n", with: " ") } ?? "(none)"
         let y = ys.map { $0.label.replacingOccurrences(of: "\n", with: " ") } ?? "(none)"
-        let ok = ms != nil && ys != nil && m.contains("4.99") && y.contains("24.99")
+        /* AddifyReview.storekit prices the plans at 4.98 / 24.98 on purpose. App Store Connect has
+           4.99 / 24.99, so the price shows which StoreKit answered: 4.98 = the local test
+           configuration (SKTestSession works), 4.99 = Apple's sandbox (the configuration was
+           not applied: the xcodebuild StoreKit sync bug, FB22237318). */
+        let local = m.contains("4.98") || y.contains("24.98")
+        let sandbox = m.contains("4.99") || y.contains("24.99")
+        let ok = ms != nil && ys != nil && (local || sandbox)
         let trial = y.lowercased().contains("free")
         log.line("store-plans", ok ? "PASS" : "FAIL", shot: shot("store-plans"),
-                 "monthly '\(m)'; yearly '\(y)'; trial line on yearly: \(trial ? "yes" : "no")")
+                 "monthly '\(m)'; yearly '\(y)'; trial line on yearly: \(trial ? "yes" : "no"); prices come from \(local ? "the local StoreKit test configuration" : sandbox ? "Apple's sandbox (App Store Connect products; the local configuration did NOT apply)" : "unknown")")
+        storeLocal = local
         audit("paywall-with-plans")
     }
 
