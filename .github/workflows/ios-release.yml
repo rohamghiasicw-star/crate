@@ -114,8 +114,8 @@ jobs:
       # contains no devices and needs none.
       #
       # The export step below is where the distribution profile is created and the app is
-      # signed, so the archive itself does not need to be signed at all. This also keeps
-      # the whole thing working on a team that never registers a single device.
+      # signed for distribution. The archive is only signed ad hoc (no profile, no devices),
+      # which keeps this working on a team that never registers a single device.
       - name: Archive
         run: |
           set -o pipefail
@@ -124,11 +124,25 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath build/Addify.xcarchive \
             DEVELOPMENT_TEAM=${{ secrets.ASC_TEAM_ID }} \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            PROVISIONING_PROFILE_SPECIFIER= \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             archive 2>&1 | tee archive.log
+
+      # 2026-10-31: an unsigned archive carries no entitlements, so the export signed both
+      # bundles without the app group (build 19 had none) and the share extension's inbox never
+      # reached the app. The archive above is signed ad hoc with each target's entitlements file;
+      # the export re-signs it for distribution. This step stops the run if the group is missing.
+      - name: Check both bundles carry the app group
+        run: |
+          app=build/Addify.xcarchive/Products/Applications/Addify.app
+          for b in "$app" "$app/PlugIns/AddifyShare.appex"; do
+            codesign -d --entitlements - --xml "$b" 2>/dev/null | grep -q "group.com.addify.app" \
+              || { echo "::error::no app group in $b"; exit 1; }
+            echo "app group OK: $b"
+          done
 
       # App Review checks (2026-09-29): both bundles must carry PrivacyInfo.xcprivacy
       # (required-reason API declarations, ITMS-91053), and the version/build/device family

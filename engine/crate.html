@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Addify">
 <title>Addify. Name the sound in any clip</title>
-<script>if(window.ADDIFY_NATIVE||/Addify-iOS\//.test(navigator.userAgent))document.documentElement.classList.add('native');</script>
+<script>if(window.ADDIFY_NATIVE||/Addify(-iOS)?\//.test(navigator.userAgent))document.documentElement.classList.add('native');</script>
 <style>
 :root{
   /* DARK, NOT PURPLE (Konnor's spec, 2026-09-23). Page #17141F, cards #211C2E, brand
@@ -7097,7 +7097,7 @@ function paintOnb(){
   document.addEventListener(t,function(){onbTapAt=Date.now();},true);});
 function onbNoteRun(){
   if(onbQuiet) return;
-  var nat=!!(window.ADDIFY_NATIVE||/Addify-iOS\//.test(navigator.userAgent));
+  var nat=!!(window.ADDIFY_NATIVE||/Addify(-iOS)?\//.test(navigator.userAgent));
   if(nat && !window.event && Date.now()-onbTapAt>1500) onbSharedIn();}
 function onbSharedIn(){
   onbSet('addify-sharedin','1');

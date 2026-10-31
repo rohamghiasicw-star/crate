@@ -356,7 +356,7 @@ class Ledger:
 # --------------------------------------------------------------------------------------------
 def static_checks(L, html):
     s = html.decode("utf-8", "replace")
-    L.check("S1", "5e20237", "NEWFLOW stays off for everyone while App Review tests build 18 (NEWFLOW_ALL=false)",
+    L.check("S1", "5e20237", "NEWFLOW stays off for everyone (NEWFLOW_ALL=false)",
             re.search(r"\bvar NEWFLOW_ALL\s*=\s*false\s*;", s) is not None,
             (re.search(r"var NEWFLOW_ALL\s*=\s*[^;]+;", s) or [None])[0])
     m1 = re.search(r"REPLAY_NAME_MS\s*=\s*\[(\d+)\s*,\s*(\d+)\]", s)
@@ -370,8 +370,8 @@ def static_checks(L, html):
             "rowProven(" not in s)
     L.check("S5", "ddef685", "5 free scans, lifetime counter (FREE_SCANS=5, key addify-scans-life)",
             re.search(r"var FREE_SCANS\s*=\s*5\s*;", s) is not None and "'addify-scans-life'" in s)
-    L.check("S6", "a8999a3,cd3543e", "The plan is named Addify Plus, buttons read Addify Plus Monthly / Yearly",
-            "'Addify Plus'" in s and "' Yearly'" in s and "' Monthly'" in s)
+    L.check("S6", "a8999a3,cd3543e", "The sheet is Addify Plus and each plan button prints StoreKit's own name",
+            "'Addify Plus'" in s and "esc(q.name" in s)
     L.check("S7", "ff5a064,b84521e", "YouTube plays inside the app: nocookie embed with playsinline=1",
             "youtube-nocookie.com/embed/" in s and "playsinline=1" in s)
 
