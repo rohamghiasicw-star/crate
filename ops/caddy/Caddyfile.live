@@ -1,0 +1,89 @@
+# 2026-10-08 (retry bug, Alex call): HTTP/3 off. Caddy advertised h3 (Alt-Svc) while ufw drops
+# UDP 443, so phones tried a QUIC connection that could never open. h1/h2 over TCP only.
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+# 2026-10-31 (App Review rejection, Oct 30): one site definition for every hostname.
+# - Access log so we can see whether a reviewer's device reaches us at all. Privacy policy
+#   (engine/pages/privacy.html, effective 31 Oct 2026): no full IP, only the first block
+#   (17.0.0.0 for Apple), no query strings with clip links, no cookies, kept 14 days.
+# - /support, /privacy, /terms are served from disk by Caddy: they answer GET and HEAD and keep
+#   working even if the engine hangs (Guideline 1.5: "Support URL ... not functional").
+(addify_site) {
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 20MiB
+			roll_keep 20
+			roll_keep_for 336h
+		}
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip ip_mask {
+					ipv4 8
+					ipv6 32
+				}
+				request>client_ip ip_mask {
+					ipv4 8
+					ipv6 32
+				}
+				request>remote_port delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>Cf-Connecting-Ip delete
+				request>headers>X-Forwarded-For delete
+				request>headers>X-Real-Ip delete
+				request>uri query {
+					delete url
+					delete text
+					delete q
+					delete scan
+					delete kit
+				}
+				resp_headers delete
+			}
+		}
+	}
+
+	# Compress the page itself (2026-10-07: 536 KB uncompressed took 6.6 s to reach a phone in
+	# Bali). HTML only, so the live progress streams (text/event-stream) and the JSON API are
+	# never buffered.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/html*
+		}
+	}
+
+	@legal path /support /support.html /privacy /privacy.html /terms /terms.html
+	handle @legal {
+		root * /opt/addify/app/engine/pages
+		rewrite /support /support.html
+		rewrite /privacy /privacy.html
+		rewrite /terms /terms.html
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8788 {
+			# the engine reads CF-Connecting-IP first (ratelimit.client_ip): overwrite it with the
+			# real peer so a client cannot spoof it; the proxy headers also keep /review,
+			# /review/note and /backend-map closed (ratelimit.is_local), same as the tunnel.
+			header_up CF-Connecting-IP {remote_host}
+			header_up X-Real-IP {remote_host}
+			flush_interval -1
+		}
+	}
+}
+
+# Addify public address since 2026-09-30. sslip.io maps the name to 161.35.185.80; Caddy gets
+# and renews the Let's Encrypt certificate itself. Being replaced by a real domain: Apple's
+# review network could not reach this name (rejections Oct 15 and Oct 30).
+161-35-185-80.sslip.io {
+	import addify_site
+}

@@ -10107,6 +10107,26 @@ def _on_sigterm(signum, frame):
     threading.Thread(target=_drain, name="drain", daemon=True).start()
 
 
+class _HeadSink(object):
+    """wfile for a HEAD request: the status line and headers pass through, and once the headers
+    are flushed (H.end_headers sets drop) every body byte is discarded."""
+
+    def __init__(self, real):
+        self.real = real
+        self.drop = False
+
+    def write(self, b):
+        if self.drop:
+            return len(b)
+        return self.real.write(b)
+
+    def flush(self):
+        return self.real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -10270,6 +10290,32 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
+
+    # APP REVIEW 1.5 (rejection 2026-10-30, "Support URL ... not functional"): BaseHTTP answered
+    # HEAD with 501 Not Implemented, and link checkers send HEAD. HEAD is now GET without the body,
+    # for the pages only. Any other path gets 405 + Allow, so a HEAD can never start a scan.
+    HEAD_OK = ("/", "/index.html", "/crate.html", "/share", "/health", "/manifest.webmanifest",
+               "/icon.svg", "/privacy", "/privacy.html", "/support", "/support.html", "/terms",
+               "/terms.html")
+
+    def do_HEAD(self):
+        if urlparse(self.path).path not in self.HEAD_OK:
+            self.send_response(405)
+            self.send_header("Allow", "GET, POST, OPTIONS")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        real = self.wfile
+        self.wfile = _HeadSink(real)
+        try:
+            self.do_GET()
+        finally:
+            self.wfile = real
+
+    def end_headers(self):
+        super().end_headers()
+        if isinstance(self.wfile, _HeadSink):
+            self.wfile.drop = True        # the body that follows a HEAD's headers is thrown away
 
     def _send_page(self):
         try:
