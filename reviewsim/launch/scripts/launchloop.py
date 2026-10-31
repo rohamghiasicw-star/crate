@@ -69,6 +69,10 @@ def near(c, ref, tol):
 def classify(d):
     """Screen class from OCR text plus pixel colour of the middle of the screen."""
     t = norm(" ".join(d.get("text") or []))
+    # The app never prints its engine host. A host name on screen is Safari's address bar:
+    # the app handed its own page to the OS (decidePolicyFor -> openExternal).
+    if "sslip.io" in t or "addify.app" in t or "sslip-io" in t:
+        return "safari"
     if any(m in t for m in USABLE):
         return "usable"
     if any(m in t for m in OFFLINE):
@@ -290,11 +294,35 @@ def scan_log(path):
 
 
 def pf_states(ips):
-    r = netcond.sudo("pfctl", "-ss")
-    out = {}
-    for ip in ips:
-        out[ip] = sum(1 for l in r.stdout.splitlines() if ip in l)
+    """Connection states and bytes per engine IP, from `pfctl -vss`. The page is ~547 KB from
+    the test box and ~188 KB (gzip) from live; a health check is ~1-2 KB. So the bytes say
+    which host served the page."""
+    r = netcond.sudo("pfctl", "-vss")
+    out = {ip: {"states": 0, "bytes": 0} for ip in ips}
+    cur = None
+    for line in r.stdout.splitlines():
+        if not line.startswith(" ") and "->" in line:
+            cur = next((ip for ip in ips if ip in line), None)
+            if cur:
+                out[cur]["states"] += 1
+        elif cur:
+            m = re.search(r"(\d+):(\d+) bytes", line)
+            if m:
+                out[cur]["bytes"] += int(m.group(1)) + int(m.group(2))
     return out
+
+
+def resolved_key(dev):
+    """engineResolvedURL from the app-group preferences file (read after the app quit)."""
+    for d in dev.group_containers():
+        p = os.path.join(d, "Library", "Preferences", f"{GROUP}.plist")
+        try:
+            with open(p, "rb") as f:
+                pl = plistlib.load(f)
+            return pl.get("engineResolvedURL"), pl.get("engineBaseURL")
+        except Exception:
+            continue
+    return None, None
 
 
 def stub_queries(out_root, since):
@@ -324,7 +352,9 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     rec = {"id": lid, "device": dev.wanted, "device_model": dev.name, "runtime": cfg["runtime_name"],
            "build": build, "target": target, "cond": cond, "rep": rep, "counted": counted,
            "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    hosts = [tb_host] if target in ("testbox", "lab") else [live_host]
+    # labnoguard: the lab build with live reachable, so the app's directory lookup (which
+    # returns the live address) can race the launch preflight (which picks the test box).
+    hosts = [tb_host] if target in ("testbox", "lab", "labnoguard") else [live_host]
     guard = [live_ip] if target in ("testbox", "lab") else []
     account = [tb_ip, live_ip]
     # 1. clean slate
@@ -400,7 +430,7 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
         first.setdefault(k, ts)
         if k == "usable":
             terminal = (k, ts)
-        elif k in ("unreachable", "offline"):
+        elif k in ("unreachable", "offline", "safari"):
             # confirmed when it is still up 3 s later
             if unreach_seen is None:
                 unreach_seen = ts
@@ -430,6 +460,7 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     # terminal accessibility dump
     ax_text, ax_err = dev.ax_dump(lid + "-terminal")
     rec["ax_class"] = ax_classify(ax_text) if ax_text else None
+    rec["ax_state"] = ax_text.splitlines()[0] if ax_text else None
     rec["ax_error"] = ax_err
     rec["proc"] = dev.proc_state()
     ips = [tb_ip, live_ip]
@@ -460,6 +491,8 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
             kept.append(b)
     rec["crash_reports"] = kept
     run(["xcrun", "simctl", "terminate", dev.udid, BUNDLE], timeout=20)
+    time.sleep(0.8)
+    rec["resolved_url"], rec["manual_url"] = resolved_key(dev)
     netcond.clear(guard, account)
     # outcome
     rec["terminal"] = terminal[0] if terminal else None
@@ -467,7 +500,8 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     rec["final_class"] = timeline[-1][1] if timeline else None
     rec["end_t"] = end_t
     rec["restored_t"] = restored
-    for k in ("usable", "unreachable", "offline", "boot", "blank", "launchscreen", "black", "white", "springboard", "graphic", "other", "alert"):
+    for k in ("usable", "unreachable", "offline", "boot", "blank", "launchscreen", "black", "white", "springboard",
+              "graphic", "other", "alert", "safari"):
         rec[f"first_{k}"] = first.get(k)
     rec["t_usable"] = first.get("usable")
     rec["usable"] = rec["t_usable"] is not None

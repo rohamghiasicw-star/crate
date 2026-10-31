@@ -26,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 defaults:
   run:
@@ -37,6 +38,7 @@ jobs:
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
       run: ${{ steps.m.outputs.run }}
+      apps_run: ${{ steps.m.outputs.apps_run }}
     steps:
       - uses: actions/checkout@v4
       - id: m
@@ -48,10 +50,14 @@ jobs:
           inc = [{"shard": k, "devices": "|".join(v)} for k, v in p["runs"][run]["shards"].items()]
           print("run=" + run)
           print("matrix=" + json.dumps({"include": inc}))
+          # reuse the apps built by an earlier run of this workflow (same commits), or build now
+          print("apps_run=" + str(p.get("apps_from_run") or ""))
           EOF
           cat "$GITHUB_OUTPUT"
 
   build:
+    needs: plan
+    if: needs.plan.outputs.apps_run == ''
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -108,6 +114,7 @@ jobs:
 
   launch:
     needs: [plan, build]
+    if: always() && needs.plan.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: xcode-27
     timeout-minutes: 355
     strategy:
@@ -148,6 +155,8 @@ jobs:
         with:
           name: rs-launch-apps
           path: apps
+          run-id: ${{ needs.plan.outputs.apps_run || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Unpack the apps under test
         run: |

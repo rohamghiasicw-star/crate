@@ -38,27 +38,34 @@ def main(out, wanted):
     runtimes = json.loads(sh("xcrun", "simctl", "list", "runtimes", "-j"))["runtimes"]
     devtypes = json.loads(sh("xcrun", "simctl", "list", "devicetypes", "-j"))["devicetypes"]
     ios = [r for r in runtimes if r.get("platform") == "iOS" and r.get("isAvailable")]
-    ios.sort(key=lambda r: ver(r["version"]), reverse=True)
+    # newest first; among equal versions the general runtime (no device suffix) first
+    ios.sort(key=lambda r: (ver(r["version"]), not re.search(r"iPhone\d|iPad\d", r["identifier"])), reverse=True)
     notes, chosen = [], None
-    for rt in ios:
-        names = {d["name"]: d["identifier"] for d in (rt.get("supportedDeviceTypes") or devtypes)}
-        picks = {}
-        for w in wanted:
-            if w in names:
-                picks[w] = (w, names[w])
-                continue
-            alt = None
-            for pat in FALLBACK.get(w, []):
-                c = sorted([n for n in names if re.search(pat, n)], key=lambda n: ver(n) or (0,))
-                if c:
-                    alt = c[-1]
-                    break
-            if alt:
-                picks[w] = (alt, names[alt])
-        if len(picks) == len(wanted):
-            chosen = (rt, picks)
+    for allow_fallback in (False, True):
+        for rt in ios:
+            names = {d["name"]: d["identifier"] for d in (rt.get("supportedDeviceTypes") or devtypes)}
+            picks = {}
+            for w in wanted:
+                if w in names:
+                    picks[w] = (w, names[w])
+                    continue
+                if not allow_fallback:
+                    continue
+                alt = None
+                for pat in FALLBACK.get(w, []):
+                    c = sorted([n for n in names if re.search(pat, n)], key=lambda n: ver(n) or (0,))
+                    if c:
+                        alt = c[-1]
+                        break
+                if alt:
+                    picks[w] = (alt, names[alt])
+            if len(picks) == len(wanted):
+                chosen = (rt, picks)
+                break
+            notes.append(f"skipped {rt['name']} ({rt.get('buildversion')}, fallback={allow_fallback}): "
+                         f"has {len(picks)} of {len(wanted)} devices")
+        if chosen:
             break
-        notes.append(f"skipped {rt['name']} ({rt.get('buildversion')}): has {len(picks)} of {len(wanted)} devices")
     if not chosen:
         sys.exit("no runtime supports the requested devices: " + "; ".join(notes))
     rt, picks = chosen

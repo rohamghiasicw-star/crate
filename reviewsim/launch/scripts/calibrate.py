@@ -19,8 +19,13 @@ import netcond  # noqa: E402
 
 
 def dns(host):
-    p = subprocess.run(["dscacheutil", "-q", "host", "-a", "name", host], capture_output=True, text=True, timeout=40)
-    return " ".join(l.strip() for l in p.stdout.splitlines() if "address" in l) or "(no answer)"
+    t = time.time()
+    try:
+        p = subprocess.run(["dscacheutil", "-q", "host", "-a", "name", host], capture_output=True, text=True, timeout=25)
+    except subprocess.TimeoutExpired:
+        return f"(no answer, lookup still hanging after {time.time() - t:.0f} s)"
+    ans = " ".join(l.strip() for l in p.stdout.splitlines() if "address" in l) or "(no answer)"
+    return f"{ans} in {time.time() - t:.1f} s"
 
 
 def main(plan_path, out):
