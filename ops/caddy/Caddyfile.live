@@ -69,6 +69,35 @@
 		file_server
 	}
 
+	# 2026-10-31: the page is the iPhone app's interface. A browser gets a short note with the
+	# support and legal links instead of a working copy of the app. The app's web view sends
+	# "Addify-iOS/<version>" in its user agent and never "Safari"; browsers send "Safari".
+	@browser {
+		path / /index.html /crate.html /share /manifest.webmanifest
+		header User-Agent *Safari*
+		not header User-Agent *Addify*
+	}
+	handle @browser {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		respond <<HTML
+			<!doctype html>
+			<html lang="en">
+			<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width,initial-scale=1">
+			<title>Addify</title>
+			<style>body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#17141F;color:#F2F0F7;font:17px/1.5 -apple-system,system-ui,sans-serif;text-align:center;padding:24px}h1{margin:0;font-size:28px}p{margin:0;max-width:30em}a{color:#5DCAA5}</style>
+			</head>
+			<body>
+			<h1>Addify</h1>
+			<p>Addify names the song in a TikTok or Instagram clip and finds the closest version. It runs in the Addify app for iPhone.</p>
+			<p><a href="/support">Support</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+			</body>
+			</html>
+			HTML 200
+	}
+
 	handle {
 		reverse_proxy 127.0.0.1:8788 {
 			# the engine reads CF-Connecting-IP first (ratelimit.client_ip): overwrite it with the
@@ -79,11 +108,39 @@
 			flush_interval -1
 		}
 	}
+
+	# 2026-10-31: while the engine restarts, reverse_proxy fails with 502. Answer with a short
+	# page that reloads itself instead of an empty body (an empty 502 left the app on a blank
+	# screen). Status stays 503 so the app and API callers still see a failure.
+	handle_errors 502 503 504 {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		header Retry-After "5"
+		respond <<HTML
+			<!doctype html>
+			<html lang="en">
+			<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width,initial-scale=1">
+			<meta http-equiv="refresh" content="5">
+			<title>Addify</title>
+			<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#17141F;color:#F2F0F7;font:17px/1.5 -apple-system,system-ui,sans-serif;text-align:center;padding:24px}</style>
+			</head>
+			<body><p>Addify is restarting. This page reloads by itself in a few seconds.</p></body>
+			</html>
+			HTML 503
+	}
 }
 
 # Addify public address since 2026-09-30. sslip.io maps the name to 161.35.185.80; Caddy gets
 # and renews the Let's Encrypt certificate itself. Being replaced by a real domain: Apple's
 # review network could not reach this name (rejections Oct 15 and Oct 30).
 161-35-185-80.sslip.io {
+	import addify_site
+}
+
+# Addify's own domain from 2026-10-31 (registered at Namecheap, A record to this server). Caddy
+# gets and renews the Let's Encrypt certificate itself.
+addify.app {
 	import addify_site
 }
