@@ -24,6 +24,9 @@ name: iOS release to TestFlight
 on:
   workflow_dispatch:
     inputs:
+      app_group:
+        description: 'Sign with the app group (yes needs group.com.addify.app assigned to both App IDs in the developer portal; no = unsigned archive, as build 19)'
+        default: 'yes'
       notes:
         description: 'What testers should know about this build'
         required: false
@@ -119,16 +122,17 @@ jobs:
       - name: Archive
         run: |
           set -o pipefail
+          if [ "${{ inputs.app_group }}" = "no" ]; then
+            SIGN=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="")
+          else
+            SIGN=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES)
+          fi
           xcodebuild -project ios/Addify.xcodeproj -scheme Addify \
             -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath build/Addify.xcarchive \
             DEVELOPMENT_TEAM=${{ secrets.ASC_TEAM_ID }} \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY=- \
-            PROVISIONING_PROFILE_SPECIFIER= \
-            CODE_SIGNING_REQUIRED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            "${SIGN[@]}" \
             archive 2>&1 | tee archive.log
 
       # 2026-10-31: an unsigned archive carries no entitlements, so the export signed both
@@ -136,6 +140,7 @@ jobs:
       # reached the app. The archive above is signed ad hoc with each target's entitlements file;
       # the export re-signs it for distribution. This step stops the run if the group is missing.
       - name: Check both bundles carry the app group
+        if: inputs.app_group != 'no'
         run: |
           app=build/Addify.xcarchive/Products/Applications/Addify.app
           for b in "$app" "$app/PlugIns/AddifyShare.appex"; do
