@@ -106,7 +106,7 @@ def screen_of(snap):
 def fingerprint(snap):
     if not snap:
         return None
-    ctl = "|".join("%s:%s:%s" % (c["k"], c["l"], c["st"]) for c in snap["controls"])
+    ctl = "|".join("%s:%s:%s:%s:%s" % (c["k"], c["l"], c["st"], c.get("sel"), c.get("cls", "")) for c in snap["controls"])
     return hashlib.sha1(json.dumps([snap["state"], snap["overlays"], snap["textHash"], ctl, snap["rootCls"], snap["scrollY"],
                                     snap["active"], snap["inputs"], snap["path"]]).encode()).hexdigest()
 
@@ -210,6 +210,10 @@ class Walk:
         self.netreq = 0
         self.final_snap = None
         self.doing = None
+        self.pro_granted = bool(cfg["bridge"].get("pro"))
+        self.pending_posts = []
+        self.n_escapes = 0
+        self.n_downloads = 0
 
     # ----- bookkeeping
     def rel(self):
@@ -236,6 +240,7 @@ class Walk:
             reduced_motion="reduce" if self.cfg.get("reduced_motion") else "no-preference", accept_downloads=True)
         await self.ctx.add_cookies([{"name": "fz", "value": self.wid, "url": ORIGIN}])
         await self.ctx.add_init_script(script=BRIDGE.replace("__CFG__", json.dumps(self.cfg["bridge"])))
+        await self.ctx.add_init_script(script="window.__fzProbe = " + PROBE.strip().rstrip(";") + ";")
         if self.cfg.get("seedls"):
             await self.ctx.add_init_script(script=SEED_JS.replace("__SEED__", json.dumps(self.cfg["seedls"])))
         await self.ctx.route(NOT_ORIGIN, self.route_external)
@@ -249,7 +254,7 @@ class Walk:
         p.on("pageerror", lambda e: self.events.append({"k": "pageerror", "msg": str(e)[:400], "t": self.rel()}))
         p.on("dialog", self.on_dialog)
         p.on("popup", self.on_popup)
-        p.on("download", lambda dl: self.events.append({"k": "download", "name": dl.suggested_filename, "url": dl.url[:120], "t": self.rel()}))
+        p.on("download", self.on_download)
         p.on("framenavigated", self.on_nav)
         p.on("request", self.on_req)
         p.on("requestfinished", self.on_req_done)
@@ -266,6 +271,10 @@ class Walk:
         except Exception:
             pass
         mock_call("POST", "/__mock/drop", {"id": self.wid})
+
+    def on_download(self, dl):
+        self.n_downloads += 1
+        self.events.append({"k": "download", "name": dl.suggested_filename, "url": dl.url[:120], "t": self.rel()})
 
     def on_console(self, m):
         if m.type == "error":
@@ -313,6 +322,7 @@ class Walk:
                 fr = req.frame
                 main = fr.parent_frame is None
                 if main:
+                    self.n_escapes += 1
                     self.events.append({"k": "escape", "url": url[:300], "via": "main_nav" if fr.page == self.page else "popup", "t": self.rel(),
                                         "after": self.last_action_ref()})
                     return await route.abort()
@@ -367,7 +377,7 @@ class Walk:
 
     async def probe(self, full=False):
         try:
-            return await asyncio.wait_for(self.page.evaluate(PROBE, {"full": full}), timeout=12)
+            return await asyncio.wait_for(self.page.evaluate("(o) => window.__fzProbe ? window.__fzProbe(o) : null", {"full": full}), timeout=12)
         except Exception as e:
             return None
 
@@ -380,6 +390,19 @@ class Walk:
 
     # ----- oracles
     async def check(self, snap, acted=None):
+        n0 = len(self.failures)
+        await self._check(snap, acted)
+        if self.shots_dir and len(self.failures) > n0 and self.page and not self.page.is_closed():
+            # the moment an oracle fires is the picture that proves it (a toast is gone 3.5 s later)
+            for f in self.failures[n0:]:
+                try:
+                    fn = Path(self.shots_dir) / ("fail_%02d_%s.png" % (len(self.actions), f["kind"]))
+                    await self.page.screenshot(path=str(fn), timeout=15000)
+                    f["shot"] = fn.name
+                except Exception:
+                    pass
+
+    async def _check(self, snap, acted=None):
         now = time.time()
         sc = screen_of(snap)
         # errors raised in the page
@@ -402,7 +425,7 @@ class Walk:
                 self.fail("download_in_webview", e.get("name") or "?", "the page started a download (%s). EngineWebView.swift:151 allows blob:/data: in the main frame and has no download delegate, so on a device this either does nothing or replaces the app with the file" % e, snap)
             elif k == "dialog":
                 msg = e["msg"]
-                if self.typed_addify and now - self.typed_addify[1] < 6:
+                if self.typed_addify and now - self.typed_addify[1] < 6 and re.search(r"code|master|preview", msg, re.I):
                     self.fail("hidden_code_path", norm_msg(self.typed_addify[0][:14]), "typed %r into the link box, the page answered with a native %s: %r" % (self.typed_addify[0][:40], e["type"], msg), snap)
                 elif re.search(r"master|code is not valid|preview off|client id", msg, re.I):
                     self.fail("hidden_code_path", norm_msg(msg)[:40], msg, snap)
@@ -415,10 +438,13 @@ class Walk:
             return
         fz = snap.get("fz") or {}
         if fz.get("t0") != getattr(self, "fz_t0", None):
-            # a navigation or relaunch gave the page a fresh bridge: its counters start again
+            # a navigation or relaunch gave the page a fresh bridge: its counters and timers start again
             self.fz_t0 = fz.get("t0")
             self.posts_seen = 0
             self.errs_seen = (0, 0)
+            self.orphan_since, self.deadend_since, self.loading_since = {}, None, {}
+        if fz.get("grants"):
+            self.pro_granted = True
         ne, nr = fz.get("nErr", 0), fz.get("nRej", 0)
         if ne > self.errs_seen[0]:
             for x in (fz.get("errs") or [])[-(ne - self.errs_seen[0]):]:
@@ -445,10 +471,13 @@ class Walk:
             self.deadend_since = None
         # sheets
         mods = snap.get("modals") or []
+        splash = "splash" in (snap.get("overlays") or [])
+        if splash:
+            self.orphan_since = {}
         if len(mods) > 1:
             self.fail("stacked_sheets", "+".join(sorted(m["id"] for m in mods)), mods, snap)
         for m in mods:
-            if m["inside"] == 0:
+            if m["inside"] == 0 and not splash:
                 t0 = self.orphan_since.setdefault(m["id"], now)
                 if now - t0 > 2.5:
                     self.fail("orphan_sheet", m["id"], "dialog %s visible %.1fs with no tappable control inside" % (m["id"], now - t0), snap)
@@ -476,7 +505,7 @@ class Walk:
         # scan counter and paywall
         if g.get("PAYWALL_ON") and not g.get("PRO") and snap["used"] > FREE_SCANS:
             self.fail("counter_past_free_limit", self.last_scan_path(), "addify-scans-life=%d with no subscription: a scan ran after the free scans were used" % snap["used"], snap)
-        if g.get("PRO") and not fz.get("grants") and not self.cfg["bridge"].get("pro"):
+        if g.get("PRO") and not self.pro_granted:
             self.fail("pro_without_purchase", "master" if g.get("MASTER") else "other", "PRO is on with no StoreKit purchase or restore (MASTER=%s)" % g.get("MASTER"), snap)
         if g.get("PRO") and "paywall" in (snap.get("overlays") or []):
             self.fail("paywall_for_subscriber", sc, "paywall open while PRO", snap)
@@ -486,13 +515,14 @@ class Walk:
                 self.fail("pill_mismatch", "%s" % snap["pill"][:20], "pill says %r, counter %d" % (snap["pill"], snap["used"]), snap)
         if g.get("DEV"):
             self.fail("developer_mode_on", sc, "DEV is on", snap)
-        if "paywall" in (snap.get("overlays") or []) and re.search(r"not available right now", snap.get("pwb") or ""):
+        if "paywall" in (snap.get("overlays") or []) and re.search(r"not available right now", snap.get("pwb") or "") \
+                and not any(c["k"].startswith("#paywall") and re.search(r"try again|retry", c["l"], re.I) for c in snap["controls"]):
             self.fail("paywall_no_plans", "products=%s" % self.cfg["bridge"]["products"],
                       "paywall shows %r with no plan buttons and no retry (StoreKit products mode %s)" % (snap.get("pwb"), self.cfg["bridge"]["products"]), snap)
         if snap.get("toastOver"):
             self.fail("toast_covers_header", "%s|%s" % (sc, ",".join(sorted(snap["toastOver"]))[:80]),
                       "scan count toast %r sits on %s" % (snap.get("note"), snap["toastOver"]), snap)
-        for w in snap.get("devText") or []:
+        for w in (snap.get("devText") or []) if g.get("isApp") else []:
             if w.lower() in ("undefined", "nan", "[object object]", "null"):
                 self.fail("raw_value_on_screen", w.lower() + "|" + sc, "visible text contains %r on %s" % (w, sc), snap)
             else:
@@ -511,9 +541,18 @@ class Walk:
                 s = p.get("snap") or {}
                 cur = s.get("cur") or ""
                 if g.get("PAYWALL_ON") and not s.get("pro") and cur and cur not in (s.get("counted") or []):
+                    # finish() may count it a microtask after finalize() posts: look again on a later probe
+                    self.pending_posts.append({"cur": cur, "t": now})
+        for pp in list(self.pending_posts):
+            if now - pp["t"] < 1.0:
+                continue
+            self.pending_posts.remove(pp)
+            cur = pp["cur"]
+            if True:
+                if cur not in (snap.get("countedList") or []) and not g.get("PRO"):
                     scen = self.scenario_of(cur)
                     k0 = cur.split("?")[0]
-                    refunded = any(e.get("kind") == "feedback" and k0 in json.dumps(e.get("body")) for e in self.mlog)
+                    refunded = any(e.get("kind") == "feedback" and k0 in json.dumps(e.get("body")) for e in self.mlog)  # scenario_of pulled the log
                     if scen in ("cache", "cached") or refunded:
                         self.info("scan_not_counted_by_design", "%s %s" % (scen, "refunded" if refunded else "cached"))
                     else:
@@ -524,7 +563,10 @@ class Walk:
         host = urlsplit(e["url"]).hostname or e["url"][:30]
         recent = a and (self.rel() - a.get("t", -99)) < 3.0
         intended = False
-        if recent and a.get("a") in ("tap", "double_tap"):
+        if recent and a.get("a") == "key":
+            self.info("escape_after_key", "%s -> %s" % (a.get("k"), host))
+            return
+        if recent and a.get("a") in ("tap", "double_tap", "tap_xy"):
             lbl = (a.get("l") or "")
             if a.get("ext") or EXT_LABEL.search(lbl) or (a.get("k") or "").find("data-play") >= 0 or (a.get("k") or "") in ("#ob-try", "#pfcancel", "#playerout"):
                 intended = True
@@ -535,6 +577,7 @@ class Walk:
         self.fail("escape_unintended", "%s|%s" % (host, norm_msg(trig)), "left the app for %s via %s right after %s" % (e["url"][:160], e["via"], json.dumps(a)[:300]), snap)
 
     def scenario_of(self, url):
+        self.pull_mock_log()
         k = (url or "").split("?")[0]
         for e in reversed(self.mlog):
             if e.get("kind") == "base" and (e.get("url") or "").split("?")[0] == k:
@@ -542,6 +585,7 @@ class Walk:
         return None
 
     def current_scenario(self):
+        self.pull_mock_log()
         for e in reversed(self.mlog):
             if e.get("kind") == "base":
                 return e.get("scen")
@@ -563,7 +607,7 @@ class Walk:
         ctl = [c for c in (snap["controls"] if snap else []) if not c["dis"]]
         inputs = [c for c in ctl if c["inp"]]
         weights = {"tap": 55, "type": 12 if inputs else 0, "double_tap": 6, "tap_xy": 4, "visibility": 5, "rotate": 2,
-                   "wait": 5, "long_wait": 3 if self.cfg.get("patient") else 0.6, "share_in": 3, "relaunch": 1.5,
+                   "wait": 4, "long_wait": 3 if self.cfg.get("patient") else 0.3, "share_in": 3, "relaunch": 1.5,
                    "offline": 1.5, "scroll": 3, "key": 1}
         if not ctl:
             weights.update(tap=0, double_tap=0, type=0)
@@ -583,9 +627,9 @@ class Walk:
             vp = self.page.viewport_size
             a.update(x=r.randint(2, vp["width"] - 2), y=r.randint(2, vp["height"] - 2))
         elif kind == "visibility":
-            a.update(ms=r.choice([300, 900, 2500, 6000]))
+            a.update(ms=r.choice([300, 300, 900, 2500, 6000]))
         elif kind == "wait":
-            a.update(ms=r.randint(400, 3500))
+            a.update(ms=r.randint(300, 2500))
         elif kind == "long_wait":
             a.update(ms=r.randint(21000, 30000))
         elif kind == "share_in":
@@ -634,6 +678,15 @@ class Walk:
                 a["l1"] = "%s then %s" % (a.get("l"), hit.split("|", 1)[-1])
             await p.touchscreen.tap(x, y)
         elif t == "tap_xy":
+            try:
+                h = await p.evaluate("""([x,y])=>{const e=document.elementFromPoint(x,y); if(!e) return null;
+                    const c=e.closest('a[href],button,[data-fzc],[role=button],input')||e; let ext=false;
+                    try{ if(c.tagName==='A'&&c.href) ext=new URL(c.href).host!==location.host; }catch(_){}
+                    return {k:(c.id?'#'+c.id:c.tagName.toLowerCase()), l:(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40), ext:ext};}""", [x, y])
+                if h:
+                    a.update(k=h["k"], l=h["l"], ext=h["ext"])
+            except Exception:
+                pass
             await p.touchscreen.tap(x, y)
         elif t == "type":
             if x is not None and y is not None:
@@ -719,7 +772,7 @@ class Walk:
                     await self.open_page()
                 a = self.pick_action(snap) if self.script is None else dict(self.script[i])
                 before = snap
-                n_ev = (self.dialogs, self.navs, self.popups, self.netreq)
+                n_ev = (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads)
                 self.doing = a
                 try:
                     await asyncio.wait_for(self.do(a, replay=self.script is not None), timeout=45)
@@ -736,7 +789,6 @@ class Walk:
                 if self.script is None:
                     a["settle"] = round(self.rng.uniform(0.08, 0.32), 3)
                 await asyncio.sleep(a.get("settle") or 0.3)
-                self.pull_mock_log()
                 snap = await self.probe()
                 sc = screen_of(snap)
                 full = snap is not None and sc != self.last_full_screen
@@ -744,13 +796,15 @@ class Walk:
                     self.last_full_screen = sc
                     snap = await self.probe(full=True) or snap
                 # a tap that changed nothing at all
-                if a["a"] == "tap" and before and snap and not a.get("cur") and not a.get("inp") and not a.get("err"):
-                    if fingerprint(before) == fingerprint(snap) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq) \
+                done_state = re.match(r"(saved|added|liked)\b", a.get("l") or "", re.I)
+                if a["a"] == "tap" and before and snap and not a.get("cur") and not a.get("inp") and not a.get("err") and not done_state:
+                    if fingerprint(before) == fingerprint(snap) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads) \
                             and (snap.get("fz") or {}).get("posts") == (before.get("fz") or {}).get("posts") \
-                            and (snap.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store"):
+                            and (snap.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store") \
+                            and (snap.get("fz") or {}).get("gum") == (before.get("fz") or {}).get("gum"):
                         await asyncio.sleep(0.7)
                         again = await self.probe()
-                        if again and fingerprint(again) == fingerprint(before) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq) \
+                        if again and fingerprint(again) == fingerprint(before) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads) \
                                 and (again.get("fz") or {}).get("store") == (before.get("fz") or {}).get("store"):
                             self.fail("control_does_nothing", "%s|%s" % (screen_of(before), a.get("k")),
                                       "tapped %r (%s) on %s: no change on screen, no request, no dialog, no native call within 1.3s" % (a.get("l"), a.get("k"), screen_of(before)), before)

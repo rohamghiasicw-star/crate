@@ -49,6 +49,7 @@
                 el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-current') === 'page';
     controls.push({k: keyOf(el), l: lab(el), t: tag, x: Math.round(cx), y: Math.round(cy), w: Math.round(r.width), h: Math.round(r.height),
                    href: href.slice(0, 200), tg: el.getAttribute('target') || '', ext, inp, sel,
+                   cls: (typeof el.className === 'string' ? el.className : '').slice(0, 60) + '|' + el.childElementCount + '|' + (el.innerHTML.length),
                    dis: !!(el.disabled || el.getAttribute('aria-disabled') === 'true'), cur: el.getAttribute('aria-current') === 'page',
                    st: (el.getAttribute('aria-checked') || '') + (el.getAttribute('aria-pressed') || '') + (el.getAttribute('aria-expanded') || '')});
   }
@@ -104,7 +105,7 @@
     resultText: state === 'locked' ? txt('result').slice(0, 160) : '',
     textHash: (() => { let h = 0; for (let i = 0; i < bodyText.length; i++) h = (h * 31 + bodyText.charCodeAt(i)) | 0; return h; })(),
     textLen: bodyText.length,
-    devText: (bodyText.match(/\b(developer settings|developer|client id|redirect uri|engine address|debug|master unlocked|preview off|localhost|127\.0\.0\.1|undefined|NaN|\[object Object\]|null)\b/gi) || []).slice(0, 8),
+    devText: (bodyText.match(/\b(developer settings|client id|redirect uri|engine address|debug mode|master unlocked|preview off|localhost|127\.0\.0\.1|sslip\.io|undefined|NaN|\[object Object\])\b/gi) || []).slice(0, 8),
     rootCls: document.documentElement.className + '|' + (document.documentElement.getAttribute('data-theme') || ''),
     scrollY: Math.round(scrollY), active: document.activeElement && document.activeElement !== document.body ? keyOf(document.activeElement) : '',
     inputs: [...document.querySelectorAll('input,textarea')].map(i => (i.id || '') + '=' + String(i.value || '').length).join(','),

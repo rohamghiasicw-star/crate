@@ -115,24 +115,26 @@ async def main_async(args):
             snap = w.final_snap
             s = sig_of(snap)
             rec = {"type": "screen", "anchor": name, "device": dev, "depth": depth, "sig": s, "path": path,
-                   "controls": [{"k": x["k"], "l": x["l"], "x": x["x"], "y": x["y"], "ext": x["ext"], "href": x["href"], "t": x["t"], "inp": x["inp"], "dis": x["dis"]} for x in (snap or {}).get("controls", [])],
+                   "controls": [{"k": x["k"], "l": x["l"], "x": x["x"], "y": x["y"], "ext": x["ext"], "href": x["href"], "t": x["t"], "inp": x["inp"], "dis": x["dis"],
+                                 "cur": bool(x.get("cur") or x.get("sel"))} for x in (snap or {}).get("controls", [])],
                    "failures": r.get("failures"), "screen": fuzz.screen_of(snap)}
             fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fout.flush()
-            if (dev, s) in seen_screen:
+            if (dev, name, s) in seen_screen:
                 return []
-            seen_screen.add((dev, s))
+            seen_screen.add((dev, name, s))
             stats["screens"] += 1
             nxt = []
             for ctl in rec["controls"]:
                 if ctl["dis"] or ctl["inp"]:
                     continue
-                key = (dev, fuzz.screen_of(snap), ctl["k"])
+                key = (dev, name, fuzz.screen_of(snap), ctl["k"])
                 if key in tapped or stats["taps"] >= args.max_taps or time.time() > deadline:
                     continue
                 tapped.add(key)
                 stats["taps"] += 1
-                p2 = path + [{"a": "tap", "k": ctl["k"], "x": ctl["x"], "y": ctl["y"], "l": ctl["l"], "ext": ctl["ext"], "href": ctl["href"], "tag": ctl["t"]}, {"a": "wait", "ms": 1500}]
+                p2 = path + [{"a": "tap", "k": ctl["k"], "x": ctl["x"], "y": ctl["y"], "l": ctl["l"], "ext": ctl["ext"], "href": ctl["href"], "tag": ctl["t"],
+                              "cur": ctl.get("cur"), "inp": ctl["inp"]}, {"a": "wait", "ms": 1500}]
                 async with sem:
                     b = await ensure()
                     w2 = fuzz.Walk(b, c, script=p2)
@@ -146,7 +148,7 @@ async def main_async(args):
                 stats["failures"] += len(r2.get("failures") or [])
                 fout.write(json.dumps(tr, ensure_ascii=False) + "\n")
                 fout.flush()
-                if depth + 1 < args.depth and s2 != s and (dev, s2) not in seen_screen and w2.final_snap and w2.final_snap["g"].get("isApp"):
+                if depth + 1 < args.depth and s2 != s and (dev, name, s2) not in seen_screen and w2.final_snap and w2.final_snap["g"].get("isApp"):
                     nxt.append((dev, name, c, p2, depth + 1))
             return nxt
 
