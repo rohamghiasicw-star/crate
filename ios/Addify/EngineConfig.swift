@@ -24,6 +24,13 @@ import Foundation
         install loaded it before the directory answered, so App Review's clean devices opened
         on "Can't reach Addify": rejection 2.1(a), 2026-10-15)
 
+   BUILD 20 (rejections 2026-10-15 and 2026-10-30): App Review's network could not reach
+   161-35-185-80.sslip.io at all. The iPad sat on a blank screen for three minutes, then "Can't
+   reach Addify", and the Support URL on the same name failed too. The default is now the real
+   domain addify.app, the sslip.io name stays as a second address, and the app checks every
+   address at launch (pickReachable) and loads the first one that answers, instead of betting
+   the whole launch on one name.
+
    Read through the RAW GIST URL and you get a CDN-cached answer up to two tunnels stale;
    that bug cost a day. Always the API host, which is not cached. */
 enum EngineConfig {
@@ -37,7 +44,10 @@ enum EngineConfig {
        that served an address two rotations old even after the write had succeeded. */
     static let directoryURL = "https://api.github.com/gists/d63fcb85b88d9a8f12e943605dd0a078"
 
-    static let defaultBaseURL = "https://161-35-185-80.sslip.io"
+    static let defaultBaseURL = "https://addify.app"
+    /* Every address that reaches the same engine, best first. pickReachable tries them all at
+       once; the order only matters when more than one answers. */
+    static let knownBaseURLs = ["https://addify.app", "https://161-35-185-80.sslip.io"]
 
     static var baseURLString: String {
         let manual = AppGroup.defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -159,10 +169,10 @@ enum EngineConfig {
        string; once this build is the only one on testers' phones the engine flips to
        "addify engine" and nothing breaks. */
     static let engineServiceNames: Set<String> = ["addify engine", "crate engine"]
-    static func healthCheck(_ base: URL) async throws -> Health {
+    static func healthCheck(_ base: URL, timeout: TimeInterval = 8) async throws -> Health {
         guard let url = URL(string: base.absoluteString + "/health") else { throw HealthError.badURL }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 8
+        req.timeoutInterval = timeout
         req.cachePolicy = .reloadIgnoringLocalCacheData
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw HealthError.http(h.statusCode) }
@@ -170,4 +180,49 @@ enum EngineConfig {
         guard health.ok, engineServiceNames.contains(health.service) else { throw HealthError.notEngine(health.service) }
         return health
     }
+
+    /* BUILD 20: the addresses to try at launch. A URL typed in Settings (Debug builds) is the
+       only one tried, exactly as before. Otherwise: the current address first, then every known
+       address, each once. */
+    static func candidateURLs() -> [URL] {
+        if hasManualOverride { return [baseURL] }
+        var seen = Set<String>()
+        var out: [URL] = []
+        for s in [baseURLString] + knownBaseURLs {
+            let n = normalise(s)
+            guard !n.isEmpty, !seen.contains(n), let u = URL(string: n) else { continue }
+            seen.insert(n)
+            out.append(u)
+        }
+        return out
+    }
+
+    /* BUILD 20: health-check every candidate at the same time, each with a short timeout, and
+       return the first one that answers (they all reach the same engine, so the fastest wins).
+       The winner becomes the resolved address, so the page, shares and the share extension all
+       use it. nil = nothing answered within `timeout`; the caller then still tries a normal page
+       load and shows "Can't reach Addify" only if that fails too.
+       `excluding` skips a host that just failed a page load. */
+    @discardableResult
+    static func pickReachable(excluding: String? = nil, timeout: TimeInterval = 6) async -> URL? {
+        let list = candidateURLs().filter { $0.host?.lowercased() != excluding?.lowercased() }
+        guard !list.isEmpty else { return nil }
+        let winner: URL? = await withTaskGroup(of: (Int, URL?).self) { group in
+            for (i, u) in list.enumerated() {
+                group.addTask {
+                    let ok = (try? await healthCheck(u, timeout: timeout)) != nil
+                    return (i, ok ? u : nil)
+                }
+            }
+            for await (_, u) in group {
+                if let u = u { group.cancelAll(); return u }   // first answer wins, stop the rest
+            }
+            return nil
+        }
+        if let w = winner, !hasManualOverride, normalise(w.absoluteString) != normalise(baseURLString) {
+            AppGroup.defaults.set(normalise(w.absoluteString), forKey: resolvedKey)
+        }
+        return winner
+    }
 }
+

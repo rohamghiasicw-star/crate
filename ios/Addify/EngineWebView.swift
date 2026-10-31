@@ -47,14 +47,14 @@ struct EngineWebView: UIViewRepresentable {
         wv.isOpaque = false
         wv.backgroundColor = UIColor(red: 0.090, green: 0.078, blue: 0.122, alpha: 1)   // #17141F, the page ground, so launch never flashes a second black
         bridge.webView = wv
-        context.coordinator.load(wv)
+        context.coordinator.boot(wv)
         return wv
     }
 
     func updateUIView(_ wv: WKWebView, context: Context) {
         if context.coordinator.seenReloadToken != bridge.reloadToken {
             context.coordinator.seenReloadToken = bridge.reloadToken
-            context.coordinator.load(wv)
+            context.coordinator.boot(wv)
         }
     }
 
@@ -74,12 +74,33 @@ struct EngineWebView: UIViewRepresentable {
             (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
         }
 
+        /* BUILD 20: every launch and every Try again starts here. Ask all known engine
+           addresses at once (6 s, then once more with 8 s) and load the first that answers.
+           If none answers, load the current address anyway: the page load is the final word and
+           failed() decides what the user sees. The native loading screen covers all of it. */
+        func boot(_ wv: WKWebView) {
+            bridge.booting = true
+            hostSwitches = 0
+            Task { [weak self, weak wv] in
+                if await EngineConfig.pickReachable(timeout: 6) == nil {
+                    await EngineConfig.pickReachable(timeout: 8)
+                }
+                await MainActor.run {
+                    guard let self = self, let wv = wv else { return }
+                    self.load(wv)
+                }
+            }
+        }
+
         func load(_ wv: WKWebView) {
             bridge.pageReady = false
             quietRetries = 0
             loadedHost = EngineConfig.baseURL.host?.lowercased()
             var req = URLRequest(url: EngineConfig.baseURL)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
+            /* BUILD 20: 20 s, not WebKit's 60 s. A stalled address now hands over to the next one
+               in seconds instead of leaving a reviewer on a blank screen for three minutes. */
+            req.timeoutInterval = 20
             wv.load(req)
         }
 
@@ -140,6 +161,7 @@ struct EngineWebView: UIViewRepresentable {
                 quietRetries = 0
                 bridge.unreachable = false
                 bridge.offline = false
+                bridge.booting = false
                 bridge.flushPending()
             }
         }
@@ -164,6 +186,9 @@ struct EngineWebView: UIViewRepresentable {
         static let transientCodes: Set<Int> = [NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
                                                NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
                                                NSURLErrorDNSLookupFailed, NSURLErrorSecureConnectionFailed]
+        /* BUILD 20: a timeout already cost 20 s, so it is never retried on the same address;
+           it moves to another address or ends in "Can't reach Addify". */
+        static let quietRetryCodes: Set<Int> = transientCodes.subtracting([NSURLErrorTimedOut])
         static let offlineCodes: Set<Int> = [NSURLErrorNotConnectedToInternet, NSURLErrorDataNotAllowed,
                                              NSURLErrorInternationalRoamingOff, NSURLErrorCallIsActive]
 
@@ -171,31 +196,52 @@ struct EngineWebView: UIViewRepresentable {
             let e = error as NSError
             /* -999 is our own cancel from decidePolicyFor, not an outage. */
             if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
+            let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+            let fh = failing?.host?.lowercased()
             /* BUILD 19 (App Review 2.1(a), 2026-10-15: "an error message showed up right after
-               launch"). The first load starts before the directory lookup answers. If the engine
-               address changed while this load was running, load the current address instead of
-               showing "Can't reach Addify". Only for a load of the host load() last asked for,
-               and at most twice per launch, so it can never loop. */
-            if let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL,
-               let fh = failing.host?.lowercased(), fh == loadedHost,
-               let cur = EngineConfig.baseURL.host?.lowercased(), cur != fh, hostSwitches < 2 {
+               launch"). If the engine address changed while this load was running, load the
+               current address instead of showing "Can't reach Addify". Only for a load of the
+               host load() last asked for. hostSwitches caps BUILD 19 + BUILD 20 moves together,
+               so this can never loop. */
+            if let fh = fh, fh == loadedHost,
+               let cur = EngineConfig.baseURL.host?.lowercased(), cur != fh, hostSwitches < 3 {
                 hostSwitches += 1
                 load(webView)
                 return
             }
-            if e.domain == NSURLErrorDomain, Self.transientCodes.contains(e.code), quietRetries < 2,
-               let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL, isEngineOrigin(failing) {
+            /* BUILD 20 (App Review 2.1(a), 2026-10-30): this address did not answer. Ask the
+               other known addresses (6 s) and move to the first that does. */
+            if let fh = fh, fh == loadedHost, e.domain == NSURLErrorDomain,
+               Self.transientCodes.contains(e.code), hostSwitches < 3 {
+                hostSwitches += 1
+                Task { [weak self, weak webView] in
+                    let alt = await EngineConfig.pickReachable(excluding: fh, timeout: 6)
+                    await MainActor.run {
+                        guard let self = self, let wv = webView else { return }
+                        if alt != nil { self.load(wv) } else { self.retryOrGiveUp(e, failing: failing, in: wv) }
+                    }
+                }
+                return
+            }
+            retryOrGiveUp(e, failing: failing, in: webView)
+        }
+
+        private func retryOrGiveUp(_ e: NSError, failing: URL?, in webView: WKWebView) {
+            if e.domain == NSURLErrorDomain, Self.quietRetryCodes.contains(e.code), quietRetries < 2,
+               let failing = failing, isEngineOrigin(failing) {
                 quietRetries += 1
                 let delay = quietRetries == 1 ? 0.5 : 1.5
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak webView] in
                     guard let wv = webView else { return }
                     var req = URLRequest(url: failing)
                     req.cachePolicy = .reloadIgnoringLocalCacheData
+                    req.timeoutInterval = 20
                     wv.load(req)
                 }
                 return
             }
             bridge.pageReady = false
+            bridge.booting = false
             bridge.offline = e.domain == NSURLErrorDomain && Self.offlineCodes.contains(e.code)
             bridge.unreachable = true
         }

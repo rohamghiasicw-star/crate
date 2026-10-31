@@ -39,6 +39,14 @@ struct ContentView: View {
                 .offset(y: -max(geo.safeAreaInsets.top, 20))
             #endif
 
+            /* BUILD 20: the native loading screen until the engine page has loaded once. App
+               Review's iPad (2026-10-30) sat on a blank dark screen for three minutes; now the
+               first thing anyone sees is Addify loading, then the app or a clear error. */
+            if bridge.booting && !bridge.unreachable {
+                BootView()
+                    .transition(.opacity)
+            }
+
             if bridge.unreachable {
                 UnreachableView()
                     .transition(.opacity)
@@ -58,6 +66,38 @@ struct ContentView: View {
         .sheet(isPresented: $bridge.showSettings) {
             SettingsView()
                 .environmentObject(bridge)
+        }
+    }
+}
+
+/* BUILD 20: what the app shows while it finds a working engine address and loads the page.
+   Same ground and accent as the page and the error screen, so nothing flashes. After 8 s it
+   says it is still connecting, so a slow network never looks frozen. */
+struct BootView: View {
+    @State private var slow = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "waveform")
+                .font(.system(size: 44, weight: .semibold))
+                .foregroundStyle(Color(red: 0.36, green: 0.29, blue: 0.91))
+            Text("Addify")
+                .font(.title2.weight(.semibold))
+            ProgressView()
+                .tint(.white)
+                .padding(.top, 4)
+            Text(slow ? "Still connecting..." : " ")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea())
+        .foregroundStyle(.white)
+        .task {
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            slow = true
         }
     }
 }

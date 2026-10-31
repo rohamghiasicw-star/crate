@@ -14,6 +14,11 @@ final class EngineBridge: ObservableObject {
        injected into any other page (Spotify's login page navigates the same web view). */
     @Published var pageReady = false
     @Published var unreachable = false
+    /* BUILD 20: true from launch (and from every Try again) until the engine page has loaded
+       once. ContentView shows the native loading screen while it is true, so a slow or failing
+       first load is never a blank screen (App Review 2026-10-30: three minutes of blank iPad).
+       Only the FIRST load counts: later navigations (Spotify's sign-in page) never bring it back. */
+    @Published var booting = true
     /* CALL-RETRY: the last failed load said the PHONE has no network (-1009 and friends), as
        opposed to the engine not answering. UnreachableView picks its words from this. */
     @Published var offline = false
@@ -123,6 +128,7 @@ final class EngineBridge: ObservableObject {
         unreachable = false
         offline = false
         pageReady = false
+        booting = true
         reloadToken += 1
     }
 
