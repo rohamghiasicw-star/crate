@@ -1,0 +1,203 @@
+name: Mock App Review (simulator)
+
+# WHY THIS EXISTS. Every App Review round costs about 12 business days, and two rounds in a
+# row failed on things a clean install shows in the first minute. This job does what the
+# reviewer does before Apple sees the build: a fresh install on iPhone 17 Pro Max and an
+# iPad Air on iOS 27, launch, onboarding, paste a Review Notes link, scan, result, Profile,
+# the paywall, Restore Purchases, the legal links, the mic prompt and the addify://scan
+# deep link. It records video and a screenshot of every step.
+#
+# Two jobs on purpose:
+#   build-app  macos-26, newest Xcode 26.x: the same toolchain ios-release.yml ships with, so
+#              the binary under test links against the same SDK as the one App Review gets.
+#   review     xcode-27 image: the only GitHub runner with iOS 27 simulators (App Review used
+#              iOS/iPadOS 27.0 on 2026-10-15). Falls back to whatever iOS is newest there.
+#
+# It never uploads anything to Apple and never deploys anything. The only server traffic is
+# the app loading its page like any user, plus real scans when MR_SCANS is 1 (budgeted:
+# each scan is real work on the live box).
+
+on:
+  push:
+    branches: [mock-review-sim]
+    paths: ['mockreview/**', '.github/workflows/mock-review.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: mock-review
+  cancel-in-progress: false
+
+env:
+  MR_SCANS: '0'
+  MR_IPAD_SCAN: '0'
+  MR_NO_IDLE: '1'
+  MR_RESULT_TIMEOUT: '150'
+  ENGINE: https://161-35-185-80.sslip.io
+  # The three public sample links in the App Review Notes (appstore/REVIEW-REPLY-2026-10-01.md).
+  SAMPLE_1: https://vt.tiktok.com/ZSXWjGrqT/
+  SAMPLE_2: https://www.tiktok.com/@kxmrax/video/7649302623153098015
+  SAMPLE_3: https://www.tiktok.com/@bouch.szn/video/7651437319941066005
+
+jobs:
+  build-app:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode on the runner (same rule as ios-release.yml)
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i simulator | tail -2
+
+      # Release, like the App Store build. Simulator SDK, ad-hoc "Sign to Run Locally" so the
+      # app group entitlement is honoured; unsigned as a fallback (the ios-build.yml command).
+      - name: Build Addify (Release, simulator)
+        run: |
+          set -o pipefail
+          common=(-project ios/Addify.xcodeproj -scheme Addify -configuration Release
+                  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+                  -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=NO)
+          if xcodebuild "${common[@]}" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+               PROVISIONING_PROFILE_SPECIFIER= CODE_SIGNING_REQUIRED=NO build 2>&1 | tee build.log; then
+            echo "SIGNING=adhoc" | tee signing.txt
+          else
+            echo "ad-hoc build failed, retrying unsigned"
+            xcodebuild "${common[@]}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+              build 2>&1 | tee build-unsigned.log
+            echo "SIGNING=unsigned" | tee signing.txt
+          fi
+
+      - name: Package the app
+        run: |
+          app=build/Build/Products/Release-iphonesimulator/Addify.app
+          test -d "$app"
+          {
+            echo "version $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist") build $(plutil -extract CFBundleVersion raw "$app/Info.plist")"
+            echo "device family $(plutil -extract UIDeviceFamily json -o - "$app/Info.plist")"
+            echo "sdk $(plutil -extract DTSDKName raw "$app/Info.plist") xcode $(plutil -extract DTXcode raw "$app/Info.plist")"
+            cat signing.txt
+            codesign -dv "$app" 2>&1 | grep -E 'Signature|Identifier|TeamIdentifier' || true
+            codesign -d --entitlements - "$app" 2>/dev/null | head -20 || true
+            ls "$app/PlugIns" 2>/dev/null
+          } | tee app-info.txt
+          ditto -c -k --sequesterRsrc --keepParent "$app" Addify-sim.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: addify-sim-app
+          path: |
+            Addify-sim.zip
+            app-info.txt
+            build*.log
+          retention-days: 7
+
+  review:
+    needs: build-app
+    runs-on: xcode-27
+    timeout-minutes: 80
+    env:
+      MR_OUT: ${{ github.workspace }}/out
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode
+        run: |
+          mkdir -p "$MR_OUT/inventory"
+          ls -d /Applications/Xcode*.app | tee "$MR_OUT/inventory/xcodes.txt"
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          { xcode-select -p; xcodebuild -version; sw_vers; } | tee "$MR_OUT/inventory/xcode.txt"
+
+      - name: Simulator runtimes and device types
+        run: |
+          xcrun simctl list runtimes | tee "$MR_OUT/inventory/runtimes.txt"
+          xcrun simctl list devicetypes > "$MR_OUT/inventory/devicetypes.txt"
+          python3 mockreview/scripts/pick_devices.py "$MR_OUT/inventory" | tee -a "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: addify-sim-app
+          path: app
+
+      - name: Unpack the app under test
+        run: |
+          cd app && ditto -x -k Addify-sim.zip . && ls -la && cat app-info.txt
+          cp app-info.txt "$MR_OUT/inventory/"
+
+      - name: Build the reviewer UI tests
+        run: |
+          set -o pipefail
+          curl -sSL -o /tmp/xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          unzip -q -o /tmp/xcodegen.zip -d /tmp/xcodegen
+          /tmp/xcodegen/xcodegen/bin/xcodegen generate --spec mockreview/project.yml --project mockreview
+          xcodebuild build-for-testing -project mockreview/MockReview.xcodeproj -scheme ReviewerUITests \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath mrbuild 2>&1 | tee "$MR_OUT/uitests-build.log" | tail -25
+          ls mrbuild/Build/Products/
+
+      - name: Live server before the run
+        run: curl -sS -m 15 "$ENGINE/health" | tee "$MR_OUT/health-before.json" || true
+
+      - name: iPhone - fresh device
+        run: |
+          udid=$(mockreview/scripts/sim.sh device iPhone "$IPHONE_NAME" "$IPHONE_TYPE" "$RUNTIME_ID" | tail -1)
+          echo "IPHONE_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: iPhone - install and cold launch (shots at 2, 5, 10, 20 s)
+        run: mockreview/scripts/sim.sh launch "$IPHONE_UDID" iphone app/Addify.app
+
+      - name: iPhone - reviewer path
+        run: mockreview/scripts/sim.sh uitest "$IPHONE_UDID" iphone testIPhoneReviewerPath "$SAMPLE_1"
+
+      - name: iPhone - deep link addify://scan
+        if: env.MR_SCANS == '1'
+        run: mockreview/scripts/sim.sh deeplink "$IPHONE_UDID" iphone "$SAMPLE_2"
+
+      - name: iPhone - stop recording
+        if: always()
+        run: mockreview/scripts/sim.sh stop iphone || true
+
+      - name: iPad - fresh device
+        if: always()
+        run: |
+          xcrun simctl shutdown "${IPHONE_UDID:-none}" 2>/dev/null || true
+          udid=$(mockreview/scripts/sim.sh device iPad "$IPAD_NAME" "$IPAD_TYPE" "$RUNTIME_ID" | tail -1)
+          echo "IPAD_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: iPad - install and cold launch (shots at 2, 5, 10, 20 s)
+        if: always()
+        run: mockreview/scripts/sim.sh launch "$IPAD_UDID" ipad app/Addify.app
+
+      - name: iPad - launch path
+        if: always()
+        run: MR_SCANS="$MR_IPAD_SCAN" mockreview/scripts/sim.sh uitest "$IPAD_UDID" ipad testIPadLaunchPath "$SAMPLE_3"
+
+      - name: iPad - stop recording
+        if: always()
+        run: mockreview/scripts/sim.sh stop ipad || true
+
+      - name: Live server after the run
+        if: always()
+        run: curl -sS -m 15 "$ENGINE/health" | tee "$MR_OUT/health-after.json" || true
+
+      - name: Summary
+        if: always()
+        run: python3 mockreview/scripts/summarize.py "$MR_OUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mock-review-${{ github.run_number }}
+          path: out
+          retention-days: 14
