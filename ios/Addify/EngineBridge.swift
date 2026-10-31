@@ -14,6 +14,9 @@ final class EngineBridge: ObservableObject {
        injected into any other page (Spotify's login page navigates the same web view). */
     @Published var pageReady = false
     @Published var unreachable = false
+    /* CALL-RETRY: the last failed load said the PHONE has no network (-1009 and friends), as
+       opposed to the engine not answering. UnreachableView picks its words from this. */
+    @Published var offline = false
     @Published var showSettings = false
     @Published var toast: ResultPayload? = nil
     /* Bumped to make the web view reload from the (possibly new) engine base. */
@@ -118,6 +121,7 @@ final class EngineBridge: ObservableObject {
 
     func retry() {
         unreachable = false
+        offline = false
         pageReady = false
         reloadToken += 1
     }

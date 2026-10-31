@@ -20,7 +20,9 @@ import Foundation
 
      1. a URL the user typed in Settings  (explicit override, never auto-replaced)
      2. the last value resolved from the directory and proven healthy
-     3. defaultBaseURL, which is only a last resort and is expected to be dead
+     3. defaultBaseURL, the live server (BUILD 19: it used to be a dead host, and a fresh
+        install loaded it before the directory answered, so App Review's clean devices opened
+        on "Can't reach Addify": rejection 2.1(a), 2026-10-15)
 
    Read through the RAW GIST URL and you get a CDN-cached answer up to two tunnels stale;
    that bug cost a day. Always the API host, which is not cached. */
@@ -35,7 +37,7 @@ enum EngineConfig {
        that served an address two rotations old even after the write had succeeded. */
     static let directoryURL = "https://api.github.com/gists/d63fcb85b88d9a8f12e943605dd0a078"
 
-    static let defaultBaseURL = "https://addify.rghiasi.com"
+    static let defaultBaseURL = "https://161-35-185-80.sslip.io"
 
     static var baseURLString: String {
         let manual = AppGroup.defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

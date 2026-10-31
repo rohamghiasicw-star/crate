@@ -26,7 +26,13 @@ struct AddifyApp: App {
                 /* The engine hostname rotates while the app is closed, so the value
                    baked into the last launch is usually already dead. Resolve before the
                    web view is asked for anything. */
-                .task { await EngineConfig.resolveFromDirectory() }
+                /* BUILD 19: the lookup does not hold the first load (the web view loads at
+                   once), so when it lands after that load already failed, reload on what it
+                   found instead of leaving "Can't reach Addify" up until someone taps. */
+                .task {
+                    let found = await EngineConfig.resolveFromDirectory()
+                    if found != nil && bridge.unreachable { bridge.retry() }
+                }
                 .onChange(of: scenePhase) { phase in
                     bridge.isActive = (phase == .active)
                     /* The inbox is the guaranteed share path; drain it on every
@@ -34,8 +40,11 @@ struct AddifyApp: App {
                     if phase == .active {
                         bridge.drainInbox()
                         /* Same reason as launch: a phone that sat in a pocket for an hour
-                           comes back to a hostname that no longer resolves. */
-                        Task { await EngineConfig.resolveFromDirectory() }
+                           comes back to a hostname that no longer resolves.
+                           CALL-RETRY: coming back to "Can't reach Addify" is the moment to try
+                           again, so the user does not have to tap it (resolve, then reload). */
+                        if bridge.unreachable { bridge.retryResolvingFirst() }
+                        else { Task { await EngineConfig.resolveFromDirectory() } }
                     }
                 }
         }
