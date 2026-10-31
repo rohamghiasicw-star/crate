@@ -10,6 +10,7 @@ import Foundation
 import Vision
 import CoreGraphics
 import ImageIO
+import CoreML
 
 var lastFP: [Double] = []
 var lastText: [String] = []
@@ -49,12 +50,48 @@ func stats(_ px: [UInt8], w: Int, h: Int, x0: Int, x1: Int, y0: Int, y1: Int) ->
     return (m, (sd * 10).rounded() / 10)
 }
 
-func ocr(_ img: CGImage) -> [String] {
+// CI runners are virtual Macs with no Neural Engine and no GPU acceleration, where Vision's
+// default compute path can fail or return nothing. After the first failure (or empty result on
+// a frame with clear structure) every request runs on the CPU. Errors are reported, never hidden.
+var cpuOnly = ProcessInfo.processInfo.environment["RS_OCR_CPU"] == "1"
+var lastError: String? = nil
+
+func pinCPU(_ req: VNRecognizeTextRequest) {
+    if #available(macOS 14.0, *) {
+        for stage in [VNComputeStage.main, VNComputeStage.postProcessing] {
+            if let devs = try? req.supportedComputeStageDevices[stage],
+               let cpu = devs.first(where: { if case .cpu = $0 { return true } else { return false } }) {
+                req.setComputeDevice(cpu, for: stage)
+            }
+        }
+    } else {
+        req.usesCPUOnly = true
+    }
+}
+
+func recognize(_ img: CGImage, cpu: Bool) -> ([String], String?) {
     let req = VNRecognizeTextRequest()
     req.recognitionLevel = .accurate
     req.usesLanguageCorrection = false
-    try? VNImageRequestHandler(cgImage: img, options: [:]).perform([req])
-    return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    if cpu { pinCPU(req) }
+    do {
+        try VNImageRequestHandler(cgImage: img, options: [:]).perform([req])
+    } catch {
+        return ([], "\(error)")
+    }
+    return ((req.results ?? []).compactMap { $0.topCandidates(1).first?.string }, nil)
+}
+
+func ocr(_ img: CGImage, structured: Bool) -> [String] {
+    var (text, err) = recognize(img, cpu: cpuOnly)
+    if !cpuOnly && (err != nil || (text.isEmpty && structured)) {
+        let (t2, e2) = recognize(img, cpu: true)
+        if !t2.isEmpty || e2 == nil { cpuOnly = true }
+        text = t2
+        err = e2 ?? err.map { "default path: " + $0 }
+    }
+    lastError = err
+    return text
 }
 
 while let line = readLine() {
@@ -92,12 +129,14 @@ while let line = readLine() {
         changed = maxd > 5
     }
     if changed {
-        lastText = ocr(crop)
+        lastText = ocr(crop, structured: cs > 6)
         lastFP = fp
         out["ocr"] = true
+        if let e = lastError { out["ocr_error"] = e }
     } else {
         out["ocr"] = false
     }
+    out["cpu"] = cpuOnly
     out["text"] = lastText
     out["ms"] = Int(Date().timeIntervalSince(t0) * 1000)
     print(String(data: try! JSONSerialization.data(withJSONObject: out), encoding: .utf8)!)

@@ -44,7 +44,7 @@ enum Quiescence {
     }
 }
 
-final class AXServer: XCTestCase {
+final class LaunchObserver: XCTestCase {
     func stateName(_ s: XCUIApplication.State) -> String {
         switch s {
         case .unknown: return "unknown"

@@ -128,21 +128,42 @@ def ax_classify(text):
 
 
 class Classifier:
+    """Apple Vision OCR (screenclass) first; Tesseract when Vision returns nothing on a frame
+    that clearly has content (CI runners are virtual Macs without the Neural Engine)."""
     def __init__(self, binary):
         self.p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+        self.tess = shutil.which("tesseract")
+        self.last_tess = []
+        self.engines = collections.Counter()
 
     def reset(self):
         self.p.stdin.write("!reset\n")
         self.p.stdin.flush()
+        self.last_tess = []
+        self.engines = collections.Counter()
+
+    def tesseract(self, path):
+        r = run([self.tess, path, "stdout", "--psm", "11", "-l", "eng"], timeout=25)
+        return [l.strip() for l in r.stdout.splitlines() if l.strip()]
 
     def read(self, path):
         self.p.stdin.write(path + "\n")
         self.p.stdin.flush()
         line = self.p.stdout.readline()
         try:
-            return json.loads(line)
+            d = json.loads(line)
         except Exception:
             return {"path": path, "error": "bad json: " + line[:100]}
+        if d.get("text"):
+            self.engines["vision"] += 1
+            return d
+        if self.tess and (d.get("cstd") or 0) > 6:
+            if d.get("ocr"):
+                self.last_tess = self.tesseract(path)
+            d["text"] = self.last_tess
+            d["ocr_engine"] = "tesseract"
+            self.engines["tesseract"] += 1
+        return d
 
 
 class Device:
@@ -170,10 +191,8 @@ class Device:
         self.udid = run(["xcrun", "simctl", "create", f"RS {self.wanted}", self.type, self.runtime], check=True).stdout.strip()
         run(["xcrun", "simctl", "boot", self.udid], check=True)
         r = run(["xcrun", "simctl", "bootstatus", self.udid, "-b"], timeout=1800)
-        # best effort: show URLs in the device log instead of <private>
-        pr = run(["xcrun", "simctl", "spawn", self.udid, "log", "config", "--mode", "private_data:on"], timeout=30)
         self.note(f"created {self.name} ({self.type}) {self.udid} on {self.runtime}, booted in {now() - t:.0f} s "
-                  f"(bootstatus rc {r.returncode}; private_data rc {pr.returncode} {pr.stderr.strip()[:80]})")
+                  f"(bootstatus rc {r.returncode})")
         return now() - t
 
     def start_ax(self):
@@ -183,7 +202,6 @@ class Device:
         log = open(os.path.join(self.out, "ax-xcodebuild.log"), "a")
         self.ax_proc = subprocess.Popen(
             ["xcodebuild", "test-without-building", "-xctestrun", self.xctestrun, "-destination", f"id={self.udid}",
-             "-only-testing:ObserverUITests/AXServer/testServe",
              "-resultBundlePath", os.path.join(self.out, f"ax-{int(now())}.xcresult")],
             stdout=log, stderr=subprocess.STDOUT, env=env)
         ready = os.path.join(self.out, "ax-ready.txt")
@@ -357,8 +375,9 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     hosts = [tb_host] if target in ("testbox", "lab", "labnoguard") else [live_host]
     guard = [live_ip] if target in ("testbox", "lab") else []
     account = [tb_ip, live_ip]
-    # 1. clean slate
+    # 1. clean slate (Safari too: an earlier launch may have handed a page to it)
     run(["xcrun", "simctl", "terminate", dev.udid, BUNDLE], timeout=20)
+    run(["xcrun", "simctl", "terminate", dev.udid, "com.apple.mobilesafari"], timeout=20)
     run(["xcrun", "simctl", "uninstall", dev.udid, BUNDLE], timeout=60)
     left = dev.group_containers()
     rec["group_container_left_after_uninstall"] = len(left)
@@ -394,7 +413,11 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     restored = None
     terminal = None
     launch_ret = None
-    poll = os.path.join(dev.out, "poll.jpg")
+    # every poll frame is kept (as a small JPEG after the launch) so the whole launch can be
+    # re-read offline with the same classifier
+    pdir = os.path.join(dev.out, "polls", lid)
+    os.makedirs(pdir, exist_ok=True)
+    full = []
     unreach_seen = None
     gone_seen = None
     while True:
@@ -415,8 +438,8 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
             ok = dev.shot(path, "png")
         else:
             c = None
-            path = poll
-            ok = dev.shot(path, "jpeg")
+            path = os.path.join(pdir, f"p{len(full):03d}.png")
+            ok = dev.shot(path, "png")
         ts = round(now() - t0, 2)
         if ok:
             d = cls.read(path)
@@ -425,8 +448,12 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
             d, k = {"text": []}, "noshot"
         if c is not None:
             at[c] = k
+        if d.get("ocr_error"):
+            rec.setdefault("ocr_errors", []).append(d["ocr_error"][:160])
         txt = " | ".join(d.get("text") or [])[:90]
         timeline.append([ts, k, txt if (not timeline or timeline[-1][1] != k) else ""])
+        full.append([ts, k, os.path.basename(path), " | ".join(d.get("text") or [])[:160],
+                     d.get("cmean"), d.get("cstd"), d.get("ocr_engine", "vision" if d.get("text") else "")])
         first.setdefault(k, ts)
         if k == "usable":
             terminal = (k, ts)
@@ -513,7 +540,18 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     rec["nothing_shown_s"] = round(blank, 1)
     rec["checkpoints"] = {str(k): v for k, v in sorted(at.items())}
     rec["polls"] = len(timeline)
+    rec["ocr_engines"] = dict(cls.engines)
+    if rec.get("ocr_errors"):
+        rec["ocr_errors"] = sorted(set(rec["ocr_errors"]))[:3]
     rec["timeline"] = [x for i, x in enumerate(timeline) if i == 0 or x[1] != timeline[i - 1][1] or i == len(timeline) - 1]
+    with open(os.path.join(pdir, "timeline.json"), "w") as f:
+        json.dump(full, f)
+    pngs = sorted(glob.glob(os.path.join(pdir, "p*.png")))
+    if pngs:
+        run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "50", "-Z", "640", *pngs, "--out", pdir], timeout=300)
+        for x in pngs:
+            if os.path.exists(x[:-4] + ".jpg"):
+                os.remove(x)
     # keep full PNGs only for rep 1; everything else becomes a small JPEG
     for c in at:
         png = os.path.join(dev.out, "shots", f"{lid}-{c:03d}s.png")
@@ -524,8 +562,9 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
     return rec
 
 
-def schedule(plan, run_name):
-    cells = plan["runs"][run_name]["cells"]
+def schedule(plan, run_name, shard):
+    spec = plan["runs"][run_name]["shards"].get(shard)
+    cells = spec["cells"] if isinstance(spec, dict) and spec.get("cells") else plan["runs"][run_name]["cells"]
     order = []
     maxrep = max(c["reps"] for c in cells)
     for rep in range(1, maxrep + 1):
@@ -555,7 +594,7 @@ def main():
            "testbox_host": plan["testbox"].split("//")[1], "live_host": plan["live"].split("//")[1],
            "checkpoints": plan["checkpoints"], "max_secs": plan["max_secs"],
            "runtime_name": f"{picked['runtime_name']} ({picked['runtime_build']})", "out_root": a.out}
-    order = schedule(plan, a.run)
+    order = schedule(plan, a.run, a.shard)
     print(f"{len(order)} launches per device, {len(picked['devices'])} devices", flush=True)
     cls = Classifier(a.classifier)
     results = os.path.join(a.out, "results.jsonl")

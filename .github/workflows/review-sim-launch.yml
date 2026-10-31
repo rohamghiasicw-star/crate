@@ -47,7 +47,8 @@ jobs:
           import json
           p = json.load(open("reviewsim/launch/plan.json"))
           run = p["active"]
-          inc = [{"shard": k, "devices": "|".join(v)} for k, v in p["runs"][run]["shards"].items()]
+          inc = [{"shard": k, "devices": "|".join(v["devices"] if isinstance(v, dict) else v)}
+                 for k, v in p["runs"][run]["shards"].items()]
           print("run=" + run)
           print("matrix=" + json.dumps({"include": inc}))
           # reuse the apps built by an earlier run of this workflow (same commits), or build now
@@ -125,6 +126,7 @@ jobs:
       RS_OUT: ${{ github.workspace }}/out
       RS_NET_STATE: ${{ github.workspace }}/out/net-state.json
       RS_RUN: ${{ needs.plan.outputs.run }}
+      RS_OCR_CPU: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -173,10 +175,14 @@ jobs:
             || { tail -30 "$RS_OUT/observer-build.log"; exit 1; }
           echo "XCTESTRUN=$(ls "$PWD"/obsbuild/Build/Products/*.xctestrun | head -1)" | tee -a "$GITHUB_ENV"
 
-      - name: Build the screen reader (Apple Vision OCR)
+      # Vision on a virtual Mac (no Neural Engine, no GPU) returned no text in the first pilot,
+      # so OCR runs on the CPU, with Tesseract as the fallback reader.
+      - name: Build the screen reader (Apple Vision OCR, Tesseract fallback)
         run: |
           mkdir -p bin
           swiftc -O -o bin/screenclass reviewsim/launch/scripts/screenclass.swift
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tesseract > "$RS_OUT/inventory/tesseract-install.log" 2>&1 || tail -5 "$RS_OUT/inventory/tesseract-install.log"
+          (which tesseract && tesseract --version 2>&1 | head -1) || echo "tesseract not installed"
 
       - name: Pick the runtime and devices
         run: python3 reviewsim/launch/scripts/pick.py "$RS_OUT" "${{ matrix.devices }}" | tee -a "$GITHUB_ENV"
@@ -212,5 +218,5 @@ jobs:
           path: |
             out
             !out/**/*.xcresult
-            !out/**/poll.jpg
+            !out/**/poll.*
           retention-days: 7
