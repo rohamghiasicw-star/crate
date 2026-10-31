@@ -239,7 +239,6 @@ class Walk:
         if self.cfg.get("seedls"):
             await self.ctx.add_init_script(script=SEED_JS.replace("__SEED__", json.dumps(self.cfg["seedls"])))
         await self.ctx.route(NOT_ORIGIN, self.route_external)
-        self.ctx.on("page", self.on_popup)
         await self.open_page(self.cfg.get("share"))
 
     async def open_page(self, share=None):
@@ -249,6 +248,7 @@ class Walk:
         p.on("console", self.on_console)
         p.on("pageerror", lambda e: self.events.append({"k": "pageerror", "msg": str(e)[:400], "t": self.rel()}))
         p.on("dialog", self.on_dialog)
+        p.on("popup", self.on_popup)
         p.on("download", lambda dl: self.events.append({"k": "download", "name": dl.suggested_filename, "url": dl.url[:120], "t": self.rel()}))
         p.on("framenavigated", self.on_nav)
         p.on("request", self.on_req)
@@ -336,8 +336,7 @@ class Walk:
                 pass
 
     async def on_popup(self, pg):
-        if pg == self.page:
-            return
+        # page.on("popup") fires only for windows this page opened (target=_blank, window.open)
         self.popups += 1
         u = pg.url
         for _ in range(20):
@@ -483,6 +482,12 @@ class Walk:
                 self.fail("pill_mismatch", "%s" % snap["pill"][:20], "pill says %r, counter %d" % (snap["pill"], snap["used"]), snap)
         if g.get("DEV"):
             self.fail("developer_mode_on", sc, "DEV is on", snap)
+        if "paywall" in (snap.get("overlays") or []) and re.search(r"not available right now", snap.get("pwb") or ""):
+            self.fail("paywall_no_plans", "products=%s" % self.cfg["bridge"]["products"],
+                      "paywall shows %r with no plan buttons and no retry (StoreKit products mode %s)" % (snap.get("pwb"), self.cfg["bridge"]["products"]), snap)
+        if snap.get("toastOver"):
+            self.fail("toast_covers_header", "%s|%s" % (sc, ",".join(sorted(snap["toastOver"]))[:80]),
+                      "scan count toast %r sits on %s" % (snap.get("note"), snap["toastOver"]), snap)
         for w in snap.get("devText") or []:
             if w.lower() in ("undefined", "nan", "[object object]", "null"):
                 self.fail("raw_value_on_screen", w.lower() + "|" + sc, "visible text contains %r on %s" % (w, sc), snap)

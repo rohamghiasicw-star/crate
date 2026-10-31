@@ -1,3 +1,3 @@
-{"label": "pilot", "walk_shards": 2, "walks_per_shard": 8, "actions": 20, "conc": 4, "walk_timeout": 420, "max_minutes": 25,
+{"label": "pilot2", "walk_shards": 2, "walks_per_shard": 8, "actions": 20, "conc": 4, "walk_timeout": 420, "max_minutes": 25,
  "sweep_shards": 1, "sweep_depth": 2, "sweep_max_taps": 16, "sweep_conc": 4, "sweep_minutes": 20,
  "min_parts": 1, "min_budget": 8, "min_conc": 3, "min_minutes": 20}

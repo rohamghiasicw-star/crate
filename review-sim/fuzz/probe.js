@@ -90,7 +90,13 @@
     g: {PRO: !!window.PRO, PAYWALL_ON: !!window.PAYWALL_ON, STORE: !!window.STORE, MASTER: !!window.MASTER, DEV: !!window.DEV,
         NEWFLOW: !!window.NEWFLOW, busy: !!window.busy, cur: String(window.curURL || '').slice(0, 200), engineUp: window.engineUp === true,
         isApp: !!document.getElementById('app'), secure: !!window.isSecureContext},
-    pill: txt('scanpill'), err: txt('err'), ttl: txt('matchttl'), note: txt('scannote'), pwm: txt('pwm'),
+    pill: txt('scanpill'), err: txt('err'), ttl: txt('matchttl'), note: txt('scannote'), pwm: txt('pwm'), pwb: txt('pwb'),
+    toastOver: (() => { const n = document.getElementById('scannote'); if (!n || !n.classList.contains('on') || !vis(n)) return [];
+      const r = n.getBoundingClientRect(); const out = [];
+      for (const el of document.querySelectorAll('#matchttl, .hd .brand, .hd .ttl, #scanpill, #back, #share, #cancel, #lcancel, #theme, .tabbar .tab')) {
+        if (!vis(el)) continue; const q = el.getBoundingClientRect();
+        if (q.right > r.left + 2 && q.left < r.right - 2 && q.bottom > r.top + 2 && q.top < r.bottom - 2) out.push(keyOf(el)); }
+      return out; })(),
     resultText: state === 'locked' ? txt('result').slice(0, 160) : '',
     textHash: (() => { let h = 0; for (let i = 0; i < bodyText.length; i++) h = (h * 31 + bodyText.charCodeAt(i)) | 0; return h; })(),
     textLen: bodyText.length,
