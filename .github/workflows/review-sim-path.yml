@@ -1,0 +1,357 @@
+name: Review sim - reviewer paths (simulator)
+
+# REVIEW-SIM, DEVICE-PATH LANE (2026-10-31). Every path an App Reviewer can take through build 20
+# (release-next 9049251), on a fresh iPhone 17 Pro Max and a fresh iPad Air 11-inch (M3)
+# simulator (the iPhone app in iPad compatibility mode): onboarding and every branch, paste flows,
+# the Share Extension from Safari, listen mode, Search, Trending, Finds, every Profile row, the
+# paywall against StoreKit (test-only scheme), background/foreground mid-scan, rotation, light
+# and dark, the largest text size, the accessibility audit and crash logs.
+#
+# SERVERS. The app is pointed at the TEST box through its own address override (see
+# mockreview/scripts/sim.sh). The LIVE server is blocked in /etc/hosts on every runner before
+# the app is installed, and the job stops if it still answers. Scans only when
+# mockreview/path-run.env says MR_SCANS=1, budgeted per device, and only while the test box
+# reports no scan running. The iPad job waits for the iPhone job's scan step to finish.
+#
+# It never uploads anything to Apple, never deploys, never touches App Store Connect.
+
+on:
+  push:
+    branches: [review-sim-path]
+    paths: ['mockreview/**', '.github/workflows/review-sim-path.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: review-sim-path
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
+env:
+  MR_NO_IDLE: '1'
+  MR_RESULT_TIMEOUT: '150'
+  ENGINE: https://165-22-231-221.sslip.io
+  LIVE_HOST: 161-35-185-80.sslip.io
+
+jobs:
+  build-app:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode on the runner (same rule as ios-release.yml)
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          xcodebuild -version
+
+      # Release, like the App Store build, from the project that ships (ios/Addify.xcodeproj).
+      - name: Build Addify build 20 (Release, simulator)
+        run: |
+          set -o pipefail
+          common=(-project ios/Addify.xcodeproj -scheme Addify -configuration Release
+                  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+                  -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CURRENT_PROJECT_VERSION=20)
+          if xcodebuild "${common[@]}" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+               PROVISIONING_PROFILE_SPECIFIER= CODE_SIGNING_REQUIRED=NO build 2>&1 | tee build.log | tail -5; then
+            echo "SIGNING=adhoc" | tee signing.txt
+          else
+            echo "ad-hoc build failed, retrying unsigned"
+            xcodebuild "${common[@]}" CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+              build 2>&1 | tee build-unsigned.log | tail -5
+            echo "SIGNING=unsigned" | tee signing.txt
+          fi
+
+      - name: Package the app
+        run: |
+          app=build/Build/Products/Release-iphonesimulator/Addify.app
+          test -d "$app"
+          {
+            echo "git $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+            echo "version $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist") build $(plutil -extract CFBundleVersion raw "$app/Info.plist")"
+            echo "device family $(plutil -extract UIDeviceFamily json -o - "$app/Info.plist")"
+            echo "sdk $(plutil -extract DTSDKName raw "$app/Info.plist") xcode $(plutil -extract DTXcode raw "$app/Info.plist")"
+            cat signing.txt
+            codesign -dv "$app" 2>&1 | grep -E 'Signature|Identifier|TeamIdentifier' || true
+            echo "--- entitlements (app)"; codesign -d --entitlements :- "$app" 2>/dev/null || true
+            echo "--- entitlements (share extension)"; codesign -d --entitlements :- "$app/PlugIns/AddifyShare.appex" 2>/dev/null || true
+            echo "--- default engine address compiled in"; strings "$app/Addify" | grep -E '^https://' | sort -u | head -10
+            ls "$app/PlugIns" 2>/dev/null
+          } | tee app-info.txt
+          ditto -c -k --sequesterRsrc --keepParent "$app" Addify-sim.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: path-sim-app
+          path: |
+            Addify-sim.zip
+            app-info.txt
+            build*.log
+          retention-days: 7
+
+  review:
+    name: review (${{ matrix.dev }})
+    needs: build-app
+    runs-on: xcode-27
+    timeout-minutes: 175
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dev: iphone
+            budget: '5'
+            samples: 'tiktok=https://www.tiktok.com/@bouch.szn/video/7651437319941066005;instagram=https://www.instagram.com/reel/Da-RX_3h6_V/?igsh=MTc4MmM1YmI2Ng==;long=https://vt.tiktok.com/ZSXWjGrqT/;share=https://www.tiktok.com/@kxmrax/video/7649302623153098015'
+          - dev: ipad
+            budget: '5'
+            samples: 'tiktok=https://vt.tiktok.com/ZSXWjGrqT/;instagram=https://www.instagram.com/reel/Da-RX_3h6_V/?igsh=MTc4MmM1YmI2Ng==;long=https://www.tiktok.com/@kyks.edits7/video/7648736728290790688;share=https://www.tiktok.com/@bouch.szn/video/7651437319941066005'
+    env:
+      MR_OUT: ${{ github.workspace }}/out
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      DEV: ${{ matrix.dev }}
+      MR_SCAN_BUDGET: ${{ matrix.budget }}
+      MR_SAMPLES: ${{ matrix.samples }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run settings
+        run: |
+          mkdir -p "$MR_OUT/inventory"
+          grep -E '^(MR_SCANS|MR_GROUPS)=' mockreview/path-run.env | tee -a "$GITHUB_ENV" | tee "$MR_OUT/inventory/run-settings.txt"
+
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app | tee "$MR_OUT/inventory/xcodes.txt"
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          { xcode-select -p; xcodebuild -version; sw_vers; } | tee "$MR_OUT/inventory/xcode.txt"
+
+      # Nothing in this job may reach the live server. Blocked before any app is installed.
+      - name: Block the live server on this runner
+        run: |
+          echo "127.0.0.1 $LIVE_HOST" | sudo tee -a /etc/hosts
+          echo "::1 $LIVE_HOST" | sudo tee -a /etc/hosts
+          sudo dscacheutil -flushcache || true
+          sudo killall -HUP mDNSResponder || true
+          sleep 2
+          if curl -sS -m 8 -o /dev/null "https://$LIVE_HOST/health" 2>/dev/null; then
+            echo "the live host still answers on this runner: stopping"; exit 1
+          fi
+          { echo "live host $LIVE_HOST blocked: $(dscacheutil -q host -a name "$LIVE_HOST" | tr '\n' ' ')";
+            echo "test box /health: $(curl -sS -m 25 "$ENGINE/health" | head -c 400)"; } | tee "$MR_OUT/inventory/network.txt"
+
+      - name: Simulator runtimes and device types
+        run: |
+          xcrun simctl list runtimes | tee "$MR_OUT/inventory/runtimes.txt"
+          xcrun simctl list devicetypes > "$MR_OUT/inventory/devicetypes.txt"
+          python3 mockreview/scripts/pick_devices.py "$MR_OUT/inventory" | tee -a "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: path-sim-app
+          path: app
+
+      - name: Unpack the app under test
+        run: |
+          cd app && ditto -x -k Addify-sim.zip . && ls -la && cat app-info.txt
+          cp app-info.txt "$MR_OUT/inventory/"
+
+      - name: Fresh device
+        run: |
+          if [ "$DEV" = iphone ]; then name="$IPHONE_NAME"; type="$IPHONE_TYPE"; else name="$IPAD_NAME"; type="$IPAD_TYPE"; fi
+          udid=$(mockreview/scripts/sim.sh device "$DEV" "$name" "$type" "$RUNTIME_ID" | tail -1)
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          mockreview/scripts/sim.sh logstart "$udid" "$DEV"
+
+      - name: Build the reviewer UI tests (bundle-id driven, MockHost)
+        run: |
+          set -o pipefail
+          curl -sSL -o /tmp/xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          unzip -q -o /tmp/xcodegen.zip -d /tmp/xcodegen
+          /tmp/xcodegen/xcodegen/bin/xcodegen generate --spec mockreview/project.yml --project mockreview
+          xcodebuild build-for-testing -project mockreview/MockReview.xcodeproj -scheme ReviewerUITests \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath mrbuild 2>&1 | tee "$MR_OUT/uitests-build.log" | tail -15
+          ls mrbuild/Build/Products/
+
+      - name: Build the StoreKit test-only project (Addify Debug + StoreUITests)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          /tmp/xcodegen/xcodegen/bin/xcodegen generate --spec mockreview/store.yml --project mockreview
+          xcodebuild build-for-testing -project mockreview/AddifyStoreReview.xcodeproj -scheme StoreReview \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath srbuild 2>&1 | tee "$MR_OUT/store-build.log" | tail -15
+          ls srbuild/Build/Products/
+
+      - name: Install and cold launch (shots at 1, 2, 3, 5, 10, 20 s)
+        if: contains(env.MR_GROUPS, 'launch')
+        run: mockreview/scripts/sim.sh launch "$UDID" "$DEV" app/Addify.app
+
+      # iPhone scans early, iPad scans late: the two jobs never scan at the same time.
+      - name: Scan walks (test box)
+        if: matrix.dev == 'iphone' && env.MR_SCANS == '1' && contains(env.MR_GROUPS, 'scans')
+        timeout-minutes: 45
+        run: |
+          S=mockreview/scripts/sim.sh
+          $S fresh "$UDID" app/Addify.app; MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathScans "-"
+          MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathShareSafari "-"
+          MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathListenAllowed "-"
+
+      - name: Fresh install walk (no scans)
+        if: always() && contains(env.MR_GROUPS, 'fresh')
+        timeout-minutes: 45
+        run: |
+          mockreview/scripts/sim.sh fresh "$UDID" app/Addify.app
+          MR_SCANS=0 mockreview/scripts/sim.sh uitest "$UDID" "$DEV" testPathFresh "-"
+
+      - name: Onboarding - Try it on a reel round trip
+        if: always() && contains(env.MR_GROUPS, 'tryreel')
+        timeout-minutes: 15
+        run: |
+          mockreview/scripts/sim.sh fresh "$UDID" app/Addify.app
+          MR_SCANS=0 mockreview/scripts/sim.sh uitest "$UDID" "$DEV" testPathTryReel "-"
+
+      - name: Onboarding - fast double taps
+        if: always() && contains(env.MR_GROUPS, 'taps')
+        timeout-minutes: 20
+        run: |
+          S=mockreview/scripts/sim.sh
+          $S fresh "$UDID" app/Addify.app; MR_SCANS=0 $S uitest "$UDID" "$DEV" testPathDoubleTaps "-"
+          $S fresh "$UDID" app/Addify.app; MR_SCANS=0 $S uitest "$UDID" "$DEV" testPathFastTaps "-"
+
+      - name: Largest accessibility text size
+        if: always() && contains(env.MR_GROUPS, 'largetext')
+        timeout-minutes: 15
+        run: |
+          S=mockreview/scripts/sim.sh
+          $S fresh "$UDID" app/Addify.app
+          $S textsize "$UDID" accessibility-extra-extra-extra-large
+          MR_SCANS=0 $S uitest "$UDID" "$DEV" testPathLargeText "-" || true
+          $S textsize "$UDID" large
+
+      - name: Rotation
+        if: always() && contains(env.MR_GROUPS, 'rotate')
+        timeout-minutes: 12
+        run: MR_SCANS=0 mockreview/scripts/sim.sh uitest "$UDID" "$DEV" testPathRotation "-"
+
+      - name: Paywall against StoreKit (test-only scheme, Debug build of the same sources)
+        if: always() && contains(env.MR_GROUPS, 'store')
+        timeout-minutes: 30
+        run: |
+          if [ ! -d srbuild/Build/Products ]; then echo "StoreKit project did not build"; exit 0; fi
+          xcrun simctl terminate "$UDID" com.addify.app 2>/dev/null || true
+          xcrun simctl uninstall "$UDID" com.addify.app 2>/dev/null || true
+          echo "[$(date -u +%H:%M:%S)] uitest testStoreFlows on $DEV (StoreKit project)" | tee -a "$MR_OUT/host.log"
+          xcrun simctl io "$UDID" recordVideo --codec=hevc --force "$MR_OUT/$DEV-testStoreFlows.mp4" >/dev/null 2>&1 &
+          vp=$!
+          set +e
+          TEST_RUNNER_MR_OUT="$MR_OUT" TEST_RUNNER_MR_DEVICE="$DEV" TEST_RUNNER_MR_SCANS=0 TEST_RUNNER_MR_ENGINE="$ENGINE" \
+          TEST_RUNNER_MR_NO_IDLE=1 TEST_RUNNER_MR_LIVE="$LIVE_HOST" \
+            xcodebuild test -project mockreview/AddifyStoreReview.xcodeproj -scheme StoreReview -derivedDataPath srbuild \
+              -destination "id=$UDID" -only-testing:StoreUITests/ReviewerUITests/testStoreFlows \
+              -resultBundlePath "$MR_OUT/$DEV-testStoreFlows.xcresult" 2>&1 \
+            | tee "$MR_OUT/$DEV-testStoreFlows.xcodebuild.log" \
+            | grep --line-buffered -E '^MR\||Test Case|error:|\*\* TEST|SKTest|StoreKit'
+          echo "store walk exit ${PIPESTATUS[0]}"
+          kill -INT $vp 2>/dev/null || true; sleep 3
+          exit 0
+
+      - name: Wait for the iPhone job's scans to finish (one scan at a time)
+        if: always() && matrix.dev == 'ipad' && env.MR_SCANS == '1' && contains(env.MR_GROUPS, 'scans')
+        timeout-minutes: 70
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 130); do
+            st=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+                 --jq '.jobs[] | select(.name=="review (iphone)") | ((.steps // [])[] | select(.name=="Scan walks (test box)") | .status), .status' 2>/dev/null | tr '\n' ' ')
+            echo "[$(date -u +%H:%M:%S)] iphone scan step, then job: $st"
+            case "$st" in *completed*) break;; esac
+            sleep 30
+          done
+
+      - name: Scan walks (test box), iPad
+        if: always() && matrix.dev == 'ipad' && env.MR_SCANS == '1' && contains(env.MR_GROUPS, 'scans')
+        timeout-minutes: 45
+        run: |
+          S=mockreview/scripts/sim.sh
+          $S fresh "$UDID" app/Addify.app; MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathScans "-"
+          MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathShareSafari "-"
+          MR_SCANS=1 $S uitest "$UDID" "$DEV" testPathListenAllowed "-"
+
+      - name: Delete my data, and what comes after
+        if: always() && contains(env.MR_GROUPS, 'delete')
+        timeout-minutes: 10
+        run: |
+          mockreview/scripts/sim.sh fresh "$UDID" app/Addify.app
+          MR_SCANS=0 mockreview/scripts/sim.sh uitest "$UDID" "$DEV" testPathDeleteData "-"
+
+      - name: Crash logs
+        if: always()
+        run: |
+          mockreview/scripts/sim.sh crashes "$DEV" || true
+          cat "$MR_OUT/$DEV-crashes.txt" | head -60 || true
+
+      - name: Test box after the run
+        if: always()
+        run: curl -sS -m 20 "$ENGINE/health" | tee "$MR_OUT/testbox-health-after.json" || true
+
+      - name: Stop the device log
+        if: always()
+        run: mockreview/scripts/sim.sh stop "$DEV" || true
+
+      - name: Summary
+        if: always()
+        run: |
+          mv "$MR_OUT/steps.jsonl" "$MR_OUT/steps-$DEV.jsonl" 2>/dev/null || true
+          cp "$MR_OUT/steps-$DEV.jsonl" "$MR_OUT/steps.jsonl" 2>/dev/null || true
+          python3 mockreview/scripts/summarize.py "$MR_OUT"
+          mv "$MR_OUT/SUMMARY.md" "$MR_OUT/SUMMARY-$DEV.md" 2>/dev/null || true
+
+      - name: Screenshot previews
+        if: always()
+        run: |
+          mkdir -p "$MR_OUT/preview"
+          for f in "$MR_OUT"/*.png; do
+            [ -f "$f" ] || continue
+            sips -s format jpeg -s formatOptions 70 -Z 1000 "$f" --out "$MR_OUT/preview/$(basename "${f%.png}").jpg" >/dev/null 2>&1 || true
+          done
+          ls "$MR_OUT/preview" | wc -l
+
+      - name: Upload the report (steps, previews, accessibility dumps, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: path-${{ matrix.dev }}-${{ github.run_number }}
+          path: |
+            out
+            !out/*.png
+            !out/*.mp4
+            !out/*.xcresult
+            !out/*-device.log
+          retention-days: 14
+
+      - name: Upload the evidence (full screenshots, videos, device log, xcresult)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: path-${{ matrix.dev }}-${{ github.run_number }}-evidence
+          path: |
+            out/*.png
+            out/*.mp4
+            out/*.xcresult
+            out/*-device.log
+          retention-days: 14

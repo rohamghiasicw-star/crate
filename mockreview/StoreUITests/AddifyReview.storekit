@@ -1,0 +1,86 @@
+{
+  "identifier" : "7A3C9E21",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21587001",
+      "localizations" : [
+
+      ],
+      "name" : "Addify Unlimited",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6815190901",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Unlimited scans, billed monthly",
+              "displayName" : "Addify Unlimited",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.addify.app.unlimited.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Addify Unlimited Monthly",
+          "subscriptionGroupID" : "21587001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "24.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6815190902",
+          "introductoryOffer" : {
+            "internalID" : "6815190903",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "Unlimited scans, billed yearly",
+              "displayName" : "Addify Unlimited",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.addify.app.unlimited.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Addify Unlimited Yearly",
+          "subscriptionGroupID" : "21587001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

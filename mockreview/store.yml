@@ -1,0 +1,92 @@
+# TEST-ONLY StoreKit project for the review simulation. NOT part of the shipped app.
+#
+# Builds the real Addify app and its Share Extension straight from ../ios (same sources, same
+# Info.plists, same entitlements as ios/project.yml) in Debug, with AddifyReview.storekit attached
+# to the scheme, plus the StoreUITests bundle that targets it. StoreKit testing (SKTestSession)
+# only drives an app that its UI test bundle targets, which the bundle-id-driven MockHost
+# project in project.yml cannot do. ios/Addify.xcodeproj is left exactly as it ships.
+#
+# Generated on the runner: xcodegen generate --spec mockreview/store.yml --project mockreview
+name: AddifyStoreReview
+options:
+  bundleIdPrefix: com.addify
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "20"
+    # Simulator only: "Sign to Run Locally", no Apple account or profile; entitlements honoured.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: NO
+    DEVELOPMENT_TEAM: ""
+    PROVISIONING_PROFILE_SPECIFIER: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  Addify:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../ios/Addify
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.addify.app
+        INFOPLIST_FILE: ../ios/Addify/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: ../ios/Addify/Addify.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: AddifyShare
+        embed: true
+  AddifyShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ../ios/AddifyShare
+        excludes:
+          - "Info.plist"
+      - path: ../ios/Addify/SharedInbox.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.addify.app.share
+        INFOPLIST_FILE: ../ios/AddifyShare/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: ../ios/AddifyShare/AddifyShare.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  StoreUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ReviewerUITests/ReviewerUITests.swift
+      - path: ReviewerUITests/PathWalks.swift
+      - path: StoreUITests/StoreWalks.swift
+      - path: StoreUITests/AddifyReview.storekit
+        buildPhase: resources
+    dependencies:
+      - target: Addify
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.addify.storereview.uitests
+        TEST_TARGET_NAME: Addify
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+schemes:
+  StoreReview:
+    build:
+      targets:
+        Addify: all
+        StoreUITests: [test]
+    run:
+      config: Debug
+      storeKitConfiguration: StoreUITests/AddifyReview.storekit
+    test:
+      config: Debug
+      targets: [StoreUITests]
