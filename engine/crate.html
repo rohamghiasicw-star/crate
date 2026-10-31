@@ -121,6 +121,8 @@ body{
 button,input{font:inherit; color:inherit}
 button{background:none;border:0;cursor:pointer}
 a{color:inherit;text-decoration:none}
+/* no long-press image menu (Save to Photos) and no image drag or selection on cover art */
+img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
 
 /* ---------- finds (Konnor's page 4) ---------- */
 .lhd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:2px 0 14px}
@@ -334,7 +336,7 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
   border-radius:var(--r-pill);padding:5px 5px 5px 14px;transition:border-color .16s,box-shadow .16s}
 .form.focus{border-color:var(--accent2);box-shadow:0 0 0 4px color-mix(in oklab,var(--accent) 22%,transparent)}
 .form .lk{color:var(--faint);display:grid;place-items:center;flex:none}
-.form input{flex:1;min-width:0;background:none;border:0;outline:none;padding:9px 0;font-size:14px;color:var(--text)}
+.form input{flex:1;min-width:0;background:none;border:0;outline:none;padding:9px 0;font-size:16px;color:var(--text)}   /* 16px: iOS zooms the page when a field under 16px takes focus */
 .form input::placeholder{color:var(--faint)}
 .go{background:var(--accent);color:var(--on-accent);border-radius:var(--r-pill);padding:9px 15px;font-weight:650;
   font-size:13.5px;flex:none;transition:background .15s,transform .12s} .go:active{transform:scale(.96)} .go[disabled]{opacity:.5;pointer-events:none}
@@ -636,7 +638,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .search{display:flex;align-items:center;gap:8px;background:var(--raise);border:1px solid var(--line);
   border-radius:12px;padding:9px 12px;margin:2px 0 10px}
 .search svg{color:var(--faint);flex:none}
-.search input{flex:1;min-width:0;background:none;border:0;outline:none;font-size:13px;color:var(--text)}
+.search input{flex:1;min-width:0;background:none;border:0;outline:none;font-size:16px;color:var(--text)}   /* 16px, same reason as .form input */
 .search input::placeholder{color:var(--faint)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .chipf{font-size:11.5px;font-weight:650;padding:6px 11px;border-radius:var(--r-pill);
@@ -702,14 +704,6 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .setrow .sv.ok{color:var(--good)}
 .setrow.danger{color:#FF7A7A}
 .setrow .go2{color:var(--faint)}
-/* Cancel plan save offer: only shown once the user taps Cancel plan. */
-.sheet.keep{place-items:center}
-.keepcard{align-items:center;text-align:center;gap:10px;padding:26px 20px 18px}
-.keepcard h2{margin:0;text-wrap:balance;font-size:21px;font-weight:760;line-height:1.25}
-.keepcard p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.5;max-width:280px}
-.keepcard .kbtn{width:100%;background:var(--accent);color:var(--on-accent);font-size:15px;font-weight:700;
-  padding:14px;border-radius:var(--r-pill);margin-top:6px}
-.keepcard .klink{width:100%;font-size:13.5px;font-weight:600;color:var(--muted);padding:10px}
 .setlist{display:flex;flex-direction:column}
 /* iOS-style switch, reused for every toggle */
 .sw{width:40px;height:24px;border-radius:99px;background:var(--raise2);position:relative;flex:none;
@@ -966,8 +960,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 /* ---------- onboarding v4 + scan-count sheets (NEWFLOW) ----------
    Konnor's "Addify Onboarding Screens for Roham" (2026-10-05, addify-harness/konnor-docs/
    onboarding-screens.md): Value, Share to Addify, 5 free scans, then Home; the "1 free scan
-   left" sheet after the 4th result; the payment sheet after the 5th. Behind NEWFLOW until
-   App Review passes build 18 (the reviewer is testing the v3 screens and the old paywall).
+   left" sheet after the 4th result; the payment sheet after the 5th.
    The onboarding is always the dark purple ground of his mocks; the two sheets follow the theme. */
 .o4{position:fixed;inset:0;z-index:81;display:flex;flex-direction:column;color:#F4F2FA;overflow:hidden;
   background:radial-gradient(130% 62% at 50% 40%,#2B2263 0%,#1A1440 46%,#0E0B1E 100%);
@@ -1685,15 +1678,6 @@ button.savecard[disabled]{pointer-events:none}
 .tog{width:46px;height:27px;border-radius:99px;background:var(--raise2);position:relative;flex:none;transition:background .18s}
 .tog i{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:left .18s}
 .tog.on{background:var(--good)} .tog.on i{left:22px}
-.setfield{display:flex;flex-direction:column;gap:7px;background:var(--raise);border-radius:15px;padding:13px 14px}
-.setfield label{font-size:12px;font-weight:650;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
-.setfield input{background:var(--raise2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;
-  font-size:13.5px;color:var(--text);outline:none}
-.setfield input:focus{border-color:var(--accent2)}
-.hint2{font-size:11.5px;color:var(--faint);line-height:1.6}
-.hint2 code{display:inline-block;margin-top:5px;background:var(--raise2);padding:3px 7px;border-radius:6px;
-  color:var(--accent2);font-size:11px;overflow-wrap:anywhere;max-width:100%}
-.setfield input{min-width:0}
 /* Privacy / Support / Terms at the foot of the sheet. Anchors inherit colour everywhere
    else in the app (they are styled rows), so these get the accent explicitly. */
 .legal{display:flex;justify-content:center;align-items:center;gap:8px;font-size:12px;color:var(--faint);margin-top:2px}
@@ -1890,10 +1874,10 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
    margin: the same box on screen, a 44 px tap. */
 .form input{min-height:44px;margin:-2.5px 0}
 .search input{min-height:44px;margin:-11px 0}
-:where(.legal a,#pfsp,#spbtn,#sretry,.vbtn){position:relative}
+:where(.legal a,#pfsp,#sretry,.vbtn){position:relative}
 .legal a::before{content:"";position:absolute;inset:-13px -4px}
 #pfsp::before{content:"";position:absolute;inset:-12px -4px}
-#spbtn::before,#sretry::before{content:"";position:absolute;inset:-3px 0}
+#sretry::before{content:"";position:absolute;inset:-3px 0}
 .vbtn::before{content:"";position:absolute;inset:-1px 0}
 .chipf::before{inset:-7px -3px}
 
@@ -1911,7 +1895,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 <script>/* SHARE FIRST PAINT, first frame (Konnor 2026-10-03): a page opened by a share starts on the
    scanning screen, not Home. Boot below confirms it (shareFirstPaint) or puts Home back. */
 (function(){try{var q=location.search,a=document.getElementById('app');
-  if((/[?&](url|text|title)=/.test(q)&&!/[?&]code=/.test(q))||sessionStorage.getItem('addify-pending')) a.setAttribute('data-state','scanning');}catch(e){}})();</script>
+  if(/[?&](url|text|title)=/.test(q)||sessionStorage.getItem('addify-pending')) a.setAttribute('data-state','scanning');}catch(e){}})();</script>
 
   <!-- ============ HOME ============ -->
   <section class="screen" id="s-home">
@@ -1978,7 +1962,6 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
       <input id="sq" type="search" enterkeyhint="search" spellcheck="false" autocapitalize="off"
              placeholder="a lyric, a vibe, or a creator" aria-label="Search by lyric, vibe or creator">
       <button type="button" class="sclear" id="sclear" hidden aria-label="Clear search"></button>
-      <!-- REVIEW 2026-09-29 (App Review 2.1): no "coming soon" hum mic until hum search exists -->
     </form>
     <div id="sbody" aria-live="polite"></div>
   </section>
@@ -2088,27 +2071,10 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
         <div><b>Auto-save</b><span>Every match goes to your playlist</span></div>
         <button class="tog" id="togauto" role="switch" aria-checked="false" aria-label="Auto-save"><i></i></button>
       </div>
-      <div class="setrow">
-        <div><b id="splabel">Spotify</b><span id="spsub">Not connected</span></div>
-        <button class="go" id="spbtn">Connect</button>
-      </div>
-      <div class="setfield">
-        <label for="spid">Spotify Client ID</label>
-        <input id="spid" type="text" placeholder="paste from developer.spotify.com" spellcheck="false">
-        <span class="hint2">Create an app at developer.spotify.com/dashboard and add this exact redirect URI:<br><code id="rdu"></code></span>
-      </div>
       <!-- hrefs are set in paintSheet() from ENGINE, not hard-coded: the GitHub Pages copy of
            this page has no /privacy of its own and has to point at the engine host. -->
       <div class="legal"><a id="lgpriv" target="_blank" rel="noopener">Privacy</a><span>&middot;</span><a id="lgsup" target="_blank" rel="noopener">Support</a><span>&middot;</span><a id="lgterms" target="_blank" rel="noopener">Terms</a></div>
     </div>
-</div>
-<div class="sheet keep" id="keep" hidden>
-  <div class="sheetcard keepcard" role="dialog" aria-modal="true" aria-labelledby="keeph">
-    <h2 id="keeph"></h2>
-    <p id="keepp"></p>
-    <button class="kbtn" id="keepyes"></button>
-    <button class="klink" id="keepno"></button>
-  </div>
 </div>
 
 
@@ -2138,36 +2104,6 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 <script>
 /* ---------- icons ---------- */
 var IC={
-  /* MESSAGES AND MAIL, MEASURED OFF KONNOR'S PHOTOS (219, 225, 286, 364), not drawn from memory.
-     Both glyphs fill the whole 44px tile (viewBox 0 0 100 100 = tile percent) so every
-     proportion below is the one read off the real icon, and the tile gradients on the .ap
-     spans in step 3 are sampled from the same photos.
-     Messages (photo 225): one plump bubble, ellipse centre 50/47.6, 73% of the tile wide and
-     60% tall, short curled tail at the lower left (tip 17/78). Fill fades from white at the
-     top to pale mint at the bottom, with a thin light rim. */
-  bubble:'<svg width="44" height="44" viewBox="0 0 100 100" aria-hidden="true"><defs>'+
-    '<linearGradient id="abG" x1="0" y1="17" x2="0" y2="79" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset=".27" stop-color="#F3FCF5"/><stop offset=".48" stop-color="#E1F8E4"/><stop offset=".64" stop-color="#CDF1D2"/><stop offset=".8" stop-color="#B2E9BE"/><stop offset="1" stop-color="#9DE5AF"/></linearGradient>'+
-    '<filter id="abS" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="1.2" stdDeviation="1.4" flood-color="#0C7A22" flood-opacity=".25"/></filter></defs>'+
-    '<path filter="url(#abS)" fill="url(#abG)" stroke="#fff" stroke-opacity=".5" stroke-width=".8" d="M32.9 74.3A36.4 30.2 0 1 0 19.47 64.05Q21.5 73 17.3 78.3Q25 78 32.9 74.3Z"/></svg>',
-  /* Mail (photos 219, 364; Konnor 20:33: "the top part of the logo is pure white and the left
-     bottom and right side is a different shade"). Envelope 75% of the tile wide, 52% tall,
-     centred with its top at 22.5% of the tile, rounded corners. A deep PURE WHITE flap from both top corners down to a rounded
-     point 2/3 of the way down (59% of the tile), the point rounded as wide as the real one. Under it, pale blue grey LEFT and RIGHT
-     faces (lighter at the top) and a slightly bluer BOTTOM face, split by thin white fold
-     highlights. A soft shadow under the flap, a white rim round the envelope and a faint
-     drop shadow onto the blue. No horizontal seam anywhere. */
-  mail:'<svg width="44" height="44" viewBox="0 0 100 100" aria-hidden="true"><defs>'+
-    '<linearGradient id="amB" x1="0" y1="24" x2="0" y2="76" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#EAF3FE"/><stop offset=".22" stop-color="#E0EDFC"/><stop offset=".375" stop-color="#D5E7FD"/><stop offset=".53" stop-color="#C3DCFC"/><stop offset=".68" stop-color="#ACCEFA"/><stop offset=".76" stop-color="#9DC3F7"/><stop offset="1" stop-color="#8FB8EF"/></linearGradient>'+
-    '<linearGradient id="amF" x1="0" y1="38" x2="0" y2="76" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#DCEBFC"/><stop offset=".67" stop-color="#AFCCF2"/><stop offset=".78" stop-color="#9CBFF0"/><stop offset=".88" stop-color="#89B4F2"/><stop offset="1" stop-color="#8AB4F1"/></linearGradient>'+
-    '<linearGradient id="amT" x1="0" y1="24" x2="0" y2="60" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F6F9FE"/></linearGradient>'+
-    '<filter id="amS" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="1.6" stdDeviation="1.6" flood-color="#0A3C9E" flood-opacity=".35"/></filter>'+
-    '<filter id="amFS" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="1.4" stdDeviation="1.2" flood-color="#3A6FB8" flood-opacity=".3"/></filter>'+
-    '<clipPath id="amC"><rect x="12.5" y="24" width="75" height="52" rx="5.5"/></clipPath></defs><g transform="translate(0 -1.5)">'+
-    '<rect filter="url(#amS)" x="12.5" y="24" width="75" height="52" rx="5.5" fill="url(#amB)"/>'+
-    '<g clip-path="url(#amC)"><path d="M12.5 76 50 38.5 87.5 76Z" fill="url(#amF)"/>'+
-    '<path d="M13.6 75 38.5 50.1M86.4 75 61.5 50.1" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="1" stroke-linecap="round"/>'+
-    '<path filter="url(#amFS)" d="M12.5 24H87.5L57.5 55.2Q50 63 42.5 55.2Z" fill="url(#amT)"/></g>'+
-    '<rect x="12.5" y="24" width="75" height="52" rx="5.5" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.4"/></g></svg>',
   more:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18" cy="12" r="1.9"/></svg>',
   clock:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
   layers:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.5 8.5 4.5L12 12.5 3.5 8z"/><path d="m3.5 12.2 8.5 4.5 8.5-4.5M3.5 16.2l8.5 4.5 8.5-4.5"/></svg>',
@@ -2202,7 +2138,6 @@ var IC={
   apple:'<svg width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="amg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FB5C74"/><stop offset="1" stop-color="#FA233B"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.2" fill="url(#amg)"/><path d="M16.9 5.6 10.3 7.1a.8.8 0 0 0-.63.79v6.55a2.35 2.35 0 1 0 1.35 2.12V9.53l5.3-1.2v4.32a2.35 2.35 0 1 0 1.35 2.12V6.38a.8.8 0 0 0-.97-.78z" fill="#fff"/></svg>',
   soundcloud:'<svg width="24" height="24" viewBox="0 0 24 24"><g fill="#FF5500"><rect x="1.2" y="12.6" width="1.5" height="5.2" rx=".75"/><rect x="4" y="10.6" width="1.5" height="7.2" rx=".75"/><rect x="6.8" y="9" width="1.5" height="8.8" rx=".75"/><rect x="9.6" y="7.2" width="1.5" height="10.6" rx=".75"/><path d="M13 6.9c.72-.6 1.63-.95 2.63-.95a4.2 4.2 0 0 1 4.16 3.72A3.1 3.1 0 0 1 19.2 17.8h-6.1a.6.6 0 0 1-.6-.6V7.4c0-.2.09-.38.24-.5z"/></g></svg>',
   youtube:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.6 7.2a2.9 2.9 0 0 0-2.03-2.05C18.77 4.66 12 4.66 12 4.66s-6.77 0-8.57.49A2.9 2.9 0 0 0 1.4 7.2C.92 9 .92 12 .92 12s0 3 .48 4.8a2.9 2.9 0 0 0 2.03 2.05c1.8.49 8.57.49 8.57.49s6.77 0 8.57-.49a2.9 2.9 0 0 0 2.03-2.05c.48-1.8.48-4.8.48-4.8s0-3-.48-4.8z" fill="#FF0000"/><path d="M9.8 15.3 15.4 12 9.8 8.7z" fill="#fff"/></svg>',
-  shazam:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#0088FF"/><g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M9.4 15.4c-1.5-1.1-1.8-3.2-.7-4.7l2.2-3c1.1-1.5 3.2-1.8 4.7-.7"/><path d="M14.6 8.6c1.5 1.1 1.8 3.2.7 4.7l-2.2 3c-1.1 1.5-3.2 1.8-4.7.7"/></g></svg>',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.4 12 3.8l8 6.6V20a1 1 0 0 1-1 1h-4.6v-6h-4.8v6H5a1 1 0 0 1-1-1z"/></svg>',
   flame:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5c3.9 0 6.5-2.5 6.5-6.1 0-2.5-1.4-4.4-2.8-6-.5 1-1.3 1.9-2.2 2.3.3-2.9-1-6.4-3.6-8.2.1 2.3-.7 4-2 5.6-1.3 1.7-2.4 3.6-2.4 6.3 0 3.6 2.6 6.1 6.5 6.1z"/></svg>',
   rows:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h9.5"/></svg>',
@@ -2263,20 +2198,8 @@ function readPal(){var s=getComputedStyle(root); return {signal:s.getPropertyVal
 var pal=readPal();
 
 /* ---------- engine ---------- */
-var ENGINE=(function(){try{var q=new URLSearchParams(location.search).get('engine'); if(q) return q.replace(/\/+$/,'');}catch(e){}
+var ENGINE=(function(){
   if(location.protocol==='http:'||location.protocol==='https:') return ''; return 'http://127.0.0.1:8788';})();
-/* APPLYALL 2026-09-29 (build 3, App Review): THE LAUNCH PAGE HAS NO DEVELOPER TOOLS AND NO
-   SPOTIFY SIGN-IN. Spotify caps an app in development mode at 5 users, so a sign-in button
-   would fail for everyone else; "Open in Spotify" links need no sign-in and stay. The
-   Developer settings row and the Client ID field were in front of every user. No page-level
-   hidden path existed (the native long-press opens the native engine settings, which cannot
-   reach this sheet), so ?dev=1 on the page URL turns both back on for this device, like the
-   existing ?engine= override, and ?dev=0 turns them off. SP_SIGNIN follows DEV until Spotify
-   grants extended quota; then set it to true. */
-var DEV=(function(){try{var q=new URLSearchParams(location.search).get('dev');
-  if(q==='1') localStorage.setItem('addify-dev','on'); else if(q==='0') localStorage.removeItem('addify-dev');
-  return localStorage.getItem('addify-dev')==='on';}catch(e){return false;}})();
-var SP_SIGNIN=DEV;
 /* ONLY THE POSITIVE IS CACHED. A failed health check must never be sticky: the engine
    restarts often (any .py edit needs one), and a page that was open across a restart used
    to latch to engine_down forever and answer every later scan offline WITHOUT contacting
@@ -2478,6 +2401,21 @@ function kitStart(){kitStop(); if(!kitOK()) return '';
   for(var i=0;i<n;i++) kitWorker(s);
   return id;}
 function kitStop(){if(KIT) KIT.on=false; KIT=null;}
+/* SHAZAMKIT ATTRIBUTION. A song ShazamKit named is shown with a link to its Apple Music page.
+   The link comes from the result (appleMusicURL) or from this scan's own ShazamKit answers
+   (KIT_AM, emptied when a new scan starts) when one names the same song. Only an
+   https music.apple.com or itunes.apple.com address is used. */
+var KIT_AM=[];
+function amOK(u){u=String(u||''); return /^https:\/\/([a-z0-9-]+\.)*(music|itunes)\.apple\.com\//i.test(u)?u:'';}
+function amKey(s){return String(s||'').toLowerCase().replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
+function kitAMKeep(ans){if(!ans||!ans.matched||!ans.title) return;
+  var u=amOK(ans.appleMusicURL||ans.apple_music_url); if(u) KIT_AM.push({t:amKey(ans.title),a:amKey(ans.artist),u:u});}
+function appleMusicURL(d){if(!d) return '';
+  var u=amOK(d.appleMusicURL||d.apple_music_url); if(u) return u;
+  var t=amKey(d.base_song), a=amKey(d.base_artist); if(!t) return '';
+  for(var i=0;i<KIT_AM.length;i++){var k=KIT_AM[i];
+    if(k.t===t&&(!a||!k.a||k.a.split(' ')[0]===a.split(' ')[0])) return k.u;}
+  return '';}
 function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
   fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
   fr.onerror=function(){no(fr.error);}; fr.readAsDataURL(blob);});}
@@ -2497,6 +2435,7 @@ function kitWorker(s){if(!s.on) return;
         // later probe would be refused too: stop offering them so the engine gives up on
         // this phone after one probe, and let run() move the page once /base answers.
         KIT_MOVED=true; s.on=false;}
+      try{kitAMKeep(ans);}catch(e){}                    // SHAZAMKIT ATTRIBUTION: keep its Apple Music link
       if(ans&&(ans.matched||ans.reason==='no_match')) s.good=true;
       else if(ans&&ans.domain!=='page'&&++s.errs>=2&&!s.good){
         // ShazamKit itself refused twice and never once answered: this build cannot match
@@ -4852,9 +4791,12 @@ function renderResult(d,partial){
   if(_cov && !/^https:\/\//i.test(_cov)) _cov='';
   var artHtml=_cov?'<a class="artlink" href="'+esc(_cov)+'" target="_blank" rel="noopener" aria-label="'+
     esc(ex?'Open this version':'Open this song')+'">'+art+'</a>':art;
+  var _am=appleMusicURL(d);   // SHAZAMKIT ATTRIBUTION: a song ShazamKit named links to its Apple Music page
   var hero='<div class="hero"><span class="artwrap">'+artHtml+corner+'</span>'+
     '<h2 class="rtitle">'+esc(_htitle)+'</h2>'+
-    '<p class="rartist">'+esc(_hartist)+'</p>'+badge+'</div>';
+    '<p class="rartist">'+esc(_hartist)+'</p>'+
+    (_am?'<p class="rartist"><a class="playerout" href="'+esc(_am)+'" target="_blank" rel="noopener">Open in Apple Music</a></p>':'')+
+    badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
   // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of
   // it was ever rendered, so a two-song clip displayed as one song and looked like a
@@ -5302,53 +5244,22 @@ function paintRecCanvas(){var c=document.getElementById('reccanvas'); if(!c||!W.
   c.width=w*dpr; c.height=h*dpr; var g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
   ribbon(g,w,h,W.amp,W.lo,W.hi,W.centroid,bassAmt,0.96);}
 
-/* ==================== SPOTIFY: sign in + write the playlist ====================
-   Authorization Code with PKCE. No client secret is used or stored: a secret in a page
-   anyone can View Source on is not a secret, and PKCE is exactly the flow Spotify
-   documents for public clients. The verifier is generated per attempt, the challenge is
-   its SHA-256, and only the verifier can redeem the code - so intercepting the redirect
-   alone is useless.
-
-   SETUP (one time, needs Roham's own Spotify account - I cannot create the app for him):
-     1. developer.spotify.com/dashboard -> Create app
-     2. Add redirect URIs, exactly, including the trailing slash:
-          http://127.0.0.1:8788/       and, for the TV,  http://192.168.0.13:8788/
-        Spotify permits plain http ONLY for loopback/private addresses like these.
-     3. Copy the Client ID into Addify's settings. That is all that is needed.
-   Scopes: playlist-modify-private/public to write, playlist-read-private to find an
-   existing "Found with Addify" instead of making duplicates, ugc-image-upload for the
-   branded cover. */
+/* ==================== SPOTIFY: write the playlist ====================
+   For an account that is already connected: its access and refresh tokens sit in
+   localStorage. No sign-in here. This only refreshes the token, writes the playlist and
+   signs out. No client secret is used or stored. */
 var SP = (function(){
   var LS={id:'addify-sp-id', tok:'addify-sp-tok', ref:'addify-sp-ref',
-          exp:'addify-sp-exp', ver:'addify-sp-ver', pl:'addify-sp-playlist'};
-  var SCOPES='playlist-modify-private playlist-modify-public playlist-read-private ugc-image-upload';
+          exp:'addify-sp-exp', pl:'addify-sp-playlist'};
   function g(k){try{return localStorage.getItem(k);}catch(e){return null;}}
   function set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
-  // Addify's own Spotify app (dashboard: developer.spotify.com/dashboard). This is a
-  // PUBLIC identifier, not a credential - the PKCE flow exists precisely so a browser
-  // client needs no secret, and Spotify shows this ID to anyone who starts a login. The
-  // settings field can still override it, which is what you want for testing against a
-  // different app.
+  // Addify's own Spotify app. This is a PUBLIC identifier, not a credential. An ID saved
+  // on this device earlier still wins, since a refresh token only works with the client
+  // ID that issued it.
   var DEFAULT_CLIENT_ID='41320c87000f433394ec8a500c153301';
   function clientId(){return g(LS.id)||DEFAULT_CLIENT_ID;}
-  function redirect(){return location.origin+'/';}
   function connected(){return !!g(LS.tok);}
 
-  function rand(n){var a=new Uint8Array(n); crypto.getRandomValues(a);
-    return Array.from(a).map(function(x){return ('0'+(x%36).toString(36)).slice(-1);}).join('');}
-  function b64url(buf){var b=String.fromCharCode.apply(null,new Uint8Array(buf));
-    return btoa(b).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-
-  function login(){
-    var id=clientId();
-    if(!id){alert('Add your Spotify Client ID in settings first.');return;}
-    var v=rand(64); set(LS.ver,v);
-    crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)).then(function(h){
-      location.href='https://accounts.spotify.com/authorize?'+new URLSearchParams({
-        client_id:id, response_type:'code', redirect_uri:redirect(),
-        code_challenge_method:'S256', code_challenge:b64url(h), scope:SCOPES}).toString();
-    });
-  }
   function logout(){[LS.tok,LS.ref,LS.exp,LS.pl].forEach(function(k){set(k,null);});}
 
   function token(body){
@@ -5361,16 +5272,6 @@ var SP = (function(){
         if(j.refresh_token) set(LS.ref,j.refresh_token);
         set(LS.exp, String(Date.now()+((j.expires_in||3600)-60)*1000));
         return j.access_token;});
-  }
-  /* Runs on page load: Spotify sends the user back here with ?code=. */
-  function finishLogin(){
-    var q=new URLSearchParams(location.search), code=q.get('code');
-    if(!code) return Promise.resolve(false);
-    history.replaceState({},'',location.pathname);
-    return token({client_id:clientId(), grant_type:'authorization_code', code:code,
-                  redirect_uri:redirect(), code_verifier:g(LS.ver)||''})
-      .then(function(){return true;})
-      .catch(function(e){console.warn('spotify login failed',e); return false;});
   }
   function fresh(){
     if(!g(LS.tok)) return Promise.reject(new Error('not connected'));
@@ -5449,13 +5350,12 @@ var SP = (function(){
     return api('/users/'+me.id+'/playlists',{method:'POST',
       body:JSON.stringify({name:name,public:false,description:'made with Addify'})});})
     .then(function(p){return {id:p.id,name:p.name,n:0,img:''};});}
-  return {login:login, logout:logout, connected:connected, finishLogin:finishLogin,
+  return {logout:logout, connected:connected,
           add:add, count:count, clientId:clientId,
           who:who, fetchWho:fetchWho, playlistUrl:playlistUrl,
           lists:lists, addTo:addTo, create:create,
           forgetPlaylist:function(){set(LS.pl,null); set('addify-sp-plname',null);},
-          defaultId:function(){return g(LS.pl);},
-          setClientId:function(v){set(LS.id,(v||'').trim());}};
+          defaultId:function(){return g(LS.pl);}};
 })();
 
 /* Writes the match straight into the local "Found with Addify" list. Respects the
@@ -5596,19 +5496,9 @@ var FREE_SCANS=5;
 var STORE=!!(window.ADDIFY_NATIVE&&window.ADDIFY_NATIVE.store&&window.webkit&&
   window.webkit.messageHandlers&&window.webkit.messageHandlers.addifyStore);
 var PAYWALL_ON=STORE, PRO=false;
-/* MASTER 2026-10-01 (Roham): owners paste their code into the link box once; that phone gets
-   unlimited scans for good. Only the SHA-256 of the code is in this page. */
-var MASTER_H='bf95d3d2df2e9ea189aeaae8eb6709bb6dc125332ed9fa0d47548078d33fc8c9';
-var MASTER=(function(){try{return localStorage.getItem('addify-master')===MASTER_H;}catch(e){return false;}})();
-if(MASTER) PRO=true;
-function masterTry(code){try{crypto.subtle.digest('SHA-256',new TextEncoder().encode(code)).then(function(b){
-  var h=[].map.call(new Uint8Array(b),function(x){return ('0'+x.toString(16)).slice(-2);}).join('');
-  if(h===MASTER_H){try{localStorage.setItem('addify-master',h);}catch(e){} MASTER=true; PRO=true; paintPill();
-    try{renderProf();}catch(e){} alert('Master unlocked: unlimited scans on this phone.');}
-  else alert('That code is not valid.');});}catch(e){alert('Could not check the code.');}}
 function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.postMessage(Object.assign({op:op},extra||{}));}
 function storeRefresh(){if(!STORE) return Promise.resolve(false);
-  return storeCall('status').then(function(r){PRO=!!(r&&r.pro)||MASTER; paintPill(); return PRO;},function(){return PRO;});}
+  return storeCall('status').then(function(r){PRO=!!(r&&r.pro); paintPill(); return PRO;},function(){return PRO;});}
 function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
@@ -5645,7 +5535,7 @@ function openPaywall(){
     '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button>'+
     '<b class="pwh" id="pwh">Addify Plus</b>'+
     '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans. ':'')+
-      'Unlimited scans to find the exact version of any song. Scans that find nothing never count.</p>'+
+      'Unlimited scans. Addify names the song, finds the closest version and tells you when it isn\'t sure. Scans that find nothing never count.</p>'+
     '<div class="pwb" id="pwb"><span class="pwm">Loading prices...</span></div>'+
     '<span class="pwm" id="pwm" hidden></span>'+
     '<button class="pwr" id="pwr">Restore purchases</button>'+
@@ -5656,19 +5546,29 @@ function openPaywall(){
   ov.hidden=false;
   document.getElementById('pwx').onclick=function(){ov.hidden=true;};
   var busyBuy=false;
-  storeCall('products').then(function(ps){
-    var b=document.getElementById('pwb'); if(!b) return;
-    if(!ps||!ps.length){b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>'; return;}
-    b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+('Addify Plus'+(q.period==='year'?' Yearly':q.period==='month'?' Monthly':''))+
-      '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
-    [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
-      if(busyBuy) return; busyBuy=true; pwMsg('');
-      storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
-        if(r&&r.pro){PRO=true; ov.hidden=true; paintPill(); try{renderProf();}catch(e){} return;}
-        var e=(r&&r.error)||''; if(e==='pending') pwMsg('Your purchase is waiting for approval.');
-        else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
-      },function(){busyBuy=false; pwMsg('The purchase did not go through. Try again.');});};});
-  },function(){var b=document.getElementById('pwb'); if(b) b.innerHTML='<span class="pwm">Subscriptions are not available right now. Try again later.</span>';});
+  // No products, a refusal or a plan without a price: say so and offer Try again, which asks
+  // StoreKit again. While it asks, the box reads "Loading prices...", never a bare "/ month".
+  var noPlans=function(){var b=document.getElementById('pwb'); if(!b) return;
+    b.innerHTML='<span class="pwm">Couldn\'t load prices right now.</span><button class="cta" id="pwretry">Try again</button>';
+    document.getElementById('pwretry').onclick=loadPlans;};
+  var loadPlans=function(){
+    var b0=document.getElementById('pwb'); if(b0) b0.innerHTML='<span class="pwm">Loading prices...</span>';
+    storeCall('products').then(function(ps){
+      var b=document.getElementById('pwb'); if(!b) return;
+      ps=Array.isArray(ps)?ps.filter(function(q){return q&&q.id&&q.price;}):[];
+      if(!ps.length){noPlans(); return;}
+      // the plan's name is StoreKit's display name, so the sheet and Apple's purchase sheet agree
+      b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+esc(q.name||(q.period==='year'?'Yearly':q.period==='month'?'Monthly':''))+
+        '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
+      [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
+        if(busyBuy) return; busyBuy=true; pwMsg('');
+        storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
+          if(r&&r.pro){PRO=true; ov.hidden=true; paintPill(); try{renderProf();}catch(e){} return;}
+          var e=(r&&r.error)||''; if(e==='pending') pwMsg('Your purchase is waiting for approval.');
+          else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
+        },function(){busyBuy=false; pwMsg('The purchase did not go through. Try again.');});};});
+    },noPlans);};
+  loadPlans();
   document.getElementById('pwr').onclick=function(){pwMsg('Checking your Apple ID...');
     storeCall('restore').then(function(r){PRO=!!(r&&r.pro); paintPill();
       if(PRO){ov.hidden=true; try{renderProf();}catch(e){}} else pwMsg('No active subscription found on this Apple ID.');},
@@ -5688,8 +5588,18 @@ function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
 function dayOf(ts){if(!ts) return 'Earlier'; var d=new Date(ts), n=new Date();
   var d0=new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime();
   if(ts>=d0) return 'Today'; if(ts>=d0-864e5) return 'Yesterday'; return 'Earlier';}
+/* Export finds. Inside the iOS app a download goes nowhere, so the list goes to the native
+   side (the exportFinds handler), which shows the share sheet. An app build without that
+   handler but with the song share bridge gets the same text through it. A plain browser
+   keeps the download. */
 function exportFinds(){var a=loadCrate(); if(!a.length) return;
   var txt=a.map(function(x){return x.song+' - '+(x.artist||'')+(x.url?'  '+x.url:'');}).join('\n');
+  var H=window.webkit&&window.webkit.messageHandlers, N=window.ADDIFY_NATIVE;
+  try{
+    if(H&&H.exportFinds){var r=H.exportFinds.postMessage({filename:'addify.txt', mimeType:'text/plain', text:txt});
+      if(r&&r.catch) r.catch(function(){}); return;}
+    if(N&&N.share&&H&&H.addify){H.addify.postMessage({type:'share', url:'', text:txt, title:'Addify finds'}); return;}
+  }catch(e){}
   var u=URL.createObjectURL(new Blob([txt],{type:'text/plain'})); var el=document.createElement('a');
   el.href=u; el.download='addify.txt'; el.click(); URL.revokeObjectURL(u);}
 if(document.getElementById('export')) document.getElementById('export').onclick=exportFinds;
@@ -5799,7 +5709,10 @@ function wireTrows(box){
       add.classList.add('did'); add.innerHTML=IC.tick;};});}
 var trendFilter='All';
 function renderTrend(){
-  var kinds=['All','Slowed','Sped up','Remix'];
+  // a filter chip shows only when at least one row carries its tag: no empty tabs
+  var kinds=['All','Slowed','Sped up','Remix'].filter(function(k){
+    return k==='All'||TREND.rows.some(function(r){return trendTag(r)===k.toLowerCase();});});
+  if(kinds.indexOf(trendFilter)<0) trendFilter='All';
   document.getElementById('trendchips').innerHTML=kinds.map(function(k){
     return '<button class="chipf'+(trendFilter===k?' on':'')+'" data-k="'+k+'">'+k+'</button>';}).join('');
   Array.prototype.forEach.call(document.querySelectorAll('#trendchips .chipf'),function(c){
@@ -6046,7 +5959,7 @@ function sRun(q,mode){
 (function(){
   var f=document.getElementById('sform'), inp=document.getElementById('sq');
   document.querySelector('#sform .sico').innerHTML=IC.search;
-  var _smic=document.getElementById('smic'); if(_smic) _smic.innerHTML=IC.mic;   // REVIEW 2026-09-29: absent for 1.0
+  var _smic=document.getElementById('smic'); if(_smic) _smic.innerHTML=IC.mic;
   document.getElementById('sclear').innerHTML=IC.x;
   f.onsubmit=function(e){e.preventDefault(); inp.blur(); sRun(inp.value,'auto');};
   inp.oninput=function(){document.getElementById('sclear').hidden=!inp.value;
@@ -6057,51 +5970,29 @@ function sRun(q,mode){
 })();
 
 /* ---------- profile ---------- */
-/* Paid plan + cancel save offer (Konnor). Hitting Cancel plan first offers a free month;
-   the offer is made once, after that Cancel plan cancels straight away. */
 function planOn(){return PAYWALL_ON&&PRO;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
-function keepShown(h,p,yes,no){document.getElementById('keeph').textContent=h;
-  document.getElementById('keepp').textContent=p;
-  var y=document.getElementById('keepyes'), n=document.getElementById('keepno');
-  y.textContent=yes; n.hidden=!no; if(no) n.textContent=no;
-  document.getElementById('keep').hidden=false;}
-function closeKeep(){document.getElementById('keep').hidden=true; renderProf();}
-function planCancelled(){try{localStorage.setItem('addify-plan','off');}catch(e){}
-  keepShown('Plan cancelled','You are back on the free plan.','Done');
-  document.getElementById('keepyes').onclick=closeKeep;}
-function openKeep(){
-  if(localStorage.getItem('addify-freemonth')){planCancelled(); return;}
-  keepShown("Don't cancel and get 1 month for free",'Stay and your next month is on us.',
-    'Get 1 month free','Continue cancelling');
-  document.getElementById('keepyes').onclick=function(){
-    try{localStorage.setItem('addify-freemonth',String(Date.now()));}catch(e){}
-    keepShown('Your free month is added','Thanks for staying. Next month is on us.','Done');
-    this.onclick=closeKeep;};
-  document.getElementById('keepno').onclick=planCancelled;}
 function monthlyOn(){try{return localStorage.getItem('addify-monthly')==='on';}catch(e){return false;}}
 function renderProf(){
   var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
   var name=SP.who()||'You';
   b.innerHTML=
     '<div class="avarow"><span class="ava">'+esc(name.charAt(0).toUpperCase())+'</span>'+
-      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Addify Plus'+(localStorage.getItem('addify-freemonth')?' · free month added':''):'Free · '+left+' scan'+(left===1?'':'s')+' left')+'</span></div></div>'+
+      '<div><b>'+esc(name)+'</b><span>'+(!PAYWALL_ON?songs(loadCrate().length)+' in your Finds':planOn()?'Addify Plus':'Free · '+left+' scan'+(left===1?'':'s')+' left')+'</span></div></div>'+
     (PAYWALL_ON?'<div class="upcard"'+(planOn()?' hidden':'')+'><div class="ut"><b>Get Addify Plus</b><span>Unlimited scans</span></div>'+
       '<button class="upbtn" id="upbtn">Upgrade</button></div>':'')+
-    // APPLYALL 2026-09-29 (build 3, App Review): no "iOS app" placeholder rows. The Spotify row
-    // shows with SP_SIGNIN, or for someone already signed in, who can still sign out.
-    ((SP_SIGNIN||SP.connected())?'<div class="sect">Connected accounts</div><div class="setlist">'+
+    // The Spotify row shows only for an account that is already connected, which can still sign out.
+    (SP.connected()?'<div class="sect">Connected accounts</div><div class="setlist">'+
       '<div class="setrow"><span class="si">'+IC.spotify+'</span><span class="st">Spotify</span>'+
-        '<button class="sv'+(SP.connected()?' ok':'')+'" id="pfsp">'+(SP.connected()?'Connected<span class="itick">'+IC.tick+'</span>':'Connect')+'</button></div></div>':'')+
+        '<button class="sv ok" id="pfsp">Connected<span class="itick">'+IC.tick+'</span></button></div></div>':'')+
     '<div class="sect">Scanning</div><div class="setlist">'+
       // ONBOARDING v3 2026-09-30 (Konnor): the way back to the share sheet steps, screen 2 replayed
       '<button class="setrow" id="pfhowto"><span class="st">How to add Addify</span><span class="go2">'+IC.rchev+'</span></button>'+
       '<div class="setrow"><span class="st">Auto-save to playlist</span><button class="sw'+(autoOn()?' on':'')+'" id="pfauto" role="switch" aria-checked="'+autoOn()+'" aria-label="Auto-save to playlist"></button></div>'+
-      // REVIEW 2026-09-29 (App Review 2.1): Monthly playlists only names Spotify playlists, so it shows with Spotify
-      ((SP_SIGNIN||SP.connected())?'<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>':'')+
+      // Monthly playlists only names Spotify playlists, so it shows with Spotify
+      (SP.connected()?'<div class="setrow"><span class="st">Monthly playlists</span><button class="sw'+(monthlyOn()?' on':'')+'" id="pfmon" role="switch" aria-checked="'+monthlyOn()+'" aria-label="Monthly playlists"></button></div>':'')+
       '</div>'+   // APPLYALL 2026-09-29 (build 3): the "Notifications / iOS app" placeholder row is gone
     '<div class="sect">Manage</div><div class="setlist">'+
-      '<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>'+
-      (DEV?'<button class="setrow" id="pfdev"><span class="si">'+IC.gear+'</span><span class="st">Developer settings</span><span class="go2">'+IC.rchev+'</span></button>':'')+   // APPLYALL 2026-09-29 (build 3)
+      (loadCrate().length?'<button class="setrow" id="pfexp"><span class="si">'+IC.down+'</span><span class="st">Export finds</span><span class="go2">'+IC.rchev+'</span></button>':'')+   // nothing to export: no row
       '<button class="setrow" id="pfclear"><span class="si">'+IC.x+'</span><span class="st">Clear finds</span><span class="go2">'+IC.rchev+'</span></button>'+
       (planOn()?'<button class="setrow" id="pfcancel"><span class="si">'+IC.x+'</span><span class="st">Manage subscription</span><span class="go2">'+IC.rchev+'</span></button>':'')+
       (SP.connected()?'<button class="setrow" id="pfout"><span class="st">Sign out of Spotify</span></button>':'')+
@@ -6111,21 +6002,18 @@ function renderProf(){
   var _upbtn=document.getElementById('upbtn');   // PAYWALL 2026-09-29: absent while PAYWALL_ON is false
   if(_upbtn) _upbtn.onclick=openPaywall;
   var _pfsp=document.getElementById('pfsp');   // APPLYALL 2026-09-29 (build 3): the row may be off
-  if(_pfsp) _pfsp.onclick=function(){
-    if(!SP.connected()){SP.login();} else nav('profile');};
+  if(_pfsp) _pfsp.onclick=function(){nav('profile');};
   document.getElementById('pfauto').onclick=function(){
     try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} renderProf();};
-  var _pfmon=document.getElementById('pfmon');   // REVIEW 2026-09-29: the row may be off
+  var _pfmon=document.getElementById('pfmon');   // the row may be off
   if(_pfmon) _pfmon.onclick=function(){
     try{localStorage.setItem('addify-monthly', monthlyOn()?'off':'on');}catch(e){}
     SP.forgetPlaylist(); renderProf();};
-  document.getElementById('pfexp').onclick=exportFinds;
+  var _pfexp=document.getElementById('pfexp'); if(_pfexp) _pfexp.onclick=exportFinds;
   var _pfh=document.getElementById('pfhowto'); if(_pfh) _pfh.onclick=function(){openOnb(1,'replay');};   // ONBOARDING v3
-  var _pfdev=document.getElementById('pfdev'); if(_pfdev) _pfdev.onclick=openSheet;   // APPLYALL 2026-09-29 (build 3)
   document.getElementById('pfclear').onclick=function(){
     if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
-  // Review wants privacy + support reachable from inside the app, next to the deletion
-  // path, not buried behind Developer settings. Same engine-resolved URLs as the sheet.
+  // Privacy and support sit next to the deletion path. Same engine-resolved URLs as the sheet.
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
   var pc=document.getElementById('pfcancel');
@@ -6146,7 +6034,7 @@ var busy=false, urlEl=document.getElementById('url');
    they just backed out of - which is exactly why "back does nothing": it worked, then the
    finishing hunt yanked them back. run() and sendListen() clear it when a new scan begins. */
 var leftScan=false;
-document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); run(urlEl.value);});
+document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); onbQuiet=true; try{run(urlEl.value);}finally{onbQuiet=false;}});   // typed or pasted by hand: never a share
 urlEl.addEventListener('focus',function(){document.getElementById('form').classList.add('focus');});
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
 function showErr(m){var e=document.getElementById('err'); e.hidden=false; e.textContent=m;
@@ -6162,14 +6050,16 @@ function showErr(m){var e=document.getElementById('err'); e.hidden=false; e.text
    The clipboard path is not lost, it moves to the paste field, where tapping a control
    labelled "paste" is what the user asked for and the OS prompt reads as expected. */
 document.getElementById('go').onclick=function(){
-  if(urlEl.value.trim()) return run(urlEl.value);
+  if(urlEl.value.trim()){onbQuiet=true; try{return run(urlEl.value);}finally{onbQuiet=false;}}
   startListen();};
 /* Explicit paste, on the field itself - here the OS prompt is the point, not a surprise. */
 var pasteBtn=document.getElementById('pastebtn');
 if(pasteBtn) pasteBtn.onclick=function(){
   if(!(navigator.clipboard&&navigator.clipboard.readText)){urlEl.focus();return;}
   navigator.clipboard.readText().then(function(t){
-    if(parseLink(t).host){urlEl.value=t; syncFormAction(); run(t);}
+    // onbQuiet: this run() fires from the clipboard promise after the OS Paste callout, which
+    // is not a page event, so onbNoteRun would take it for a share-sheet arrival
+    if(parseLink(t).host){urlEl.value=t; syncFormAction(); onbQuiet=true; try{run(t);}finally{onbQuiet=false;}}
     else {urlEl.focus(); showErr('No TikTok or Instagram link on the clipboard.');}
   }).catch(function(){urlEl.focus();});};
 
@@ -6210,12 +6100,12 @@ var curURL='';
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
-function run(raw){if(busy) return; if(/^\s*addify-master-/i.test(raw||'')){masterTry(String(raw).trim()); return;}
-  if(/^\s*addify-preview/i.test(raw||'')&&previewCode(raw)) return;   // NEWFLOW: owners preview Konnor's new screens
+function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
     if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){openPaywall(); return;}} var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
+  KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
   if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
@@ -6597,15 +6487,6 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
 function paintSheet(){
   document.getElementById('togauto').classList.toggle('on', autoOn());
-  document.getElementById('spid').value=SP.clientId();
-  document.getElementById('rdu').textContent=location.origin+'/';
-  var on=SP.connected();
-  document.getElementById('spsub').textContent=on?'Connected · saving to Found with Addify':'Not connected';
-  document.getElementById('spbtn').textContent=on?'Disconnect':'Connect';
-  // APPLYALL 2026-09-29 (build 3, App Review): the Spotify row and the Client ID field are
-  // developer tools. A signed-in tester still gets Disconnect.
-  document.getElementById('spbtn').parentNode.hidden=!(SP_SIGNIN||on);
-  document.getElementById('spid').parentNode.hidden=!DEV;
   document.getElementById('togauto').setAttribute('aria-checked',String(autoOn()));
   document.getElementById('lgpriv').href=legalURL('privacy');
   document.getElementById('lgsup').href=legalURL('support');
@@ -6910,9 +6791,6 @@ document.getElementById('sheetx').onclick=function(){document.getElementById('sh
 document.getElementById('sheet').onclick=function(e){if(e.target.id==='sheet') e.target.hidden=true;};
 document.getElementById('togauto').onclick=function(){
   try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} paintSheet();};
-document.getElementById('spid').onchange=function(){SP.setClientId(this.value); paintSheet();};
-document.getElementById('spbtn').onclick=function(){
-  if(SP.connected()){SP.logout(); paintSheet();} else {SP.setClientId(document.getElementById('spid').value); SP.login();}};
 
 /* ---------- nav ---------- */
 function goHome(){nav('idle'); try{if(PW_DUE&&outOfScans()){PW_DUE=false; setTimeout(openPaywall,450);}}catch(e){} try{if(ONE_LEFT_DUE) setTimeout(oneLeftShow,450);}catch(e){} endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
@@ -7020,6 +6898,7 @@ function cleanupListen(){
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
 function sendListen(blob){
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
+  KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   // APPLYALL 2026-09-29 (review finding 15): listen mode ends any running link scan first, so
   // the old /base answer or hunt budget cannot draw over the listen result
   endHunt(); huntEnd(); scanTok++; p1Busy=false;   // PROGRESS 2026-09-29: the hunt poll too
@@ -7090,7 +6969,7 @@ function openPicker(d){
         return SP.addTo(p.id,d.base_song,d.base_artist).then(function(){
           nw.querySelector('b').innerHTML=esc(p.name)+' · added'+'<span class="itick">'+IC.tick+'</span>';});
       }).catch(function(){nw.querySelector('b').textContent='Failed. Tap to retry';});};
-  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists. Reconnect Spotify in Profile.</div>';});}
+  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load your Spotify playlists.</div>';});}   // no sign-in on this page, so no "reconnect"
 document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
 
 /* ============================================================
@@ -7111,7 +6990,7 @@ function splash(){
    screen to resume on: the share sheet round trip can reload the page) · addify-onb3 (this
    person started the v3 flow) · addify-onb3-ok (the green card has been shown) ·
    addify-sharedin (a scan has arrived from the share sheet at least once). */
-var onbStep=0, onbMode='first', onbAway=0, onbQuiet=false, onbTapAt=0;
+var onbStep=0, onbMode='first', onbAway=0, onbQuiet=false, onbTapAt=0, onbTapOK=0;
 /* NOT MATCHED YET: Konnor wants a real iPhone screenshot (or a short screen recording) of
    each step in the final version. Name the files here, served next to crate.html (e.g.
    'onb-step1.jpg'), and they replace the icons on the three rows of screen 2. */
@@ -7197,7 +7076,11 @@ function paintOnb(){
   b.className='onbbody ob'+(onbStep+1);
   b.innerHTML=h;
   b.style.animation='none'; void b.offsetWidth; b.style.animation='';   // replay the fade per screen
-  var on=function(id,f){var el=document.getElementById(id); if(el) el.onclick=f;};
+  // One tap at a time: "Set it up" and the next screen's "Try it on a reel" sit in the same
+  // spot, so a quick double tap used to open TikTok. A tap within 450 ms of the last handled
+  // one is ignored.
+  var on=function(id,f){var el=document.getElementById(id);
+    if(el) el.onclick=function(){var n=Date.now(); if(n-onbTapOK<450) return; onbTapOK=n; f();};};
   on('ob-next',function(){onbGo(1);});
   on('ob-try',onbTryReel);
   on('ob-later',function(){if(onbMode==='replay'){onbClose(); return;} onbGo(2);});
@@ -7207,8 +7090,9 @@ function paintOnb(){
 /* WHICH SCANS CAME IN THROUGH THE SHARE SHEET. A share reaches the page one of two ways
    (ios/Addify/EngineBridge.swift deliver()): /share?url=... while the page loads (sharedLink()
    at boot), or the app calling run(link) straight into a page that is already up. Every
-   in-page run() starts from a tap (or the boot resume/queue, which set onbQuiet), so inside
-   the app a run() with no tap in the last 1.5 s is the share extension. */
+   in-page run() starts from a tap, or sets onbQuiet (the boot resume, the offline queue and
+   the Paste button, whose run() waits on the clipboard), so inside the app a run() with no
+   tap in the last 1.5 s is the share extension. */
 ['pointerdown','touchstart','keydown','click','submit'].forEach(function(t){
   document.addEventListener(t,function(){onbTapAt=Date.now();},true);});
 function onbNoteRun(){
@@ -7236,28 +7120,10 @@ document.addEventListener('visibilitychange',function(){
    ("Addify Onboarding Screens for Roham", 2026-10-05; addify-harness/konnor-docs/
    onboarding-screens.md). Value, Share to Addify, 5 free scans, then Home; "1 free scan
    left" once, after the 4th result; the payment sheet after the 5th.
-   OFF for everyone until App Review passes build 18: the reviewer is testing the v3
-   onboarding and the old paywall, and the review video shows those. Owners preview it now
-   by typing addify-preview in the link box (again turns it off); addify-preview-sheets
-   opens the two sheets. NEWFLOW_ALL=true turns it on for everyone with one deploy.
    ============================================================ */
 var NEWFLOW_ALL=false;
-/* APP REVIEW 2.5.19 (guidelines revised 2026-10-17: no hidden, dormant or undocumented features).
-   The owner preview of the new screens answers ONLY on a master (owner) phone. Anyone else who
-   types addify-preview gets the normal "not a link" path, and a device that turned the preview
-   on before this keeps the current screens. */
-var NEWFLOW=NEWFLOW_ALL||(MASTER&&(function(){try{return localStorage.getItem('addify-newflow')==='1';}catch(e){return false;}})());
+var NEWFLOW=NEWFLOW_ALL;
 var ONE_LEFT_DUE=false;
-function previewCode(raw){var c=String(raw||'').trim().toLowerCase();
-  if(c!=='addify-preview'&&c!=='addify-preview-sheets') return false;
-  if(!MASTER) return false;   // APP REVIEW 2.5.19: owner phones only (see NEWFLOW above)
-  urlEl.value='';
-  if(c==='addify-preview-sheets'){NEWFLOW=true; oneLeftShow(true); return true;}
-  var on=NEWFLOW_ALL||!(function(){try{return localStorage.getItem('addify-newflow')==='1';}catch(e){return false;}})();
-  try{if(on) localStorage.setItem('addify-newflow','1'); else localStorage.removeItem('addify-newflow');}catch(e){}
-  NEWFLOW=on;
-  if(on) openOnb4(0,'preview'); else alert('Preview off. The current screens are back.');
-  return true;}
 var O4I={
   arrow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
   check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 12.6l4.3 4.2L18.6 7.6"/></svg>',
@@ -7334,8 +7200,7 @@ function paintOnb4(){
         '<div class="o4big" aria-hidden="true">'+left+'</div><div class="o4lbl">FREE SCANS</div>'+
         '<div class="o4bars" aria-hidden="true">'+[0,1,2,3,4].map(function(i){return '<i class="'+(i<left?'on':'')+'"></i>';}).join('')+'</div>'+
         '<ul class="o4checks"><li><i>'+O4I.check+'</i>No card needed to start</li>'+
-          '<li><i>'+O4I.check+'</i>Exact-version matching on every edit</li>'+
-          '<li><i>'+O4I.check+'</i>Save finds to Spotify, open them in Apple Music</li></ul></div>'+
+          '<li><i>'+O4I.check+'</i>Exact-version matching on every edit</li></ul></div>'+
       '<div class="o4foot">'+cta('o4go','Start finding songs',false)+'<div class="o4note" id="o4price"></div></div>';
   }
   o.innerHTML='<div class="o4top">'+dots+'<button class="o4skip" id="o4skip">Skip</button></div><div class="o4body">'+h+'</div>';
@@ -7413,7 +7278,6 @@ function openPaywall5(){
     paint();});
   document.getElementById('p5go').onclick=function(){
     if(busyBuy||!plans) return; var q=plans[pick]; if(!q) return;
-    if(MASTER){msg('Preview on an owner phone: buying is switched off here.'); return;}
     busyBuy=true; msg('');
     storeCall('buy',{id:q.id}).then(function(r){busyBuy=false;
       if(r&&r.pro){PRO=true; close(); paintPill(); try{renderProf();}catch(e){} return;}
@@ -7421,7 +7285,7 @@ function openPaywall5(){
       else if(e&&e!=='cancelled') msg('The purchase did not go through. Try again.');
     },function(){busyBuy=false; msg('The purchase did not go through. Try again.');});};
   document.getElementById('p5r').onclick=function(){msg('Checking your Apple ID...');
-    storeCall('restore').then(function(r){PRO=!!(r&&r.pro)||MASTER; paintPill();
+    storeCall('restore').then(function(r){PRO=!!(r&&r.pro); paintPill();
       if(r&&r.pro){close(); try{renderProf();}catch(e){}} else msg('No active subscription found on this Apple ID.');},
       function(){msg('Could not reach the App Store. Try again.');});};}
 
@@ -7433,7 +7297,6 @@ function openPaywall5(){
    them tap again is the whole friction the share sheet exists to remove. */
 function sharedLink(){
   var q; try{q=new URLSearchParams(location.search);}catch(e){return null;}
-  if(q.get('code')) return null;                 // Spotify OAuth return, not a share
   var raw=q.get('url')||q.get('text')||q.get('title')||'';
   var m=String(raw).match(/https?:\/\/[^\s]+/);
   var cand=m?m[0]:raw;
@@ -7468,10 +7331,8 @@ if(_shared){
   shareFirstPaint(_shared);
   setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
 } else splash();
-SP.finishLogin().then(function(ok){
-  if(ok) SP.fetchWho().then(function(){paintHome();});
+Promise.resolve().then(function(){
   onbSet('addify-onb-return',null);                   // ONBOARDING v3: the Spotify step is gone
-  if(ok){nav('profile'); return;}                      // connected outside onboarding → show it stuck
   if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: green card if onboarding is owed
   if(!onbSeen()){openOnb(onbAt());}                    // resume where the share sheet round trip left them
 });
