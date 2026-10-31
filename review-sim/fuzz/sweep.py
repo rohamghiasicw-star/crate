@@ -131,7 +131,11 @@ async def main_async(args):
         async def explore(dev, name, c, path, depth):
             async with sem:
                 b = await ensure()
-                w = fuzz.Walk(b, c, script=path)
+                shots = None
+                if depth == 0 and name.startswith("t_"):
+                    shots = out / "shots" / ("%s_%s" % (dev, name))
+                    shots.mkdir(parents=True, exist_ok=True)
+                w = fuzz.Walk(b, c, script=path, shots_dir=(str(shots) if shots else None))
                 r = await w.run()
                 stats["replays"] += 1
             snap = w.final_snap
@@ -139,7 +143,9 @@ async def main_async(args):
             rec = {"type": "screen", "anchor": name, "device": dev, "depth": depth, "sig": s, "path": path,
                    "controls": [{"k": x["k"], "l": x["l"], "x": x["x"], "y": x["y"], "ext": x["ext"], "href": x["href"], "t": x["t"], "inp": x["inp"], "dis": x["dis"],
                                  "cur": bool(x.get("cur") or x.get("sel"))} for x in (snap or {}).get("controls", [])],
-                   "failures": r.get("failures"), "screen": fuzz.screen_of(snap)}
+                   "failures": r.get("failures"), "screen": fuzz.screen_of(snap),
+                   "actions": w.actions if depth == 0 else None, "infos": r.get("infos", [])[-8:],
+                   "shots": (str(shots.relative_to(out)) if (depth == 0 and name.startswith("t_")) else None)}
             fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fout.flush()
             if (dev, name, s) in seen_screen:

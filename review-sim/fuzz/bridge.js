@@ -114,6 +114,9 @@
   /* window.open and history, for the escape oracle */
   var wo = window.open;
   window.open = function(u, n, f){ F.opens.push({url:String(u||''), target:String(n||''), t:Date.now()}); return wo.apply(window, arguments); };
+  // every link activation (target=_blank anchors, openExternal's temporary anchor, mailto:), with the page clock
+  document.addEventListener('click', function(e){ try { var el = e.target && e.target.closest && e.target.closest('a[href]');
+    if (el) F.opens.push({url:String(el.href||''), target:String(el.target||''), t:Date.now(), kind:'anchor'}); } catch(_) {} }, true);
   var hb = history.back.bind(history);
   history.back = function(){ F.hist.push({op:'back', t:Date.now(), len:history.length}); return hb(); };
 
