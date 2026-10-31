@@ -4,7 +4,11 @@ import SwiftUI
    One field, because the engine address is the one thing that changes under the app:
    the free tunnel hostname rotates on every cloudflared restart. Written to the app
    group so the Share Extension sees the same value. No Settings.bundle on purpose:
-   that writes to the app's own defaults, which the extension cannot read. */
+   that writes to the app's own defaults, which the extension cannot read.
+
+   DEBUG BUILDS ONLY. This is a developer tool (engine address, health test), so the whole
+   screen is compiled out of Release builds and nothing in a Release build can open it. */
+#if DEBUG
 struct SettingsView: View {
     @EnvironmentObject private var bridge: EngineBridge
     @Environment(\.dismiss) private var dismiss
@@ -109,3 +113,4 @@ struct SettingsView: View {
         if EngineConfig.baseURL != before { bridge.retry() }
     }
 }
+#endif

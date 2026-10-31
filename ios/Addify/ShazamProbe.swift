@@ -98,7 +98,10 @@ enum ShazamProbe {
                        "apple_music_url": it.appleMusicURL?.absoluteString ?? "",
                        "artwork_url": it.artworkURL?.absoluteString ?? "",
                        "isrc": it.isrc ?? "",
-                       "n_items": m.mediaItems.count]
+                       "n_items": m.mediaItems.count,
+                       /* The match's own Apple Music link for the page, so a ShazamKit-named song
+                          links straight to its Apple Music page. null when the match has none. */
+                       "appleMusicURL": it.appleMusicURL?.absoluteString ?? NSNull()]
                 if #available(iOS 18.4, *) { out["confidence"] = Double(it.confidence) }
             } else {
                 out = ["matched": false, "reason": "no_match", "note": "match with zero media items"]
@@ -144,9 +147,9 @@ final class ShazamKitHandler: NSObject, WKScriptMessageHandlerWithReply {
 
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) async -> (Any?, String?) {
-        /* Only the engine's own page may spend this app's ShazamKit quota. */
-        guard let host = message.frameInfo.request.url?.host?.lowercased(),
-              let engineHost = EngineConfig.baseURL.host?.lowercased(), host == engineHost else {
+        /* Only the engine's own page may spend this app's ShazamKit quota: a page on any
+           compiled-in engine address, and nothing else. */
+        guard message.frameInfo.isTrustedEngineFrame else {
             return (nil, "not the engine page")
         }
         guard let body = message.body as? [String: Any], (body["type"] as? String) == "match",

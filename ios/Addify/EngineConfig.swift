@@ -14,15 +14,16 @@ import Foundation
    account no known login opens, and the NameSilo account that holds the registration is
    not the one we can sign into either).
 
-   So the build does NOT hardcode a hostname. It reads one from a public directory - a
-   gist the tunnel watchdog rewrites on every rotation - health-checks it, and caches the
-   winner. Resolution order for every call:
+   ONE SOURCE OF TRUTH (2026-10-31). The app only loads, and its native bridges only answer,
+   the addresses compiled into knownBaseURLs. The public directory (a gist) can only rank
+   those addresses for the next launch check: a host it names that is not in the list is
+   ignored, and so is any other stored value. The launch check (pickReachable) is the only
+   code that writes the address in use, so nothing rewrites it under a page that is loading.
+   Resolution order for every call:
 
-     1. a URL the user typed in Settings  (explicit override, never auto-replaced)
-     2. the last value resolved from the directory and proven healthy
-     3. defaultBaseURL, the live server (BUILD 19: it used to be a dead host, and a fresh
-        install loaded it before the directory answered, so App Review's clean devices opened
-        on "Can't reach Addify": rejection 2.1(a), 2026-10-15)
+     1. a URL the user typed in Settings  (Debug builds only; Release never reads it)
+     2. the address the last launch check proved (pickReachable)
+     3. defaultBaseURL
 
    BUILD 20 (rejections 2026-10-15 and 2026-10-30): App Review's network could not reach
    161-35-185-80.sslip.io at all. The iPad sat on a blank screen for three minutes, then "Can't
@@ -39,6 +40,9 @@ enum EngineConfig {
        share storage, or a successful resolve would silently overwrite a hostname the
        tester deliberately typed in, and clearing Settings would wipe the cache too. */
     static let resolvedKey = "engineResolvedURL"
+    /* The directory's pick, kept apart from resolvedKey: it only ranks the known addresses for
+       the next launch check and never changes the address of a page in use. */
+    static let directoryKey = "engineDirectoryURL"
 
     /* api.github.com, never gist.githubusercontent.com. The raw host sits behind a CDN
        that served an address two rotations old even after the write had succeeded. */
@@ -46,22 +50,78 @@ enum EngineConfig {
 
     static let defaultBaseURL = "https://addify.app"
     /* Every address that reaches the same engine, best first. pickReachable tries them all at
-       once; the order only matters when more than one answers. */
+       once; the order only matters when more than one answers. This list is also the whole
+       allowlist: the app loads nothing else as its page and trusts nothing else on its bridges. */
     static let knownBaseURLs = ["https://addify.app", "https://161-35-185-80.sslip.io"]
 
+    // MARK: trust
+
+    /* An origin as the bridges compare it: scheme, host and port, with the default port filled
+       in, so https://addify.app and https://addify.app:443 are the same origin. */
+    struct Origin: Hashable {
+        let scheme: String
+        let host: String
+        let port: Int
+
+        init?(scheme: String?, host: String?, port: Int?) {
+            guard let s = scheme?.lowercased(), s == "https" || s == "http",
+                  let h = host?.lowercased(), !h.isEmpty else { return nil }
+            self.scheme = s
+            self.host = h
+            if let p = port, p > 0 { self.port = p } else { self.port = (s == "https") ? 443 : 80 }
+        }
+
+        init?(_ url: URL?) {
+            guard let u = url else { return nil }
+            self.init(scheme: u.scheme, host: u.host, port: u.port)
+        }
+    }
+
+    /* The compiled-in addresses, plus (Debug builds only) an address typed into Settings. */
+    static var trustedOrigins: Set<Origin> {
+        var s = Set(knownBaseURLs.compactMap { Origin(URL(string: $0)) })
+        if let m = manualOverrideURL, let o = Origin(m) { s.insert(o) }
+        return s
+    }
+
+    /* The single trust test: the page load, staysInside, the mic grant and every native bridge
+       (addify, addifyStore, addifyKit, exportFinds) ask this, never "is it the address we hold
+       right now", so a page on any compiled-in address keeps working whichever one answered first. */
+    static func isTrusted(_ url: URL?) -> Bool {
+        guard let o = Origin(url) else { return false }
+        return trustedOrigins.contains(o)
+    }
+
+    static func isTrusted(scheme: String?, host: String?, port: Int?) -> Bool {
+        guard let o = Origin(scheme: scheme, host: host, port: port) else { return false }
+        return trustedOrigins.contains(o)
+    }
+
+    // MARK: the address
+
+    /* Debug builds only: the address typed in Settings. Release builds never read it, and
+       AddifyApp.init also clears any value an older build left behind. */
+    static var manualOverrideURL: URL? {
+        #if DEBUG
+        let manual = normalise(AppGroup.defaults.string(forKey: key) ?? "")
+        return manual.isEmpty ? nil : URL(string: manual)
+        #else
+        return nil
+        #endif
+    }
+
     static var baseURLString: String {
-        let manual = AppGroup.defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !manual.isEmpty { return manual }
-        let resolved = AppGroup.defaults.string(forKey: resolvedKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !resolved.isEmpty { return resolved }
+        if let m = manualOverrideURL { return m.absoluteString }
+        /* Only a compiled-in address counts. An older build may have stored a tunnel or any
+           host the directory named; that value is ignored, not loaded. */
+        let resolved = normalise(AppGroup.defaults.string(forKey: resolvedKey) ?? "")
+        if !resolved.isEmpty, isTrusted(URL(string: resolved)) { return resolved }
         return defaultBaseURL
     }
 
-    /* True only when the tester typed something. Used by Settings so "Reset" is offered
-       for a manual value but not for one we resolved ourselves. */
-    static var hasManualOverride: Bool {
-        !(AppGroup.defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
-    }
+    /* True only when the tester typed something (Debug builds). Used by Settings so "Reset" is
+       offered for a manual value but not for one we resolved ourselves. */
+    static var hasManualOverride: Bool { manualOverrideURL != nil }
 
     static var baseURL: URL {
         URL(string: normalise(baseURLString)) ?? URL(string: defaultBaseURL)!
@@ -92,13 +152,14 @@ enum EngineConfig {
 
 
     /* ---------- directory resolution ----------
-       Called at launch, on every foreground, and again whenever a load fails. Cheap:
-       one small GET, and it only writes when the answer both parses and passes the same
-       health check Settings uses, so a directory that has been vandalised or a tunnel
-       that now points at someone else's app cannot replace a working hostname.
+       Called at launch, on every foreground, and on Try again. One small GET. The gist can
+       only pick one of knownBaseURLs: its pick is stored under directoryKey and moves that
+       address to the front of the next launch check. A host outside the list is ignored and
+       clears an older pick. This never writes the address in use, so it cannot change the
+       address of a page that is loading or loaded.
 
        Never touches the manual override. If the tester typed a URL, that wins forever
-       until they clear it. */
+       until they clear it. Returns the pick, or nil when there is none. */
     @discardableResult
     static func resolveFromDirectory() async -> String? {
         if hasManualOverride { return nil }
@@ -110,17 +171,20 @@ enum EngineConfig {
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let candidate = parseDirectory(data),
-              let url = URL(string: candidate)
-        else { return nil }
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        guard let pick = directoryChoice(data) else {
+            AppGroup.defaults.removeObject(forKey: directoryKey)
+            return nil
+        }
+        AppGroup.defaults.set(pick, forKey: directoryKey)
+        return pick
+    }
 
-        /* Already on it and it works: nothing to write. */
-        if candidate == baseURLString, (try? await healthCheck(url)) != nil { return candidate }
-
-        guard (try? await healthCheck(url)) != nil else { return nil }
-        AppGroup.defaults.set(candidate, forKey: resolvedKey)
-        return candidate
+    /* The gist's pick, only when it names one of knownBaseURLs (same scheme, host and port).
+       Returns the compiled-in spelling, never the gist's own text. */
+    static func directoryChoice(_ data: Data) -> String? {
+        guard let candidate = parseDirectory(data), let o = Origin(URL(string: candidate)) else { return nil }
+        return knownBaseURLs.first { Origin(URL(string: $0)) == o }
     }
 
     /* The gist holds one file whose whole body is the URL. Parsed defensively rather
@@ -181,48 +245,88 @@ enum EngineConfig {
         return health
     }
 
-    /* BUILD 20: the addresses to try at launch. A URL typed in Settings (Debug builds) is the
-       only one tried, exactly as before. Otherwise: the current address first, then every known
-       address, each once. */
+    /* The addresses a launch check tries, best first. A URL typed in Settings (Debug builds) is
+       the only one tried, exactly as before. Otherwise the directory's pick (when it is a
+       compiled-in address), then knownBaseURLs in order, each once. Nothing outside the
+       allowlist is ever a candidate. */
     static func candidateURLs() -> [URL] {
-        if hasManualOverride { return [baseURL] }
-        var seen = Set<String>()
+        if let m = manualOverrideURL { return [m] }
+        let pick = normalise(AppGroup.defaults.string(forKey: directoryKey) ?? "")
+        let trusted = trustedOrigins
+        var seen = Set<Origin>()
         var out: [URL] = []
-        for s in [baseURLString] + knownBaseURLs {
+        for s in [pick] + knownBaseURLs {
             let n = normalise(s)
-            guard !n.isEmpty, !seen.contains(n), let u = URL(string: n) else { continue }
-            seen.insert(n)
+            guard !n.isEmpty, let u = URL(string: n), let o = Origin(u),
+                  trusted.contains(o), !seen.contains(o) else { continue }
+            seen.insert(o)
             out.append(u)
         }
         return out
     }
 
-    /* BUILD 20: health-check every candidate at the same time, each with a short timeout, and
-       return the first one that answers (they all reach the same engine, so the fastest wins).
-       The winner becomes the resolved address, so the page, shares and the share extension all
-       use it. nil = nothing answered within `timeout`; the caller then still tries a normal page
-       load and shows "Can't reach Addify" only if that fails too.
-       `excluding` skips a host that just failed a page load. */
+    /* BUILD 20: health-check every candidate at the same time, each with a short timeout.
+       The best-ranked candidate that answers wins: once one answers, the check waits at most
+       `preferWindow` for better-ranked candidates still in flight, then takes the best that
+       answered (an address that already failed is never waited for). The winner becomes the
+       address in use, so the page, shares and the share extension all use it. This is the ONLY
+       writer of that address. nil = nothing answered within `timeout`; the caller then still
+       tries a normal page load and shows "Can't reach Addify" only if that fails too.
+       `excluding` skips a host that just failed a page load. `check` replaces the network
+       health check in host tests. */
     @discardableResult
-    static func pickReachable(excluding: String? = nil, timeout: TimeInterval = 6) async -> URL? {
+    static func pickReachable(excluding: String? = nil, timeout: TimeInterval = 6,
+                              preferWindow: TimeInterval = 0.75,
+                              check: (@Sendable (URL) async -> Bool)? = nil) async -> URL? {
         let list = candidateURLs().filter { $0.host?.lowercased() != excluding?.lowercased() }
         guard !list.isEmpty else { return nil }
-        let winner: URL? = await withTaskGroup(of: (Int, URL?).self) { group in
+        let probe: @Sendable (URL) async -> Bool = check ?? { u in (try? await healthCheck(u, timeout: timeout)) != nil }
+        let winner = await bestAnswer(list, preferWindow: preferWindow, check: probe)
+        if let w = winner, !hasManualOverride {
+            let s = normalise(w.absoluteString)
+            if AppGroup.defaults.string(forKey: resolvedKey) != s { AppGroup.defaults.set(s, forKey: resolvedKey) }
+        }
+        return winner
+    }
+
+    /* Runs `check` on every URL at once and returns the best-ranked (lowest index) URL that
+       passed. It decides as soon as every better-ranked check has finished, or `preferWindow`
+       seconds after the first pass, whichever comes first. nil when nothing passed. */
+    static func bestAnswer(_ list: [URL], preferWindow: TimeInterval,
+                           check: @escaping @Sendable (URL) async -> Bool) async -> URL? {
+        enum Event: Sendable { case result(Int, Bool), windowClosed }
+        return await withTaskGroup(of: Event.self) { group in
             for (i, u) in list.enumerated() {
-                group.addTask {
-                    let ok = (try? await healthCheck(u, timeout: timeout)) != nil
-                    return (i, ok ? u : nil)
-                }
+                group.addTask { .result(i, await check(u)) }
             }
-            for await (_, u) in group {
-                if let u = u { group.cancelAll(); return u }   // first answer wins, stop the rest
+            var passed = [Bool?](repeating: nil, count: list.count)
+            var windowOpen = false
+            while let event = await group.next() {
+                switch event {
+                case .result(let i, let ok):
+                    passed[i] = ok
+                    if let best = passed.firstIndex(where: { $0 == true }),
+                       passed[..<best].allSatisfy({ $0 != nil }) {
+                        group.cancelAll()
+                        return list[best]
+                    }
+                    if ok && !windowOpen {
+                        windowOpen = true
+                        let ns = UInt64(max(0, preferWindow) * 1_000_000_000)
+                        group.addTask {
+                            try? await Task.sleep(nanoseconds: ns)
+                            return .windowClosed
+                        }
+                    }
+                case .windowClosed:
+                    if let best = passed.firstIndex(where: { $0 == true }) {
+                        group.cancelAll()
+                        return list[best]
+                    }
+                }
             }
             return nil
         }
-        if let w = winner, !hasManualOverride, normalise(w.absoluteString) != normalise(baseURLString) {
-            AppGroup.defaults.set(normalise(w.absoluteString), forKey: resolvedKey)
-        }
-        return winner
     }
 }
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import StoreKit
+import UniformTypeIdentifiers
 
 /* ---------- the web view ----------
    This is where the app stops being a wrapper. Every delegate method below exists because
@@ -24,7 +25,11 @@ struct EngineWebView: UIViewRepresentable {
         cfg.websiteDataStore = .default()          // persistent: Spotify token + library live in localStorage
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
-        cfg.applicationNameForUserAgent = "Addify-iOS/\(Coordinator.appVersion)"
+        /* WebKit puts this after "(KHTML, like Gecko) ", replacing its default "Mobile/15E148".
+           Keep that token and add ours, so the agent reads
+           Mozilla/5.0 (iPhone; CPU iPhone OS <v> like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Addify/<version>
+           and never carries a "Safari" token. */
+        cfg.applicationNameForUserAgent = Coordinator.userAgentApplicationName(default: cfg.applicationNameForUserAgent)
 
         let ucc = WKUserContentController()
         /* Lets the page know it is inside the app (feature-detect with window.ADDIFY_NATIVE).
@@ -36,6 +41,7 @@ struct EngineWebView: UIViewRepresentable {
         ucc.add(context.coordinator, name: "addify")
         ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
+        ucc.addScriptMessageHandler(ExportFindsHandler(bridge: bridge), contentWorld: .page, name: ExportFindsHandler.name)
         AddifyStore.shared.start()
         cfg.userContentController = ucc
 
@@ -67,11 +73,33 @@ struct EngineWebView: UIViewRepresentable {
            to a newer engine address (see failed()). */
         var loadedHost: String?
         var hostSwitches = 0
+        /* SERVER ERRORS: automatic reloads spent after an engine page answered 5xx or empty (see
+           mainFrameFailed), and a counter that cancels the ones still waiting when a new boot
+           starts or a page loads. */
+        var autoRetries = 0
+        var retryGeneration = 0
+        /* Set when this code itself cancelled a main-frame load, so the WebKit error that the
+           cancel produces (102, frame load interrupted) is not shown as a second failure. */
+        var ownCancel = false
+        /* The last engine page the main frame was allowed to load (a share, the stale-shell
+           reload and Spotify's return included), so a failure can reload exactly that page. */
+        var lastEngineURL: URL?
+        /* Only the newest boot loads: two quick Try again taps must not start two page loads. */
+        var bootGeneration = 0
 
         init(bridge: EngineBridge) { self.bridge = bridge }
 
         static var appVersion: String {
             (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+        }
+
+        /* WebKit's own token (Mobile/15E148 on iOS) followed by Addify/<CFBundleShortVersionString>.
+           Anything else WebKit might put in its default is dropped, and so is any Safari token. */
+        static func userAgentApplicationName(default def: String?) -> String {
+            let mobile = (def ?? "").split(separator: " ")
+                .first { $0.hasPrefix("Mobile/") && !$0.localizedCaseInsensitiveContains("safari") }
+                .map(String.init) ?? "Mobile/15E148"
+            return "\(mobile) Addify/\(appVersion)"
         }
 
         /* BUILD 20: every launch and every Try again starts here. Ask all known engine
@@ -80,13 +108,18 @@ struct EngineWebView: UIViewRepresentable {
            failed() decides what the user sees. The native loading screen covers all of it. */
         func boot(_ wv: WKWebView) {
             bridge.booting = true
+            bridge.holdShares = true
             hostSwitches = 0
+            autoRetries = 0
+            retryGeneration += 1
+            bootGeneration += 1
+            let generation = bootGeneration
             Task { [weak self, weak wv] in
                 if await EngineConfig.pickReachable(timeout: 6) == nil {
                     await EngineConfig.pickReachable(timeout: 8)
                 }
                 await MainActor.run {
-                    guard let self = self, let wv = wv else { return }
+                    guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
                     self.load(wv)
                 }
             }
@@ -95,8 +128,13 @@ struct EngineWebView: UIViewRepresentable {
         func load(_ wv: WKWebView) {
             bridge.pageReady = false
             quietRetries = 0
+            ownCancel = false
             loadedHost = EngineConfig.baseURL.host?.lowercased()
-            var req = URLRequest(url: EngineConfig.baseURL)
+            /* A share that arrived during the launch check opens on the address it chose, through
+               the page's own share landing, as a share always did when the page was not up. */
+            bridge.holdShares = false
+            let target = bridge.takePendingLink().flatMap { bridge.shareURL($0) } ?? EngineConfig.baseURL
+            var req = URLRequest(url: target)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
             /* BUILD 20: 20 s, not WebKit's 60 s. A stalled address now hands over to the next one
                in seconds instead of leaving a reviewer on a blank screen for three minutes. */
@@ -108,13 +146,14 @@ struct EngineWebView: UIViewRepresentable {
            in the OS. Embedded players (sub-frames) are decided separately in decidePolicyFor. */
         private func staysInside(_ url: URL) -> Bool {
             guard let host = url.host?.lowercased() else { return true }   // about:blank etc.
-            if let engineHost = EngineConfig.baseURL.host?.lowercased(), host == engineHost { return true }
+            if EngineConfig.isTrusted(url) { return true }
             return host == "accounts.spotify.com" || host == "api.spotify.com"
         }
 
+        /* Any compiled-in engine address, not just the one held right now: the page that loaded
+           is the truth, whichever address answered the launch check first. */
         private func isEngineOrigin(_ url: URL?) -> Bool {
-            guard let u = url, let h = u.host?.lowercased(), let e = EngineConfig.baseURL.host?.lowercased() else { return false }
-            return h == e
+            EngineConfig.isTrusted(url)
         }
 
         // MARK: navigation
@@ -145,7 +184,24 @@ struct EngineWebView: UIViewRepresentable {
                 return
             }
             if scheme == "http" || scheme == "https" {
-                if staysInside(url) { decisionHandler(.allow) } else { bridge.openExternal(url); decisionHandler(.cancel) }
+                if staysInside(url) {
+                    if isEngineOrigin(url) { lastEngineURL = url }
+                    decisionHandler(.allow)
+                    return
+                }
+                /* While a native screen covers the page (loading, or the error screen and its
+                   automatic reloads), the main frame only loads engine pages, and nobody can tap a
+                   link. An address that redirects anywhere else (a parked domain, a captive portal)
+                   is a failed load: show the error screen, never Safari with the loading screen
+                   left up and nothing loading behind it. */
+                if bridge.booting || bridge.unreachable {
+                    ownCancel = true
+                    decisionHandler(.cancel)
+                    mainFrameFailed(retry: lastEngineURL ?? EngineConfig.baseURL)
+                    return
+                }
+                bridge.openExternal(url)
+                decisionHandler(.cancel)
                 return
             }
             if scheme == "about" || scheme == "blob" || scheme == "data" { decisionHandler(.allow); return }
@@ -154,15 +210,73 @@ struct EngineWebView: UIViewRepresentable {
             decisionHandler(.cancel)
         }
 
+        /* SERVER ERRORS (2026-10-31). While the engine restarts, Caddy answers the page with an
+           empty 502, and WebKit reports an HTTP error page as a finished load: a blank screen with
+           nothing to tap. A main-frame engine response of 500 or more, or one with an empty body,
+           is cancelled here and handled as a failed load (mainFrameFailed). */
+        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                     decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            guard navigationResponse.isForMainFrame,
+                  let http = navigationResponse.response as? HTTPURLResponse,
+                  let url = http.url, isEngineOrigin(url),
+                  http.statusCode >= 500 || http.expectedContentLength == 0 else {
+                decisionHandler(.allow)
+                return
+            }
+            ownCancel = true
+            decisionHandler(.cancel)
+            mainFrameFailed(retry: url)
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            ownCancel = false
             let onEngine = isEngineOrigin(webView.url)
             bridge.pageReady = onEngine
-            if onEngine {
-                quietRetries = 0
-                bridge.unreachable = false
-                bridge.offline = false
-                bridge.booting = false
-                bridge.flushPending()
+            guard onEngine else { return }
+            quietRetries = 0
+            autoRetries = 0
+            retryGeneration += 1
+            bridge.unreachable = false
+            bridge.offline = false
+            bridge.booting = false
+            bridge.flushPending()
+            /* A response without a Content-Length can still be empty, and an empty engine page is
+               the same outage as a 5xx. If the document that just finished has nothing in it, it
+               is handled as a failed load. */
+            webView.evaluateJavaScript(Self.contentProbe) { [weak self, weak webView] value, _ in
+                guard let self = self, let wv = webView, !wv.isLoading,
+                      let n = value as? NSNumber, n.intValue == 0,
+                      let u = wv.url, self.isEngineOrigin(u) else { return }
+                self.mainFrameFailed(retry: u)
+            }
+        }
+
+        /* Characters inside <head> and <body>; 0 only for an empty document. */
+        static let contentProbe = "(function(){var d=document,h=d.head,b=d.body;return ((h&&h.innerHTML.trim().length)||0)+((b&&b.innerHTML.trim().length)||0);})()"
+
+        /* The native error screen (UnreachableView, whose Try again runs a fresh launch check),
+           then the same page reloaded on its own 2, 4, 8 and 16 s later, so an engine restart
+           heals without a tap. A new boot or a page that loads cancels the reloads still waiting.
+           Network errors keep their own path (failed()). */
+        static let autoRetryDelays: [TimeInterval] = [2, 4, 8, 16]
+
+        private func mainFrameFailed(retry url: URL) {
+            bridge.pageReady = false
+            bridge.booting = false
+            bridge.offline = false
+            bridge.unreachable = true
+            guard autoRetries < Self.autoRetryDelays.count else { return }
+            let delay = Self.autoRetryDelays[autoRetries]
+            autoRetries += 1
+            let generation = retryGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self, generation == self.retryGeneration, self.bridge.unreachable,
+                      let wv = self.bridge.webView else { return }
+                self.ownCancel = false
+                var req = URLRequest(url: url)
+                req.cachePolicy = .reloadIgnoringLocalCacheData
+                req.timeoutInterval = 20
+                wv.load(req)
             }
         }
 
@@ -196,6 +310,12 @@ struct EngineWebView: UIViewRepresentable {
             let e = error as NSError
             /* -999 is our own cancel from decidePolicyFor, not an outage. */
             if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
+            /* 102 (frame load interrupted) follows a main-frame load this code cancelled itself;
+               mainFrameFailed has already decided what the user sees. */
+            if ownCancel, e.code == 102, e.domain == "WebKitErrorDomain" || e.domain == WKError.errorDomain {
+                ownCancel = false
+                return
+            }
             let failing = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL
             let fh = failing?.host?.lowercased()
             /* BUILD 19 (App Review 2.1(a), 2026-10-15: "an error message showed up right after
@@ -271,8 +391,8 @@ struct EngineWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                      initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                      decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-            let engineHost = EngineConfig.baseURL.host?.lowercased() ?? ""
-            if type == .microphone && origin.host.lowercased() == engineHost { decisionHandler(.grant) }
+            let engine = EngineConfig.isTrusted(scheme: origin.protocol, host: origin.host, port: origin.port)
+            if type == .microphone && engine { decisionHandler(.grant) }
             else { decisionHandler(.prompt) }
         }
 
@@ -294,12 +414,7 @@ struct EngineWebView: UIViewRepresentable {
         }
 
         private func present(_ controller: UIViewController, over view: UIView) -> Void? {
-            var responder: UIResponder? = view
-            while let r = responder {
-                if let vc = r as? UIViewController { vc.present(controller, animated: true); return () }
-                responder = r.next
-            }
-            return nil
+            presentOnTop(controller, over: view) ? () : nil
         }
 
         // MARK: messages from the page
@@ -307,7 +422,7 @@ struct EngineWebView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "addify" else { return }
             /* Only the engine's own page may talk to the native side. */
-            guard isEngineOrigin(message.frameInfo.request.url) else { return }
+            guard message.frameInfo.isTrustedEngineFrame else { return }
             /* The song's share button. WKWebView never exposes navigator.share, so the page
                hands the link here and we raise the real iOS share sheet. */
             if let d = message.body as? [String: Any], (d["type"] as? String) == "share" {
@@ -415,9 +530,9 @@ final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
     @MainActor
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) async -> (Any?, String?) {
-        /* Only the engine's own page may start a purchase. */
-        guard let host = message.frameInfo.request.url?.host?.lowercased(),
-              let engineHost = EngineConfig.baseURL.host?.lowercased(), host == engineHost else {
+        /* Only the engine's own page may start a purchase: a page on any compiled-in engine
+           address, whichever one the launch picked, and nothing else. */
+        guard message.frameInfo.isTrustedEngineFrame else {
             return (nil, "not the engine page")
         }
         guard let body = message.body as? [String: Any], let op = body["op"] as? String else {
@@ -450,4 +565,98 @@ final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
             return (nil, "bad op")
         }
     }
+}
+
+/* EXPORT FINDS (2026-10-31). The page's download link goes nowhere inside WKWebView (it has no
+   download handler), so the page hands the list over instead:
+       window.webkit.messageHandlers.exportFinds.postMessage({filename, mimeType, text})
+   The app writes the text to a temporary file with that name and opens the iOS share sheet on it
+   (Save to Files, AirDrop, Mail, Messages). The promise resolves with {ok:true} once the sheet is
+   up; the file is deleted when the sheet closes. */
+final class ExportFindsHandler: NSObject, WKScriptMessageHandlerWithReply {
+    static let name = "exportFinds"
+    static let maxBytes = 5 * 1024 * 1024
+    private weak var bridge: EngineBridge?
+
+    init(bridge: EngineBridge) { self.bridge = bridge }
+
+    @MainActor
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        guard message.frameInfo.isTrustedEngineFrame else { return (nil, "not the engine page") }
+        guard let body = message.body as? [String: Any], let text = body["text"] as? String else {
+            return (nil, "bad message")
+        }
+        let data = Data(text.utf8)
+        guard data.count <= Self.maxBytes else { return (nil, "too large") }
+        guard let wv = bridge?.webView else { return (nil, "no view") }
+        let name = Self.fileName(body["filename"] as? String, mimeType: body["mimeType"] as? String)
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent(name, isDirectory: false)
+            try data.write(to: file, options: .atomic)
+            let ac = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+            ac.completionWithItemsHandler = { _, _, _, _ in try? FileManager.default.removeItem(at: dir) }
+            /* iPad (and an iPhone app running on iPad) presents this as a popover; without an
+               anchor that is a crash, not a no-op. */
+            if let pop = ac.popoverPresentationController {
+                pop.sourceView = wv
+                pop.sourceRect = CGRect(x: wv.bounds.midX, y: wv.bounds.midY, width: 0, height: 0)
+                pop.permittedArrowDirections = []
+            }
+            guard presentOnTop(ac, over: wv) else {
+                try? FileManager.default.removeItem(at: dir)
+                return (nil, "cannot present")
+            }
+            return (["ok": true], nil)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            return (nil, "write failed")
+        }
+    }
+
+    /* The page's file name, made safe for a file system: no path separators, no leading dots, at
+       most 80 characters before the extension. With no extension, one comes from the MIME type. */
+    static func fileName(_ raw: String?, mimeType: String?) -> String {
+        let cleaned = (raw ?? "")
+            .components(separatedBy: CharacterSet(charactersIn: "/\\:\u{0}").union(.newlines).union(.controlCharacters))
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespaces)
+        var base = (cleaned as NSString).deletingPathExtension
+        var ext = (cleaned as NSString).pathExtension
+        while base.hasPrefix(".") { base.removeFirst() }
+        if base.count > 80 { base = String(base.prefix(80)) }
+        if base.isEmpty { base = "addify-finds" }
+        if ext.isEmpty || ext.count > 10 {
+            ext = mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension } ?? "txt"
+        }
+        return base + "." + ext
+    }
+}
+
+extension WKFrameInfo {
+    /* The bridges' origin test: this frame's security origin is one of the compiled-in engine
+       addresses (EngineConfig.isTrusted). An embedded player (YouTube, SoundCloud) never is. */
+    var isTrustedEngineFrame: Bool {
+        let o = securityOrigin
+        return EngineConfig.isTrusted(scheme: o.protocol, host: o.host, port: o.port)
+    }
+}
+
+/* Presents from the view controller that owns `view`, or from whatever it is already presenting,
+   so a second sheet never silently fails to appear. */
+@discardableResult
+func presentOnTop(_ controller: UIViewController, over view: UIView) -> Bool {
+    var responder: UIResponder? = view
+    while let r = responder {
+        if var vc = r as? UIViewController {
+            while let p = vc.presentedViewController, !p.isBeingDismissed { vc = p }
+            vc.present(controller, animated: true)
+            return true
+        }
+        responder = r.next
+    }
+    return false
 }

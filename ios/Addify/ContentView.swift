@@ -63,10 +63,13 @@ struct ContentView: View {
             }
         }
         }
+        /* Debug builds only, like every way in: Release builds compile no Settings screen. */
+        #if DEBUG
         .sheet(isPresented: $bridge.showSettings) {
             SettingsView()
                 .environmentObject(bridge)
         }
+        #endif
     }
 }
 

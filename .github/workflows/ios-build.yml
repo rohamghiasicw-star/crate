@@ -15,6 +15,11 @@ on:
   push:
     paths: ['ios/**', '.github/workflows/ios-build.yml']
   workflow_dispatch:
+    inputs:
+      smoke:
+        description: 'Also run the simulator smoke test (iPhone and iPad, local stub engine plus one real page load from the test server)'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -62,4 +67,81 @@ jobs:
         with:
           name: build-log
           path: build.log
+          retention-days: 7
+
+  # Release archive checks with the release toolchain (newest Xcode on macos-26, the same rule as
+  # ios-release.yml), never signed with a real identity, never exported or uploaded: what the
+  # release archive carries (app group entitlements), and what the Release binaries must not
+  # contain. Details in ios/tools/archive_checks.sh.
+  archive:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode on the runner (same rule as ios-release.yml)
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+            | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' \
+            | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          xcodebuild -version
+
+      - name: Release archive checks
+        run: bash ios/tools/archive_checks.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: archive-logs
+          path: archive-*.log
+          retention-days: 7
+
+  # Manual only (Run workflow, smoke = true). Two lab copies of the app, patched by
+  # ios/tools/smoke/smoke.py: one talks to a stub engine on the runner, one loads the real page
+  # from the test server (page loads only, no scans). Both run on an iPhone and an iPad simulator.
+  smoke:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.smoke
+    runs-on: macos-26
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain and simulators
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available | grep -i ios || true
+
+      - name: Build the two lab copies (Release, simulator, ad hoc signed)
+        run: |
+          set -o pipefail
+          for v in stub testbox; do
+            rm -rf "lab-$v" && mkdir "lab-$v" && cp -R ios "lab-$v/ios"
+            python3 ios/tools/smoke/smoke.py patch "lab-$v/ios" "$v"
+            xcodebuild -project "lab-$v/ios/Addify.xcodeproj" -scheme Addify -configuration Release \
+              -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "dd-$v" \
+              ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER= CODE_SIGNING_REQUIRED=NO build > "build-$v.log" 2>&1 \
+              || { tail -40 "build-$v.log"; exit 1; }
+            test -d "dd-$v/Build/Products/Release-iphonesimulator/Addify.app"
+          done
+
+      - name: Simulator smoke (iPhone and iPad)
+        run: |
+          python3 -u ios/tools/smoke/smoke.py run \
+            --stub-app dd-stub/Build/Products/Release-iphonesimulator/Addify.app \
+            --testbox-app dd-testbox/Build/Products/Release-iphonesimulator/Addify.app \
+            --out smoke-out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-out
+          path: |
+            smoke-out
+            build-*.log
           retention-days: 7
