@@ -189,11 +189,12 @@ struct EngineWebView: UIViewRepresentable {
                     decisionHandler(.allow)
                     return
                 }
-                /* Until the engine page has loaded, the main frame only loads engine pages. An
-                   address that redirects anywhere else (a parked domain, a captive portal) is a
-                   failed launch: show the error screen, never Safari with the loading screen left
-                   up and nothing loading behind it. */
-                if bridge.booting {
+                /* While a native screen covers the page (loading, or the error screen and its
+                   automatic reloads), the main frame only loads engine pages, and nobody can tap a
+                   link. An address that redirects anywhere else (a parked domain, a captive portal)
+                   is a failed load: show the error screen, never Safari with the loading screen
+                   left up and nothing loading behind it. */
+                if bridge.booting || bridge.unreachable {
                     ownCancel = true
                     decisionHandler(.cancel)
                     mainFrameFailed(retry: lastEngineURL ?? EngineConfig.baseURL)

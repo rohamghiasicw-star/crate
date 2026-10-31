@@ -7,6 +7,7 @@ iPhone and an iPad simulator. Scenarios:
   relaunch   same install launched again, so the directory's pick is now stored
   untrusted  the directory names a host outside the compiled-in list (fresh, then relaunch)
   server5xx  the main page answers an empty 502 twice, then the page
+  redirect   the main page redirects to a host outside the list (must never reach Safari)
   export     the page calls the exportFinds handler
 A second lab copy loads the real page from the test server (screenshots only, no scans).
 
@@ -157,6 +158,12 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 COUNTS[role] = COUNTS.get(role, 0) + 1
                 k = COUNTS[role]
+            if cfg.get("redirect"):
+                self.send_response(302)
+                self.send_header("Location", cfg["redirect"])
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return 302
             if cfg.get("down") or k <= cfg.get("fail_first", 0):
                 return self.reply(502)      # empty body, like Caddy while the engine restarts
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
@@ -398,6 +405,21 @@ def run_stub_suite(dev, app, version, ipad=False):
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
         json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
+
+        # The engine page redirects to a host outside the list (a parked domain): never Safari,
+        # neither on the first load nor on the automatic reloads. Safari loading it would show up
+        # as a request on the outside port.
+        red = {"A": {"health_ms": 20, "redirect": "http://localhost:8799/"}, "B": {"health": False, "down": True},
+               "G": {"pick": ""}, "X": {}}
+        res = scenario(dev, app, "redirect", red, want=(), timeout=12, shots=(("t5", 5.0),))
+        reqs = page_requests(res, "A")
+        outside = [e for e in res["entries"] if e["role"] == "X"]
+        check(dev, "redirect", "outside host never loaded (no Safari handoff)", not outside,
+              "%d requests %s" % (len(outside), json.dumps([e.get("ua", "")[-40:] for e in outside][:3])))
+        check(dev, "redirect", "engine page reloaded on its own", len(reqs) >= 2, json.dumps(reqs))
+        check(dev, "redirect", "native error screen, not blank", pixel_class(res["shots"]["final"]) == "native",
+              pixel_class(res["shots"]["final"]))
+        json.dump(res, open(os.path.join(dev.out, "%s-redirect.json" % dev.tag), "w"), indent=1)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     res = scenario(dev, app, "export", exp, want=("export", "alive"), timeout=40, shots=(("sheet", 4.0),))
