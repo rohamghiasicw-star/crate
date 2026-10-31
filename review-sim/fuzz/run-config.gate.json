@@ -1,0 +1,3 @@
+{"label": "gate", "walk_shards": 6, "walks_per_shard": 300, "actions": 50, "conc": 11, "walk_timeout": 420, "max_minutes": 60,
+ "sweep_shards": 2, "sweep_depth": 3, "sweep_max_taps": 600, "sweep_conc": 6, "sweep_minutes": 90, "sweep_only": "",
+ "min_parts": 3, "min_budget": 16, "min_conc": 4, "min_minutes": 45}

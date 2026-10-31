@@ -19,3 +19,12 @@ with seeded random walks (`fuzz.py`) and a breadth-first sweep of every tappable
 
 Runs only in GitHub Actions on Linux (`.github/workflows/review-sim-fuzz.yml`), started by a change
 to `run-config.json` or by workflow_dispatch. Output leaves the run only encrypted.
+
+## As a pre-submit gate
+
+1. Point it at the build: `gh workflow run review-sim-fuzz.yml --repo rohamghiasicw-star/crate --ref review-sim-fuzz -f page_ref=<commit>`
+   (or copy `run-config.gate.json` over `run-config.json` and push, which tests the pinned commit).
+2. The `report` job ends with `gate.py --quiet`: the run is red when any blocking signature fired
+   (an unintended escape, a hidden code answering, a crash, a dead end, a stuck screen, an orphaned
+   or stacked sheet, paid scans without a purchase, developer text, a dead control, a clipped sheet).
+3. The details (signatures, shortest repro, screenshots) are only in the `final-sealed` artifact.

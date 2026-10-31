@@ -9,6 +9,11 @@ on:
     branches: [review-sim-fuzz]
     paths: ['review-sim/fuzz/run-config.json']
   workflow_dispatch:
+    inputs:
+      page_ref:
+        description: 'crate.html to test: a commit or branch (empty = the pinned build-20 commit, hash-checked)'
+        required: false
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -60,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash review-sim/fuzz/fetch_page.sh
+        env:
+          PAGE_REF: ${{ github.event.inputs.page_ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -132,6 +139,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash review-sim/fuzz/fetch_page.sh
+        env:
+          PAGE_REF: ${{ github.event.inputs.page_ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
