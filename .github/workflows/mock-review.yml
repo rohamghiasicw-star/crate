@@ -105,7 +105,7 @@ jobs:
   review:
     needs: build-app
     runs-on: xcode-27
-    timeout-minutes: 80
+    timeout-minutes: 90
     env:
       MR_OUT: ${{ github.workspace }}/out
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -162,10 +162,12 @@ jobs:
         run: mockreview/scripts/sim.sh launch "$IPHONE_UDID" iphone app/Addify.app
 
       - name: iPhone - reviewer path
+        timeout-minutes: 30
         run: mockreview/scripts/sim.sh uitest "$IPHONE_UDID" iphone testIPhoneReviewerPath "$SAMPLE_1"
 
       - name: iPhone - deep link addify://scan
         if: env.MR_SCANS == '1'
+        timeout-minutes: 8
         run: mockreview/scripts/sim.sh deeplink "$IPHONE_UDID" iphone "$SAMPLE_2"
 
       - name: iPhone - stop recording
@@ -185,6 +187,7 @@ jobs:
 
       - name: iPad - launch path
         if: always()
+        timeout-minutes: 15
         run: MR_SCANS="$MR_IPAD_SCAN" mockreview/scripts/sim.sh uitest "$IPAD_UDID" ipad testIPadLaunchPath "$SAMPLE_3"
 
       - name: iPad - stop recording

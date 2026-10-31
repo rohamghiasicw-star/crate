@@ -72,10 +72,10 @@ cmd_uitest() {
   TEST_RUNNER_MR_RESULT_TIMEOUT="${MR_RESULT_TIMEOUT:-150}" \
     xcodebuild test-without-building -xctestrun "$xctestrun" -destination "id=$udid" \
       -only-testing:"ReviewerUITests/ReviewerUITests/$test" \
-      -resultBundlePath "$OUT/$dev-$test.xcresult" \
-      > "$OUT/$dev-$test.xcodebuild.log" 2>&1
-  local rc=$?
-  grep -E '^MR\||Test Case|error:|\*\* TEST' "$OUT/$dev-$test.xcodebuild.log" | tail -80
+      -resultBundlePath "$OUT/$dev-$test.xcresult" 2>&1 \
+    | tee "$OUT/$dev-$test.xcodebuild.log" \
+    | grep --line-buffered -E '^MR\||^ *t = |Test Case|error:|\*\* TEST'
+  local rc=${PIPESTATUS[0]}
   note "uitest $test exit $rc"
   return 0
 }
