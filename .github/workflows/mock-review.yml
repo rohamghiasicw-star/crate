@@ -27,6 +27,10 @@ concurrency:
   group: mock-review
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
 env:
   MR_SCANS: '0'
   MR_IPAD_SCAN: '0'

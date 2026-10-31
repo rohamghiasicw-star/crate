@@ -134,6 +134,7 @@ final class ReviewerUITests: XCTestCase {
         profileLinks()
         deleteAccountPrompt()
         listenMode()
+        webTells()
         exportFinds()
         relaunchCheck()
         finish()
@@ -146,7 +147,7 @@ final class ReviewerUITests: XCTestCase {
         attach()
         launchCheck()
         windowGeometry()
-        onboarding()
+        onboarding(tryReel: true)
         if cfg.scans {
             if pasteAndMaybeScan() { waitForResult(stepName: "scan-result") }
             goHome()
@@ -211,7 +212,7 @@ final class ReviewerUITests: XCTestCase {
                  "app window \(Int(f.width))x\(Int(f.height)) pt inside screen \(Int(sf.width))x\(Int(sf.height)) pt")
     }
 
-    func onboarding() {
+    func onboarding(tryReel: Bool = false) {
         guard let setUp = waitForElement("Set it up", exact: true, types: [.button], timeout: 20) else {
             let s = shot("onboarding-missing")
             let home = sees("Clip link")
@@ -225,13 +226,33 @@ final class ReviewerUITests: XCTestCase {
         log.line("onboarding-1", next != nil ? "PASS" : "FAIL", shot: s1, "tapped 'Set it up'")
 
         let s2 = shot("onboarding-2")
-        guard let later = waitForElement("do this later", exact: false, types: [.button], timeout: 8) else {
-            log.line("onboarding-2", "FAIL", shot: s2, "no 'I'll do this later' button")
-            return
+        if tryReel {
+            /* The primary button on screen 2. It leaves the app for TikTok (Safari on a device
+               without TikTok, like a review device may be); coming back should land on screen 3. */
+            guard let tr = waitForElement("Try it on a reel", exact: false, types: [.button], timeout: 8) else {
+                log.line("onboarding-2", "FAIL", shot: s2, "no 'Try it on a reel' button")
+                return
+            }
+            tr.tap()
+            let away = safari.wait(for: .runningForeground, timeout: 8)
+            Thread.sleep(forTimeInterval: 4)
+            let sa = shot("try-reel-away")
+            log.line("onboarding-try-reel", away ? "INFO" : "WARN", shot: sa,
+                     away ? "'Try it on a reel' opened Safari (no TikTok app on this device)" : "tapped 'Try it on a reel', Safari did not come up")
+            app.activate()
+            _ = app.wait(for: .runningForeground, timeout: 8)
+            let back = waitForText(["Not set up yet", "Paste a link instead"], timeout: 8)
+            log.line("onboarding-2", back != nil ? "PASS" : "FAIL", shot: shot("try-reel-back"),
+                     back != nil ? "back in Addify on screen 3" : "back in Addify but screen 3 never showed")
+        } else {
+            guard let later = waitForElement("do this later", exact: false, types: [.button], timeout: 8) else {
+                log.line("onboarding-2", "FAIL", shot: s2, "no 'I'll do this later' button")
+                return
+            }
+            later.tap()
+            let third = waitForText(["Not set up yet", "Paste a link instead"], timeout: 8)
+            log.line("onboarding-2", third != nil ? "PASS" : "FAIL", shot: s2, "tapped 'I'll do this later'")
         }
-        later.tap()
-        let third = waitForText(["Not set up yet", "Paste a link instead"], timeout: 8)
-        log.line("onboarding-2", third != nil ? "PASS" : "FAIL", shot: s2, "tapped 'I'll do this later'")
 
         let s3 = shot("onboarding-3")
         guard let paste = waitForElement("Paste a link instead", exact: false, types: [.button], timeout: 8) else {
@@ -353,8 +374,10 @@ final class ReviewerUITests: XCTestCase {
         let t0 = Date()
         var outcome: String? = nil
         var lastHeadline = ""
+        var toastSeen = false
         while Date().timeIntervalSince(t0) < cfg.resultTimeout {
             let text = screenText()
+            if sees("Match found", in: text) { toastSeen = true }
             if sees("Find another song", in: text) { outcome = "result"; break }
             if sees("Use listen mode instead", in: text) || sees("Back to home", in: text)
                 || sees("Back to TikTok", in: text) || sees("Back to Instagram", in: text) { outcome = "no-match"; break }
@@ -376,7 +399,7 @@ final class ReviewerUITests: XCTestCase {
         let ax = dumpAX(stepName)
         let after = serverAdmitted()
         let server = "server admitted \(before.map(String.init) ?? "?") -> \(after.map(String.init) ?? "?")"
-        let toast = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Exact version'")).firstMatch.exists
+        let toast = toastSeen || sees("Match found")
         switch outcome {
         case "result":
             log.line(stepName, "PASS", shot: s, "song found in \(secs) s; \(server); native toast \(toast ? "shown" : "not seen"); ax=\(ax)")
@@ -586,6 +609,66 @@ final class ReviewerUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 2)
         let s3 = shot("after-listen")
         log.line("after-listen", "INFO", shot: s3, "screen after the listen attempt")
+    }
+
+    /// Things that make an app read as a website in a frame (Guideline 4.2): page text that
+    /// selects on a long press, a page that pinch-zooms, links that open a Safari preview.
+    /// crate.html sets no user-select, no touch-callout and no maximum-scale.
+    func webTells() {
+        if let home = waitForElement("Home", exact: true, types: [.button], timeout: 5) { home.tap() }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let t = waitForElement("Share a reel into Addify", exact: false, types: [.staticText], timeout: 4) {
+            t.press(forDuration: 1.6)
+            Thread.sleep(forTimeInterval: 1.0)
+            let s = shot("longpress-text")
+            let menu = waitForElement("Copy", exact: true, types: [.menuItem, .button], timeout: 1.5)
+                ?? waitForElement("Look Up", exact: true, types: [.menuItem, .button], timeout: 0.5)
+            log.line("web-longpress-text", menu != nil ? "WARN" : "PASS", shot: s,
+                     menu != nil ? "a long press on home text selects it and shows the iOS text menu ('\(menu!.label)'), like a web page"
+                                 : "no text selection on a long press")
+            dismissOverlay()
+        } else {
+            log.line("web-longpress-text", "SKIP", shot: nil, "home text 'Share a reel into Addify' not found")
+        }
+        let web = app.webViews.firstMatch
+        let field = waitForElement("Clip link", exact: true, types: [.textField], timeout: 3)
+        if web.exists, let f = field {
+            let w0 = f.frame.width
+            web.pinch(withScale: 2.5, velocity: 2.0)
+            Thread.sleep(forTimeInterval: 1.5)
+            let s = shot("pinch-zoom")
+            let w1 = f.exists ? f.frame.width : w0
+            let zoomed = w1 > w0 * 1.2
+            log.line("web-pinch-zoom", zoomed ? "WARN" : "PASS", shot: s,
+                     zoomed ? "the whole page pinch-zooms (link box \(Int(w0)) pt wide before, \(Int(w1)) pt after), like a web page"
+                            : "pinch does not zoom the page (link box \(Int(w0)) -> \(Int(w1)) pt)")
+            if zoomed {
+                web.pinch(withScale: 0.3, velocity: -2.0)
+                Thread.sleep(forTimeInterval: 1.5)
+                let w2 = f.exists ? f.frame.width : 0
+                log.line("web-pinch-back", abs(w2 - w0) < 4 ? "INFO" : "WARN", shot: shot("pinch-back"),
+                         "after pinching back the link box is \(Int(w2)) pt wide (was \(Int(w0)))")
+            }
+        }
+        if let you = waitForElement("You", exact: true, types: [.button], timeout: 5) { you.tap() }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let l = waitForElement("Privacy policy", exact: false, types: [.link], timeout: 4) {
+            l.press(forDuration: 1.6)
+            Thread.sleep(forTimeInterval: 1.2)
+            let s = shot("longpress-link")
+            let preview = waitForElement("Open Link", exact: false, types: [.button, .menuItem], timeout: 1.5)
+                ?? waitForElement("Copy Link", exact: false, types: [.button, .menuItem], timeout: 0.5)
+            log.line("web-link-preview", preview != nil ? "WARN" : "PASS", shot: s,
+                     preview != nil ? "a long press on 'Privacy policy' opens the Safari link preview menu ('\(preview!.label)')"
+                                    : "no link preview on a long press")
+            if safari.state == .runningForeground { app.activate(); Thread.sleep(forTimeInterval: 1) }
+            dismissOverlay()
+        }
+    }
+
+    func dismissOverlay() {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04)).tap()
+        Thread.sleep(forTimeInterval: 1.0)
     }
 
     /// "Export finds" builds a blob: link with a download attribute. The web view has no

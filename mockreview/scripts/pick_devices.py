@@ -37,13 +37,13 @@ def main(outdir):
     if not ios:
         sys.exit("no available iOS simulator runtime on this runner")
     ios.sort(key=lambda r: ver(r["version"]))
-    pref = [r for r in ios if r["version"].startswith("27.")]
-    rt = (pref or ios)[-1]
+    # Newest first, iOS 27.x ahead of everything else. A runtime can be device-specific (the
+    # xcode-27 image's iOS 27.1 runtime supports only "iPhone Duo"), so take the newest one
+    # that has both an iPhone and an iPad.
+    order = [r for r in reversed(ios) if r["version"].startswith("27.")] + \
+            [r for r in reversed(ios) if not r["version"].startswith("27.")]
 
-    supported = rt.get("supportedDeviceTypes") or devtypes
-    names = {d["name"]: d["identifier"] for d in supported}
-
-    def choose(exact, pattern):
+    def choose(names, exact, pattern):
         for n in exact:
             if n in names:
                 return n
@@ -53,11 +53,20 @@ def main(outdir):
         cands.sort(key=lambda n: ver(n) or (0,))
         return cands[-1]
 
-    iphone = choose(["iPhone 17 Pro Max"], r"^iPhone \d+ Pro Max$") or choose([], r"^iPhone")
-    ipad = (choose(["iPad Air 11-inch (M3)", "iPad Air 11-inch (M4)", "iPad Air 11-inch (M2)"], r"^iPad Air 11")
-            or choose([], r"^iPad Air") or choose([], r"^iPad"))
-    if not iphone or not ipad:
-        sys.exit(f"runtime {rt['name']} lacks an iPhone or iPad device type: {sorted(names)}")
+    rt = iphone = ipad = None
+    skipped = []
+    for cand in order:
+        supported = cand.get("supportedDeviceTypes") or devtypes
+        names = {d["name"]: d["identifier"] for d in supported}
+        ip = choose(names, ["iPhone 17 Pro Max"], r"^iPhone \d+ Pro Max$") or choose(names, [], r"^iPhone")
+        pd = (choose(names, ["iPad Air 11-inch (M3)", "iPad Air 11-inch (M4)", "iPad Air 11-inch (M2)"], r"^iPad Air 11")
+              or choose(names, [], r"^iPad Air") or choose(names, [], r"^iPad"))
+        if ip and pd:
+            rt, iphone, ipad = cand, ip, pd
+            break
+        skipped.append(f"{cand['name']} ({len(names)} device types: {sorted(names)[:4]})")
+    if not rt:
+        sys.exit("no iOS runtime here supports both an iPhone and an iPad: " + "; ".join(skipped))
 
     lines = {
         "RUNTIME_ID": rt["identifier"],
@@ -73,6 +82,7 @@ def main(outdir):
         for k, v in lines.items():
             f.write(f"{k}={v}\n")
         f.write("\nall iOS runtimes: " + ", ".join(f"{r['name']} ({r.get('buildversion','')})" for r in ios) + "\n")
+        f.write("skipped runtimes: " + ("; ".join(skipped) or "none") + "\n")
         f.write("device types on the picked runtime: " + ", ".join(sorted(names)) + "\n")
     for k, v in lines.items():
         print(f"{k}={v}")
