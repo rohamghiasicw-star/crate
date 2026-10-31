@@ -348,12 +348,34 @@ final class ReviewerUITests: XCTestCase {
     /// above the keyboard (the web view's form accessory) or by tapping the page.
     func dismissKeyboard() {
         guard app.keyboards.firstMatch.exists else { return }
-        if let done = waitForElement("Done", exact: true, types: [.button], timeout: 1.5) {
-            done.tap()
+        /* review-sim run 41189222058: the "Done" button vanished between finding it and tapping
+           it, and tap() on a vanished element ends the whole walk. Taps go through tapEl, which
+           reads the element's frame from a snapshot (that throws instead of failing) and taps
+           the screen point. */
+        if let done = waitForElement("Done", exact: true, types: [.button], timeout: 1.5), tapEl(done) {
         } else if let t = waitForElement("Share a reel into Addify", exact: false, types: [.staticText], timeout: 1.5) {
-            t.tap()
+            _ = tapEl(t)
         }
         Thread.sleep(forTimeInterval: 1.0)
+    }
+
+    /// Frame of an element from a snapshot: nil (never a test failure) when it is gone.
+    func frameOf(_ e: XCUIElement) -> CGRect? {
+        guard let s = try? e.snapshot() else { return nil }
+        let f = s.frame
+        return f.isEmpty ? nil : f
+    }
+
+    /// Taps the visible part of an element by screen position. Returns false (and taps nothing)
+    /// when the element is gone or entirely outside the app window. Never ends the walk.
+    @discardableResult
+    func tapEl(_ e: XCUIElement) -> Bool {
+        guard let f = frameOf(e) else { return false }
+        let win = frameOf(app.windows.firstMatch) ?? springboard.frame
+        let vis = f.intersection(win)
+        guard !vis.isNull, vis.width >= 4, vis.height >= 4 else { return false }
+        tapScreen(CGPoint(x: vis.midX, y: vis.midY))
+        return true
     }
 
     /// Paste the sample link. With scans on, the page's own Paste button reads the clipboard,
@@ -864,7 +886,20 @@ final class ReviewerUITests: XCTestCase {
         }
     }
 
-    func screenText() -> String { app.debugDescription }
+    /* Every label and value on screen, from a snapshot. debugDescription raised "Lost connection
+       to the application" as a test failure when iOS relaunched the app (run 41189222058); a
+       snapshot throws instead, so a lost app reads as an empty screen and the walk goes on. */
+    func screenText() -> String {
+        guard let root = try? app.snapshot() else { return "" }
+        var out: [String] = []
+        func walk(_ n: XCUIElementSnapshot, _ depth: Int) {
+            if !n.label.isEmpty { out.append(n.label) }
+            if let v = n.value as? String, !v.isEmpty { out.append(v) }
+            if depth < 80 { for c in n.children { walk(c, depth + 1) } }
+        }
+        walk(root, 0)
+        return out.joined(separator: "\n")
+    }
 
     func sees(_ s: String, in text: String? = nil) -> Bool {
         (text ?? screenText()).range(of: s, options: [.caseInsensitive, .diacriticInsensitive]) != nil
@@ -886,7 +921,7 @@ final class ReviewerUITests: XCTestCase {
         repeat {
             for t in types {
                 let e = app.descendants(matching: t).matching(p).firstMatch
-                if e.exists { return e }
+                if (try? e.snapshot()) != nil { return e }
             }
             if timeout <= 0 { break }
             Thread.sleep(forTimeInterval: 0.7)
@@ -894,25 +929,45 @@ final class ReviewerUITests: XCTestCase {
         return nil
     }
 
+    /// The first label on screen that contains s, read from one snapshot (one query, not a
+    /// tree-wide search per call: those took ~15 s each on the web view in run 41189222058).
     func firstLabel(containing s: String) -> String? {
-        let p = NSPredicate(format: "label CONTAINS[c] %@", s)
-        let e = app.descendants(matching: .any).matching(p).firstMatch
-        return e.exists ? e.label : nil
+        let text = screenText()
+        for line in text.split(separator: "\n") where line.range(of: s, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+            return String(line)
+        }
+        return nil
+    }
+
+    func alertSnapshot(_ root: XCUIApplication) -> XCUIElementSnapshot? {
+        let a = root.alerts.firstMatch
+        return try? a.snapshot()
+    }
+
+    func flatten(_ n: XCUIElementSnapshot, _ out: inout [XCUIElementSnapshot]) {
+        out.append(n)
+        for c in n.children { flatten(c, &out) }
     }
 
     func systemAlertInfo(timeout: TimeInterval) -> String? {
         let a = springboard.alerts.firstMatch
-        guard a.waitForExistence(timeout: timeout) else { return nil }
-        let texts = a.staticTexts.allElementsBoundByIndex.map { $0.label }.filter { !$0.isEmpty }
-        let buttons = a.buttons.allElementsBoundByIndex.map { $0.label }
-        return "title '\(a.label)'; text '\(texts.joined(separator: " | "))'; buttons \(buttons)"
+        guard a.waitForExistence(timeout: timeout), let s = alertSnapshot(springboard) else { return nil }
+        var all: [XCUIElementSnapshot] = []
+        flatten(s, &all)
+        let texts = all.filter { $0.elementType == .staticText }.map { $0.label }.filter { !$0.isEmpty }
+        let buttons = all.filter { $0.elementType == .button }.map { $0.label }
+        return "title '\(s.label)'; text '\(texts.joined(separator: " | "))'; buttons \(buttons)"
     }
 
     func tapAlertButton(preferring labels: [String]) {
-        let a = springboard.alerts.firstMatch
-        guard a.exists else { return }
-        for l in labels where a.buttons[l].exists { a.buttons[l].tap(); return }
-        a.buttons.firstMatch.tap()
+        for root in [springboard, app] {
+            guard let s = alertSnapshot(root) else { continue }
+            var all: [XCUIElementSnapshot] = []
+            flatten(s, &all)
+            let buttons = all.filter { $0.elementType == .button && !$0.frame.isEmpty }
+            let pick = labels.compactMap { l in buttons.first { $0.label == l } }.first ?? buttons.first
+            if let b = pick { tapScreen(CGPoint(x: b.frame.midX, y: b.frame.midY)); return }
+        }
     }
 
     @discardableResult

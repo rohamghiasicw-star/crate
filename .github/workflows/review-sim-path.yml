@@ -154,6 +154,17 @@ jobs:
           { echo "live host $LIVE_HOST blocked: $(dscacheutil -q host -a name "$LIVE_HOST" | tr '\n' ' ')";
             echo "test box /health: $(curl -sS -m 25 "$ENGINE/health" | head -c 400)"; } | tee "$MR_OUT/inventory/network.txt"
 
+      # Apple reviewed build 19 on iPadOS 27.2 (Oct 30); the image ships 27.0 and 27.1 runtimes only.
+      # The iPad job tries to add the 27.2 runtime while the iPhone job does its scans.
+      - name: iPad - try to install the iOS 27.2 simulator runtime
+        if: matrix.dev == 'ipad' && contains(env.MR_GROUPS, 'runtime272')
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          t0=$(date +%s)
+          xcodebuild -downloadPlatform iOS 2>&1 | tail -5 | tee "$MR_OUT/inventory/runtime-download.txt" || true
+          echo "download took $(( $(date +%s) - t0 )) s" | tee -a "$MR_OUT/inventory/runtime-download.txt"
+
       - name: Simulator runtimes and device types
         run: |
           xcrun simctl list runtimes | tee "$MR_OUT/inventory/runtimes.txt"

@@ -118,7 +118,7 @@ extension ReviewerUITests {
         log = StepLog(cfg: cfg, phase: "rotate")
         launchPointed("launch")
         ensureHome()
-        dismissKeyboard()
+        resetZoom("walk start")
         let dev = XCUIDevice.shared
         let plan: [(UIDeviceOrientation, String)] = [(.landscapeLeft, "landscape-left"), (.portrait, "portrait"),
                                                       (.landscapeRight, "landscape-right"), (.portraitUpsideDown, "upside-down"),
@@ -127,11 +127,12 @@ extension ReviewerUITests {
             dev.orientation = o
             Thread.sleep(forTimeInterval: 2.5)
             let w = app.windows.firstMatch
-            let f = w.exists ? w.frame : .zero
-            let sf = springboard.windows.firstMatch.exists ? springboard.windows.firstMatch.frame : .zero
+            let f = frameOf(w) ?? .zero
+            let sf = frameOf(springboard.windows.firstMatch) ?? .zero
             let s = shot("rotate-\(name)")
             let tabs = waitForElement("You", exact: true, types: [.button], timeout: 2)
-            let tabOK = tabs.map { $0.frame.maxX <= f.maxX + 1 && $0.frame.minX >= f.minX - 1 && $0.frame.maxY <= f.maxY + 1 } ?? false
+            let tf = tabs.flatMap { frameOf($0) }
+            let tabOK = tf.map { $0.maxX <= f.maxX + 1 && $0.minX >= f.minX - 1 && $0.maxY <= f.maxY + 1 } ?? false
             log.line("rotate-\(name)", tabOK ? "PASS" : "WARN", shot: s,
                      "app window \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)) in screen \(Int(sf.width))x\(Int(sf.height)); 'You' tab \(tabs == nil ? "not found" : (tabOK ? "inside the window" : "outside the window"))")
             if name == "landscape-left" {
@@ -153,7 +154,7 @@ extension ReviewerUITests {
         log = StepLog(cfg: cfg, phase: "scans")
         launchPointed("launch")
         ensureHome()
-        dismissKeyboard()
+        resetZoom("walk start")
         if let tt = sample("tiktok"), scanGate("paste-tiktok", tt) {
             if pasteToScan(step: "paste-tiktok", link: tt) {
                 let out = waitScanOutcome("scan-tiktok")
@@ -180,7 +181,7 @@ extension ReviewerUITests {
         log = StepLog(cfg: cfg, phase: "share")
         launchPointed("launch")
         ensureHome()
-        dismissKeyboard()
+        resetZoom("walk start")
         guard let link = sample("share") else { log.line("share", "SKIP", shot: nil, "no share sample"); finish(); return }
         guard scanGate("share-from-safari", link) else { finish(); return }
         shareFromSafari(link)
@@ -193,7 +194,7 @@ extension ReviewerUITests {
         app.resetAuthorizationStatus(for: .microphone)
         launchPointed("launch")
         ensureHome()
-        dismissKeyboard()
+        resetZoom("walk start")
         guard scanGate("listen-allowed", "(microphone)") else { finish(); return }
         listenAllowed()
         finish()
@@ -210,15 +211,15 @@ extension ReviewerUITests {
             finish(); return
         }
         let pill0 = firstLabel(containing: "scans left") ?? firstLabel(containing: "Unlimited") ?? "?"
-        d.tap()
+        tapEl(d)
         let alert = app.alerts.firstMatch
         guard alert.waitForExistence(timeout: 5) else {
             log.line("delete-data", "FAIL", shot: shot("delete-no-confirm"), "tapped Delete account, no confirmation")
             finish(); return
         }
-        let text = alert.staticTexts.allElementsBoundByIndex.map { $0.label }.joined(separator: " | ")
+        let text = appAlertText()
         let s1 = shot("delete-confirm")
-        if alert.buttons["OK"].exists { alert.buttons["OK"].tap() } else { alert.buttons.element(boundBy: alert.buttons.count - 1).tap() }
+        tapAlertButton(preferring: ["OK"])
         Thread.sleep(forTimeInterval: 6)
         let after = waitForText(["Find the exact song", "Clip link", "reach Addify"], timeout: 20)
         let s2 = shot("after-delete")
@@ -334,7 +335,7 @@ extension ReviewerUITests {
             log.line(step, "FAIL", shot: shot(step + "-missing"), "no 'Try it on a reel' button")
             return
         }
-        tr.tap()
+        tapEl(tr)
         let inSafari = safari.wait(for: .runningForeground, timeout: 10)
         Thread.sleep(forTimeInterval: 4)
         let sa = shot(step + "-away")
@@ -345,7 +346,7 @@ extension ReviewerUITests {
                           : "Safari did not come to the front in 10 s (state \(stateName(safari.state)))")
         // Back the way a person does it: the status-bar breadcrumb, else the app switcher.
         let crumb = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Addify'")).firstMatch
-        if crumb.exists && crumb.isHittable { crumb.tap() } else { app.activate() }
+        if frameOf(crumb) != nil { tapEl(crumb) } else { app.activate() }
         _ = app.wait(for: .runningForeground, timeout: 10)
         let back = waitForText(expectBack, timeout: 8)
         log.line(step + "-back", back != nil ? "PASS" : "FAIL", shot: shot(step + "-back"),
@@ -361,14 +362,27 @@ extension ReviewerUITests {
                 continue
             }
             let before = onbScreenName()
-            let c = b.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            if mode == "doubleTap" { b.doubleTap() } else { c.tap(); Thread.sleep(forTimeInterval: 0.15); c.tap() }
-            Thread.sleep(forTimeInterval: 2.5)
-            let away = safari.state == .runningForeground
+            guard let f = frameOf(b) else { continue }
+            let p = CGPoint(x: f.midX, y: f.midY)
+            if mode == "doubleTap" {
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: p.x, dy: p.y)).doubleTap()
+            } else {
+                tapScreen(p); Thread.sleep(forTimeInterval: 0.15); tapScreen(p)
+            }
+            // Left the app? Safari in front, or the status-bar "◀ Addify" breadcrumb (run 41189222058
+            // caught Safari sliding in while Addify's tree still answered, so poll for 6 s).
+            var away = false
+            let t0 = Date()
+            while Date().timeIntervalSince(t0) < 6 {
+                if safari.state == .runningForeground || (try? springboard.buttons["breadcrumb"].snapshot()) != nil { away = true; break }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
             let s = shot("\(mode)-\(name)")
             if away {
-                log.line("\(mode)-\(name)", "FAIL", shot: s, "\(mode) on '\(label)' (screen \(before)) threw the user out of Addify into Safari (TikTok)")
-                app.activate(); _ = app.wait(for: .runningForeground, timeout: 10); Thread.sleep(forTimeInterval: 2.5)
+                log.line("\(mode)-\(name)", "FAIL", shot: s, "\(mode) on '\(label)' (screen \(before)) threw the user out of Addify into Safari (TikTok): the second tap landed on the next screen's 'Try it on a reel'")
+                let crumb = springboard.buttons["breadcrumb"]
+                if !tapEl(crumb) { app.activate() }
+                _ = app.wait(for: .runningForeground, timeout: 10); Thread.sleep(forTimeInterval: 3)
             } else {
                 let after = onbScreenName()
                 let skipped = (before == "1" && after != "2") || (before == "2" && after != "3") || (before.hasPrefix("3") && after != "home")
@@ -398,15 +412,14 @@ extension ReviewerUITests {
     /// pans the page. Measured against the app window, with the box focused and after the
     /// keyboard closes (the zoom stays).
     func layoutAndZoom(_ step: String) {
-        let win = app.windows.firstMatch.frame
+        let win = frameOf(app.windows.firstMatch) ?? springboard.frame
         var parts: [String] = []
         var cut: [String] = []
         for (label, exact, types) in [("scans left", false, [XCUIElement.ElementType.staticText, .button]),
                                       ("Clip link", true, [.textField]),
                                       ("Paste link from clipboard", true, [.button]),
                                       ("You", true, [.button]), ("Home", true, [.button])] as [(String, Bool, [XCUIElement.ElementType])] {
-            guard let e = waitForElement(label, exact: exact, types: types, timeout: 1) else { continue }
-            let f = e.frame
+            guard let e = waitForElement(label, exact: exact, types: types, timeout: 1), let f = frameOf(e) else { continue }
             parts.append("\(label) x \(Int(f.minX))-\(Int(f.maxX))")
             if f.maxX > win.maxX + 1 || f.minX < win.minX - 1 { cut.append(label) }
         }
@@ -417,8 +430,7 @@ extension ReviewerUITests {
         Thread.sleep(forTimeInterval: 1)
         var cut2: [String] = []
         for label in ["You", "Home", "Search", "Finds"] {
-            if let e = waitForElement(label, exact: true, types: [.button], timeout: 1) {
-                let f = e.frame
+            if let e = waitForElement(label, exact: true, types: [.button], timeout: 1), let f = frameOf(e) {
                 if f.maxX > win.maxX + 1 || f.minX < win.minX - 1 { cut2.append("\(label) x \(Int(f.minX))-\(Int(f.maxX))") }
             }
         }
@@ -443,9 +455,11 @@ extension ReviewerUITests {
             log.line(step, "FAIL", shot: shot(step + "-no-paste-button"), "no Paste button or link box on home")
             return (false, nil)
         }
-        let fieldFrame = field.frame
-        let btnFrame = pbtn.frame
-        let win = app.windows.firstMatch.frame
+        guard let fieldFrame = frameOf(field), let btnFrame = frameOf(pbtn) else {
+            log.line(step, "FAIL", shot: shot(step + "-no-frames"), "the Paste button or link box vanished")
+            return (false, nil)
+        }
+        let win = frameOf(app.windows.firstMatch) ?? springboard.frame
         let sw = springboard.frame.width
         tapScreen(CGPoint(x: btnFrame.midX, y: btnFrame.midY))
         Thread.sleep(forTimeInterval: 1.6)
@@ -490,8 +504,9 @@ extension ReviewerUITests {
 
     /// Reads the page's error line (#err, shown for 4.5 s).
     func pageError() -> String? {
+        let lines = screenText().split(separator: "\n").map(String.init)
         for key in ["TikTok or Instagram link", "does not look like", "Couldn't", "Could not"] {
-            if let l = firstLabel(containing: key), !l.isEmpty { return l }
+            if let l = lines.first(where: { $0.range(of: key, options: .caseInsensitive) != nil }) { return l }
         }
         return nil
     }
@@ -543,17 +558,17 @@ extension ReviewerUITests {
         guard let field = waitForElement("Clip link", exact: true, types: [.textField], timeout: 5) else {
             log.line("typed-invalid", "FAIL", shot: shot("typed-invalid-no-box"), "no link box"); return
         }
-        field.tap()
-        Thread.sleep(forTimeInterval: 0.6)
-        field.typeText("not a link")
+        guard typeInto(field, "not a link") else {
+            log.line("typed-invalid", "FAIL", shot: shot("typed-invalid-no-focus"), "the link box would not take keyboard focus"); return
+        }
         Thread.sleep(forTimeInterval: 0.5)
         let go = waitForElement("Find it", exact: true, types: [.button], timeout: 3)
         if let g = go {
             let kb = app.keyboards.firstMatch
-            if kb.exists && kb.frame.intersects(g.frame) { dismissKeyboard() }
-            if g.exists { g.tap() }
-        } else {
-            field.typeText("\n")
+            if kb.exists && (frameOf(kb) ?? .zero).intersects(frameOf(g) ?? .zero) { dismissKeyboard() }
+            if g.exists { tapEl(g) }
+        } else if app.keyboards.firstMatch.exists {
+            app.typeText("\n")
         }
         Thread.sleep(forTimeInterval: 1.0)
         let err = pageError()
@@ -703,7 +718,7 @@ extension ReviewerUITests {
             log.line("\(step)-allset-card", "FAIL", shot: cardShot,
                      "the onboarding card 'You're all set / Find my first song' covered the scan \(Int(c)) s in, although nothing was shared from the share sheet")
             if let b = waitForElement("Find my first song", exact: true, types: [.button], timeout: 2) {
-                b.tap()
+                tapEl(b)
                 Thread.sleep(forTimeInterval: 1.5)
                 log.line("\(step)-allset-dismissed", "INFO", shot: shot("\(step)-under-card"), "tapped 'Find my first song'; screen now: \(sees("Find another song") ? "the result" : (sees("Clip link") ? "home" : "other"))")
             }
@@ -716,17 +731,47 @@ extension ReviewerUITests {
         return "?"
     }
 
+    /// The result screen: what is on it, the native share sheet (an iPad popover with no anchor
+    /// is a crash) and the in-app preview player. Feedback controls (Right/Wrong version, Rate
+    /// this result, Like) are never touched.
     func resultScreenChecks(_ tag: String) {
         audit("result-\(tag)")
         let save = waitForElement("Save to Found with Addify", exact: false, types: [.button, .staticText], timeout: 2) != nil
         let openIn = sees("OPEN IN") || sees("Open in")
         log.line("result-\(tag)-screen", "INFO", shot: shot("result-\(tag)"),
                  "save button \(save ? "present" : "absent"); 'Open in' tiles \(openIn ? "present" : "absent")")
+        if let sh = waitForElement("Share", exact: true, types: [.button], timeout: 2) {
+            tapEl(sh)
+            Thread.sleep(forTimeInterval: 2.5)
+            let alive = app.state == .runningForeground
+            let sheet = app.otherElements["ActivityListView"].exists || app.sheets.firstMatch.exists
+                || app.buttons.matching(NSPredicate(format: "label ==[c] 'Copy' OR label ==[c] 'Messages' OR label ==[c] 'Mail'")).firstMatch.exists
+            let s = shot("result-\(tag)-share")
+            log.line("result-\(tag)-share", alive && sheet ? "PASS" : "FAIL", shot: s,
+                     !alive ? "the app is gone after tapping Share (crash?)" : (sheet ? "the iOS share sheet opened" : "tapped Share, no share sheet appeared"))
+            if let c = waitForElement("Close", exact: true, types: [.button], timeout: 1.5) { tapEl(c) }
+            else { springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap() }
+            Thread.sleep(forTimeInterval: 1.5)
+            if !alive { launchPointed("relaunch-after-share"); ensureHome() }
+        }
+        if let p = waitForElement("Play here", exact: false, types: [.button], timeout: 2) {
+            tapEl(p)
+            Thread.sleep(forTimeInterval: 6)
+            let img = XCUIScreen.main.screenshot()
+            let s = saveShot(img, "result-\(tag)-player")
+            let words = ocr(img, screenWidth: springboard.frame.width).map { $0.text }.joined(separator: " ")
+            let bad = ["unavailable", "Error", "error 15", "Sign in to confirm", "configuration", "not available"].first { words.contains($0) }
+            let left = safari.state == .runningForeground
+            log.line("result-\(tag)-player", bad == nil && !left ? "PASS" : "FAIL", shot: s,
+                     left ? "Play here left the app for Safari" : (bad != nil ? "the in-app player shows '\(bad!)': \(words.prefix(160))" : "the in-app preview player opened (\(words.prefix(100)))"))
+            if left { app.activate(); _ = app.wait(for: .runningForeground, timeout: 8) }
+            if let c = waitForElement("Close", exact: false, types: [.button], timeout: 2) { tapEl(c); Thread.sleep(forTimeInterval: 1) }
+        }
     }
 
     func backHome() {
         for label in ["Find another song", "Back to home", "Back"] {
-            if let b = waitForElement(label, exact: true, types: [.button], timeout: 1.5) { b.tap(); break }
+            if let b = waitForElement(label, exact: true, types: [.button], timeout: 1.5) { tapEl(b); break }
         }
         Thread.sleep(forTimeInterval: 1)
         _ = goTab("Home")
@@ -762,17 +807,17 @@ extension ReviewerUITests {
     }
 
     func typeAndSubmitLink(_ field: XCUIElement, _ link: String) -> Bool {
-        field.tap()
-        Thread.sleep(forTimeInterval: 0.6)
-        field.typeText(link)
+        guard typeInto(field, link) else {
+            log.line("find-it", "FAIL", shot: shot("link-box-no-focus"), "the link box would not take keyboard focus"); return false
+        }
         Thread.sleep(forTimeInterval: 0.5)
         guard let go = waitForElement("Find it", exact: true, types: [.button], timeout: 3) else {
             log.line("find-it", "FAIL", shot: shot("no-find-it"), "no Find it button after typing"); return false
         }
         let kb = app.keyboards.firstMatch
-        if kb.exists && kb.frame.intersects(go.frame) { dismissKeyboard() }
+        if kb.exists && (frameOf(kb) ?? .zero).intersects(frameOf(go) ?? .zero) { dismissKeyboard() }
         guard go.exists else { return false }
-        go.tap()
+        tapEl(go)
         let started = waitForText(["Finding song", "Reading the clip", "reading audio", "Match found"], timeout: 8)
         log.line("find-it", started != nil ? "PASS" : "FAIL", shot: shot("find-it"), started != nil ? "scan started" : "no scan screen 8 s after Find it")
         return started != nil
@@ -800,7 +845,7 @@ extension ReviewerUITests {
         var shareBtn = safari.buttons.matching(NSPredicate(format: "label ==[c] 'Share' OR identifier ==[c] 'ShareButton'")).firstMatch
         if !shareBtn.exists {
             let menu = safari.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Page Menu' OR label CONTAINS[c] 'More' OR label ==[c] 'Menu' OR identifier CONTAINS[c] 'PageMenu'")).firstMatch
-            if menu.exists { menu.tap(); Thread.sleep(forTimeInterval: 1.5) }
+            if menu.exists { tapEl(menu); Thread.sleep(forTimeInterval: 1.5) }
             shareBtn = safari.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] 'Share'")).firstMatch
         }
         guard shareBtn.exists else {
@@ -808,7 +853,7 @@ extension ReviewerUITests {
             log.line("share-sheet", "FAIL", shot: shot("share-no-button"), "could not find Safari's Share button (Safari tree saved)")
             return
         }
-        shareBtn.tap()
+        tapEl(shareBtn)
         Thread.sleep(forTimeInterval: 2.5)
         let s1 = shot("share-sheet")
         var addify: XCUIElement? = nil
@@ -816,21 +861,22 @@ extension ReviewerUITests {
             for root in [safari, springboard] {
                 let q = root.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] 'Addify'"))
                 let e = q.firstMatch
-                if e.exists && e.isHittable { addify = e; break }
+                if frameOf(e) != nil { addify = e; break }
             }
             if addify != nil { break }
             // Scroll the app row left: it lists new extensions at its end.
             let row = safari.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] 'Messages' OR label ==[c] 'Mail' OR label ==[c] 'Notes' OR label ==[c] 'Reminders'")).firstMatch
-            if row.exists {
-                let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 160, dy: 0))
-                let end = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: -140, dy: 0))
+            if let rf = frameOf(row) {
+                let o = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                let start = o.withOffset(CGVector(dx: rf.midX + 160, dy: rf.midY))
+                let end = o.withOffset(CGVector(dx: max(10, rf.midX - 140), dy: rf.midY))
                 start.press(forDuration: 0.05, thenDragTo: end)
                 Thread.sleep(forTimeInterval: 1)
             }
             if attempt == 3 {
                 // Last resort: the row's own "More" list.
                 let more = safari.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] 'More'")).firstMatch
-                if more.exists && more.isHittable { more.tap(); Thread.sleep(forTimeInterval: 1.5) }
+                if frameOf(more) != nil { tapEl(more); Thread.sleep(forTimeInterval: 1.5) }
             }
         }
         guard let target = addify else {
@@ -839,7 +885,7 @@ extension ReviewerUITests {
             return
         }
         log.line("share-sheet-addify", "PASS", shot: shot("share-addify-found"), "Addify is in the share sheet")
-        target.tap()
+        tapEl(target)
         let t0 = Date()
         var arrived = false
         var notes: [String] = []
@@ -854,7 +900,7 @@ extension ReviewerUITests {
             if card.exists {
                 notes.append("the extension showed its fallback card")
                 log.line("share-card", "WARN", shot: shot("share-card"), "the extension could not open Addify by itself and showed 'Open Addify'; tapping it")
-                if card.isHittable { card.tap() }
+                if frameOf(card) != nil { tapEl(card) }
             }
             Thread.sleep(forTimeInterval: 1)
         }
@@ -884,7 +930,7 @@ extension ReviewerUITests {
         if let f = waitForElement("Clip link", exact: true, types: [.textField], timeout: 2), let v = f.value as? String, !v.isEmpty, v != f.placeholderValue {
             clearField(f); dismissKeyboard()
         }
-        orb.tap()
+        tapEl(orb)
         if let a = systemAlertInfo(timeout: 8) {
             log.line("mic-prompt", "INFO", shot: shot("mic-prompt"), "\(a)")
             tapAlertButton(preferring: ["Don’t Allow", "Don't Allow"])
@@ -896,7 +942,7 @@ extension ReviewerUITests {
             log.line("mic-denied", msg.hasPrefix("(") ? "FAIL" : "PASS", shot: s,
                      "after Don't Allow the page says '\(msg)'; 5 s later the message is \(still ? "still up" : "gone") (\(shot("mic-denied-7s")))")
             if let orb2 = waitForElement("Scan", exact: true, types: [.button], timeout: 3) {
-                orb2.tap()
+                tapEl(orb2)
                 Thread.sleep(forTimeInterval: 2.5)
                 let again = systemAlertInfo(timeout: 1)
                 let msg2 = firstLabel(containing: "icrophone") ?? "(no message)"
@@ -907,7 +953,7 @@ extension ReviewerUITests {
         } else {
             log.line("mic-prompt", "WARN", shot: shot("listen-no-prompt"), "tapped SCAN, no microphone prompt in 8 s")
         }
-        if let b = waitForElement("Cancel", exact: true, types: [.button], timeout: 1) { b.tap() }
+        if let b = waitForElement("Cancel", exact: true, types: [.button], timeout: 1) { tapEl(b) }
         _ = goTab("Home")
     }
 
@@ -915,7 +961,7 @@ extension ReviewerUITests {
         guard let orb = waitForElement("Scan", exact: true, types: [.button], timeout: 5) else {
             log.line("listen-allowed", "FAIL", shot: shot("no-scan-dial"), "no SCAN dial on home"); return
         }
-        orb.tap()
+        tapEl(orb)
         if let a = systemAlertInfo(timeout: 8) {
             log.line("mic-prompt", "INFO", shot: shot("mic-prompt"), "\(a); tapped Allow")
             tapAlertButton(preferring: ["Allow", "OK"])
@@ -952,7 +998,7 @@ extension ReviewerUITests {
             log.line("tab-\(name)", "FAIL", shot: shot("no-tab-\(name)"), "no '\(name)' tab button")
             return false
         }
-        b.tap()
+        tapEl(b)
         Thread.sleep(forTimeInterval: 1.2)
         return true
     }
@@ -964,13 +1010,12 @@ extension ReviewerUITests {
             log.line("search", "FAIL", shot: shot("search-no-field"), "no search field"); return
         }
         for (q, name) in [("slowed", "search-slowed"), ("zzqxv nothing 0941", "search-nonsense")] {
-            f.tap()
-            Thread.sleep(forTimeInterval: 0.5)
-            if let v = f.value as? String, !v.isEmpty, v != f.placeholderValue {
-                f.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: v.count + 2))
-            }
+            let v = ((try? f.snapshot())?.value as? String) ?? ""
+            let clear = (!v.isEmpty && v != "a lyric, a vibe, or a creator") ? String(repeating: XCUIKeyboardKey.delete.rawValue, count: v.count + 2) : ""
             let base = app.buttons.count
-            f.typeText(q + "\n")
+            guard typeInto(f, clear + q + "\n") else {
+                log.line(name, "FAIL", shot: shot(name + "-no-focus"), "the search field would not take keyboard focus"); continue
+            }
             let t0 = Date()
             var got = ""
             while Date().timeIntervalSince(t0) < 20 {
@@ -996,7 +1041,7 @@ extension ReviewerUITests {
             log.line("trending", "WARN", shot: shot("trending-no-see-all"), empty ? "no Trending teaser on home (no chart data on this engine): 'Your finds will land here'" : "no 'See all' on home")
             return
         }
-        see.tap()
+        tapEl(see)
         Thread.sleep(forTimeInterval: 2)
         let ok = waitForText(["Trending songs"], timeout: 5) != nil
         log.line("trending-open", ok ? "PASS" : "FAIL", shot: shot("trending"), ok ? "Trending screen is up" : "See all did not open Trending")
@@ -1005,7 +1050,7 @@ extension ReviewerUITests {
             guard let c = waitForElement(chip, exact: true, types: [.button], timeout: 3) else {
                 log.line("chip-\(chip)", "FAIL", shot: shot("chip-\(chip)-missing"), "no '\(chip)' chip"); continue
             }
-            c.tap()
+            tapEl(c)
             Thread.sleep(forTimeInterval: 1.2)
             let empty = firstLabel(containing: "sounds right now")
             let rows = app.buttons.matching(NSPredicate(format: "label MATCHES '(?s)^[0-9]+ .*'")).count
@@ -1013,7 +1058,7 @@ extension ReviewerUITests {
                      empty != nil ? "'\(chip)' shows an empty list: '\(empty!)'" : "'\(chip)' lists rows (\(rows) numbered rows read)")
         }
         if let back = waitForElement("Back to Home", exact: true, types: [.button], timeout: 3) {
-            back.tap()
+            tapEl(back)
             Thread.sleep(forTimeInterval: 1)
         } else { _ = goTab("Home") }
     }
@@ -1039,23 +1084,23 @@ extension ReviewerUITests {
         guard let see = waitForElement("See all", exact: true, types: [.button], timeout: 8) else {
             log.line("save-trending", "SKIP", shot: shot("save-no-trending"), "no Trending teaser, so no song to save without a scan"); return
         }
-        see.tap()
+        tapEl(see)
         Thread.sleep(forTimeInterval: 2)
         let rows = app.buttons.matching(NSPredicate(format: "label MATCHES '(?s)^1[^0-9].*'"))
         let row = rows.firstMatch.exists ? rows.firstMatch : app.buttons.matching(NSPredicate(format: "label MATCHES '(?s)^[0-9]+ .*'")).firstMatch
         guard row.exists else {
             log.line("save-trending", "FAIL", shot: shot("save-no-row"), "no Trending row to save"); return
         }
-        let f = row.frame
+        guard let f = frameOf(row) else { log.line("save-trending", "FAIL", shot: shot("save-row-gone"), "the Trending row vanished"); return }
         let plus = app.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] 'Save to playlist'")).firstMatch
-        if plus.exists && plus.isHittable { plus.tap() }
+        if frameOf(plus) != nil { tapEl(plus) }
         else { tapScreen(CGPoint(x: f.maxX - 25, y: f.midY)) }   // the 28 pt + sits 11 pt from the row's right edge
         Thread.sleep(forTimeInterval: 1.5)
         let leftApp = safari.state == .runningForeground
         log.line("save-trending", leftApp ? "FAIL" : "PASS", shot: shot("save-trending"),
                  leftApp ? "the tap on + opened the song outside Addify instead of saving it" : "tapped + on '\(row.label.prefix(50))'")
         if leftApp { app.activate(); _ = app.wait(for: .runningForeground, timeout: 10) }
-        if let back = waitForElement("Back to Home", exact: true, types: [.button], timeout: 3) { back.tap() }
+        if let back = waitForElement("Back to Home", exact: true, types: [.button], timeout: 3) { tapEl(back) }
     }
 
     // =================================================================================
@@ -1079,7 +1124,7 @@ extension ReviewerUITests {
         audit("profile")
         // Export finds with an empty library.
         if let ex = waitForElement("Export finds", exact: false, types: [.button], timeout: 3) {
-            ex.tap()
+            tapEl(ex)
             Thread.sleep(forTimeInterval: 2.5)
             let stillHere = waitForElement("You", exact: true, types: [.button], timeout: 1) != nil
             let sheet = app.otherElements["ActivityListView"].exists || app.sheets.firstMatch.exists
@@ -1088,12 +1133,12 @@ extension ReviewerUITests {
         }
         // How to add Addify replays screen 2.
         if let how = waitForElement("How to add Addify", exact: true, types: [.button], timeout: 3) {
-            how.tap()
+            tapEl(how)
             let up = waitForText(["Pin Addify"], timeout: 5) != nil
             let s2 = shot("howto")
             var closed = false
             if up, let later = waitForElement("do this later", exact: false, types: [.button], timeout: 3) {
-                later.tap()
+                tapEl(later)
                 Thread.sleep(forTimeInterval: 1)
                 closed = !sees("Pin Addify")
             }
@@ -1101,18 +1146,41 @@ extension ReviewerUITests {
         }
     }
 
+    /// Closes the paywall with its X. When the zoomed page has pushed the X off the screen (the
+    /// link box zoom), that is logged as a failure and the page is pinched back out first.
     func closePaywall() {
-        if let x = waitForElement("Close", exact: true, types: [.button], timeout: 3) {
-            x.tap()
+        guard let x = waitForElement("Close", exact: true, types: [.button], timeout: 3) else { return }
+        if tapEl(x) {
             Thread.sleep(forTimeInterval: 1)
+            if !sees("Restore purchases") { return }
         }
+        let f = frameOf(x).map { "x \(Int($0.minX))-\(Int($0.maxX)), y \(Int($0.minY))" } ?? "?"
+        let win = frameOf(app.windows.firstMatch) ?? springboard.frame
+        log.line("paywall-x-offscreen", "FAIL", shot: shot("paywall-x-offscreen"),
+                 "the paywall's Close (X) is outside the \(Int(win.width)) pt screen (\(f)) because the page is zoomed in; a reviewer has to pinch out or pan to close it")
+        resetZoom("to reach the paywall X")
+        if let x2 = waitForElement("Close", exact: true, types: [.button], timeout: 2) { tapEl(x2) }
+        Thread.sleep(forTimeInterval: 1)
+    }
+
+    /// Pinches the page back out to its normal scale (what a reviewer does by hand once the
+    /// link box has zoomed the page) and records where the tab bar ends up.
+    func resetZoom(_ why: String) {
+        dismissKeyboard()
+        let web = app.webViews.firstMatch
+        guard frameOf(web) != nil else { return }
+        let before = waitForElement("You", exact: true, types: [.button], timeout: 1).flatMap { frameOf($0) }
+        web.pinch(withScale: 0.35, velocity: -2.0)
+        Thread.sleep(forTimeInterval: 1.5)
+        let after = waitForElement("You", exact: true, types: [.button], timeout: 1).flatMap { frameOf($0) }
+        log.line("zoom-reset", "INFO", shot: nil, "pinched the page out (\(why)): 'You' tab x \(before.map { "\(Int($0.minX))-\(Int($0.maxX))" } ?? "?") -> \(after.map { "\(Int($0.minX))-\(Int($0.maxX))" } ?? "?")")
     }
 
     func paywallNoProducts() {
         guard goTab("You"), let up = waitForElement("Upgrade", exact: true, types: [.button], timeout: 5) else {
             log.line("paywall-open", "FAIL", shot: shot("no-upgrade"), "no Upgrade button"); return
         }
-        up.tap()
+        tapEl(up)
         Thread.sleep(forTimeInterval: 1.5)
         let opened = sees("Restore purchases")
         log.line("paywall-open", opened ? "PASS" : "FAIL", shot: shot("paywall"), opened ? "paywall is up" : "Upgrade opened nothing")
@@ -1143,7 +1211,7 @@ extension ReviewerUITests {
         guard let r = waitForElement("Restore purchases", exact: true, types: [.button], timeout: 4) else {
             log.line(step, "FAIL", shot: shot(step + "-missing"), "no Restore purchases button"); return
         }
-        r.tap()
+        tapEl(r)
         let t0 = Date()
         var message = ""
         var prompts: [String] = []
@@ -1183,7 +1251,7 @@ extension ReviewerUITests {
         guard let l = found else {
             log.line(step, "FAIL", shot: shot(step + "-missing"), "no '\(label)' link"); return
         }
-        l.tap()
+        tapEl(l)
         let inSafari = safari.wait(for: .runningForeground, timeout: 10)
         Thread.sleep(forTimeInterval: 3.5)
         let s = shot(step)
@@ -1216,13 +1284,13 @@ extension ReviewerUITests {
             guard let b = waitForElement(row, exact: false, types: [.button], timeout: 4) else {
                 log.line(step, "FAIL", shot: shot(step + "-missing"), "no '\(row)' row"); continue
             }
-            b.tap()
+            tapEl(b)
             let alert = app.alerts.firstMatch
             if alert.waitForExistence(timeout: 5) {
-                let text = alert.staticTexts.allElementsBoundByIndex.map { $0.label }.joined(separator: " | ")
-                let buttons = alert.buttons.allElementsBoundByIndex.map { $0.label }
+                let text = appAlertText()
+                let buttons = appAlertButtons()
                 log.line(step, "PASS", shot: shot(step + "-confirm"), "'\(row)' asks '\(text)' with \(buttons); tapped Cancel")
-                if alert.buttons["Cancel"].exists { alert.buttons["Cancel"].tap() } else { alert.buttons.firstMatch.tap() }
+                tapAlertButton(preferring: ["Cancel"])
             } else {
                 log.line(step, "FAIL", shot: shot(step + "-nothing"), "tapped '\(row)', no confirmation")
             }
@@ -1237,7 +1305,7 @@ extension ReviewerUITests {
             log.line("export-songs", "FAIL", shot: shot("export-songs-missing"), "no Export finds row"); return
         }
         let finds = firstLabel(containing: "in your Finds") ?? firstLabel(containing: "scans left") ?? ""
-        ex.tap()
+        tapEl(ex)
         Thread.sleep(forTimeInterval: 3)
         let s = shot("export-songs")
         let ax = dumpAX("export-songs")
@@ -1245,7 +1313,10 @@ extension ReviewerUITests {
         let sheet = app.otherElements["ActivityListView"].exists || app.sheets.firstMatch.exists
         let alert = systemAlertInfo(timeout: 1) ?? (app.alerts.firstMatch.exists ? app.alerts.firstMatch.label : nil)
         if !tabs {
-            log.line("export-songs", "FAIL", shot: s, "after Export finds the app page is gone (no tab bar): the web view navigated to the text file and there is no way back but force quit. ax=\(ax)")
+            let unreachable = sees("reach Addify") || sees("didn't answer")
+            log.line("export-songs", "FAIL", shot: s, unreachable
+                     ? "after Export finds the app shows 'Can't reach Addify': the failed blob download went through EngineWebView failed() -> unreachable. Only Try again or a relaunch gets the app back. ax=\(ax)"
+                     : "after Export finds the app page is gone (no tab bar): the web view navigated to the text file and there is no way back but force quit. ax=\(ax)")
             app.terminate()
             launchPointed("relaunch-after-export")
             ensureHome()
@@ -1274,7 +1345,7 @@ extension ReviewerUITests {
         // The page's own theme switch sits on the Profile header.
         _ = goTab("You")
         if let t = waitForElement("Switch theme", exact: true, types: [.button], timeout: 3) {
-            t.tap()
+            tapEl(t)
             Thread.sleep(forTimeInterval: 1.5)
             log.line("page-theme-light-profile", "INFO", shot: shot("page-theme-light-profile"), "the page's own theme switch, light, on Profile")
             _ = goTab("Home")
@@ -1282,7 +1353,7 @@ extension ReviewerUITests {
             log.line("page-theme-light-home", "INFO", shot: shot("page-theme-light-home"), "home in the page's light theme (the SCAN dial)")
             audit("home-light-theme", types: [.contrast])
             _ = goTab("You")
-            if let t2 = waitForElement("Switch theme", exact: true, types: [.button], timeout: 2) { t2.tap() }
+            if let t2 = waitForElement("Switch theme", exact: true, types: [.button], timeout: 2) { tapEl(t2) }
             Thread.sleep(forTimeInterval: 1)
         } else {
             log.line("page-theme", "WARN", shot: shot("no-theme-switch"), "no 'Switch theme' button on Profile")
@@ -1312,12 +1383,42 @@ extension ReviewerUITests {
             log.line(step, "FAIL", shot: shot(step + "-missing"), "no '\(label)' button (screen: \(onbScreenName()))")
             return false
         }
-        b.tap()
+        tapEl(b)
         let got = waitForText(expect, timeout: 8)
         if !quiet || got == nil {
             log.line(step, got != nil ? "PASS" : "FAIL", shot: shot(step), got != nil ? "tapped '\(label)', now '\(got!)'" : "tapped '\(label)', none of \(expect) appeared")
         }
         return got != nil
+    }
+
+
+    /// Taps a text field and types into it only once the keyboard is up (typeText without
+    /// keyboard focus is a test failure that ends the walk).
+    @discardableResult
+    func typeInto(_ field: XCUIElement, _ text: String) -> Bool {
+        guard tapEl(field) else { return false }
+        let t0 = Date()
+        while !app.keyboards.firstMatch.exists && Date().timeIntervalSince(t0) < 3 { Thread.sleep(forTimeInterval: 0.3) }
+        guard app.keyboards.firstMatch.exists else { return false }
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeText(text)
+        return true
+    }
+
+
+    /// Text and buttons of the app's own alert (a JavaScript confirm shown natively), from a snapshot.
+    func appAlertText() -> String {
+        guard let s = alertSnapshot(app) else { return "" }
+        var all: [XCUIElementSnapshot] = []
+        flatten(s, &all)
+        return all.filter { $0.elementType == .staticText }.map { $0.label }.filter { !$0.isEmpty }.joined(separator: " | ")
+    }
+
+    func appAlertButtons() -> [String] {
+        guard let s = alertSnapshot(app) else { return [] }
+        var all: [XCUIElementSnapshot] = []
+        flatten(s, &all)
+        return all.filter { $0.elementType == .button }.map { $0.label }
     }
 
     func auditName(_ t: XCUIAccessibilityAuditType) -> String {

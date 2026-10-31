@@ -164,7 +164,8 @@ cmd_textsize() {
 }
 
 cmd_crashes() {
-  local dev=$1 dir="$OUT/crashes-$dev"
+  local dev=$1
+  local dir="$OUT/crashes-$dev"
   mkdir -p "$dir"
   local n=0
   for d in "$HOME/Library/Logs/DiagnosticReports" "$HOME/Library/Logs/DiagnosticReports/Retired"; do
@@ -179,6 +180,8 @@ cmd_crashes() {
     ls -la "$dir"
     echo "--- device log lines that look like a crash, a kill or a jetsam (first 80)"
     grep -n -i -E "crash|EXC_|SIGABRT|SIGKILL|jetsam|terminated|WebContent.*(exit|crash)|ProcessTerminated|didTerminate" "$OUT/$dev-device.log" 2>/dev/null | head -80
+    echo "--- com.addify.app lifecycle lines (runningboardd / SpringBoard / the app), first 120"
+    grep -n -i -E "com\.addify\.app.*(termination|terminat|exit|launch|jetsam|memory|kill|crash|suspend)|\[app<com\.addify" "$OUT/$dev-device.log" 2>/dev/null | cut -c1-300 | head -120
   } > "$OUT/$dev-crashes.txt"
   note "crash scan for $dev: $n report(s)"
 }

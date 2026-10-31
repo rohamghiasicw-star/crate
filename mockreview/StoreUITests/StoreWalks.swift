@@ -21,7 +21,7 @@ extension ReviewerUITests {
         let session = storeSession()
         launchPointed("launch")
         ensureHome()
-        dismissKeyboard()
+        resetZoom("store walk start")
 
         // 1. Products: names, prices, the trial line.
         if openPaywall("store-paywall") { paywallPlansCheck() }
@@ -142,7 +142,7 @@ extension ReviewerUITests {
             log.line(step, "FAIL", shot: shot(step + "-no-upgrade"), "no Upgrade button on Profile (counter '\(firstLabel(containing: "scans left") ?? firstLabel(containing: "Unlimited") ?? "?")')")
             return false
         }
-        up.tap()
+        tapEl(up)
         Thread.sleep(forTimeInterval: 1.5)
         let t0 = Date()
         while Date().timeIntervalSince(t0) < 20 && sees("Loading prices") { Thread.sleep(forTimeInterval: 1.2) }
@@ -154,9 +154,10 @@ extension ReviewerUITests {
     func paywallPlansCheck() {
         let monthly = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Monthly'")).firstMatch
         let yearly = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Yearly'")).firstMatch
-        let m = monthly.exists ? monthly.label.replacingOccurrences(of: "\n", with: " ") : "(none)"
-        let y = yearly.exists ? yearly.label.replacingOccurrences(of: "\n", with: " ") : "(none)"
-        let ok = monthly.exists && yearly.exists && m.contains("4.99") && y.contains("24.99")
+        let ms = try? monthly.snapshot(), ys = try? yearly.snapshot()
+        let m = ms.map { $0.label.replacingOccurrences(of: "\n", with: " ") } ?? "(none)"
+        let y = ys.map { $0.label.replacingOccurrences(of: "\n", with: " ") } ?? "(none)"
+        let ok = ms != nil && ys != nil && m.contains("4.99") && y.contains("24.99")
         let trial = y.lowercased().contains("free")
         log.line("store-plans", ok ? "PASS" : "FAIL", shot: shot("store-plans"),
                  "monthly '\(m)'; yearly '\(y)'; trial line on yearly: \(trial ? "yes" : "no")")
@@ -171,23 +172,32 @@ extension ReviewerUITests {
         guard btn.exists else {
             log.line(step, "FAIL", shot: shot(step + "-no-plan"), "no '\(plan)' plan button on the paywall"); return
         }
-        btn.tap()
+        // The paywall's own X is labelled "Close" too; remember where it is so it is never taken
+        // for the Cancel button of Apple's sheet.
+        let pwX = waitForElement("Close", exact: true, types: [.button], timeout: 1).flatMap { frameOf($0) }
+        tapEl(btn)
         Thread.sleep(forTimeInterval: 2.5)
         var sheetNote = "no purchase sheet"
         if answer != "none" {
-            let want = answer == "cancel" ? ["Cancel", "Close", "Not Now"] : ["Subscribe", "Confirm", "Try It Free", "Start Free Trial", "Purchase", "Buy", "OK"]
+            let want = answer == "cancel" ? ["Cancel", "Not Now", "Close"] : ["Subscribe", "Confirm", "Try It Free", "Start Free Trial", "Purchase", "Buy", "OK"]
             var tapped = false
             let t0 = Date()
             while !tapped && Date().timeIntervalSince(t0) < 15 {
-                for root in [app, springboard] {
+                for root in [springboard, app] {
                     for l in want {
-                        let b = root.buttons.matching(NSPredicate(format: "label ==[c] %@", l)).firstMatch
-                        if b.exists && b.isHittable {
+                        let q = root.buttons.matching(NSPredicate(format: "label ==[c] %@", l))
+                        for i in 0..<min(4, q.count) {
+                            let b = q.element(boundBy: i)
+                            guard let f = frameOf(b) else { continue }
+                            if let x = pwX, abs(x.midX - f.midX) < 2, abs(x.midY - f.midY) < 2 { continue }
                             let s = shot(step + "-sheet")
-                            let texts = root.staticTexts.allElementsBoundByIndex.prefix(14).map { $0.label }.filter { !$0.isEmpty }.joined(separator: " | ")
-                            sheetNote = "Apple's sheet (\(s)) said: \(texts.prefix(300)); tapped '\(l)'"
-                            b.tap(); tapped = true; break
+                            let texts = screenTextOf(root).prefix(400)
+                            if tapEl(b) {
+                                sheetNote = "Apple's sheet (\(s)) said: \(texts.replacingOccurrences(of: "\n", with: " | ")); tapped '\(l)'"
+                                tapped = true; break
+                            }
                         }
+                        if tapped { break }
                     }
                     if tapped { break }
                 }
@@ -216,6 +226,15 @@ extension ReviewerUITests {
         }
     }
 
+
+    /// Every label under another app's root (springboard or the app), from a snapshot.
+    func screenTextOf(_ root: XCUIApplication) -> String {
+        guard let r = try? root.snapshot() else { return "" }
+        var all: [XCUIElementSnapshot] = []
+        flatten(r, &all)
+        return all.map { $0.label }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
     func subscriberChecks(_ tag: String) {
         guard goTab("You") else { return }
         Thread.sleep(forTimeInterval: 1)
@@ -226,7 +245,7 @@ extension ReviewerUITests {
         log.line("subscriber-\(tag)", plus && !card && manage != nil ? "PASS" : "FAIL", shot: shot("subscriber-\(tag)"),
                  "Profile: 'Addify Plus' \(plus ? "shown" : "missing"); upgrade card \(card ? "still shown" : "hidden"); Manage subscription row \(manage != nil ? "present" : "missing")")
         if let m = manage {
-            m.tap()
+            tapEl(m)
             Thread.sleep(forTimeInterval: 4)
             let s = shot("manage-\(tag)")
             let inSafari = safari.state == .runningForeground
