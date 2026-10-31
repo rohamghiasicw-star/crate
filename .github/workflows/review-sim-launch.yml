@@ -210,7 +210,7 @@ jobs:
         run: |
           test -f "$RS_OUT/results.jsonl" && python3 reviewsim/launch/scripts/aggregate.py "$RS_OUT/summary" "$RS_OUT/results.jsonl" || echo "no results"
 
-      - name: Upload results
+      - name: Upload results (small: results, calibration, accessibility dumps, logs, checkpoint shots)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -218,5 +218,13 @@ jobs:
           path: |
             out
             !out/**/*.xcresult
-            !out/**/poll.*
+            !out/**/polls/**
+          retention-days: 7
+
+      - name: Upload every poll frame (for offline re-reading)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rs-launch-${{ needs.plan.outputs.run }}-${{ matrix.shard }}-frames
+          path: out/**/polls/**
           retention-days: 7

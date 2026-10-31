@@ -548,17 +548,19 @@ def launch_once(dev, cfg, cls, app_path, build, target, cond, rep, counted=True)
         json.dump(full, f)
     pngs = sorted(glob.glob(os.path.join(pdir, "p*.png")))
     if pngs:
-        run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "50", "-Z", "640", *pngs, "--out", pdir], timeout=300)
+        run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "45", "-Z", "720", *pngs, "--out", pdir], timeout=300)
         for x in pngs:
             if os.path.exists(x[:-4] + ".jpg"):
                 os.remove(x)
-    # keep full PNGs only for rep 1; everything else becomes a small JPEG
-    for c in at:
-        png = os.path.join(dev.out, "shots", f"{lid}-{c:03d}s.png")
-        if os.path.exists(png) and (rep != 1 or not counted):
-            run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "55", "-Z", "900", png,
-                 "--out", png[:-4] + ".jpg"], timeout=30)
-            os.remove(png)
+    # checkpoint shots become JPEGs (1000 px tall side): artifacts stay small enough to download
+    shots = [os.path.join(dev.out, "shots", f"{lid}-{c:03d}s.png") for c in at]
+    shots = [x for x in shots if os.path.exists(x)]
+    if shots:
+        run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "60", "-Z", "1000", *shots,
+             "--out", os.path.join(dev.out, "shots")], timeout=120)
+        for x in shots:
+            if os.path.exists(x[:-4] + ".jpg"):
+                os.remove(x)
     return rec
 
 
