@@ -6969,7 +6969,7 @@ function openPicker(d){
         return SP.addTo(p.id,d.base_song,d.base_artist).then(function(){
           nw.querySelector('b').innerHTML=esc(p.name)+' · added'+'<span class="itick">'+IC.tick+'</span>';});
       }).catch(function(){nw.querySelector('b').textContent='Failed. Tap to retry';});};
-  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load playlists. Reconnect Spotify in Profile.</div>';});}
+  }).catch(function(){body.innerHTML='<div class="pknote">Couldn’t load your Spotify playlists.</div>';});}   // no sign-in on this page, so no "reconnect"
 document.getElementById('picker').onclick=function(e){if(e.target.id==='picker') e.target.hidden=true;};
 
 /* ============================================================
