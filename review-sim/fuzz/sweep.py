@@ -83,6 +83,13 @@ def anchors(device):
     A.append(("t_export_with_finds", cfg(66, device, finds), [tap("#tb-prof"), wait(500), tap("#pfexp"), wait(1500)]))
     A.append(("t_export_empty", cfg(67, device, ONB), [tap("#tb-prof"), wait(500), tap("#pfexp"), wait(1500)]))
     A.append(("t_trending", cfg(68, device, ONB), [tap("#seeall"), wait(1500)]))
+    near = dict(ONB, **{"addify-scans-life": "4", "addify-scans-life-urls": json.dumps(["https://www.tiktok.com/@s/video/70000000000000000%02d" % i for i in range(4)])})
+    c69 = cfg(69, device, near)
+    c69["dialogs"] = "accept"
+    A.append(("t_delete_account_counter", c69, [tap("#tb-prof"), wait(500), tap("#pfdel"), wait(3000)]))
+    A.append(("t_legal_privacy", cfg(70, device, ONB), [tap("#tb-prof"), wait(500), tap("#pfpriv"), wait(2000)]))
+    A.append(("t_legal_support", cfg(71, device, ONB), [tap("#tb-prof"), wait(500), tap("#pfsup"), wait(2000)]))
+    A.append(("t_legal_terms_paywall", cfg(72, device, ONB), [tap("#scanpill"), wait(1500), tap("#paywall a", l="Terms of Use"), wait(2000)]))
     return A
 
 
@@ -100,6 +107,9 @@ async def main_async(args):
     for dev in ("iphone17promax", "ipad_compat"):
         for name, c, path in anchors(dev):
             jobs.append((dev, name, c, path))
+    if args.only:
+        import re as _re
+        jobs = [j for j in jobs if _re.search(args.only, j[1])]
     jobs = [j for i, j in enumerate(jobs) if i % args.shards == args.shard]
     fout = open(out / ("sweep-%03d.jsonl" % args.shard), "a")
     stats = {"anchors": len(jobs), "screens": 0, "taps": 0, "failures": 0, "replays": 0, "t0": time.time()}
@@ -197,6 +207,7 @@ def main():
     ap.add_argument("--max-taps", type=int, default=600)
     ap.add_argument("--max-minutes", type=float, default=200)
     ap.add_argument("--out", default="out")
+    ap.add_argument("--only", default="", help="regex on anchor names, e.g. ^t_ for the targeted paths")
     args = ap.parse_args()
     asyncio.run(main_async(args))
 

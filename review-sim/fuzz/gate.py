@@ -16,7 +16,7 @@ BLOCK = {"escape_unintended", "hidden_code_path", "js_uncaught", "js_error", "un
          "stuck_loading", "long_scan", "counter_past_free_limit", "pro_without_purchase", "paywall_for_subscriber",
          "developer_mode_on", "developer_text_on_screen", "raw_value_on_screen", "download_in_webview", "external_request",
          "control_does_nothing", "sheet_clipped", "overflow_x", "paywall_no_plans", "page_load_error", "toast_covers_header"}
-WARN = {"free_scan_not_counted", "pill_mismatch"}
+WARN = {"free_scan_not_counted", "pill_mismatch", "filter_always_empty", "legal_page_back_column", "free_scans_reset"}
 
 
 def main():

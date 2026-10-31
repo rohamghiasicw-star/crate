@@ -97,7 +97,7 @@ jobs:
               > "$GITHUB_WORKSPACE/out/run.log" 2>&1 || echo "fuzz exited $?"
           else
             python sweep.py --shard "$I" --shards "$N" --conc "$(C sweep_conc)" --depth "$(C sweep_depth)" \
-              --max-taps "$(C sweep_max_taps)" --max-minutes "$(C sweep_minutes)" --out "$GITHUB_WORKSPACE/out" \
+              --max-taps "$(C sweep_max_taps)" --max-minutes "$(C sweep_minutes)" --only "$(echo "$CFG" | python -c "import json,sys;print(json.load(sys.stdin).get('sweep_only',''))")" --out "$GITHUB_WORKSPACE/out" \
               > "$GITHUB_WORKSPACE/out/run.log" 2>&1 || echo "sweep exited $?"
           fi
           grep -E "^(shard|sweep) done" "$GITHUB_WORKSPACE/out/run.log" || echo "no done line"

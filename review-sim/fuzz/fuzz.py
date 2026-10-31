@@ -284,7 +284,10 @@ class Walk:
         self.dialogs += 1
         self.events.append({"k": "dialog", "type": d.type, "msg": d.message[:300], "t": self.rel()})
         try:
-            if d.type == "confirm" and self.rng.random() < 0.5:
+            pol = self.cfg.get("dialogs")
+            if pol == "accept" and d.type != "prompt":
+                await d.accept()
+            elif d.type == "confirm" and self.rng.random() < 0.5:
                 await d.dismiss()
             elif d.type == "prompt":
                 await d.dismiss()       # WKWebView has no text-input panel delegate (EngineWebView.swift): prompt() returns null
@@ -505,6 +508,13 @@ class Walk:
         # scan counter and paywall
         if g.get("PAYWALL_ON") and not g.get("PRO") and snap["used"] > FREE_SCANS:
             self.fail("counter_past_free_limit", self.last_scan_path(), "addify-scans-life=%d with no subscription: a scan ran after the free scans were used" % snap["used"], snap)
+        if g.get("PAYWALL_ON") and not g.get("PRO") and g.get("isApp"):
+            lu = getattr(self, "last_used", None)
+            if lu is not None and lu >= 2 and snap["used"] == 0:
+                la = self.last_action_ref() or {}
+                self.fail("free_scans_reset", norm_msg(la.get("l") or la.get("a") or "?")[:40],
+                          "the free scan counter went from %d to 0 without a purchase (last action %s)" % (lu, json.dumps(la)[:200]), snap)
+            self.last_used = snap["used"]
         if g.get("PRO") and not self.pro_granted:
             self.fail("pro_without_purchase", "master" if g.get("MASTER") else "other", "PRO is on with no StoreKit purchase or restore (MASTER=%s)" % g.get("MASTER"), snap)
         if g.get("PRO") and "paywall" in (snap.get("overlays") or []):
@@ -519,6 +529,12 @@ class Walk:
                 and not any(c["k"].startswith("#paywall") and re.search(r"try again|retry", c["l"], re.I) for c in snap["controls"]):
             self.fail("paywall_no_plans", "products=%s" % self.cfg["bridge"]["products"],
                       "paywall shows %r with no plan buttons and no retry (StoreKit products mode %s)" % (snap.get("pwb"), self.cfg["bridge"]["products"]), snap)
+        if snap.get("trendEmpty"):
+            self.fail("filter_always_empty", snap["trendEmpty"], "Trending filter %r shows 'No ... sounds right now'" % snap["trendEmpty"], snap)
+        lg = snap.get("legal")
+        if lg and lg["w"] < 120 and lg["h"] > lg["vh"]:
+            self.fail("legal_page_back_column", "%s|%s" % (snap.get("path"), self.cfg["device"]),
+                      "the Back bar on %s renders as a %dx%d px column beside the text (body flex-direction %s)" % (snap.get("path"), lg["w"], lg["h"], lg["flex"]), snap)
         if snap.get("toastOver"):
             self.fail("toast_covers_header", "%s|%s" % (sc, ",".join(sorted(snap["toastOver"]))[:80]),
                       "scan count toast %r sits on %s" % (snap.get("note"), snap["toastOver"]), snap)

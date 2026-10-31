@@ -103,6 +103,9 @@
         if (q.right > r.left + 2 && q.left < r.right - 2 && q.bottom > r.top + 2 && q.top < r.bottom - 2) out.push(keyOf(el)); }
       return out; })(),
     resultText: state === 'locked' ? txt('result').slice(0, 160) : '',
+    trendEmpty: state === 'trending' ? (/No .{1,20} sounds right now/.test(txt('trendbody')) ? norm((document.querySelector('#trendchips .on') || {}).innerText || '') : '') : '',
+    legal: !app ? (() => { const b = document.querySelector('.backbar'); if (!b) return null; const r = b.getBoundingClientRect();
+      return {w: Math.round(r.width), h: Math.round(r.height), vw: W, vh: H, flex: getComputedStyle(document.body).flexDirection}; })() : null,
     textHash: (() => { let h = 0; for (let i = 0; i < bodyText.length; i++) h = (h * 31 + bodyText.charCodeAt(i)) | 0; return h; })(),
     textLen: bodyText.length,
     devText: (bodyText.match(/\b(developer settings|client id|redirect uri|engine address|debug mode|master unlocked|preview off|localhost|127\.0\.0\.1|sslip\.io|undefined|NaN|\[object Object\])\b/gi) || []).slice(0, 8),
