@@ -109,6 +109,7 @@
     textHash: (() => { let h = 0; for (let i = 0; i < bodyText.length; i++) h = (h * 31 + bodyText.charCodeAt(i)) | 0; return h; })(),
     textLen: bodyText.length,
     devText: (bodyText.match(/\b(developer settings|client id|redirect uri|engine address|debug mode|master unlocked|preview off|localhost|127\.0\.0\.1|sslip\.io|undefined|NaN|\[object Object\])\b/gi) || []).slice(0, 8),
+    fzpro: document.cookie.indexOf('__fzpro=1') >= 0,
     rootCls: document.documentElement.className + '|' + (document.documentElement.getAttribute('data-theme') || ''),
     scrollY: Math.round(scrollY), active: document.activeElement && document.activeElement !== document.body ? keyOf(document.activeElement) : '',
     inputs: [...document.querySelectorAll('input,textarea')].map(i => (i.id || '') + '=' + String(i.value || '').length).join(','),

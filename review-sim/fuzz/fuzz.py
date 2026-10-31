@@ -88,6 +88,13 @@ SEED_JS = """(function(){ if (window.top !== window) return; try{
     var S = __SEED__; for (var k in S) localStorage.setItem(k, S[k]); } }catch(e){} })();"""
 
 
+HIT_JS = """([x,y])=>{const e=document.elementFromPoint(x,y); if(!e) return null;
+  const c=e.closest('a[href],button,[data-fzc],[role=button],input,textarea,summary')||e; let ext=false;
+  try{ if(c.tagName==='A'&&c.getAttribute('href')&&!/^#/.test(c.getAttribute('href'))) ext=new URL(c.href).host!==location.host; }catch(_){}
+  return {k:(c.id?'#'+c.id:c.tagName.toLowerCase()+(c.className&&typeof c.className==='string'?'.'+c.className.trim().split(/\\s+/)[0]:'')),
+          l:(c.getAttribute('aria-label')||c.innerText||'').trim().slice(0,40), ext:ext};}"""
+
+
 def norm_msg(s):
     s = re.sub(r"https?://\S+", "<url>", str(s or ""))
     s = re.sub(r"\b\d+(\.\d+)?\b", "#", s)
@@ -322,12 +329,16 @@ class Walk:
         url = req.url
         try:
             if req.is_navigation_request():
-                fr = req.frame
-                main = fr.parent_frame is None
+                try:
+                    fr = req.frame
+                    main = fr.parent_frame is None
+                    via = "main_nav" if fr.page == self.page else "popup"
+                except Exception:
+                    # a new window's first navigation is issued before its frame exists (Playwright throws here)
+                    main, via = True, "popup"
                 if main:
                     self.n_escapes += 1
-                    self.events.append({"k": "escape", "url": url[:300], "via": "main_nav" if fr.page == self.page else "popup", "t": self.rel(),
-                                        "after": self.last_action_ref()})
+                    self.events.append({"k": "escape", "url": url[:300], "via": via, "t": self.rel(), "cands": self.trigger_candidates()})
                     return await route.abort()
                 return await route.fulfill(status=200, content_type="text/html", body="<html><body style='background:#000'></body></html>")
             rt = req.resource_type
@@ -370,6 +381,14 @@ class Walk:
                 await self.page.goto(u, wait_until="domcontentloaded", timeout=20000)
             except Exception:
                 pass
+
+    def trigger_candidates(self):
+        out = []
+        if self.doing is not None:
+            out.append(dict(self.doing, _i=len(self.actions), _now=True))
+        for i in range(len(self.actions) - 1, max(-1, len(self.actions) - 4), -1):
+            out.append(dict(self.actions[i], _i=i))
+        return [{k: v for k, v in c.items() if k in ("a", "k", "l", "t", "ext", "href", "tag", "hk", "hl", "hext", "hit2", "submit", "_i", "_now", "text")} for c in out]
 
     def last_action_ref(self):
         if not self.actions:
@@ -446,7 +465,7 @@ class Walk:
             self.posts_seen = 0
             self.errs_seen = (0, 0)
             self.orphan_since, self.deadend_since, self.loading_since = {}, None, {}
-        if fz.get("grants"):
+        if fz.get("grants") or snap.get("fzpro"):
             self.pro_granted = True
         ne, nr = fz.get("nErr", 0), fz.get("nRej", 0)
         if ne > self.errs_seen[0]:
@@ -575,22 +594,40 @@ class Walk:
                         self.fail("free_scan_not_counted", scen or "?", "a found result for %s was posted and the clip is not in addify-scans-life-urls (scenario %s)" % (cur[:90], scen), snap)
 
     def classify_escape(self, e, snap):
-        a = e.get("after") or {}
-        host = urlsplit(e["url"]).hostname or e["url"][:30]
-        recent = a and (self.rel() - a.get("t", -99)) < 3.0
-        intended = False
-        if recent and a.get("a") == "key":
+        url = e["url"]
+        host = urlsplit(url).hostname or url.split(":")[0][:30]
+        deliberate = ("tap", "double_tap", "tap_xy", "key", "type", "share_in", "relaunch")
+        a = None
+        for c in e.get("cands") or []:
+            if c.get("a") in deliberate and (c.get("_now") or e["t"] - (c.get("t") or -99) < 3.0):
+                a = c
+                break
+
+        def ext_like(k, l, x):
+            return bool(x) or bool(EXT_LABEL.search(l or "")) or "data-play" in (k or "") or (k or "") in ("#ob-try", "#pfcancel", "#playerout") \
+                or "mailto" in (k or "")
+        if a is None:
+            self.fail("escape_unintended", "%s|no-tap" % host, "left the app for %s via %s with no tap in the 3 s before it; recent actions %s" % (url[:160], e["via"], json.dumps(e.get("cands"))[:300]), snap)
+            return
+        t = a["a"]
+        k1, l1, x1 = a.get("hk") or a.get("k"), a.get("hl") or a.get("l"), a.get("hext") if a.get("hk") else a.get("ext")
+        if t == "key":
             self.info("escape_after_key", "%s -> %s" % (a.get("k"), host))
             return
-        if recent and a.get("a") in ("tap", "double_tap", "tap_xy"):
-            lbl = (a.get("l") or "")
-            if a.get("ext") or EXT_LABEL.search(lbl) or (a.get("k") or "").find("data-play") >= 0 or (a.get("k") or "") in ("#ob-try", "#pfcancel", "#playerout"):
-                intended = True
-        if intended:
-            self.info("escape_intended", "%s -> %s" % (a.get("l") or a.get("k"), host))
+        if t in ("tap", "tap_xy") and ext_like(k1, l1, x1):
+            self.info("escape_intended", "%s -> %s" % (l1 or k1, host))
             return
-        trig = "none" if not recent else "%s:%s" % (a.get("a"), (a.get("l1") or a.get("l") or a.get("k") or "?")[:40])
-        self.fail("escape_unintended", "%s|%s" % (host, norm_msg(trig)), "left the app for %s via %s right after %s" % (e["url"][:160], e["via"], json.dumps(a)[:300]), snap)
+        if t == "double_tap":
+            h2 = a.get("hit2") or ""
+            k2, l2 = (h2.split("|", 1) + [""])[:2] if h2 else ("", "")
+            if ext_like(k1, l1, x1):
+                self.info("escape_intended", "double tap on %s -> %s" % (l1 or k1, host))
+                return
+            self.fail("escape_unintended", "%s|double_tap:%s->%s" % (host, norm_msg(l1 or k1)[:30], norm_msg(l2 or k2)[:30]),
+                      "a double tap on %r (%s) left the app for %s: the second tap landed on %r (%s) after the first one changed the screen" % (l1, k1, url[:160], l2, k2), snap)
+            return
+        self.fail("escape_unintended", "%s|%s:%s" % (host, t, norm_msg(l1 or k1 or "?")[:40]),
+                  "left the app for %s via %s right after %s %r (%s)" % (url[:160], e["via"], t, l1, k1), snap)
 
     def scenario_of(self, url):
         self.pull_mock_log()
@@ -679,6 +716,13 @@ class Walk:
             a["found"] = found
         else:
             x, y = a.get("x"), a.get("y")
+        if t in ("tap", "double_tap") and x is not None and y is not None:
+            try:
+                h = await p.evaluate(HIT_JS, [x, y])
+                if h:
+                    a.update(hk=h["k"], hl=h["l"], hext=h["ext"])
+            except Exception:
+                pass
         if t == "tap":
             await p.touchscreen.tap(x, y)
         elif t == "double_tap":
@@ -812,7 +856,8 @@ class Walk:
                     self.last_full_screen = sc
                     snap = await self.probe(full=True) or snap
                 # a tap that changed nothing at all
-                done_state = re.match(r"(saved|added|liked)\b", a.get("l") or "", re.I)
+                done_state = re.match(r"(saved|added|liked)\b", a.get("l") or "", re.I) or re.search(r"pwbuy|p5go|p5plan", a.get("k") or "") \
+                    or any(b.get("k") == a.get("k") and a["t"] - (b.get("t") or -99) < 5 for b in self.actions[-4:-1])
                 if a["a"] == "tap" and before and snap and not a.get("cur") and not a.get("inp") and not a.get("err") and not done_state:
                     if fingerprint(before) == fingerprint(snap) and n_ev == (self.dialogs, self.navs, self.popups, self.netreq, self.n_escapes, self.n_downloads) \
                             and (snap.get("fz") or {}).get("posts") == (before.get("fz") or {}).get("posts") \
