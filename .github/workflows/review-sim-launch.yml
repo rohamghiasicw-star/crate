@@ -1,0 +1,207 @@
+name: Review sim - device launch
+
+# Device-launch lane of the App Review simulation (2026-10-31). Clean installs of Addify build
+# 19 and build 20 on iOS simulators under the network conditions App Review might have, set on
+# the runner with pf, dummynet and /etc/resolver (the simulator uses the runner's network
+# stack and resolver). Measures how often a fresh install reaches a usable first screen and
+# how long it takes, and reproduces the Oct 30 rejection screens.
+#
+# It never uploads anything to Apple, never deploys and never scans: the app only loads its
+# page. Volume goes to the TEST box (165-22-231-221.sslip.io). The live server sees only the
+# few dozen launches that must prove the shipped addresses, and while any lab launch runs a pf
+# guard drops every packet to it, so a lab launch cannot reach live by any path.
+#
+# Jobs: plan (ubuntu, reads reviewsim/launch/plan.json), build (macos-26, the ios-release.yml
+# toolchain), launch (xcode-27 image, the only runner with iOS 27 simulators; at most 3 at once).
+
+on:
+  push:
+    branches: [review-sim-launch]
+    paths: ['reviewsim/launch/**', '.github/workflows/review-sim-launch.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: review-sim-launch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      run: ${{ steps.m.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          p = json.load(open("reviewsim/launch/plan.json"))
+          run = p["active"]
+          inc = [{"shard": k, "devices": "|".join(v)} for k, v in p["runs"][run]["shards"].items()]
+          print("run=" + run)
+          print("matrix=" + json.dumps({"include": inc}))
+          EOF
+          cat "$GITHUB_OUTPUT"
+
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: b20
+      - uses: actions/checkout@v4
+        with:
+          ref: build19
+          path: b19
+
+      - name: Select the newest Xcode on the runner (same rule as ios-release.yml)
+        run: |
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          xcodebuild -version
+
+      # Build 20 = this branch's ios/ tree (identical to release-next). The lab copy changes ONE
+      # line: the second engine address becomes the test box, so the shipped two-address
+      # fallback can run at volume without touching live. Build 19 = branch build19.
+      - name: Build build 20, the build 20 lab copy and build 19 (Release, simulator)
+        run: |
+          mkdir -p apps
+          build_one() {
+            local name=$1 proj=$2
+            xcodebuild -project "$proj/Addify.xcodeproj" -scheme Addify -configuration Release \
+              -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "dd-$name" \
+              ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER= CODE_SIGNING_REQUIRED=NO build > "apps/build-$name.log" 2>&1 \
+              || { tail -40 "apps/build-$name.log"; return 1; }
+            local app="dd-$name/Build/Products/Release-iphonesimulator/Addify.app"
+            test -d "$app"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "apps/Addify-$name.zip"
+            echo "$name: $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist") ($(plutil -extract CFBundleVersion raw "$app/Info.plist")) sdk $(plutil -extract DTSDKName raw "$app/Info.plist") xcode $(plutil -extract DTXcode raw "$app/Info.plist")" | tee -a apps/app-info.txt
+          }
+          echo "b20 commit $(git -C b20 rev-parse HEAD), ios tree $(git -C b20 rev-parse HEAD:ios)" | tee apps/app-info.txt
+          echo "b19 commit $(git -C b19 rev-parse HEAD), ios tree $(git -C b19 rev-parse HEAD:ios)" | tee -a apps/app-info.txt
+          build_one b20 b20/ios
+          mkdir -p lab && cp -R b20/ios lab/ios
+          sed -i '' 's#"https://addify.app", "https://161-35-185-80.sslip.io"\]#"https://addify.app", "https://165-22-231-221.sslip.io"]#' lab/ios/Addify/EngineConfig.swift
+          diff b20/ios/Addify/EngineConfig.swift lab/ios/Addify/EngineConfig.swift > apps/lab.diff || true
+          cat apps/lab.diff
+          test "$(grep -c '^[<>]' apps/lab.diff)" = 2
+          build_one b20lab lab/ios
+          build_one b19 b19/ios
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rs-launch-apps
+          path: apps
+          retention-days: 3
+
+  launch:
+    needs: [plan, build]
+    runs-on: xcode-27
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      RS_OUT: ${{ github.workspace }}/out
+      RS_NET_STATE: ${{ github.workspace }}/out/net-state.json
+      RS_RUN: ${{ needs.plan.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode and record the host
+        run: |
+          mkdir -p "$RS_OUT/inventory"
+          echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+          newest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed 's#.*/Xcode_\{0,1\}##; s#\.app##' | sort -V | tail -1)
+          for c in "/Applications/Xcode_${newest}.app" "/Applications/Xcode${newest}.app" "/Applications/Xcode.app"; do
+            [ -d "$c" ] && { sudo xcode-select -s "$c/Contents/Developer"; break; }
+          done
+          { xcode-select -p; xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string; df -h /; } | tee "$RS_OUT/inventory/host.txt"
+
+      - name: Try to install the iOS 27.2 simulator runtime (App Review used iPadOS 27.2)
+        timeout-minutes: 40
+        continue-on-error: true
+        run: |
+          xcrun simctl list runtimes | tee "$RS_OUT/inventory/runtimes-before.txt"
+          if grep -q 'iOS 27.2' "$RS_OUT/inventory/runtimes-before.txt"; then echo "iOS 27.2 already installed"; exit 0; fi
+          t=$(date +%s)
+          xcodebuild -downloadPlatform iOS > "$RS_OUT/inventory/runtime-download.log" 2>&1 && rc=0 || rc=$?
+          echo "xcodebuild -downloadPlatform iOS: rc=$rc after $(( $(date +%s) - t )) s" | tee "$RS_OUT/inventory/runtime-download.txt"
+          tr '\r' '\n' < "$RS_OUT/inventory/runtime-download.log" | grep -v '^ *$' | tail -12 | tee -a "$RS_OUT/inventory/runtime-download.txt"
+          xcrun simctl list runtimes | tee "$RS_OUT/inventory/runtimes-after.txt"
+          df -h / | tee -a "$RS_OUT/inventory/runtime-download.txt"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rs-launch-apps
+          path: apps
+
+      - name: Unpack the apps under test
+        run: |
+          for n in b20 b20lab b19; do mkdir -p "apps/$n"; ditto -x -k "apps/Addify-$n.zip" "apps/$n"; test -d "apps/$n/Addify.app"; done
+          cat apps/app-info.txt apps/lab.diff | tee "$RS_OUT/inventory/apps.txt"
+
+      - name: Build the accessibility observer (UI test bundle)
+        run: |
+          curl -sSL -o /tmp/xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          unzip -q -o /tmp/xcodegen.zip -d /tmp/xcodegen
+          /tmp/xcodegen/xcodegen/bin/xcodegen generate --spec reviewsim/launch/observer/project.yml --project reviewsim/launch/observer
+          xcodebuild build-for-testing -project reviewsim/launch/observer/Observer.xcodeproj -scheme ObserverUITests \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath obsbuild > "$RS_OUT/observer-build.log" 2>&1 \
+            || { tail -30 "$RS_OUT/observer-build.log"; exit 1; }
+          echo "XCTESTRUN=$(ls "$PWD"/obsbuild/Build/Products/*.xctestrun | head -1)" | tee -a "$GITHUB_ENV"
+
+      - name: Build the screen reader (Apple Vision OCR)
+        run: |
+          mkdir -p bin
+          swiftc -O -o bin/screenclass reviewsim/launch/scripts/screenclass.swift
+
+      - name: Pick the runtime and devices
+        run: python3 reviewsim/launch/scripts/pick.py "$RS_OUT" "${{ matrix.devices }}" | tee -a "$GITHUB_ENV"
+
+      - name: Network lab setup and calibration
+        run: |
+          python3 reviewsim/launch/scripts/netcond.py setup | tee "$RS_OUT/net-setup.txt"
+          python3 reviewsim/launch/scripts/calibrate.py reviewsim/launch/plan.json "$RS_OUT"
+
+      - name: Launches
+        run: |
+          left=$(( 355*60 - ($(date +%s) - JOB_T0) - 25*60 ))
+          echo "time budget for launches: $left s"
+          RS_BUDGET_SECS=$left python3 -u reviewsim/launch/scripts/launchloop.py --plan reviewsim/launch/plan.json \
+            --run "$RS_RUN" --shard "${{ matrix.shard }}" --out "$RS_OUT" \
+            --app b20=apps/b20/Addify.app --app b19=apps/b19/Addify.app --app b20lab=apps/b20lab/Addify.app \
+            --xctestrun "$XCTESTRUN" --classifier bin/screenclass
+
+      - name: Tear down the network lab
+        if: always()
+        run: python3 reviewsim/launch/scripts/netcond.py teardown || true
+
+      - name: Summary
+        if: always()
+        run: |
+          test -f "$RS_OUT/results.jsonl" && python3 reviewsim/launch/scripts/aggregate.py "$RS_OUT/summary" "$RS_OUT/results.jsonl" || echo "no results"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rs-launch-${{ needs.plan.outputs.run }}-${{ matrix.shard }}
+          path: |
+            out
+            !out/**/*.xcresult
+            !out/**/poll.jpg
+          retention-days: 7
