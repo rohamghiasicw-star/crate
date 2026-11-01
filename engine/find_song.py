@@ -475,11 +475,80 @@ SCAN = _contextvars.ContextVar("addify_scan", default=None)
 DEADLINE = _contextvars.ContextVar("addify_deadline", default=None)
 
 
+# True while server.py runs a forced scan (?nocache=1): its probes skip the answer memo below.
+FORCED = _contextvars.ContextVar("addify_scan_forced", default=False)
+
+
 def scan_begin():
     d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
-         "timeouts": 0, "why": None, "deadline": DEADLINE.get()}
+         "timeouts": 0, "why": None, "deadline": DEADLINE.get(), "memo": 0,
+         "forced": bool(FORCED.get())}
     SCAN.set(d)
     return d
+
+
+# SHAZAM ANSWER MEMO (Fix 4, issue #11, 2026-11-01). Shazam lets one datacenter IP make about 5
+# lookups a minute (test box tlog 10-14..10-31: 5 or 6 answered calls in the 61 s before 108 of
+# the 127 refusals). A scan answered "busy" had usually been answered on most of its windows
+# already, and its retry (the page's quiet retry, Try again, the same clip shared again) asked
+# Shazam for every one of them again, out of the same minute that had just run out. Paced mode
+# only: an answer Shazam itself gave (a hit, or a real "not in the catalogue") is kept for
+# CRATE_SHAZAM_MEMO_S seconds (default 1200, 0 = off), keyed by the probe's own signature, and a
+# probe with the same signature gets that answer back without a pacer slot or a Shazam call.
+# Same signature, same answer, so nothing the sweep decides can change. Never kept: a refusal, a
+# timeout, a phone's ShazamKit answer (client input stays with its own scan). A forced scan
+# (nocache) neither reads nor fills it. A signature is a fingerprint, not audio (hard rules).
+MEMO_S = float(os.environ.get("CRATE_SHAZAM_MEMO_S", "1200") or 0)
+MEMO_MAX = int(os.environ.get("CRATE_SHAZAM_MEMO_MAX", "4000") or 4000)
+_MEMO = _collections.OrderedDict()            # key -> (time kept, answer)
+_MEMO_LOCK = _threading.Lock()
+
+
+def _memo_key(sig):
+    try:
+        import hashlib
+        s = sig.signature
+        return "%s:%d" % (hashlib.sha1(s.uri.encode("utf-8")).hexdigest(), int(s.samples))
+    except Exception:
+        return None
+
+
+def _memo_get(key):
+    """-> (answer, True) for a kept answer, else (None, False)."""
+    if not key or MEMO_S <= 0:
+        return None, False
+    with _MEMO_LOCK:
+        v = _MEMO.get(key)
+        if v is None:
+            return None, False
+        if _time.time() - v[0] > MEMO_S:
+            _MEMO.pop(key, None)
+            return None, False
+        return (dict(v[1]) if isinstance(v[1], dict) else v[1]), True
+
+
+def _memo_put(key, ans):
+    if not key or MEMO_S <= 0 or not (ans is None or isinstance(ans, dict)):
+        return
+    with _MEMO_LOCK:
+        _MEMO[key] = (_time.time(), dict(ans) if isinstance(ans, dict) else None)
+        _MEMO.move_to_end(key)
+        while len(_MEMO) > MEMO_MAX:
+            _MEMO.popitem(last=False)
+
+
+def retry_hint(lo=5.0, hi=60.0):
+    """Seconds until this server's Shazam minute has room again: the oldest call in the
+    pacer's window leaves it (or a 429 hold ends). The busy answer's retry_after, so a retry
+    lands after the minute that ran out instead of inside it. None when pacing is off."""
+    if not PACE:
+        return None
+    with _PACER.lock:
+        now = _time.time()
+        while _PACER.sent and _PACER.sent[0] <= now - PACE_WINDOW_S:
+            _PACER.sent.popleft()
+        at = max(_PACER.hold_until, (_PACER.sent[0] + PACE_WINDOW_S) if _PACER.sent else now)
+    return int(round(min(hi, max(lo, at - now + 2.0))))
 
 
 def pace_waited():
@@ -499,7 +568,8 @@ class _Pacer(object):
         self.seq = 0
         self.stats = {"sent": 0, "waited_probes": 0, "wait_s": 0.0, "throttled": 0,
                       "http429": 0, "http5xx": 0, "http4xx": 0, "net_err": 0,
-                      "timeouts": 0, "last_wait": 0.0, "last_429": None, "last_err": None}
+                      "timeouts": 0, "last_wait": 0.0, "last_429": None, "last_err": None,
+                      "memo_hits": 0}
 
     def _slot_at(self, now, k):
         """When the (k+1)-th next free slot opens (k=0: the next one)."""
@@ -690,6 +760,16 @@ async def _paced_shazamio(path, timeout, scan):
             _scan_timeout(scan)
             raise
     sig_s = loop.time() - t0
+    mkey = None
+    if sig is not None and MEMO_S > 0 and not (scan or {}).get("forced"):
+        mkey = _memo_key(sig)
+        ans, kept = _memo_get(mkey)
+        if kept:                         # Shazam already answered this exact window: no call
+            with _PACER.lock:
+                _PACER.stats["memo_hits"] += 1
+            if scan is not None:
+                scan["memo"] = scan.get("memo", 0) + 1
+            return ans
     for attempt in (1, 2):
         try:
             await _PACER.acquire(scan)
@@ -720,7 +800,9 @@ async def _paced_shazamio(path, timeout, scan):
                 raise Throttled("shazam refused twice (%s)" % e.status)
             continue                     # the retry waits out the hold in acquire()
         _PACER.answered()
-        return _shazamio_answer(out)
+        ans = _shazamio_answer(out)
+        _memo_put(mkey, ans)
+        return ans
 
 
 def _scan_timeout(scan):

@@ -2324,7 +2324,7 @@ function call(path,url,opt){
   if(moved) return {result:'moved'};
   return checkEngine().then(function(up){if(!up) return RELOADING?{result:'moved'}:downResult();
   var kit=(opt&&opt.kit)?kitStart():'';
-  var sq=(opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'';
+  var sq=((opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'')+((opt&&opt.qr)?'&qr='+opt.qr:'');   // FIX 4: qr = quiet retry number, for the engine's busy log
   // CALL-RETRY: the same URL (same kit id) on every retry, so a /base that did reach the
   // engine is joined, not started again, and its phone probes keep their session
   return netJSON(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq,{alive:opt&&opt.alive})
@@ -4433,7 +4433,12 @@ function renderResult(d,partial){
   // server-kit: the one-server engine's own scan gate or Shazam pacing answered busy (d.busy:
   // "queue", "shazam", "starved", "draining"). It is not TikTok, so it gets its own words. Only the
   // server sends d.busy (the limit case above is the engine's per-user scan limit).
-  if(d.result==='rate_limited'&&d.busy){setEndTitle(d); result.innerHTML=errCard('sat','Addify is busy','Lots of scans right now.<br>Try again in a minute.','<button class="cta" id="retrybtn">Try again</button>');
+  // FIX 4 (issue #11): this card only shows once the page's quiet retries (baseCall) are spent.
+  // It says what happened and that it passes; Try again runs the same link again.
+  if(d.result==='rate_limited'&&d.busy){setEndTitle(d);
+    var _bw=d.busy==='shazam'?'Too many song lookups in the last minute.':
+            d.busy==='draining'?'Addify is restarting for an update.':'Lots of scans at once right now.';
+    result.innerHTML=errCard('sat','Addify is busy',_bw+'<br>It clears up in about a minute.','<button class="cta" id="retrybtn">Try again</button>');
     var _rbb=document.getElementById('retrybtn');
     if(_rbb) _rbb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
     return;}
@@ -5513,7 +5518,7 @@ var PW_DUE=false;
 function scanNote(failed){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_SCANS-scansUsed());
   var n=document.getElementById('scannote');
   if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status'); document.body.appendChild(n);}
-  n.textContent=(failed?"No song found, so it didn't count. ":'')+left+(NEWFLOW?' free':'')+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');
+  n.textContent=(failed==='busy'?"That scan didn't count. ":failed?"No song found, so it didn't count. ":'')+left+(NEWFLOW?' free':'')+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');   // FIX 4: a busy scan found nothing because it never ran
   clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}
 function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; var c=countedURLs(), i=c.indexOf(u);
   if(i<0) return; c.splice(i,1); lsSet(scanKey()+'-urls',c);
@@ -6100,6 +6105,22 @@ var curURL='';
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
+/* FIX 4 (issue #11, Konnor: "Make the app retry once or twice quietly before it shows anything").
+   A /base the engine answered busy (its scan gate, or its Shazam minute ran out; never the
+   per-user scan limit, busy:"limit") is asked again, quietly, up to BUSY_QUIET.length times,
+   after the wait the engine suggested (retry_after: for a Shazam busy, when its minute has room
+   again), held inside each entry's [min, max] seconds. The scan screen stays exactly as it is
+   meanwhile (same headline, same dial, no new step), and only an answer that is still busy
+   after the last retry shows the busy card. Back or a new scan stops the retries. Each retry
+   tells the engine its number (&qr=), which the engine writes on any busy answer it logs. */
+var BUSY_QUIET=[[3,45],[3,45]];
+function busyQuiet(d){return !!(d&&d.result==='rate_limited'&&d.busy&&d.busy!=='limit');}
+function baseCall(u,tok){var n=0;
+  function ask(){return call('/base',u,{kit:true,guard:true,qr:n,alive:function(){return tok===scanTok;}}).then(function(d){
+    if(tok!==scanTok||KIT_MOVED||!busyQuiet(d)||n>=BUSY_QUIET.length) return d;
+    var b=BUSY_QUIET[n++], w=Math.min(b[1],Math.max(b[0],+d.retry_after||20));
+    return netSleep(w*1000).then(function(){return tok===scanTok?ask():d;});});}
+  return ask();}
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
     if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){openPaywall(); return;}} var p=parseLink(raw);
@@ -6138,7 +6159,7 @@ function run(raw){if(busy) return;
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  return call('/base',p.url,{kit:true,guard:true,alive:function(){return tok===scanTok;}}).then(function(d){   // CALL-RETRY: no retry for a cancelled scan
+  return baseCall(p.url,tok).then(function(d){   // CALL-RETRY: no retry for a cancelled scan; FIX 4: quiet retries on busy
     if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
     if(d&&d.result==='moved') return;  // NAMING 2026-09-30: the page is moving to the app's engine with this link
     if(KIT_MOVED&&d&&(d.result==='rate_limited'||d.result==='engine_down'||d.result==='error')){
@@ -6448,7 +6469,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
     var q=lsGet('addify-queue','[]');
     if(q.indexOf(curURL)<0){q.push(curURL); lsSet('addify-queue',q);}}
   if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
-    try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(true); }catch(e){}   // Konnor: failed scans don't count, say so
+    try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(d.result==='rate_limited'?'busy':true); }catch(e){}   // Konnor: failed scans don't count, say so
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
       logUnmatched(curURL, d.handle);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
