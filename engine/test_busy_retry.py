@@ -18,6 +18,12 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
   Q8  /base busy (scan gate queue), then found -> song (gate busy is retried too)
   Q9  busy with a 10 s retry_after, then found -> the scan dial keeps moving through the wait
       (sampled each second, never back to 0, never stuck)
+  round 2 (the engine's busy answer says whether asking again is getting somewhere: quiet):
+  Q10 /base busy with quiet:true four times, then found -> song, 5 asks, no busy card
+  Q11 /base busy with quiet:true every time -> the busy card after 8 asks, not before
+  Q12 listen mode: /listen busy twice, then found -> song, 3 /listen requests, no busy card
+  Q13 listen mode: /listen busy every time -> busy card after 3 requests; Try again sends the
+      same recording again (a 4th /listen), it does not just go home
 
 usage:  /usr/bin/python3 test_busy_retry.py [--page crate.html] [--only Q1,Q2] [--expect-old]
 --expect-old runs Q1 and Q8 against a page WITHOUT the fix and passes when the busy card shows
@@ -36,9 +42,15 @@ FOUND = {"result": "found", "base_song": "Busy Test Song", "base_artist": "Test 
 HUNT = dict(FOUND, edits_pending=True)
 
 
-def busy(why, ra=3):
-    return {"result": "rate_limited", "busy": why, "retry_after": ra, "url": CLIP,
-            "error": "Addify is busy right now. Try again in a minute.", "secs": 0.1}
+def busy(why, ra=3, quiet=None):
+    d = {"result": "rate_limited", "busy": why, "retry_after": ra, "url": CLIP,
+         "error": "Addify is busy right now. Try again in a minute.", "secs": 0.1}
+    if quiet is not None:
+        d["quiet"] = quiet
+    return d
+
+
+FOUND_L = dict(FOUND, listen=True, platform="mic")
 
 
 INIT = r"""
@@ -95,7 +107,7 @@ class Engine:
             hb = {"ok": True, "service": "crate engine", "name": "Addify engine", "build": "T1",
                   "phone_probes": {"on": False}}
             return await route.fulfill(status=200, content_type="application/json", body=json.dumps(hb))
-        if path in ("/base", "/edits", "/find"):
+        if path in ("/base", "/edits", "/find", "/listen"):
             return await route.fulfill(status=200, content_type="application/json",
                                        body=json.dumps(self._next(path)))
         if path == "/edits/stream":
@@ -149,7 +161,7 @@ async def state(page):
       hunt:(typeof HUNT_ON!=='undefined')?!!HUNT_ON:null})""")
 
 
-async def run_case(pw, html, name, plan, steps=None, secs=30, store=False):
+async def run_case(pw, html, name, plan, steps=None, secs=30, store=False, listen=False):
     br = await pw.chromium.launch()
     ctx = await br.new_context(viewport={"width": 393, "height": 852})
     await ctx.add_init_script(INIT + (STORE if store else ""))
@@ -159,7 +171,13 @@ async def run_case(pw, html, name, plan, steps=None, secs=30, store=False):
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)[:200]))
     t0 = time.time()
-    await page.goto(ORIGIN + "/share?url=" + CLIP)
+    if listen:
+        # listen mode: the page as it is after a recording (sendListen(blob)), no link
+        await page.goto(ORIGIN + "/")
+        await page.wait_for_timeout(1500)
+        await page.evaluate("sendListen(new Blob([new Uint8Array(9000)],{type:'audio/webm'}))")
+    else:
+        await page.goto(ORIGIN + "/share?url=" + CLIP)
     out = {"name": name}
     if steps:
         out.update(await steps(page, eng, ctx) or {})
@@ -285,6 +303,39 @@ async def amain(a):
             st = r["state"]
             ok = (song(r["cards"]) and not busy_cards(r["cards"]) and not st["busy"] and not st["gob"]
                   and r["hits"].get("/base") == 1)
+            res.append((r, ok))
+        if want("Q10") and not a.expect_old:
+            q = busy("shazam", 2, quiet=True)
+            r = await run_case(pw, html, "Q10 busy x4 with headway (quiet), then found",
+                               {"/base": [q, q, q, q, FOUND]}, secs=40)
+            ok = (song(r["cards"]) and not busy_cards(r["cards"]) and r["hits"].get("/base") == 5
+                  and "&qr=4" in r["base_urls"][4])
+            res.append((r, ok))
+        if want("Q11") and not a.expect_old:
+            r = await run_case(pw, html, "Q11 busy with headway every time: card after 8 asks",
+                               {"/base": [busy("shazam", 2, quiet=True)]}, secs=40)
+            ok = bool(busy_cards(r["cards"])) and r["hits"].get("/base") == 8
+            res.append((r, ok))
+        if want("Q12") and not a.expect_old:
+            r = await run_case(pw, html, "Q12 listen: busy x2 then found",
+                               {"/listen": [busy("shazam", 2), busy("shazam", 2), FOUND_L]},
+                               secs=30, listen=True)
+            ok = (song(r["cards"]) and not busy_cards(r["cards"]) and r["hits"].get("/listen") == 3
+                  and not r["hits"].get("/base"))
+            res.append((r, ok))
+        if want("Q13") and not a.expect_old:
+            async def steps13(page, eng, ctx):
+                await wait_for(page, lambda c: bool(busy_cards(c)), 30)
+                n_card = eng.hits.get("/listen", 0)
+                st = await state(page)
+                await page.click("#retrybtn")
+                await page.wait_for_timeout(1500)
+                return {"listen_at_card": n_card, "listen_after_try_again": eng.hits.get("/listen", 0),
+                        "state_at_card": st, "state_after_try_again": (await state(page))["st"]}
+            r = await run_case(pw, html, "Q13 listen: busy every time, Try again resends",
+                               {"/listen": [busy("shazam", 2)]}, steps=steps13, listen=True)
+            ok = (r.get("listen_at_card") == 3 and r.get("listen_after_try_again", 0) >= 4
+                  and r.get("state_after_try_again") != "idle")
             res.append((r, ok))
         if want("Q8"):
             r = await run_case(pw, html, "Q8 busy (scan gate queue) then found",

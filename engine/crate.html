@@ -4440,7 +4440,8 @@ function renderResult(d,partial){
             d.busy==='draining'?'Addify is restarting for an update.':'Lots of scans at once right now.';
     result.innerHTML=errCard('sat','Addify is busy',_bw+'<br>It clears up in about a minute.','<button class="cta" id="retrybtn">Try again</button>');
     var _rbb=document.getElementById('retrybtn');
-    if(_rbb) _rbb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
+    // FIX 4 round 2: a listen scan has no link; Try again sends its recording again
+    if(_rbb) _rbb.onclick=function(){var u=curURL, lb=(!u&&LISTEN_BLOB)?LISTEN_BLOB:null; goHome(); if(u) run(u); else if(lb) sendListen(lb);};
     return;}
   // APPLYALL 2026-09-29 (build 3): plain words, and a Try again button (the card was a dead end)
   if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','TikTok is limiting requests right now.<br>Wait a moment and try again.','<button class="cta" id="retrybtn">Try again</button>');
@@ -6106,20 +6107,29 @@ var curURL='';
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
 /* FIX 4 (issue #11, Konnor: "Make the app retry once or twice quietly before it shows anything").
-   A /base the engine answered busy (its scan gate, or its Shazam minute ran out; never the
-   per-user scan limit, busy:"limit") is asked again, quietly, up to BUSY_QUIET.length times,
-   after the wait the engine suggested (retry_after: for a Shazam busy, when its minute has room
-   again), held inside each entry's [min, max] seconds. The scan screen stays exactly as it is
-   meanwhile (same headline, same dial, no new step), and only an answer that is still busy
-   after the last retry shows the busy card. Back or a new scan stops the retries. Each retry
-   tells the engine its number (&qr=), which the engine writes on any busy answer it logs. */
-var BUSY_QUIET=[[3,45],[3,45]];
+   A scan the engine answered busy (its scan gate, or its Shazam minute ran out; never the
+   per-user scan limit, busy:"limit") is asked again, quietly, after the wait the engine
+   suggested (retry_after: for a Shazam busy, when its Shazam pacer next has room under what
+   Shazam's own refusals taught it; for a scan keeping its place in the engine's line, a few
+   seconds), held inside [BUSY_QUIET_MIN, BUSY_QUIET_MAX] seconds. Two quiet retries always.
+   FIX 4 round 2: more only while the engine says asking again is getting somewhere (d.quiet: a
+   Shazam ask that got new answers, which the engine keeps for the next ask, or a scan holding
+   its place in the line), up to BUSY_QUIET_ASKS asks and BUSY_QUIET_SECS seconds in all. The
+   scan screen stays exactly as it is meanwhile (same headline, same dial, no new step), and
+   only an answer still busy after that shows the busy card. Back or a new scan stops the
+   retries. Each retry tells the engine its number (&qr=), which it writes on a busy it logs. */
+var BUSY_QUIET_N=2, BUSY_QUIET_ASKS=8, BUSY_QUIET_SECS=360, BUSY_QUIET_MIN=2, BUSY_QUIET_MAX=75;
 function busyQuiet(d){return !!(d&&d.result==='rate_limited'&&d.busy&&d.busy!=='limit');}
-function baseCall(u,tok){var n=0;
+/* seconds to wait before asking again after `n` quiet retries (since t0), or -1: show it */
+function busyAgain(d,n,t0){
+  if(!busyQuiet(d)) return -1;
+  if(n>=BUSY_QUIET_N&&!(d.quiet===true&&n+1<BUSY_QUIET_ASKS&&Date.now()-t0<BUSY_QUIET_SECS*1000)) return -1;
+  return Math.min(BUSY_QUIET_MAX,Math.max(BUSY_QUIET_MIN,+d.retry_after||20));}
+function baseCall(u,tok){var n=0, t0=Date.now();
   function ask(){return call('/base',u,{kit:true,guard:true,qr:n,alive:function(){return tok===scanTok;}}).then(function(d){
-    if(tok!==scanTok||KIT_MOVED||!busyQuiet(d)||n>=BUSY_QUIET.length) return d;
-    var b=BUSY_QUIET[n++], w=Math.min(b[1],Math.max(b[0],+d.retry_after||20));
-    return netSleep(w*1000).then(function(){return tok===scanTok?ask():d;});});}
+    if(tok!==scanTok||KIT_MOVED) return d;
+    var w=busyAgain(d,n,t0); if(w<0) return d;
+    n++; return netSleep(w*1000).then(function(){return tok===scanTok?ask():d;});});}
   return ask();}
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
@@ -6917,19 +6927,32 @@ function cleanupListen(){
   if(startListen._ac){try{startListen._ac.close();}catch(e){} startListen._ac=null;}
   if(lStream){lStream.getTracks().forEach(function(t){t.stop();}); lStream=null;}}
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
+/* FIX 4 round 2: listen mode gets the same quiet retries as a link scan (busyAgain): a busy
+   /listen answer sends the SAME recording again after retry_after (the engine kept the Shazam
+   answers its windows already got), and the busy card's Try again sends it once more
+   (LISTEN_BLOB, the last recording; a listen scan has no link for run()). Back stops it. */
+var LISTEN_BLOB=null;
+function listenCall(blob,tok){var n=0, t0=Date.now();
+  function ask(){return fetch(ENGINE+'/listen'+(n?'?qr='+n:''),{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
+    .then(function(r){return r.json();}).catch(function(){return downResult();})   // CALL-RETRY: offline vs no answer (a POST: not retried)
+    .then(function(d){
+      if(tok!==scanTok||leftScan) return d;
+      var w=busyAgain(d,n,t0); if(w<0) return d;
+      n++; return netSleep(w*1000).then(function(){return (tok===scanTok&&!leftScan)?ask():d;});});}
+  return ask();}
 function sendListen(blob){
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   // APPLYALL 2026-09-29 (review finding 15): listen mode ends any running link scan first, so
   // the old /base answer or hunt budget cannot draw over the listen result
   endHunt(); huntEnd(); scanTok++; p1Busy=false;   // PROGRESS 2026-09-29: the hunt poll too
+  var tok=scanTok; LISTEN_BLOB=blob;
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
   headline('Finding song'); say('Building the audio fingerprint');
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
-  fetch(ENGINE+'/listen',{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
-    .then(function(r){return r.json();}).catch(function(){return downResult();})   // CALL-RETRY: offline vs no answer (a POST: not retried)
+  listenCall(blob,tok)
     .then(function(d){
       if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
       setWindow(null, d&&d.clip_secs);

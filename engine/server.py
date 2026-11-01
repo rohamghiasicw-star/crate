@@ -52,6 +52,22 @@ SCAN_QUEUE_WAIT_S = float(os.environ.get("ADDIFY_SCAN_QUEUE_WAIT_S", "20") or 20
 EDITS_WAIT_S = float(os.environ.get("ADDIFY_EDITS_WAIT_S", "120") or 120)
 EDITS_RESERVE_S = float(os.environ.get("ADDIFY_EDITS_RESERVE_S", "45") or 45)
 BUSY_RETRY_S = int(os.environ.get("ADDIFY_BUSY_RETRY_S", "20") or 20)
+# FIX 4 round 2 (issue #11): a /base (or /find) the gate turned away (its line was full, or it
+# waited SCAN_QUEUE_WAIT_S without a slot) keeps its place in the line for ADDIFY_QUEUE_PLACE_S:
+# the page asks again after ADDIFY_PLACE_RETRY_S and that ask rejoins the line where it left,
+# ahead of everyone who came after it, and past the line's SCAN_QUEUE_MAX cap. Keyed by the clip
+# (a second person on the same clip joins the first one's scan anyway). Hunts, background jobs
+# and /listen keep the old rules. 0 = off.
+QUEUE_PLACE_S = float(os.environ.get("ADDIFY_QUEUE_PLACE_S", "180") or 0)
+PLACE_RETRY_S = int(os.environ.get("ADDIFY_PLACE_RETRY_S", "3") or 3)
+# FIX 4: requests from these User-Agent prefixes are background jobs (`batch`), like a request
+# that sends X-Addify-Batch: 1: they never take the gate's last free slot. Comma-separated.
+# addify-prewarm = prewarm.py; appflow/ = the server kit's appflow.py, which regress.sh runs on
+# a server's own engine (round 2: it never declared itself, so a regression run could take the
+# slot a real person needed). X-Addify-Batch: 0 makes any request a user scan again.
+BATCH_UAS = tuple(u.strip() for u in (os.environ.get("ADDIFY_BATCH_UA",
+                                                     "addify-prewarm,appflow/")
+                                      or "").split(",") if u.strip())
 # ADDIFY_DRAIN_S  on SIGTERM: stop taking scans, let running ones (both halves) finish for up
 #                 to this long, delete their temp audio, exit. 0 = the old instant exit.
 DRAIN_S = float(os.environ.get("ADDIFY_DRAIN_S", "0") or 0)
@@ -71,6 +87,12 @@ SCAN_DEADLINE_S = float(os.environ.get("ADDIFY_SCAN_DEADLINE_S", "88") or 88)
 #                 the Apple/Deezer catalogue confirms) and answers "busy" only when none of it
 #                 names the song. Such a scan is never cached (res["shazam_partial"]).
 NAME_FALLBACK = os.environ.get("ADDIFY_NAME_FALLBACK", "0").strip() == "1"
+# FIX 4 round 2 (issue #11): an early name (/progress "named") is held back from a scan Shazam
+# refused, or one that waited this long for Shazam slots: such a scan can still end "busy", and
+# the page put the name on screen and then the busy card over it (Thunder LOFI on 2026-11-01;
+# mason on release-next itself: named at 6.9 s, busy at 7.3 s). The /base answer still carries
+# the name when the scan names the song. Paced servers only.
+NAME_HOLD_WAIT_S = float(os.environ.get("ADDIFY_NAME_HOLD_WAIT_S", "10") or 10)
 # ADDIFY_SCAN_RESULT_S  a finished hunt the page asked for with ?scan=<its random id> is kept
 #                 this long for that id alone. The page's /edits fallback (a stream that
 #                 dropped before its done event: the app went to the background, the tunnel
@@ -1582,8 +1604,13 @@ _REQ_QR = contextvars.ContextVar("addify_quiet_try", default=None)
 
 def _busy_limit(why):
     if why == "shazam":
+        try:
+            _ln = (_FS.pace_stats() or {}).get("limit_now")
+        except Exception:
+            _ln = None
         return {"shazam_calls": getattr(_FS, "PACE_N", None),
-                "window_s": getattr(_FS, "PACE_WINDOW_S", None)}
+                "window_s": getattr(_FS, "PACE_WINDOW_S", None),
+                "learned": _ln}               # FIX 4 round 2: what Shazam's 429s taught the pacer
     return {"queue_full": {"queue_max": SCAN_QUEUE_MAX},
             "queue_wait": {"queue_wait_s": SCAN_QUEUE_WAIT_S, "slots": SCAN_SLOTS},
             "cpu": {"cpu_psi_max": ADMIT_CPU_PSI},
@@ -1605,8 +1632,8 @@ def _busy_running():
     try:
         p = _FS.pace_stats()
         if p:
-            out["pace"] = {k: p.get(k) for k in ("in_window", "limit", "waiting", "hold_s",
-                                                 "http429", "memo_hits")}
+            out["pace"] = {k: p.get(k) for k in ("in_window", "limit", "limit_now", "waiting",
+                                                 "hold_s", "http429", "memo_hits", "named_stops")}
     except Exception:
         pass
     return out
@@ -1615,19 +1642,67 @@ def _busy_running():
 def _busy_result(key, why, t0=None, detail=None):
     """The page's existing retryable state ("Try again soon"), never "No match": result
     rate_limited, plus `busy` so the page can say it is Addify, not TikTok. Never cached.
-    retry_after: for a Shazam busy, when this server's Shazam minute has room again
-    (find_song.retry_hint), so the page's quiet retry lands after it; otherwise BUSY_RETRY_S."""
+    retry_after: for a Shazam busy, when this server's Shazam pacer next has a slot under what
+    Shazam's own 429s taught it (find_song.retry_hint); for a scan that keeps its place in the
+    gate's line, a few seconds (it rejoins the line where it was); otherwise BUSY_RETRY_S.
+    FIX 4 round 2: `quiet` tells the page whether asking again is making headway, so it keeps
+    asking quietly past its first two retries only while it is: a Shazam busy whose ask got new
+    answers from Shazam (each is kept in the memo, so the next ask starts past them), or a
+    scan waiting in the gate's line (the line moves as scans finish; `ahead` = scans before it).
+    A restart (draining) is not headway."""
     ra = BUSY_RETRY_S
+    quiet, extra = False, {}
     if why == "shazam":
         try:
             ra = _FS.retry_hint() or BUSY_RETRY_S
         except Exception:
             ra = BUSY_RETRY_S
+        sc = _FS.SCAN.get() if _FS.PACE else None
+        if sc is not None:
+            extra["progress"] = {"answered": int(sc.get("answered") or 0),
+                                 "memo": int(sc.get("memo") or 0)}
+            quiet = extra["progress"]["answered"] > 0
+    elif why in ("queue_full", "queue_wait", "cpu"):
+        quiet = True
+        try:
+            ahead, held = GATE.place_info(key) if GATE is not None else (None, False)
+        except Exception:
+            ahead, held = None, False
+        if held:
+            ra = min(BUSY_RETRY_S, PLACE_RETRY_S)
+        if ahead is not None:
+            extra["ahead"] = ahead
+    elif why in ("joined", "phone_scan"):
+        quiet = True
     E.tlog("busy", 0.0, url=key, why=why, detail=str(detail or "")[:80],
-           limit=_busy_limit(why), retry_after=ra, quiet_try=_REQ_QR.get(), **_busy_running())
-    return {"result": "rate_limited", "busy": why, "retry_after": ra, "url": key,
-            "error": "Addify is busy right now. Try again in a minute.",
-            "secs": round(time.time() - t0, 1) if t0 else 0.0}
+           limit=_busy_limit(why), retry_after=ra, quiet_try=_REQ_QR.get(), quiet=quiet,
+           **dict(extra, **_busy_running()))
+    out = {"result": "rate_limited", "busy": why, "retry_after": ra, "url": key,
+           "error": "Addify is busy right now. Try again in a minute.",
+           "secs": round(time.time() - t0, 1) if t0 else 0.0, "quiet": quiet}
+    out.update(extra)
+    return out
+
+
+def _budget_log(key, half, tally=None, scan=None):
+    """FIX 4 round 2 (Konnor: "Keep a request budget per scan, and report the number of calls
+    per scan"): one scan_budget row per scan half with every outbound call it made, by kind
+    (crate_engine budget_call), the Shazam numbers of its own record (sent = calls that went
+    out, memo = windows answered from the memo, http429 = refusals), what passed a ceiling, and
+    the ceilings. Logging only; the ceilings themselves are crate_engine.BUDGET_CAPS."""
+    try:
+        calls, over = {}, {}
+        if tally is not None:
+            snap = tally.snapshot()
+            calls = dict(snap.get("calls") or {})
+            over = dict(snap.get("over") or {})
+        if scan is not None:
+            calls.update(shazam=int(scan.get("sent") or 0), shazam_memo=int(scan.get("memo") or 0),
+                         shazam_429=int(scan.get("http429") or 0))
+        E.tlog("scan_budget", 0.0, url=key, half=half, calls=calls, over=over,
+               caps=dict(getattr(E, "BUDGET_CAPS", {}) or {}))
+    except Exception:
+        pass
 
 
 _SCAN_RES = {}
@@ -1712,6 +1787,43 @@ def _name_fallback(fp, scan, src, hint_texts):
     return out
 
 
+def _scan_name_held(s):
+    """FIX 4 round 2 (NAME_HOLD_WAIT_S): no early name from a scan Shazam refused or made wait
+    that long: it may still end busy, and the page would show the name, then the busy card."""
+    return bool(s is not None and (s.get("throttled") or s.get("http429")
+                                   or (s.get("waited") or 0.0) >= NAME_HOLD_WAIT_S))
+
+
+def _is_batch(headers):
+    """FIX 4: a background job (X-Addify-Batch: 1, or a User-Agent in ADDIFY_BATCH_UA) never
+    takes the gate's last free slot. X-Addify-Batch: 0 is always a user scan."""
+    xb = headers.get("X-Addify-Batch")
+    if xb == "1":
+        return True
+    if xb == "0" or not BATCH_UAS:
+        return False
+    return (headers.get("User-Agent") or "").startswith(BATCH_UAS)
+
+
+def _name_keepable(scan):
+    """FIX 4 round 2: would _name_fallback keep this scan's name right now, by its first rule
+    alone? Every answer that named a song named the same one, at least 5 answers in all, from
+    windows at two offsets or an as-posted probe. The Shazam pacer reads it (find_song
+    scan["stop_ok"]) once Shazam has said its minute is full: a scan that can keep its name
+    stops there, exactly as it stopped at Shazam's refusal before; one that cannot (it would
+    end "busy") waits for room instead."""
+    rows = []
+    for h in list((scan or {}).get("hits") or []):
+        if isinstance(h, dict):
+            rows.append((_nf_key(h.get("t")), h.get("off"), h.get("rate")))
+    hits = [r for r in rows if r[0]]
+    if len(rows) < 5 or not hits or len(set(r[0] for r in hits)) != 1:
+        return False
+    offs = set(r[1] for r in hits if r[1] is not None)
+    return len(offs) >= 2 or any(r[2] is not None and abs(float(r[2]) - 1.0) <= 0.021
+                                 for r in hits)
+
+
 def _confirmed_hint_name(hint_texts):
     """The one song the comments/caption name that Apple or Deezer confirms with title AND
     artist agreeing (hint_confirm `paired`). Two different confirmed songs = no answer.
@@ -1740,6 +1852,8 @@ def _phase1(url, key, t0):
     E.tlog("request_start", 0.0, url=key)
     # server-kit: every Shazam probe of this scan counts into this record (find_song.SCAN).
     _scan = _FS.scan_begin() if _FS.PACE else None
+    if _scan is not None and NAME_FALLBACK:
+        _scan["stop_ok"] = lambda: _name_keepable(_scan)   # FIX 4 round 2, see find_song
     _prog_set(key, 6, "Reading the clip")
     (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
     _p0 = time.time()
@@ -2095,10 +2209,16 @@ def _phase1(url, key, t0):
             _lex.shutdown(wait=False)
         E.tlog("links_early_start", time.time() - t0)
 
+    def _name_held():
+        return _scan_name_held(_scan)       # FIX 4 round 2
+
     def _publish_decided(fpd):
         try:
             if (_PROG.get(key) or {}).get("named") or _dec.get("early"):
                 return                      # an early name already went out: it stands
+            if _name_held():
+                E.tlog("name_held", time.time() - t0, url=key, via="decided")
+                return
             nm = _decided_display(src, fpd)
             if not nm or not nm.get("title"):
                 return
@@ -2130,7 +2250,7 @@ def _phase1(url, key, t0):
                 _dec["done"] = True
             else:
                 fpd = None
-        if early is not None:
+        if early is not None and not _name_held():
             _prog_named(key, early, t0)     # owner-call-1 switch: held until settled
         if fpd is not None:
             _publish_decided(fpd)
@@ -2167,6 +2287,9 @@ def _phase1(url, key, t0):
                 if not _dec["ready"]:
                     _dec["early"] = dict(h)
                     held = True
+        if not held and _name_held():
+            held = True
+            E.tlog("name_held", time.time() - t0, url=key, via="early")
         if not held:
             _prog_named(key, h, t0)
         _prefetch_hunt(src, h, hint_texts)
@@ -2373,7 +2496,8 @@ def _phase1(url, key, t0):
             E.tlog("scan_shazam", 0.0, url=key, sent=_scan["sent"],
                    waited=round(_scan["waited"], 2), throttled=_scan["throttled"],
                    http429=_scan["http429"], timeouts=_scan.get("timeouts", 0),
-                   why=_scan["why"], memo=_scan.get("memo", 0))
+                   why=_scan["why"], memo=_scan.get("memo", 0),
+                   answered=_scan.get("answered", 0))
             if _scan["throttled"] or (_scan.get("timeouts") and not fp):
                 # A THROTTLED SCAN IS NOT AN ANSWER (server-kit). Some probe never reached
                 # Shazam, so whatever the sweep decided was decided on missing evidence:
@@ -9756,8 +9880,42 @@ class _ScanGate(object):
         self.tok = 0
         self.draining = False
         self.served = {"admitted": 0, "claimed": 0, "refused": 0, "lapsed": 0, "reaped": 0,
-                       "cpu_held": 0, "stuck": 0}
+                       "cpu_held": 0, "stuck": 0, "placed": 0}
         self.stuck = []             # [thread, freed at, path, key]: slots the watchdog took back
+        self.places = {}            # FIX 4 round 2: clip key -> [its seq in line, kept until]
+
+    def _place_get(self, key):
+        p = self.places.get(key)
+        if p is None:
+            return None
+        if p[1] < time.time():
+            del self.places[key]
+            return None
+        return p[0]
+
+    def _place_keep(self, key, seq=None):
+        """Keep `key`'s place in line (QUEUE_PLACE_S): `seq` it held, or a new one at the back."""
+        if QUEUE_PLACE_S <= 0 or not key:
+            return
+        now = time.time()
+        if len(self.places) >= 256:
+            for k in [k for k, v in self.places.items() if v[1] < now]:
+                del self.places[k]
+            if len(self.places) >= 512:
+                return
+        if seq is None:
+            self.seq += 1
+            seq = self.seq
+        self.places[key] = [seq, now + QUEUE_PLACE_S]
+
+    def place_info(self, key):
+        """-> (scans before `key`'s kept place: holding a slot or ahead in line, True), or
+        (None, False) when it keeps no place."""
+        with self.cv:
+            seq = self._place_get(key)
+            if seq is None:
+                return None, False
+            return self.busy() + sum(1 for x in self.q if x < (1, seq)), True
 
     def busy(self):
         return len(self.holders) + len(self.reserved)
@@ -9827,21 +9985,33 @@ class _ScanGate(object):
 
     def acquire(self, hunt=False, path="", key="", batch=False):
         """-> (token, None) with a slot held by this thread, or (None, why). A `batch`
-        request (a background job) queues behind every user scan and hunt, in its own class."""
+        request (a background job) queues behind every user scan and hunt, in its own class.
+        FIX 4 round 2: a user scan the line turns away keeps its place (QUEUE_PLACE_S), and
+        its next ask rejoins the line there, past the SCAN_QUEUE_MAX cap."""
         noted = [False]
         with self.cv:
             self._reap()
             if self.draining:
                 self.served["refused"] += 1
                 return None, "draining"
+            placed = bool(QUEUE_PLACE_S > 0 and key and not hunt and not batch
+                          and key != "listen")
+            held = self._place_get(key) if placed else None
             if not self.q and self._room(noted, batch):
+                if held is not None:
+                    self.places.pop(key, None)
                 return self._new(path, key, batch), None
             cls = 2 if batch else (0 if hunt else 1)
-            if cls != 0 and sum(1 for c, _ in self.q if c == cls) >= SCAN_QUEUE_MAX:
+            if held is None and cls != 0 and sum(1 for c, _ in self.q if c == cls) >= SCAN_QUEUE_MAX:
                 self.served["refused"] += 1
+                if placed:
+                    self._place_keep(key)
+                    self.served["placed"] += 1
                 return None, "queue_full"
-            self.seq += 1
-            me = (cls, self.seq)
+            if held is None:
+                self.seq += 1
+                held = self.seq
+            me = (cls, held)
             self.q.append(me)
             self.q.sort()
             deadline = time.time() + (EDITS_WAIT_S if hunt else SCAN_QUEUE_WAIT_S)
@@ -9854,10 +10024,15 @@ class _ScanGate(object):
                     if self.q[0] == me and self._room(noted, batch):
                         self.q.pop(0)
                         self.cv.notify_all()
+                        if placed:
+                            self.places.pop(key, None)
                         return self._new(path, key, batch), None
                     left = deadline - time.time()
                     if left <= 0:
                         self.served["refused"] += 1
+                        if placed:
+                            self._place_keep(key, me[1])
+                            self.served["placed"] += 1
                         return None, ("cpu" if noted[0] and self.busy() < self.slots
                                       else "queue_wait")
                     self.cv.wait(min(left, 1.0))
@@ -10206,6 +10381,11 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Private-Network", "true")
+        if isinstance(obj, dict) and obj.get("result") == "rate_limited" and obj.get("busy"):
+            # FIX 4: a busy answer that comes back through here (a Shazam busy from /base or
+            # /listen) carries the same Retry-After as a gate refusal (_send_busy)
+            self.send_header("Retry-After", str(int(obj.get("retry_after") or BUSY_RETRY_S)))
+            self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -10710,8 +10890,7 @@ class H(BaseHTTPRequestHandler):
         # it never takes the scan gate's last free slot.
         _qr = (q.get("qr") or [""])[0]
         _REQ_QR.set(int(_qr) if _qr.isdigit() and len(_qr) < 3 else None)
-        self._batch = (self.headers.get("X-Addify-Batch") == "1"
-                       or (self.headers.get("User-Agent") or "").startswith("addify-prewarm"))
+        self._batch = _is_batch(self.headers)
         # ADDIFY_SCAN_RESULT_S (NAMING.md): the page's /edits fallback for a hunt it streamed
         # with ?scan=<id> gets that hunt's finished answer, not a second whole scan.
         self._scan_id = _scan_id_of(q)
@@ -10877,7 +11056,9 @@ class H(BaseHTTPRequestHandler):
         if forced:
             _NOCACHE[key] = True
         res = None
-        ttok = E.SCAN_TALLY.set(E.ScanTally())
+        _ftally = E.ScanTally()
+        _FS.SCAN.set(None)                        # FIX 4: a kept-alive thread's last scan is not this one
+        ttok = E.SCAN_TALLY.set(_ftally)
         try:
             try:
                 res = identify(link)
@@ -10885,6 +11066,7 @@ class H(BaseHTTPRequestHandler):
                 res = {"result": "error", "error": str(e)[:200]}
         finally:
             E.SCAN_TALLY.reset(ttok)
+            _budget_log(key, "find", _ftally, _FS.SCAN.get() if _FS.PACE else None)
             GATE.release(tok)
         self._send(200, _phone_mark(res, ph, key))
 
@@ -10904,6 +11086,7 @@ class H(BaseHTTPRequestHandler):
             if forced:
                 _NOCACHE[key] = True
             dtok = _FS.DEADLINE.set(t_arr + SCAN_DEADLINE_S)
+            _FS.SCAN.set(None)                    # FIX 4: a kept-alive thread's last scan is not this one
             tally = E.ScanTally()                 # this scan's own downloads and lost evidence
             ttok = E.SCAN_TALLY.set(tally)
             out = None
@@ -10916,6 +11099,7 @@ class H(BaseHTTPRequestHandler):
             finally:
                 E.SCAN_TALLY.reset(ttok)
                 _FS.DEADLINE.reset(dtok)
+                _budget_log(key, "base", tally, _FS.SCAN.get() if _FS.PACE else None)
                 if key in SESSIONS and (res or {}).get("edits_pending"):
                     # the hunt judges its crown on this half's lost evidence too
                     SESSIONS[key]["_scan_tally"] = tally
@@ -10989,6 +11173,7 @@ class H(BaseHTTPRequestHandler):
                 raise
             finally:
                 E.SCAN_TALLY.reset(ttok)
+                _budget_log(key, "hunt", tally)
                 (_PROG.get(key) or {}).pop("cands", None)
                 _flight_close(f, res)
 
@@ -11041,6 +11226,8 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/listen":
                 ct = (self.headers.get("Content-Type") or "").lower()
                 kind = ("mp4" if "mp4" in ct else "ogg" if "ogg" in ct else "webm")
+                _lqr = (parse_qs(u.query).get("qr") or [""])[0]     # FIX 4: the page's quiet retry
+                _REQ_QR.set(int(_lqr) if _lqr.isdigit() and len(_lqr) < 3 else None)
                 # APPLYALL 2026-09-29: a mic scan is new work like /base (limiter on only)
                 _tk, _refusal = RL.admit_scan(self, "/listen", None)
                 if _refusal:
@@ -11053,11 +11240,13 @@ class H(BaseHTTPRequestHandler):
                         if _gtok is None:
                             _res = {"busy": _why}
                             return self._send_busy("/listen", "listen", _why)
+                    _FS.SCAN.set(None)          # FIX 4: a kept-alive thread's last scan is not this one
                     _res = identify_mic(body, kind)
                     return self._send(200, _res)
                 finally:
                     if _gtok is not None:
                         GATE.release(_gtok)
+                        _budget_log("listen", "listen", None, _FS.SCAN.get() if _FS.PACE else None)
                     RL.settle(_tk, _res)
             if u.path == "/review/note":
                 return self._send(200, record_review_note(RL.cap_body(json.loads(body.decode()))))
