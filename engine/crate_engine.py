@@ -1323,6 +1323,57 @@ def tlog(stage, secs, **kw):
         pass
 
 
+# FIX 3 (issue #12): ONE ROW PER HUNT THAT SAYS WHERE EVERY CANDIDATE WENT. Konnor: "Keep the
+# raw scores, speed ratio and reasons in logs". Every downloaded row is listed with its scores
+# and what happened to it; CRATE_POOL_LOG=1 adds the rows that were found and never downloaded,
+# in download-priority order, which is what tells "never searched" from "found, not downloaded".
+# Read only: nothing here writes to a row. No-op without CRATE_TIMING.
+POOL_LOG = _speed_flag("CRATE_POOL_LOG", False)
+
+
+def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
+    if not _TLOG_PATH:
+        return
+    try:
+        rk = {id(c): i for i, c in enumerate(ranked or [])}
+        kp = {id(c) for c in keep or []}
+        qi = {q: i for i, q in enumerate(queries or [])}
+        rows, n_dl, n_fail = [], 0, 0
+        for i, c in enumerate(cands or []):
+            done = bool(c.get("_done"))
+            scored = bool(c.get("path"))
+            if done:
+                n_dl += 1
+                if not scored:
+                    n_fail += 1
+            if not (done or POOL_LOG):
+                continue
+            why = ("ranked" if id(c) in rk else "kept" if id(c) in kp
+                   else "under_keep" if scored else "dl_failed" if done else "not_downloaded")
+            r = {"i": i, "u": c.get("url"), "src": c.get("source"),
+                 "t": (c.get("title") or "")[:70], "d": int(_dur_s(c)),
+                 "p": c.get("plays") or 0, "why": why}
+            q = c.get("query")
+            r["q"] = qi.get(q, (q or "")[:40] if q else None)
+            if scored:
+                r.update(core=round(float(c.get("core") or 0), 3),
+                         fp=round(float(c.get("fp") or 0), 3),
+                         v=round(float(c.get("vspeed_locked") or c.get("vspeed") or 0), 3))
+            if id(c) in rk:
+                r["rank"] = rk[id(c)]
+            lanes = [k for k in ("creator_upload", "rescue_q", "hint_mash", "family_wave",
+                                 "fast_carry", "comment_link", "sc_first", "section_lane")
+                     if c.get(k)]
+            if lanes:
+                r["lane"] = lanes
+            rows.append(r)
+        tlog("hunt_pool", 0.0, where=where, n=len(cands or []), downloaded=n_dl,
+             dl_failed=n_fail, kept=len(kp), ranked=len(rk), full=POOL_LOG,
+             queries=list(queries or [])[:24], rows=rows)
+    except Exception as e:
+        tlog("hunt_pool", 0.0, where=where, error=type(e).__name__)
+
+
 # ---------------------------------------------------------------- tiktok fetch
 # The plain HTML page walls hard when hit repeatedly. TikTok's own item-detail
 # API returns the same music.playUrl and rarely walls, and curl_cffi impersonates
@@ -10778,6 +10829,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                         _dm = {id(c) for c in _demote}
                         good = ([c for c in good if id(c) not in _dm]
                                 + [c for c in good if id(c) in _dm])
+                    pool_log(hc, good, good, hq, where="fast")     # FIX 3: log only
                     return {"queries": hq, "ranked": good, "decisive": True,
                             "clip_ok": True, "bass_boosted": False,
                             "clip_tilt": 0.0, "target_tilt": 0.0,
@@ -12273,6 +12325,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     if _corr_rows:
         result["corr_rows"] = [{"url": c.get("url"), "core": c.get("core"),
                                 "editmatch": c.get("editmatch")} for c in _corr_rows]
+    pool_log(cands, ranked, keep, queries)     # FIX 3: log only, reads the rows
     return result
 
 
