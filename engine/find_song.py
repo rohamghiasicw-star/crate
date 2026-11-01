@@ -457,11 +457,12 @@ PACE_TAIL_S = float(os.environ.get("CRATE_SHAZAM_PACE_TAIL_S", 6))
 # release-next held to 5 a minute made a 9-probe scan with 0 refusals). With one route (no
 # CRATE_SHAZAM_PROXIES) a 429 now teaches the pacer: the calls Shazam answered in the last
 # window are what it takes (never fewer than PACE_LEARN_MIN), the pacer holds to that many, and
-# the refused probe waits until a call leaves that window instead of asking again into a minute
-# that is still full (the old 4 s back-off drew 2 more 429s per retry). One more a window comes
-# back every PACE_LEARN_RELAX_S without a 429. With relays a 429 is one address of several (the
-# next ask goes to another), so nothing is learned there, as before. CRATE_SHAZAM_PACE_LEARN=0
-# turns learning off.
+# a scan that meets the full minute stops there, as its second 429 stopped it before, without
+# asking into a minute that is still full (the old 4 s back-off drew 2 more 429s per retry). Its
+# busy answer then says when the minute has room (retry_hint), so the page's quiet retry lands
+# on it. One more a window comes back every PACE_LEARN_RELAX_S without a 429. With relays a 429
+# is one address of several (the next ask goes to another), so nothing is learned there, as
+# before. CRATE_SHAZAM_PACE_LEARN=0 turns learning off.
 PACE_LEARN = os.environ.get("CRATE_SHAZAM_PACE_LEARN", "1").strip() != "0"
 PACE_LEARN_MIN = max(1, int(os.environ.get("CRATE_SHAZAM_PACE_LEARN_MIN", 3)))
 PACE_LEARN_RELAX_S = float(os.environ.get("CRATE_SHAZAM_PACE_LEARN_RELAX_S", 600))
@@ -494,25 +495,12 @@ FORCED = _contextvars.ContextVar("addify_scan_forced", default=False)
 
 
 def scan_begin():
-    # answered: calls Shazam itself answered for this scan (memo hits are counted apart);
-    # stop_ok: server.py's "this scan can keep its name if Shazam stops now" (FIX 4 round 2)
+    # answered: calls Shazam itself answered for this scan (memo hits are counted apart)
     d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
          "timeouts": 0, "why": None, "deadline": DEADLINE.get(), "memo": 0,
-         "forced": bool(FORCED.get()), "answered": 0, "stop_ok": None}
+         "forced": bool(FORCED.get()), "answered": 0}
     SCAN.set(d)
     return d
-
-
-def _stop_ok(scan):
-    """True when this scan's answers already name the song in a way the engine keeps if Shazam
-    stops answering (scan["stop_ok"], set by server.py; absent = False)."""
-    f = (scan or {}).get("stop_ok")
-    if f is None:
-        return False
-    try:
-        return bool(f())
-    except Exception:
-        return False
 
 
 # SHAZAM ANSWER MEMO (Fix 4, issue #11, 2026-11-01). Shazam lets one datacenter IP make about 5
@@ -602,7 +590,7 @@ class _Pacer(object):
         self.stats = {"sent": 0, "waited_probes": 0, "wait_s": 0.0, "throttled": 0,
                       "http429": 0, "http5xx": 0, "http4xx": 0, "net_err": 0,
                       "timeouts": 0, "last_wait": 0.0, "last_429": None, "last_err": None,
-                      "memo_hits": 0, "learned": None, "named_stops": 0}
+                      "memo_hits": 0, "learned": None, "wall_stops": 0}
 
     def _limit(self, now):
         """Calls allowed in any PACE_WINDOW_S: PACE_N, or what a 429 taught (FIX 4 round 2),
@@ -663,15 +651,17 @@ class _Pacer(object):
                             scan["waited"] += w
                         return w
                     if (self.learned is not None and scan is not None
-                            and at - now > 2 * PACE_429_BACKOFF_S and _stop_ok(scan)):
-                        # FIX 4 round 2: Shazam taught us its minute is full, and this scan
-                        # already holds a name the engine keeps when Shazam stops answering. It
-                        # stops now, where the 429 that used to stop it would have come,
-                        # instead of waiting out the minute (only a scan that would otherwise
-                        # end "busy" waits for the room).
+                            and at - now > 2 * PACE_429_BACKOFF_S):
+                        # FIX 4 round 2: a 429 taught us this address's minute is full. The
+                        # scan stops here, where its second 429 used to stop it, instead of
+                        # waiting the minute out inside one ask (a scan the engine can already
+                        # name from what it holds answers as fast as before; measured: kyks on
+                        # the test box would have answered ~55 s later). Its busy answer says
+                        # when the room comes back, the page asks again then, and every answer
+                        # Shazam gave is kept (the memo), so that ask starts past them.
                         del self.waiters[me]
-                        self.stats["named_stops"] += 1
-                        raise Throttled("named: stops at the learned limit")
+                        self.stats["wall_stops"] += 1
+                        raise Throttled("wall: Shazam's minute is full for %.0fs" % (at - now))
                     cap = PACE_MAX_WAIT_S
                     if scan is not None and scan.get("deadline"):
                         cap = min(cap, scan["deadline"] - PACE_TAIL_S - t_in)
@@ -857,7 +847,7 @@ async def _paced_shazamio(path, timeout, scan):
         try:
             await _PACER.acquire(scan)
         except Throttled as e:
-            _scan_throttled(scan, "named" if str(e).startswith("named") else "slot")
+            _scan_throttled(scan, "wall" if str(e).startswith("wall") else "slot")
             raise
         t_sent = _time.time()
         left = max(0.5, timeout - sig_s) if attempt == 1 else timeout

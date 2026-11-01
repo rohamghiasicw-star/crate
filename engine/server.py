@@ -1638,7 +1638,7 @@ def _busy_running():
         p = _FS.pace_stats()
         if p:
             out["pace"] = {k: p.get(k) for k in ("in_window", "limit", "limit_now", "waiting",
-                                                 "hold_s", "http429", "memo_hits", "named_stops")}
+                                                 "hold_s", "http429", "memo_hits", "wall_stops")}
     except Exception:
         pass
     return out
@@ -1651,10 +1651,10 @@ def _busy_result(key, why, t0=None, detail=None):
     Shazam's own 429s taught it (find_song.retry_hint); for a scan that keeps its place in the
     gate's line, a few seconds (it rejoins the line where it was); otherwise BUSY_RETRY_S.
     FIX 4 round 2: `quiet` tells the page whether asking again is making headway, so it keeps
-    asking quietly past its first two retries only while it is: a Shazam busy whose ask got new
-    answers from Shazam (each is kept in the memo, so the next ask starts past them), or a
-    scan waiting in the gate's line (the line moves as scans finish; `ahead` = scans before it).
-    A restart (draining) is not headway."""
+    asking quietly past its first two retries only while it is: a Shazam busy whose ask got
+    answers from Shazam or resumed from them (each answer is kept in the memo, so the next ask
+    starts past it; `progress`), or a scan waiting in the gate's line (the line moves as scans
+    finish; `ahead` = scans before it). A restart (draining) is not headway."""
     ra = BUSY_RETRY_S
     quiet, extra = False, {}
     if why == "shazam":
@@ -1666,7 +1666,8 @@ def _busy_result(key, why, t0=None, detail=None):
         if sc is not None:
             extra["progress"] = {"answered": int(sc.get("answered") or 0),
                                  "memo": int(sc.get("memo") or 0)}
-            quiet = extra["progress"]["answered"] > 0
+            # headway: Shazam answered this ask, or it resumed a sweep the memo holds
+            quiet = (extra["progress"]["answered"] + extra["progress"]["memo"]) > 0
     elif why in ("queue_full", "queue_wait", "cpu"):
         quiet = True
         try:
@@ -1810,25 +1811,6 @@ def _is_batch(headers):
     return (headers.get("User-Agent") or "").startswith(BATCH_UAS)
 
 
-def _name_keepable(scan):
-    """FIX 4 round 2: would _name_fallback keep this scan's name right now, by its first rule
-    alone? Every answer that named a song named the same one, at least 5 answers in all, from
-    windows at two offsets or an as-posted probe. The Shazam pacer reads it (find_song
-    scan["stop_ok"]) once Shazam has said its minute is full: a scan that can keep its name
-    stops there, exactly as it stopped at Shazam's refusal before; one that cannot (it would
-    end "busy") waits for room instead."""
-    rows = []
-    for h in list((scan or {}).get("hits") or []):
-        if isinstance(h, dict):
-            rows.append((_nf_key(h.get("t")), h.get("off"), h.get("rate")))
-    hits = [r for r in rows if r[0]]
-    if len(rows) < 5 or not hits or len(set(r[0] for r in hits)) != 1:
-        return False
-    offs = set(r[1] for r in hits if r[1] is not None)
-    return len(offs) >= 2 or any(r[2] is not None and abs(float(r[2]) - 1.0) <= 0.021
-                                 for r in hits)
-
-
 def _confirmed_hint_name(hint_texts):
     """The one song the comments/caption name that Apple or Deezer confirms with title AND
     artist agreeing (hint_confirm `paired`). Two different confirmed songs = no answer.
@@ -1857,8 +1839,6 @@ def _phase1(url, key, t0):
     E.tlog("request_start", 0.0, url=key)
     # server-kit: every Shazam probe of this scan counts into this record (find_song.SCAN).
     _scan = _FS.scan_begin() if _FS.PACE else None
-    if _scan is not None and NAME_FALLBACK:
-        _scan["stop_ok"] = lambda: _name_keepable(_scan)   # FIX 4 round 2, see find_song
     _prog_set(key, 6, "Reading the clip")
     (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
     _p0 = time.time()

@@ -7,8 +7,8 @@
   * the scan gate keeps its last free slot for a user scan when a background job asks
   * every busy answer logs the limit it hit, what was running and the page's quiet retry number
   round 2:
-  * the pacer learns what Shazam takes from its own 429s (one route only) and holds every probe
-    until a call leaves that window; a scan that can keep its name stops instead of waiting
+  * the pacer learns what Shazam takes from its own 429s (one route only); a scan that meets
+    the full minute stops there (as at its second 429 before) and retry_after says when it frees
   * a gate refusal keeps the scan's place in line; the next ask rejoins there
   * the request budget: calls counted per scan half, searches and downloads capped
   * early names are held from a refused or long-waiting scan; busy bodies carry Retry-After,
@@ -260,7 +260,7 @@ class Shazam429(object):
                           "key": "k", "images": {}}, "matches": [{"frequencyskew": 0.0}]}
 
 
-def scan_probes(paths, deadline_s=None, stop_ok=None, timeout=2.0):
+def scan_probes(paths, deadline_s=None, timeout=2.0):
     """One scan making these probes in order -> (answers or exceptions, scan record)."""
     out = {"ans": []}
 
@@ -268,7 +268,6 @@ def scan_probes(paths, deadline_s=None, stop_ok=None, timeout=2.0):
         tok = F.DEADLINE.set(time.time() + deadline_s if deadline_s else None)
         d = F.scan_begin()
         F.DEADLINE.reset(tok)
-        d["stop_ok"] = stop_ok
         for i, p in enumerate(paths):
             try:
                 out["ans"].append(await F.shazam_call(p, timeout, meta=(float(i), 1.0)))
@@ -296,24 +295,28 @@ class Learn(unittest.TestCase):
         F._SHZ_ROUTES[:] = self.routes
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 4.0, 5.0
 
-    def test_429_teaches_the_limit_and_the_retry_waits_for_a_free_slot(self):
+    def test_429_teaches_the_limit_and_the_scan_stops_at_the_wall(self):
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
+        t0 = time.time()
         ans, sc = scan_probes(["/tmp/l_%d.wav" % i for i in range(5)])
-        self.assertTrue(all(isinstance(a, dict) for a in ans), ans)   # all 5 answered
-        self.assertEqual(F._PACER.learned, 3)                 # Shazam took 3 a window
-        self.assertEqual(sc["http429"], 1)                    # one 429, then it waited
-        self.assertEqual(sc["throttled"], 0)
-        self.assertGreater(sc["waited"], 1.0)
-        self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), 1, self.up.log)
+        self.assertTrue(all(isinstance(a, dict) for a in ans[:3]), ans)   # Shazam took 3
+        self.assertIsInstance(ans[3], F.Throttled)            # the 4th met the full minute
+        self.assertEqual(F._PACER.learned, 3)
+        self.assertEqual((sc["http429"], sc["why"], sc["answered"]), (1, "wall", 3))
+        self.assertLess(time.time() - t0, 1.5)                # stopped, did not wait the minute out
+        self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), 1, self.up.log)   # no 2nd 429
+        ra = F.retry_hint(lo=0.0)
+        self.assertTrue(2 <= ra <= 4, ra)                     # when the 3 s window has room again
 
-    def test_after_learning_no_more_429s(self):
+    def test_after_learning_the_pacer_holds_to_it(self):
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
         scan_probes(["/tmp/m_%d.wav" % i for i in range(4)])  # learns 3
         n429 = sum(1 for _t, st in self.up.log if st == 429)
+        time.sleep(3.2)                                       # a fresh minute
         ans, sc = scan_probes(["/tmp/n_%d.wav" % i for i in range(4)])
-        self.assertTrue(all(isinstance(a, dict) for a in ans), ans)
+        self.assertEqual([isinstance(a, dict) for a in ans], [True, True, True, False], ans)
         self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), n429)   # paced, not refused
-        self.assertEqual(sc["http429"], 0)
+        self.assertEqual((sc["http429"], sc["why"]), (0, "wall"))
 
     def test_relays_learn_nothing(self):
         F._SHZ_ROUTES[:] = ["", "http://relay.invalid:8888"]
@@ -334,42 +337,44 @@ class Learn(unittest.TestCase):
         finally:
             F.PACE_LEARN_RELAX_S = relax
 
-    def _full_learned_window(self):
+    def _full_learned_window(self, age=0.1):
         now = time.time()
         with F._PACER.lock:
             F._PACER.learned, F._PACER.learned_at = 3, now
-            F._PACER.sent.extend([now - 0.1] * 3)            # full: the oldest leaves in ~2.9 s
+            F._PACER.sent.extend([now - age] * 3)            # full: the oldest leaves in 3 s - age
 
-    def test_a_scan_that_keeps_its_name_stops_instead_of_waiting(self):
+    def test_any_scan_stops_at_the_full_learned_window(self):
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
         self._full_learned_window()
         t0 = time.time()
-        ans, sc = scan_probes(["/tmp/p_0.wav"], stop_ok=lambda: True)
+        ans, sc = scan_probes(["/tmp/p_0.wav"])
         self.assertIsInstance(ans[0], F.Throttled)
         self.assertLess(time.time() - t0, 0.5)                # no wait
-        self.assertEqual(sc["why"], "named")
-        self.assertEqual(sc["sent"], 0)
-        self.assertGreaterEqual(F._PACER.stats["named_stops"], 1)
+        self.assertEqual((sc["why"], sc["sent"]), ("wall", 0))
+        self.assertGreaterEqual(F._PACER.stats["wall_stops"], 1)
 
-    def test_a_scan_that_would_end_busy_waits(self):
+    def test_a_short_wait_still_waits(self):
+        """Room in under 2x the 429 back-off (0.4 s here): the probe waits, as before."""
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        self._full_learned_window()
-        ans, sc = scan_probes(["/tmp/r_0.wav"], stop_ok=lambda: False)
+        self._full_learned_window(age=2.75)                   # room in ~0.25 s
+        ans, sc = scan_probes(["/tmp/r_0.wav"])
         self.assertIsInstance(ans[0], dict)
-        self.assertGreater(sc["waited"], 2.0)
+        self.assertGreater(sc["waited"], 0.1)
 
-    def test_no_learning_no_named_stop(self):
+    def test_no_learning_no_stop(self):
         """Without a 429 (live with relays never learns) a waiting probe waits as before."""
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
         now = time.time()
         with F._PACER.lock:
             F._PACER.sent.extend([now - 0.1] * 5)             # PACE_N full, nothing learned
-        ans, sc = scan_probes(["/tmp/r_1.wav"], stop_ok=lambda: True)
+        ans, sc = scan_probes(["/tmp/r_1.wav"])
         self.assertIsInstance(ans[0], dict)
         self.assertGreater(sc["waited"], 2.0)
 
     def test_deadline_still_caps_the_wait(self):
-        self._full_learned_window()
+        now = time.time()
+        with F._PACER.lock:
+            F._PACER.sent.extend([now - 0.1] * 5)             # PACE_N full, nothing learned
         t0 = time.time()
         ans, sc = scan_probes(["/tmp/t_0.wav"], deadline_s=0.5)
         self.assertIsInstance(ans[0], F.Throttled)            # slot is past its deadline
@@ -622,29 +627,6 @@ class NameRules(unittest.TestCase):
         self.assertTrue(S._scan_name_held({"http429": 1}))
         self.assertTrue(S._scan_name_held({"waited": 12.0}))
 
-    def hits(self, *rows):
-        return {"hits": [{"t": t, "off": o, "rate": r} for t, o, r in rows]}
-
-    def test_keepable_matches_the_fallback_first_rule(self):
-        two_offs = self.hits(("Song", 0.0, 0.9), ("Song (Slowed)", 6.0, 0.9), ("", 12.0, 1.0),
-                             ("", 18.0, 1.0), ("", 5.0, 0.8))
-        self.assertTrue(S._name_keepable(two_offs))
-        rival = self.hits(("Song", 0.0, 0.9), ("Other", 6.0, 0.9), ("", 12.0, 1.0),
-                          ("", 18.0, 1.0), ("", 5.0, 0.8))
-        self.assertFalse(S._name_keepable(rival))
-        four = self.hits(("Song", 0.0, 0.9), ("Song", 6.0, 0.9), ("", 12.0, 1.0), ("", 18.0, 1.0))
-        self.assertFalse(S._name_keepable(four))
-        posted = self.hits(("Song", 5.0, 1.0), ("", 0.0, 1.0), ("", 6.0, 1.0), ("", 12.0, 1.0),
-                           ("", 18.0, 1.0))
-        self.assertTrue(S._name_keepable(posted))
-        one_off = self.hits(("Song", 5.0, 1.2), ("Song", 5.0, 1.25), ("", 0.0, 1.0), ("", 6.0, 1.0),
-                            ("", 12.0, 1.0))
-        self.assertFalse(S._name_keepable(one_off))
-        # and it agrees with _name_fallback on the same rows
-        for sc in (two_offs, rival, four, posted, one_off):
-            want = S._name_fallback({"title": "Song"}, sc, {}, [])["mode"] == "kept"
-            self.assertEqual(S._name_keepable(sc), want, sc)
-
 
 class Headers(unittest.TestCase):
     class Fake(object):
@@ -721,8 +703,11 @@ class BusyLog(unittest.TestCase):
             res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "slot")
             self.assertIs(res["quiet"], True)
             self.assertEqual(res["progress"], {"answered": 3, "memo": 7})
-            d.update(answered=0)
-            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "slot")
+            d.update(answered=0)                              # resumed from the memo: headway
+            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "wall")
+            self.assertIs(res["quiet"], True)
+            d.update(answered=0, memo=0)                      # nothing at all this ask
+            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "wall")
             self.assertIs(res["quiet"], False)
         finally:
             F.SCAN.set(None)
