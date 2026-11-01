@@ -11285,7 +11285,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         # streamed or offered to a lane while the hunt runs, and their scores are set aside
         # right after this batch until the ranking pass decides whether they count.
         _rc_x, _w1_hit = [], _hit
-        if RECALL_LANE:
+        # only on a song Shazam named and the server trusts (the style lane's rule): the
+        # lane reads the song's own title words, which mean nothing under a suspect name
+        if RECALL_LANE and base_title and shazam_reliable:
             try:
                 _rc_len = duration_of(clip_audio) or 0
             except Exception:
