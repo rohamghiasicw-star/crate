@@ -7,8 +7,9 @@
   * the scan gate keeps its last free slot for a user scan when a background job asks
   * every busy answer logs the limit it hit, what was running and the page's quiet retry number
   round 2:
-  * the pacer learns what Shazam takes from its own 429s (one route only); a scan that meets
-    the full minute stops there (as at its second 429 before) and retry_after says when it frees
+  * the pacer learns what Shazam takes from its own 429s (one route only); a first ask that
+    meets the full minute stops there (as at its second 429 before) and retry_after says when it
+    frees; the page's quiet retry (patient) waits for the room unless it can keep its name
   * a gate refusal keeps the scan's place in line; the next ask rejoins there
   * the request budget: calls counted per scan half, searches and downloads capped
   * early names are held from a refused or long-waiting scan; busy bodies carry Retry-After,
@@ -260,7 +261,7 @@ class Shazam429(object):
                           "key": "k", "images": {}}, "matches": [{"frequencyskew": 0.0}]}
 
 
-def scan_probes(paths, deadline_s=None, timeout=2.0):
+def scan_probes(paths, deadline_s=None, timeout=2.0, patient=False, stop_ok=None):
     """One scan making these probes in order -> (answers or exceptions, scan record)."""
     out = {"ans": []}
 
@@ -268,6 +269,7 @@ def scan_probes(paths, deadline_s=None, timeout=2.0):
         tok = F.DEADLINE.set(time.time() + deadline_s if deadline_s else None)
         d = F.scan_begin()
         F.DEADLINE.reset(tok)
+        d["patient"], d["stop_ok"] = patient, stop_ok
         for i, p in enumerate(paths):
             try:
                 out["ans"].append(await F.shazam_call(p, timeout, meta=(float(i), 1.0)))
@@ -352,6 +354,23 @@ class Learn(unittest.TestCase):
         self.assertLess(time.time() - t0, 0.5)                # no wait
         self.assertEqual((sc["why"], sc["sent"]), ("wall", 0))
         self.assertGreaterEqual(F._PACER.stats["wall_stops"], 1)
+
+    def test_a_quiet_retry_waits_for_the_room(self):
+        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
+        self._full_learned_window()
+        ans, sc = scan_probes(["/tmp/p_1.wav"], patient=True, stop_ok=lambda: False)
+        self.assertIsInstance(ans[0], dict)
+        self.assertGreater(sc["waited"], 2.0)
+        self.assertEqual(sc["throttled"], 0)
+
+    def test_a_quiet_retry_that_keeps_its_name_stops(self):
+        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
+        self._full_learned_window()
+        t0 = time.time()
+        ans, sc = scan_probes(["/tmp/p_2.wav"], patient=True, stop_ok=lambda: True)
+        self.assertIsInstance(ans[0], F.Throttled)
+        self.assertLess(time.time() - t0, 0.5)
+        self.assertEqual(sc["why"], "wall")
 
     def test_a_short_wait_still_waits(self):
         """Room in under 2x the 429 back-off (0.4 s here): the probe waits, as before."""
@@ -626,6 +645,28 @@ class NameRules(unittest.TestCase):
         self.assertTrue(S._scan_name_held({"throttled": 1}))
         self.assertTrue(S._scan_name_held({"http429": 1}))
         self.assertTrue(S._scan_name_held({"waited": 12.0}))
+
+
+class Keepable(unittest.TestCase):
+    def hits(self, *rows):
+        return {"hits": [{"t": t, "off": o, "rate": r} for t, o, r in rows]}
+
+    def test_matches_the_fallback_first_rule(self):
+        two_offs = self.hits(("Song", 0.0, 0.9), ("Song (Slowed)", 6.0, 0.9), ("", 12.0, 1.0),
+                             ("", 18.0, 1.0), ("", 5.0, 0.8))
+        rival = self.hits(("Song", 0.0, 0.9), ("Other", 6.0, 0.9), ("", 12.0, 1.0),
+                          ("", 18.0, 1.0), ("", 5.0, 0.8))
+        four = self.hits(("Song", 0.0, 0.9), ("Song", 6.0, 0.9), ("", 12.0, 1.0), ("", 18.0, 1.0))
+        posted = self.hits(("Song", 5.0, 1.0), ("", 0.0, 1.0), ("", 6.0, 1.0), ("", 12.0, 1.0),
+                           ("", 18.0, 1.0))
+        one_off = self.hits(("Song", 5.0, 1.2), ("Song", 5.0, 1.25), ("", 0.0, 1.0), ("", 6.0, 1.0),
+                            ("", 12.0, 1.0))
+        want = {id(two_offs): True, id(rival): False, id(four): False, id(posted): True,
+                id(one_off): False}
+        for sc in (two_offs, rival, four, posted, one_off):
+            self.assertEqual(S._name_keepable(sc), want[id(sc)], sc)
+            kept = S._name_fallback({"title": "Song"}, sc, {}, [])["mode"] == "kept"
+            self.assertEqual(S._name_keepable(sc), kept, sc)   # agrees with the fallback itself
 
 
 class Headers(unittest.TestCase):
