@@ -6044,6 +6044,22 @@ def _phase2(ctx, on_cand=None):
             # A confident wrong answer is worse than an honest miss, so below the bar we
             # report the song and no exact version.
             top = verified[0] if verified else None
+            # FIX 3 (issue #12): A ROW RANKED UNDER THE BAR NO LONGER HIDES ONE ABOVE IT.
+            # rank_key puts the artist tier above audio merit (the Ark Patrol case), so on the
+            # Hymn For The Weekend clip a title-rescued "Coldplay - Hymn For The Weekend
+            # (Slowed and Reverb)" at core 0.118 ranks over an upload that verifies at core
+            # 1.000 but has no "Coldplay" in its title, and with row 1 under the bar the walk
+            # below was offered nothing. When a verified row does clear the bar, the walk starts
+            # there instead; every gate and the null control still decide (Ark Patrol's 1.000
+            # at fp 0.554 is refused by the fp floor). Row 1 at or above the bar: unchanged.
+            _above = (next((c for c in verified if (c.get("core") or 0) >= E.CORE_KEEP), None)
+                      if top and (top.get("core") or 0) < E.CORE_KEEP else None)
+            if _above is not None:
+                E.tlog("crown_past_weak_row1", 0.0, row1=(top.get("title") or "")[:60],
+                       row1_core=round(top.get("core") or 0, 3),
+                       to=(_above.get("title") or "")[:60],
+                       to_core=round(_above.get("core") or 0, 3))
+                top = _above
             if top and (top.get("core") or 0) < E.CORE_KEEP:
                 # Below the bar we refuse to CROWN - a confident wrong answer is worse
                 # than an honest miss, which is why this gate exists. But throwing the

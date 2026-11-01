@@ -1349,7 +1349,8 @@ def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
             if not (done or POOL_LOG):
                 continue
             why = ("ranked" if id(c) in rk else "kept" if id(c) in kp
-                   else "under_keep" if scored else "dl_failed" if done else "not_downloaded")
+                   else "under_keep" if scored else "recall_dropped" if c.get("recall_dropped")
+                   else "dl_failed" if done else "not_downloaded")
             r = {"i": i, "u": c.get("url"), "src": c.get("source"),
                  "t": (c.get("title") or "")[:70], "d": int(_dur_s(c)),
                  "p": c.get("plays") or 0, "why": why}
@@ -1362,8 +1363,10 @@ def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
             if id(c) in rk:
                 r["rank"] = rk[id(c)]
             lanes = [k for k in ("creator_upload", "rescue_q", "hint_mash", "family_wave",
-                                 "fast_carry", "comment_link", "sc_first", "section_lane")
+                                 "fast_carry", "comment_link", "sc_first", "recall_lane")
                      if c.get(k)]
+            if c.get("sc_top"):
+                r["sc_top"] = c.get("sc_top")
             if lanes:
                 r["lane"] = lanes
             rows.append(r)
@@ -7199,6 +7202,82 @@ def evidence_rows(rows, clip_secs, known_dir, edit_label, song_terms, artist_hit
     return out, ";".join(why)
 
 
+# FIX 3 (issue #12, Konnor: "If an upload of that audio exists, Addify must find it"). THE
+# RECALL LANE: up to RECALL_LEN_DL + RECALL_TOP_DL rows the main search already returned and the
+# 14-row head left out, downloaded in wave 1 beside it. Two signals the head never reads:
+#   * LENGTH: a short upload near the clip's own length, titled with the whole song plus an
+#     edit or section word, the same test as the length lane (evidence_rows) without needing a
+#     measured direction. Hymn For The Weekend (vt.tiktok.com/ZSgA99P91, 25.8 s clip): Lavt0c's
+#     "HYMN FOR THE WEEKEND - BASS BOOSTED // SPED UP" (25.9 s) verifies at core 1.000, fp 0.906,
+#     speed 1.000, and sat at 180 of 364 in the download order because its title has no
+#     "Coldplay"; the length lane never ran because the hunt had no measured direction.
+#   * FIRST ON SOUNDCLOUD for RECALL_TOP_MIN+ of our own queries (`sc_top`, _merge_rows), with
+#     the whole song title read through fold_name. Big League (instagram.com/reel/DeE4Gy2xjUN):
+#     Fozure's upload, titled in bold maths letters, was SoundCloud's first answer to 12 of 15
+#     queries, verifies at core 1.000, fp 0.858, speed 1.000, and sat at 322 of 337 because the
+#     title check reads only plain letters.
+# The rows' scores stay out of the hunt until the ranking pass, and count there only when no
+# other row settled the clip (core >= CORE_SAME at its speed): a hunt that ends settled without
+# the lane ends exactly as before. CRATE_RECALL_LANE=0 turns it off.
+RECALL_LANE = _speed_flag("CRATE_RECALL_LANE", True)
+RECALL_LEN_DL, RECALL_TOP_DL, RECALL_TOP_MIN = 2, 2, 2
+_RECALL_KEYS = ("_spec", "path", "spectral", "fp", "arr", "core", "vscore", "score", "same",
+                "vspeed", "bass_delta", "lag", "speed_conf", "clip_tilt", "cand_tilt",
+                "slope_delta", "clip_slope", "cand_slope", "_seek", "seek_at", "seek_clip_at",
+                "core_head", "fp_head")
+
+
+def _fold_cov(c, song_terms):
+    """song_cov read through fold_name as well as the raw title (a term counts when either
+    form carries it), so a title in a styled font is not a title with no words."""
+    if not song_terms:
+        return 1.0
+    raw = (c.get("title") or "").lower()
+    fold = fold_name(c.get("title") or "").lower()
+    return sum(1 for t in song_terms if t in raw or t in fold) / float(len(song_terms))
+
+
+def recall_rows(pool, skip, clip_secs, known_dir, song_terms):
+    """The recall lane's rows (see RECALL_LANE). Returns (rows, why). Zero network: reads
+    title, duration, plays, source, sc_top. Each row picked is tagged `recall_why`."""
+    if not song_terms:
+        return [], "no-song-words"
+    L = float(clip_secs or 0)
+    kd = known_dir or ""
+    rx = _FAST_SLOW_CLAIM if "slow" in kd else (_FAST_QUICK_CLAIM if "sped" in kd else None)
+    short_max = max(90.0, 3.0 * L)
+    sec, top = [], []
+    for i, c in enumerate(pool or []):
+        if id(c) in skip or c.get("_done") or c.get("fast_carry"):
+            continue
+        t = fold_name(c.get("title") or "")
+        if (_fold_cov(c, song_terms) < 1.0 or _is_compilation(c) or OTHER_RENDITION.search(t)
+                or (c.get("source") == "soundcloud" and abs(_dur_s(c) - 30.0) < 0.01)):
+            continue
+        d = _dur_s(c)
+        if L > 0 and 0.5 * L <= d <= short_max and (EDIT_WORDS.search(t) or _SECTION_WORD.search(t)):
+            sec.append((0 if (rx and rx.search(t)) else 1, abs(float(np.log(d / L))),
+                        -(c.get("plays") or 0), i, c))
+        if (c.get("sc_top") or 0) >= RECALL_TOP_MIN:
+            top.append((-(c.get("sc_top") or 0), -(c.get("plays") or 0), i, c))
+    sec.sort(key=lambda x: x[:4])
+    top.sort(key=lambda x: x[:3])
+    out = []
+    for x in sec[:RECALL_LEN_DL]:
+        x[-1]["recall_why"] = "length"
+        out.append(x[-1])
+    n_top = 0
+    for x in top:
+        if n_top >= RECALL_TOP_DL:
+            break
+        if any(o is x[-1] for o in out):
+            continue
+        x[-1]["recall_why"] = "sc_first:%d" % (x[-1].get("sc_top") or 0)
+        out.append(x[-1])
+        n_top += 1
+    return out, "length:%d;sc_first:%d" % (len(sec), len(top))
+
+
 def _num(s):
     try:
         return int(s)
@@ -7599,14 +7678,22 @@ def _merge_rows(results, dedup=True):
     whichever query happened to run first: on #30 "( slowed down ) love me like you do"
     was returned by both "<artist> <song> slowed" and "<song> slowed down" and landed in
     the first lane, where it was one of seventeen "slowed" rows instead of the best row
-    of the lane built to find it. Every other caller keeps the old behaviour."""
-    cands, seen = [], set()
+    of the lane built to find it. Every other caller keeps the old behaviour.
+
+    FIX 3 (issue #12): each row also carries `sc_top`, how many of these searches put it
+    FIRST on SoundCloud. Read only by the recall lane (recall_rows); nothing else sees it."""
+    cands, seen, firsts = [], set(), {}
     for rows in results:
-        for r in rows:
+        for j, r in enumerate(rows):
+            if j == 0 and r.get("source") == "soundcloud":
+                firsts[r["url"]] = firsts.get(r["url"], 0) + 1
             k = r["url"] if dedup else (r["query"], r["url"])
             if k in seen:
                 continue
             seen.add(k); cands.append(r)
+    for c in cands:
+        if c["url"] in firsts:
+            c["sc_top"] = firsts[c["url"]]
     return cands
 
 
@@ -9668,7 +9755,9 @@ def _download_and_score(cands, clip_audio, tmp, start, max_dl, clip_ctx=None,
                                   "head": _sk_head,
                                   "sec": (_sk if _sk.get("adopt") else _sk.get("alt")),
                                   "state": "section" if _sk.get("adopt") else "head"}
-                if _bud is not None:
+                if _bud is not None and not c.get("recall_lane"):
+                    # FIX 3: a recall-lane row is not evidence for the hunt budget while its
+                    # scores are set aside, so the budget runs the hunt it ran before the lane
                     _bud.note(v.get("core"), v.get("fp"))
         if _gone:                           # the cap fired while it verified: no row, no file
             _bud.drop(_dst)
@@ -11192,12 +11281,34 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _style_x = _style_extra(_style_pool, wave1, core_title)
             tlog("style_quota", 0.0, n=len(_style_x), why=_style_why,
                  titles=[(c.get("title") or "")[:60] for c in _style_x])
+        # FIX 3: THE RECALL LANE rides wave 1 as well (RECALL_LANE). Its rows are never
+        # streamed or offered to a lane while the hunt runs, and their scores are set aside
+        # right after this batch until the ranking pass decides whether they count.
+        _rc_x, _w1_hit = [], _hit
+        if RECALL_LANE:
+            try:
+                _rc_len = duration_of(clip_audio) or 0
+            except Exception:
+                _rc_len = 0
+            _rc_x, _rc_why = recall_rows(cands, {id(c) for c in wave1 + _style_x}, _rc_len,
+                                         known_dir, song_terms)
+            for c in _rc_x:
+                c["recall_lane"] = True
+            tlog("recall_lane", 0.0, n=len(_rc_x), why=_rc_why, clip_secs=round(_rc_len, 1),
+                 rows=[[(c.get("title") or "")[:60], c.get("url"), c.get("recall_why")]
+                       for c in _rc_x])
+            if _rc_x and _hit is not None:
+                def _w1_hit(c, _h=_hit):
+                    if not c.get("recall_lane"):
+                        _h(c)
         _tw1 = time.time()
-        n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
-                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit,
-                                wave="dl_wave1")
+        n = _download_and_score(wave1 + _style_x + _rc_x, clip_audio, tmp, 0,
+                                max_dl + len(_style_x) + len(_rc_x), clip_ctx=clip_ctx,
+                                on_scored=_w1_hit, wave="dl_wave1")
         tlog("dl_wave1", time.time() - _tw1, n=n)
         _wave1_done = [c for c in wave1 if c.get("_done")]
+        for c in _rc_x:
+            c["_recall"] = {k: c.pop(k) for k in _RECALL_KEYS if k in c}
     else:
         n = 0
 
@@ -11392,6 +11503,21 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     head = _producer_quota(_web_quota(_sc_quota(
         [c for c in cands if not c.get("fast_carry") and not c.get("rescue_q")],
         max_dl), max_dl), max_dl)
+    # FIX 3: a recall-lane row that this head takes would have been downloaded and scored
+    # here anyway, so its wave-1 scores join the pool now, like any head row's.
+    for c in head:
+        if c.get("_recall") is not None:
+            c.update(c.pop("_recall"))
+            c["recall_in_head"] = True
+            if _hb is not None and c.get("path"):
+                with _hb.lock:
+                    if not _hb.dead:
+                        _hb.note(c.get("core"), c.get("fp"))
+            if _hit is not None:
+                try:
+                    _hit(c)
+                except Exception:
+                    pass
     # APPENDED, NOT SUBSTITUTED - see _creator_extra. The head above is exactly what this
     # engine downloaded before the creator lane existed, so nothing that used to be
     # scored stops being scored.
@@ -11762,6 +11888,28 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                      score=bv["score"], vscore=bv["score"])
         tlog("creator_align", time.time() - _ta0, n=len(_align),
              hit=sum(1 for c in _align if c.get("aligned_at") is not None))
+
+    # FIX 3: THE RECALL LANE'S ROWS COUNT ONLY ON A HUNT NOTHING ELSE SETTLED (RECALL_LANE).
+    # Settled = the family wave's test: a row at CORE_SAME within FAMILY_SETTLED_TOL of the
+    # clip's speed. Settled without them, their scores are dropped and the ranking below is the
+    # one it would have been; unsettled, they rejoin the pool as ordinary scored rows.
+    _rc_rows = [c for c in cands if c.get("_recall") is not None]
+    if _rc_rows:
+        _rc_settled = any(
+            (c.get("core") or 0) >= CORE_SAME and abs(float(np.log2(
+                max(0.25, min(4.0, c.get("vspeed") or 1.0))))) <= FAMILY_SETTLED_TOL
+            for c in cands if c.get("_recall") is None and c.get("path"))
+        for c in _rc_rows:
+            _r = c.pop("_recall")
+            if not _rc_settled:
+                c.update(_r)
+            else:
+                c["recall_dropped"] = True
+        tlog("recall_lane_end", 0.0, settled=_rc_settled, n=len(_rc_rows),
+             rows=[[(c.get("title") or "")[:50], c.get("recall_why"),
+                    None if _rc_settled else c.get("core"),
+                    None if _rc_settled else c.get("fp"),
+                    None if _rc_settled else c.get("vspeed")] for c in _rc_rows])
 
     if SEEK_MOFF:
         seek_settle(cands, "rank")          # CRATE_SEEK_MOFF v2: aligned against aligned
