@@ -9,7 +9,7 @@ per-user "limit") the person asks again quietly the way the page under test does
   old   release-next's page: no quiet retry, the busy card at once
   two   the first Fix 4 page (f82bbab): 2 quiet retries after min(45, max(3, retry_after))
   new   this branch's page (busyAgain in crate.html): 2 quiet retries always, more only while
-        the answer says quiet:true, up to 8 asks and 360 s, after min(75, max(2, retry_after))
+        the answer says quiet:true, up to 24 asks and 360 s, after min(75, max(2, retry_after))
 A person "sees busy" when the answer that ends their quiet retries is still busy.
 
 Scenarios:
@@ -63,7 +63,7 @@ def wait_for(d, n, t0):
         return -1
     if a.page == "two":
         return min(45.0, max(3.0, ra)) if n < 2 else -1
-    if n >= 2 and not (d.get("quiet") is True and n + 1 < 8 and time.time() - t0 < 360):
+    if n >= 2 and not (d.get("quiet") is True and n + 1 < 24 and time.time() - t0 < 360):
         return -1
     return min(75.0, max(2.0, ra))
 

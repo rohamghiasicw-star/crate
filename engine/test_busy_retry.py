@@ -20,7 +20,7 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
       (sampled each second, never back to 0, never stuck)
   round 2 (the engine's busy answer says whether asking again is getting somewhere: quiet):
   Q10 /base busy with quiet:true four times, then found -> song, 5 asks, no busy card
-  Q11 /base busy with quiet:true every time -> the busy card after 8 asks, not before
+  Q11 /base busy with quiet:true every time -> the busy card after 24 asks, not before
   Q12 listen mode: /listen busy twice, then found -> song, 3 /listen requests, no busy card
   Q13 listen mode: /listen busy every time -> busy card after 3 requests; Try again sends the
       same recording again (a 4th /listen), it does not just go home
@@ -312,9 +312,9 @@ async def amain(a):
                   and "&qr=4" in r["base_urls"][4])
             res.append((r, ok))
         if want("Q11") and not a.expect_old:
-            r = await run_case(pw, html, "Q11 busy with headway every time: card after 8 asks",
-                               {"/base": [busy("shazam", 2, quiet=True)]}, secs=40)
-            ok = bool(busy_cards(r["cards"])) and r["hits"].get("/base") == 8
+            r = await run_case(pw, html, "Q11 busy with headway every time: card after 24 asks",
+                               {"/base": [busy("shazam", 2, quiet=True)]}, secs=80)
+            ok = bool(busy_cards(r["cards"])) and r["hits"].get("/base") == 24
             res.append((r, ok))
         if want("Q12") and not a.expect_old:
             r = await run_case(pw, html, "Q12 listen: busy x2 then found",

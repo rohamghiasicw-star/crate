@@ -6114,11 +6114,12 @@ var scanTok=0, p1Busy=false, SCAN_ID='';
    seconds), held inside [BUSY_QUIET_MIN, BUSY_QUIET_MAX] seconds. Two quiet retries always.
    FIX 4 round 2: more only while the engine says asking again is getting somewhere (d.quiet: a
    Shazam ask that got new answers, which the engine keeps for the next ask, or a scan holding
-   its place in the line), up to BUSY_QUIET_ASKS asks and BUSY_QUIET_SECS seconds in all. The
+   its place in the line), up to BUSY_QUIET_SECS seconds in all (BUSY_QUIET_ASKS asks at most:
+   a line of 20 people on 3 slots takes about 4 minutes to reach the last of them). The
    scan screen stays exactly as it is meanwhile (same headline, same dial, no new step), and
    only an answer still busy after that shows the busy card. Back or a new scan stops the
    retries. Each retry tells the engine its number (&qr=), which it writes on a busy it logs. */
-var BUSY_QUIET_N=2, BUSY_QUIET_ASKS=8, BUSY_QUIET_SECS=360, BUSY_QUIET_MIN=2, BUSY_QUIET_MAX=75;
+var BUSY_QUIET_N=2, BUSY_QUIET_ASKS=24, BUSY_QUIET_SECS=360, BUSY_QUIET_MIN=2, BUSY_QUIET_MAX=75;
 function busyQuiet(d){return !!(d&&d.result==='rate_limited'&&d.busy&&d.busy!=='limit');}
 /* seconds to wait before asking again after `n` quiet retries (since t0), or -1: show it */
 function busyAgain(d,n,t0){

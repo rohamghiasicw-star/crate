@@ -3233,7 +3233,9 @@ def _sound_page_alt(mid):
                 _SP_ALT_INFLIGHT.discard(k)
             tlog("sound_page_alt", time.time() - t0, ok=ok, st=st)
     try:
-        threading.Thread(target=_run, name="soundpage-alt", daemon=True).start()
+        # FIX 4: started with the caller's context, so its fetch counts on that scan's budget
+        threading.Thread(target=_contextvars.copy_context().run, args=(_run,),
+                         name="soundpage-alt", daemon=True).start()
     except Exception:
         with _SP_LOCK:
             _SP_ALT_INFLIGHT.discard(k)

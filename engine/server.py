@@ -1118,8 +1118,10 @@ def _prefetch_hunt(src, hit, hints):
     phase 2 builds differently (a later hint, a measured speed word) just runs then."""
     if not E.SPEED_PREFETCH:
         return
+    _tally = E.SCAN_TALLY.get()      # FIX 4: these searches count on this scan's call budget
 
     def _go():
+        _tk = E.SCAN_TALLY.set(_tally) if _tally is not None else None
         try:
             hs = [h for h in (hints or []) if h]
             qs = E.build_queries(src.get("credit_title"), src.get("credit_author"),
@@ -1136,6 +1138,9 @@ def _prefetch_hunt(src, hit, hints):
             E.tlog("prefetch_start", 0.0, n=n, nq=len(qs), nh=len(hq))
         except Exception as ex:
             E.tlog("prefetch_failed", 0.0, err=type(ex).__name__)
+        finally:
+            if _tk is not None:
+                E.SCAN_TALLY.reset(_tk)
     threading.Thread(target=_go, name="prefetch-hunt", daemon=True).start()
 
 
