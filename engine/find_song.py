@@ -710,8 +710,9 @@ class _Pacer(object):
             until = now + hold
             if status == 429 and PACE_LEARN and len(_SHZ_ROUTES) == 1:
                 # FIX 4 round 2: one address, so this 429 is Shazam's whole answer for this
-                # server. What it answered in the last window is what it takes; every probe
-                # now waits until a call leaves that window (never less than the old back-off).
+                # server. What it answered in the last window is what it takes; the next call
+                # goes when one leaves that window (never sooner than the old back-off): a
+                # first ask stops at that wall, a quiet retry waits for it (acquire).
                 while self.ok and self.ok[0] <= now - PACE_WINDOW_S:
                     self.ok.popleft()
                 n_ok = max(PACE_LEARN_MIN, len(self.ok))
