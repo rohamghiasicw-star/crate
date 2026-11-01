@@ -538,16 +538,21 @@ def _memo_put(key, ans):
 
 
 def retry_hint(lo=5.0, hi=60.0):
-    """Seconds until this server's Shazam minute has room again: the oldest call in the
-    pacer's window leaves it (or a 429 hold ends). The busy answer's retry_after, so a retry
-    lands after the minute that ran out instead of inside it. None when pacing is off."""
+    """Seconds until a retry of a Shazam-busy scan can get through, for the busy answer's
+    retry_after: the end of the pacer's 429 hold, or, when this server's own Shazam window is
+    full (PACE_N calls in the last PACE_WINDOW_S), the moment its oldest call leaves it. With
+    room in the window (live: 7 addresses, 35 a minute) a refusal was one address saying no,
+    and the next ask goes round-robin to another one, so the retry comes soon. None when
+    pacing is off."""
     if not PACE:
         return None
     with _PACER.lock:
         now = _time.time()
         while _PACER.sent and _PACER.sent[0] <= now - PACE_WINDOW_S:
             _PACER.sent.popleft()
-        at = max(_PACER.hold_until, (_PACER.sent[0] + PACE_WINDOW_S) if _PACER.sent else now)
+        at = max(now, _PACER.hold_until)
+        if len(_PACER.sent) >= PACE_N:
+            at = max(at, _PACER.sent[len(_PACER.sent) - PACE_N] + PACE_WINDOW_S)
     return int(round(min(hi, max(lo, at - now + 2.0))))
 
 

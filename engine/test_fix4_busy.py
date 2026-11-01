@@ -202,12 +202,19 @@ class RetryHint(unittest.TestCase):
     def test_empty_window(self):
         self.assertEqual(F.retry_hint(), 5)                   # nothing in the window: the floor
 
-    def test_oldest_call_leaves_the_window(self):
+    def test_room_in_the_window_retries_soon(self):
         now = time.time()
         with F._PACER.lock:
-            F._PACER.sent.extend([now - 1.0, now - 0.5])     # window 3 s: oldest leaves in 2 s
-        self.assertEqual(F.retry_hint(lo=0.0), 4)             # 2 s + 2 s margin
-        self.assertEqual(F.retry_hint(), 5)                   # clamped to the 5 s floor
+            F._PACER.sent.extend([now - 1.0, now - 0.5])     # 2 of 5 used: room now
+        self.assertEqual(F.retry_hint(lo=0.0), 2)             # just the 2 s margin
+        self.assertEqual(F.retry_hint(), 5)                   # the 5 s floor
+
+    def test_full_window_waits_for_its_oldest_call(self):
+        now = time.time()
+        with F._PACER.lock:
+            F._PACER.sent.extend([now - 1.0, now - 0.9, now - 0.8, now - 0.7, now - 0.6])
+        self.assertEqual(F.retry_hint(lo=0.0), 4)             # oldest leaves the 3 s window in 2 s, + 2 s
+        self.assertEqual(F.retry_hint(), 5)
 
     def test_hold_counts(self):
         with F._PACER.lock:
