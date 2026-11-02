@@ -7,6 +7,8 @@ Runs every case in bench_cases.jsonl through an engine the way the app does (/ba
   top1   it is the crown (or, with no crown, the first row)
   top3   it is in the first three of crown + rows
   time   seconds from /base to the end of the stream
+  card   the card the scan ends on (FIX 7, issue #13): crown, upload or song; "none" means a found
+         scan with no closest version card, which --strict fails
 With --tlog <engine timing log> it also counts what each scan cost: candidate downloads
 (cand_dl rows), search requests (one SoundCloud + one YouTube request per query) and Shazam
 probes, read from the rows the engine wrote while that scan ran.
@@ -95,7 +97,21 @@ def calls_between(tlog, t0, t1, url):
         elif s in ("search_scyt", "family_wave", "extra_dir_dl", "rescue_lane", "hint_mash_lane",
                    "extra_lane", "fast_search"):
             n["search_requests"] += 2 * int(r.get("nq") or 0)
+        elif s == "mashup_lane":                # FIX 7: one SoundCloud request per query
+            n["search_requests"] += len(r.get("queries") or [])
     return n
+
+
+def closest_card(final):
+    """FIX 7 (issue #13): the card a found scan ends on. "crown" (an upload was crowned), "upload"
+    or "song" (the engine's closest pick with no crown, server _closest_pick), "none" (a found scan
+    with no closest card: the bug Konnor asked a check for), or None when nothing was found."""
+    if final.get("result") != "found":
+        return None
+    ex = final.get("exact") or {}
+    if ex.get("url") or ex.get("title"):
+        return "crown"
+    return (final.get("closest") or {}).get("kind") or "none"
 
 
 def run_case(a, c):
@@ -131,6 +147,8 @@ def run_case(a, c):
             "tries": tries, "stream_end": end, "base_song": final.get("base_song") or d.get("base_song"),
             "speed": final.get("speed"), "crown": ex.get("title"), "crown_url": ex.get("url"),
             "crown_core": ex.get("core"), "rows": [[r.get("title"), r.get("url"), r.get("core")] for r in rows],
+            "closest": closest_card(final),
+            "closest_url": (final.get("closest") or {}).get("url"),
             "found": pos is not None, "top1": pos == 0, "top3": pos is not None and pos < 3,
             "position": pos, "secs": round(t1 - t0, 1),
             "calls": calls_between(a.tlog, t0 - 1.0, t1 + 1.0, c["clip"])}
@@ -162,8 +180,8 @@ def main():
             time.sleep(a.gap)
         r = run_case(a, c)
         res.append(r)
-        print("%-12s %-12s found=%-5s top1=%-5s top3=%-5s %5.1fs  crown: %s (%s)%s" % (
-            r["name"], r["result"], r["found"], r["top1"], r["top3"], r["secs"],
+        print("%-12s %-12s found=%-5s top1=%-5s top3=%-5s card=%-6s %5.1fs  crown: %s (%s)%s" % (
+            r["name"], r["result"], r["found"], r["top1"], r["top3"], r["closest"], r["secs"],
             (r["crown"] or "-")[:60], r["crown_core"],
             ("  calls %s" % json.dumps(r["calls"])) if r["calls"] else ""), flush=True)
         if a.out:
@@ -171,10 +189,13 @@ def main():
                 f.write(json.dumps(dict(r, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))) + "\n")
     if res:
         n = len(res)
-        print("recall %d/%d  top1 %d/%d  top3 %d/%d  median %.1fs" % (
+        fnd = [r for r in res if r["closest"] is not None]
+        print("recall %d/%d  top1 %d/%d  top3 %d/%d  median %.1fs  closest card %d/%d" % (
             sum(r["found"] for r in res), n, sum(r["top1"] for r in res), n,
-            sum(r["top3"] for r in res), n, sorted(r["secs"] for r in res)[n // 2]))
-    if a.strict and any(r["kind"] == "exact" and not r["top1"] for r in res):
+            sum(r["top3"] for r in res), n, sorted(r["secs"] for r in res)[n // 2],
+            sum(r["closest"] != "none" for r in fnd), len(fnd)))
+    # FIX 7: a scan that named a song and ends without a closest version card fails --strict too
+    if a.strict and any((r["kind"] == "exact" and not r["top1"]) or r["closest"] == "none" for r in res):
         sys.exit(1)
 
 

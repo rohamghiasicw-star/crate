@@ -1713,6 +1713,7 @@ def _phase1(url, key, t0):
                 base.update(result="found", from_credit=True,
                             base_song=ct, base_artist=ca, edit_certain=False,
                             speed="as posted", decisive=False, exact=None, candidates=[])
+                _closest_pick(base, where="credit")     # FIX 7: the song itself, logged
             return base, None
         raise
     res = {
@@ -4521,6 +4522,93 @@ def _write_figs(res):
         E.tlog("write_figs", 0.0, error=type(_ex).__name__)
 
 
+# ------------- THE CLOSEST VERSION, ON EVERY SCAN THAT NAMES A SONG (FIX 7, issue #13) -------------
+# Konnor: "Whenever a song is identified, a closest version card must be shown ... If no candidate
+# can be confirmed as the same audio ... show ... the identified song itself (the original
+# release) as the closest version we found. Do not promote a different song as if it were the
+# same audio." Measured on vt.tiktok.com/ZSgH4vvMH (Lil Peep "nuts"): six uploads came back, five
+# of them nuts at 8-20% off the clip's speed (core 0.74-1.00, refused for tempo) and one a
+# different mashup (refused, fp 0.596), so nothing was crowned and the page fell back to "Normal
+# speed. No upload of this exact version found yet." This names the card for every found answer
+# and logs why, display only: it never changes the crown, the rows or their figures.
+#   crown   the crowned upload, as today
+#   upload  no crown: the row with the highest figure (`fig`, the number the card prints) among
+#           rows the audio ties to this recording (_closest_usable); ties go to the smaller speed
+#           gap, then core, then plays
+#   song    no such row: the identified song itself
+_CLOSEST_NOT_SAME = ("othersong", "null")
+
+
+def _closest_song_words(base_song):
+    """The identified song's own words, the _crown_other_song way (3+ letters, no tags, no
+    filler)."""
+    return {w for w in (E._title_key(base_song or "") or "").split()
+            if len(w) >= 3 and w not in _OTHER_SONG_SKIP and w not in _OTHER_SONG_COMMON}
+
+
+def _closest_usable(r, song_words):
+    """Can this row stand as the closest version? Only an upload tied to the identified recording:
+    core at CORE_KEEP or above (the card prints a figure for it, not a word), no engine verdict
+    that it is another song or texture only, and either every word of the song in its title or
+    uploader (short words whole, long words may run together, the _crown_other_song rule) or
+    core at CORE_SAME. A refusal for tempo, EQ, a speed-edit title or an official release still
+    says "this recording, another version", so those rows can stand."""
+    core = r.get("core")
+    if not isinstance(core, (int, float)) or core < E.CORE_KEEP:
+        return False
+    if ((r.get("gate") or {}).get("kind") or "") in _CLOSEST_NOT_SAME:
+        return False
+    if core >= E.CORE_SAME or not song_words:
+        return True
+    hay = " ".join([E._title_key(r.get("title") or ""), E._title_key(r.get("uploader") or "")])
+    hw = set(hay.split())
+    return all((w in hw) if len(w) < 5 else (w in hay) for w in song_words)
+
+
+def _closest_key(r):
+    fig = r.get("fig")
+    v = r.get("vspeed")
+    gap = (abs(math.log2(v)) if isinstance(v, (int, float)) and v > 0 and not r.get("tempo_unmeasured")
+           else 9.0)
+    return (-(fig if isinstance(fig, (int, float)) else -1), round(gap, 4),
+            -float(r.get("core") or 0), -int(r.get("plays") or 0))
+
+
+def _closest_pick(res, where="hunt"):
+    """res["closest"] = {kind, url, title, fig, why} for a found answer (see above), and one
+    `closest_pick` log row with every row's core, figure, speed, verdict and whether it could
+    stand. Never fatal."""
+    try:
+        if res.get("result") != "found" or not res.get("base_song"):
+            return
+        ex = res.get("exact") or None
+        rows = [r for r in (res.get("candidates") or []) if isinstance(r, dict) and r.get("url")]
+        sw = _closest_song_words(res.get("base_song"))
+        ok = [r for r in rows if _closest_usable(r, sw)]
+        if ex and (ex.get("url") or ex.get("title")):
+            pick = {"kind": "crown", "url": ex.get("url"), "title": ex.get("title"),
+                    "fig": ex.get("fig"), "why": "the crowned upload"}
+        elif ok:
+            c = sorted(ok, key=_closest_key)[0]
+            gk = (c.get("gate") or {}).get("kind")
+            pick = {"kind": "upload", "url": c.get("url"), "title": c.get("title"), "fig": c.get("fig"),
+                    "why": "highest figure of %d upload%s tied to this recording%s" % (
+                        len(ok), "" if len(ok) == 1 else "s",
+                        (", not crowned (%s)" % gk) if gk else "")}
+        else:
+            pick = {"kind": "song", "url": None, "title": res.get("base_song"), "fig": None,
+                    "why": ("none of %d uploads is tied to this recording" % len(rows)) if rows
+                           else "no upload came back"}
+        res["closest"] = pick
+        E.tlog("closest_pick", 0.0, where=where, url=res.get("url"), kind=pick["kind"],
+               title=(pick.get("title") or "")[:80], chosen=pick.get("url"), fig=pick.get("fig"),
+               why=pick["why"], n=len(rows), usable=len(ok),
+               rows=[[(r.get("title") or "")[:50], r.get("core"), r.get("fig"), r.get("vspeed"),
+                      (r.get("gate") or {}).get("kind"), any(r is o for o in ok)] for r in rows[:12]])
+    except Exception as _ex:
+        E.tlog("closest_pick", 0.0, where=where, error=type(_ex).__name__)
+
+
 # ------------- SIMILAR EDITS (CRATE_DIR_ALIGN, closest-only redesign) -------------
 # find_edit's lane hands back result["similar_edits"] (crate_engine DIR_ALIGN): uploads whose
 # matching SECTION it found later in the upload, on two clip windows at one speed, a few percent
@@ -5645,6 +5733,7 @@ def _fast_original_finish(ctx, d):
     res["candidates"] = []
     res["decisive"] = False
     res["fast_original"] = {"score": d["score"], "parts": d["parts"]}
+    _closest_pick(res, where="fast")      # FIX 7: no rows, so the card is the song itself
     res["edits_pending"] = False
     res["hunted"] = True                  # its replay shows the exact-version step too
     res["secs"] = round(time.time() - t0, 1)
@@ -6842,6 +6931,7 @@ def _phase2(ctx, on_cand=None):
                 and "pitch kept" not in res["speed"]):
             res["speed"] = res["speed"] + ", pitch kept"       # CRATE_TEMPO_KEPT: display
         _write_figs(res)
+        _closest_pick(res)               # FIX 7: names the closest version card, display only
         _similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only
         res["edits_pending"] = False
         res["hunted"] = True             # SPEED FIX 1: a replay of this answer shows the hunt step
