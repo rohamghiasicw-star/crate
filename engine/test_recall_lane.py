@@ -283,6 +283,23 @@ class Lane(unittest.TestCase):
         self.assertTrue(lane.dead)
         self.gate.set()
 
+    @unittest.skipUnless(os.uname().sysname == "Linux", "nice is per thread on Linux only")
+    def test_lane_jobs_run_at_the_lowest_cpu_priority(self):
+        seen = []
+        orig = E.dl_clip
+
+        def nice_dl(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
+            seen.append(os.getpriority(os.PRIO_PROCESS, threading.get_native_id()))
+            return orig(url, dst, seconds, timeout, abort, ytck)
+        E.dl_clip = nice_dl
+        base = os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
+        lane = E._RecallLane("clip.wav", None, self.tmp)
+        lane.start([row("A song (sped up)", 26, url="u-n")])
+        lane.join(None)
+        lane.close()
+        self.assertEqual(seen, [min(19, base + E.RECALL_NICE)])
+        self.assertEqual(os.getpriority(os.PRIO_PROCESS, threading.get_native_id()), base)
+
     def test_a_dead_budget_means_no_wait(self):
         class HB(object):
             dead, T = True, 25.0

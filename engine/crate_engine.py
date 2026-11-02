@@ -7220,17 +7220,19 @@ def evidence_rows(rows, clip_secs, known_dir, edit_label, song_terms, artist_hit
 # rows (an independent check, release-next vs this branch on one box: bouch 9.2 -> 14.1 s, Hymn
 # 7.6 -> 13.8 s, mason 9.0 -> 13.4 s, Thunder 5.9 -> 9.4 s), because a batch waits for its
 # slowest row and 15-18 rows queued behind 16 workers. Now the lane runs on its own executor
-# (_RecallLane), started WITH wave 1 and stopped the moment a wave-1 row settles the clip
-# (recall_settles); the ranking pass waits for it (RECALL_JOIN_WAIT at most) only when the hunt
-# is still unsettled there. Wave 1 and every wave after it download release-next's rows, row for
-# row. Started after wave 1 instead (tried first), kyks' Cult Member rows missed a 4.0 s join by
-# 0.1 s (the hunt went straight from wave 1 to ranking) and Hymn waited 3.0 s. The rows' scores
-# stay out of the hunt until the ranking pass and count there only on an unsettled hunt.
-# CRATE_RECALL_LANE=0 turns it off.
+# (_RecallLane) at the lowest CPU priority (RECALL_NICE), started WITH wave 1 and stopped the
+# moment a wave-1 row settles the clip (recall_settles); the ranking pass waits for it
+# (RECALL_JOIN_WAIT at most) only when the hunt is still unsettled there. Wave 1 and every wave
+# after it download release-next's rows, row for row. Started after wave 1 instead (tried
+# first), kyks' Cult Member rows missed a 4.0 s join by 0.1 s (the hunt went straight from wave 1
+# to ranking) and Hymn waited 3.0 s; started with wave 1 at normal priority, kyks' wave 1 went
+# 12.4 -> 19.0 s. The rows' scores stay out of the hunt until the ranking pass and count there
+# only on an unsettled hunt. CRATE_RECALL_LANE=0 turns it off.
 RECALL_LANE = _speed_flag("CRATE_RECALL_LANE", True)
 RECALL_LEN_DL, RECALL_TOP_DL, RECALL_TOP_MIN = 2, 2, 2
 RECALL_DL_SECS = 30          # a lane row's fetch: verify() still reads its first 20 s (eq_aligned)
 RECALL_JOIN_WAIT = 4.0       # the ranking pass waits at most this for a lane row still running
+RECALL_NICE = 15             # how much lower a lane job's CPU priority is (Linux; see _RecallLane)
 EQ_ALIGN_MIN = 5.0           # eq_aligned needs this much clip and upload side by side
 
 
@@ -7475,9 +7477,28 @@ class _RecallLane(object):
                 except OSError:
                     pass
 
+    @staticmethod
+    def _yield_cpu(inf):
+        """LOWEST CPU PRIORITY FOR THIS JOB (Linux, where nice is per thread and every child
+        process inherits it: yt-dlp, ffmpeg, fpcalc). Wave 1 keeps 4 vCPUs busy on its own; run
+        beside it at the same priority, three lane jobs took kyks' wave 1 from 12.4 s to 19.0 s
+        and their own downloads from ~4 s to ~19 s (test box, 2026-11-02). Lowered, the lane
+        takes only CPU wave 1 leaves idle and its network waits still overlap wave 1. Raising a
+        nice value back needs privilege, so the lane's own threads are the only ones touched."""
+        if not sys.platform.startswith("linux") or RECALL_NICE <= 0:
+            return
+        try:
+            tid = threading.get_native_id()
+            cur = os.getpriority(os.PRIO_PROCESS, tid)
+            os.setpriority(os.PRIO_PROCESS, tid, min(19, cur + RECALL_NICE))
+            inf["nice"] = os.getpriority(os.PRIO_PROCESS, tid)
+        except Exception as e:
+            inf["nice"] = type(e).__name__
+
     def one(self, snap, i):
         t0 = time.time()
         inf = {}
+        self._yield_cpu(inf)
         try:
             return self._one(snap, i, inf, t0)
         except Exception as e:
