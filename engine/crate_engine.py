@@ -1363,7 +1363,8 @@ def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
             if id(c) in rk:
                 r["rank"] = rk[id(c)]
             lanes = [k for k in ("creator_upload", "rescue_q", "hint_mash", "family_wave",
-                                 "fast_carry", "comment_link", "sc_first", "recall_lane")
+                                 "fast_carry", "comment_link", "sc_first", "recall_lane",
+                                 "mashup_lane")
                      if c.get(k)]
             if c.get("sc_top"):
                 r["sc_top"] = c.get("sc_top")
@@ -7352,6 +7353,199 @@ def recall_settled(cands):
     return any(recall_settles(c) for c in cands)
 
 
+# FIX 7 (issue #13, Konnor: mashups and edits with an extra audio layer). THE MASHUP LANE.
+# Shazam names the loudest song and nothing else. On vt.tiktok.com/ZSgH4vvMH every 12 s window
+# reads "nuts" (Lil Peep) and the Tokyo Ghoul dialogue laid over it is never named (whisper hears
+# "Do me a favor, okay?"). The uploads of that exact audio are titled "do me a favor x nuts",
+# "Nuts lil peep x Tokyo ghoul" and "Do me a favour x Nuts": each verifies against the clip at
+# core 1.000, fp 0.936-0.969 on its first 20 s, speed 1.000, and its reversed copy falls to core
+# 0.33-0.36. None is reachable from the song at the depth the main search reads: SoundCloud put
+# them at 43, 99 and 130 of "nuts x" and nowhere in the first 50 of "nuts mashup", "nuts anime"
+# or "nuts edit", and that scan's own "<song> x" / "<song> mashup" queries were cut by QUERY_CAP
+# (four comment hints took 12 of the 16 slots).
+# So: "<song> <word>" for each MASHUP_WORDS entry, plus "<A> x <B>" both ways when the mashup
+# pass proved a second song, each MASHUP_SC_LIMIT deep on SoundCloud's own track search (the
+# api-v2 endpoint yt-dlp's scsearch reads, with the client id every SoundCloud download already
+# uses; one request per query, all of them about 1 s, started beside the main search). Rows
+# whose title joins the song with something else (x, vs, +, &) or carries a layer word are
+# ordered by length nearest the clip (a TikTok sound's upload is usually its own length: the two
+# 63.9 s copies come first for the 63.8 s clip) and the first MASHUP_DL ride the recall lane's
+# own slots. They count only where the recall lane's rows do: on a hunt nothing else settled,
+# verified against the clip like every other row. CRATE_MASHUP_LANE=0 turns it off;
+# CRATE_MASHUP_WORDS (comma separated) replaces the word list.
+MASHUP_LANE = _speed_flag("CRATE_MASHUP_LANE", True)
+MASHUP_WORDS = tuple(w.strip().lower() for w in os.environ.get(
+    "CRATE_MASHUP_WORDS", "x,mashup,edit,anime,gym,phonk").split(",") if w.strip())
+MASHUP_DL = 3                # lane rows per scan, on the recall lane's slots
+MASHUP_SC_LIMIT = 200        # SoundCloud results read per query
+MASHUP_WAIT = 2.0            # most the lane's start waits for a search still running
+MASHUP_MIN_SECS = 10.0
+_MASH_JOIN = re.compile(r"\s(?:x|×|vs\.?|versus|\+|&)\s", re.I)
+
+
+def _mash_layer_rx(words=None):
+    """The layer words of MASHUP_WORDS ("x" is a joiner, not a word) as one regex."""
+    ws = [w for w in (MASHUP_WORDS if words is None else words) if w and w != "x"]
+    if not ws:
+        return None
+    alts = [r"mash ?up" if w == "mashup" else re.escape(w) for w in ws]
+    return re.compile(r"\b(?:%s)\b" % "|".join(alts), re.I)
+
+
+def mashup_queries(base_title, pair=None, words=None):
+    """The lane's searches: "<song> <word>" per MASHUP_WORDS entry, and "<A> x <B>" both ways
+    when `pair` (the mashup pass's two songs) names a second song."""
+    core = _clean(re.sub(r"[\(\[].*?[\)\]]", "", base_title or "").strip() or base_title or "")
+    if not core:
+        return []
+    out = []
+
+    def add(q):
+        q = _clean(q)
+        if q and q.lower() not in {o.lower() for o in out}:
+            out.append(q)
+    for w in (MASHUP_WORDS if words is None else words):
+        add("%s %s" % (core, w))
+    if pair and len(pair) >= 2:
+        ck = _title_key(core)
+        for b in [p for p in pair[:2] if p and _title_key(p) != ck][:1]:
+            add("%s x %s" % (core, b))
+            add("%s x %s" % (b, core))
+    return out
+
+
+def _sc_api_search(q, limit=MASHUP_SC_LIMIT, timeout=12):
+    """SoundCloud's own track search, `limit` deep in one request -> pool rows with the keys
+    _run_search_raw writes. Tracks SoundCloud only lets stream as a 30 s snippet (policy SNIP)
+    or not at all (BLOCK) are left out: their audio cannot be checked."""
+    cid = _sc_client_id()
+    url = ("https://api-v2.soundcloud.com/search/tracks?q=%s&limit=%d&client_id=%s"
+           % (urllib.parse.quote(q), int(limit), cid))
+    r = _cffi_get(url, timeout=timeout)
+    if getattr(r, "status_code", 200) != 200:
+        raise RuntimeError("soundcloud search http %s" % getattr(r, "status_code", "?"))
+    rows = []
+    for i, t in enumerate(json.loads(r.text).get("collection") or []):
+        u = (t.get("permalink_url") or "").strip()
+        if not u.startswith("https://soundcloud.com/") or (t.get("policy") or "") in ("SNIP", "BLOCK"):
+            continue
+        rows.append({"title": t.get("title") or "", "uploader": (t.get("user") or {}).get("username") or "",
+                     "url": u, "source": "soundcloud",
+                     "duration": round(float(t.get("duration") or 0) / 1000.0, 3),
+                     "plays": int(t.get("playback_count") or 0), "likes": int(t.get("likes_count") or 0),
+                     "query": q, "thumb": _thumb(t.get("artwork_url") or ""), "mashup_rank": i + 1})
+    return rows
+
+
+def mashup_kind(title, song_terms, artist_toks=(), layer_rx=None):
+    """"pair" when the title joins the song with something else ("do me a favor x nuts",
+    "Lil Peep - Nuts x Summertime Sadness"), "layer" when it carries a layer word ("nuts (anime
+    edit)"), else None. The song's words must sit together on one side of the join, with at most
+    two other words beside them that are not the artist's; a join between artists ("Lil Peep x
+    XXXTENTACION - nuts") or inside a producer credit names one song, not two."""
+    want = set(song_terms or ())
+    if not want:
+        return None
+    t = fold_name((title or "").replace("×", " x ")).lower()    # the fold drops a bare ×
+    brk = re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t)
+    body = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", t)
+    segs = [s for s in re.split(r"\s+[-–—|~]+\s+|//", body) if s.strip()] + brk
+    layered = bool(layer_rx is not None and layer_rx.search(t))
+    atoks = set(artist_toks or ())
+    for seg in segs:
+        joined = bool(_MASH_JOIN.search(" %s " % seg))
+        if not joined and not layered:
+            continue
+        for part in (_MASH_JOIN.split(" %s " % seg) if joined else [seg]):
+            words = set(re.findall(r"[a-z0-9]+", EDIT_WORDS.sub(" ", part)))
+            extra = [w for w in words if len(w) >= 3 and w not in want and w not in atoks]
+            if want <= words and len(extra) <= 2:
+                return "pair" if joined else "layer"
+    return None
+
+
+def _mash_url(u):
+    u = (u or "").split("?")[0].split("#")[0].rstrip("/").lower()
+    return u.replace("://m.soundcloud.com/", "://soundcloud.com/").replace("://www.soundcloud.com/",
+                                                                         "://soundcloud.com/")
+
+
+def mashup_rows(rows, pool, skip, clip_secs, song_terms, artist_toks=(), cap=MASHUP_DL):
+    """The mashup lane's picks from its search rows. -> (rows, why). Zero network. A row the
+    pool already holds is taken as that same object unless the hunt already has it (`skip`,
+    `_done`, a carried row); every other pick is a NEW object, tagged `mashup_new`, which the
+    ranking pass adds to the pool only once the lane has scored it."""
+    L = float(clip_secs or 0)
+    lrx = _mash_layer_rx()
+    have = {_mash_url(c.get("url")): c for c in (pool or [])}
+    seen, keep = set(), []
+    for c in rows or []:
+        u = _mash_url(c.get("url"))
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        d = _dur_s(c)
+        t = fold_name(c.get("title") or "")
+        if d < MASHUP_MIN_SECS or _is_compilation(c) or OTHER_RENDITION.search(t):
+            continue
+        k = mashup_kind(c.get("title"), song_terms, artist_toks, lrx)
+        if not k:
+            continue
+        p = have.get(u)
+        if p is not None and (id(p) in skip or p.get("_done") or p.get("fast_carry") or p.get("path")):
+            continue
+        keep.append(((abs(float(np.log(max(d, 1.0) / L))) if L > 0 else 0.0),
+                     0 if k == "pair" else 1, -(c.get("plays") or 0), len(keep), k, c, p))
+    keep.sort(key=lambda x: x[:4])
+    out = []
+    for x in keep[:max(0, int(cap))]:
+        k, c, p = x[4], x[5], x[6]
+        row = p if p is not None else dict(c, mashup_new=True)
+        row["recall_why"] = "mashup:%s" % k
+        row["mashup_lane"] = True
+        out.append(row)
+    return out, "rows:%d;paired:%d" % (len(seen), len(keep))
+
+
+class _MashupSearch(object):
+    """The mashup lane's searches (see MASHUP_LANE), started now on their own executor (shut
+    down at once with wait=False, the _LaneSearch rule) and read when wave 1 starts. Never fatal:
+    a search that fails or is still out after MASHUP_WAIT adds nothing."""
+
+    def __init__(self, queries):
+        self.t0 = time.time()
+        self.queries = list(queries or [])
+        self.futs = []
+        if self.queries:
+            ex = ThreadPoolExecutor(max_workers=min(8, len(self.queries)), thread_name_prefix="mashup")
+            self.futs = [ex.submit(_sc_api_search, q) for q in self.queries]
+            ex.shutdown(wait=False)
+
+    def rows(self, pool, skip, clip_secs, song_terms, artist_toks=()):
+        t0 = time.time()
+        if self.futs:
+            _cf_wait(self.futs, timeout=MASHUP_WAIT)
+        waited = round(time.time() - t0, 2)
+        per, got, errs = [], [], 0
+        for q, f in zip(self.queries, self.futs):
+            if not f.done():
+                per.append([q, None])
+                continue
+            try:
+                r = f.result()
+            except Exception as e:
+                errs += 1
+                per.append([q, type(e).__name__])
+                continue
+            per.append([q, len(r)])
+            got.extend(r)
+        out, why = mashup_rows(got, pool, skip, clip_secs, song_terms, artist_toks)
+        tlog("mashup_lane", time.time() - self.t0, queries=per, errors=errs, waited=waited, why=why,
+             rows=[[(c.get("title") or "")[:60], c.get("url"), _dur_s(c), c.get("recall_why"),
+                    bool(c.get("mashup_new"))] for c in out])
+        return out, why
+
+
 def eq_aligned(clip_audio, cand_path, speed, lag, clip_secs=20, xc=None):
     """verify()'s two EQ legs (bass_delta on the speed-matched upload, slope_delta on the raw
     one) read on the ALIGNED window: the clip's first `clip_secs` against the stretch of the
@@ -11301,6 +11495,16 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # hunt up; its rows are appended to the download list (RESCUE_DL), never put in the
     # head.
     _rx_lane = _LaneSearch(rescue_q, 8) if rescue_q else None
+    # FIX 7: THE MASHUP LANE's searches (MASHUP_LANE) start beside the main search; read when the
+    # recall lane starts with wave 1. Same trust rule as that lane: a song Shazam named and the
+    # server trusts.
+    _mx_search = None
+    if MASHUP_LANE and RECALL_LANE and base_title and shazam_reliable:
+        try:                        # NEVER FATAL: no lane = the hunt exactly as without it
+            _mx_search = _MashupSearch(mashup_queries(base_title, pair))
+        except Exception as e:
+            tlog("mashup_lane", 0.0, setup_error=type(e).__name__)
+            _mx_search = None
     _hm_q = _hint_mash_queries(hints, base_title)
     _hm_lanes = [_LaneSearch([q], 6) for q in _hm_q]
     # ROOTFIX A/D lanes (CRATE_POSTED_LANE / CRATE_MASHUP_HALVES): nothing unless a flag is on
@@ -11600,6 +11804,16 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _rc_len = 0
             _rc_x, _rc_why = recall_rows(cands, {id(c) for c in wave1 + _style_x}, _rc_len,
                                          known_dir, song_terms, artist_toks)
+            # FIX 7: the mashup lane's picks ride the same slots, after the recall rows
+            if _mx_search is not None:
+                try:
+                    _mx_x, _mx_why = _mx_search.rows(
+                        cands, {id(c) for c in wave1 + _style_x + _rc_x}, _rc_len,
+                        song_terms, artist_toks)
+                    _rc_x = _rc_x + _mx_x
+                    _rc_why = "%s;mashup:%d" % (_rc_why, len(_mx_x))
+                except Exception as e:
+                    tlog("mashup_lane", 0.0, error=type(e).__name__)
             # HUNT BUDGET: read, never fired: past T with nothing at 0.62 no lane starts
             if _rc_x and (_hb is None or _hb.evidence
                           or (not _hb.dead and _hb.elapsed() <= _hb.T)):
@@ -12218,6 +12432,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 continue
             c.update(r)
             c["_done"] = True
+            if c.get("mashup_new") and not any(c is x for x in cands):
+                _term_hits([c])         # FIX 7: a mashup lane row joins the pool only now
+                cands.append(c)
             _rc_took.append(c)
         _rc_rows = [c for c, _f in _rc_lane.jobs]
         for c in _rc_rows:
