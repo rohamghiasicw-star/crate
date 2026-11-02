@@ -7382,6 +7382,8 @@ MASHUP_WAIT = 2.0            # most the lane's start waits for a search still ru
 MASHUP_MIN_SECS = 10.0
 MASHUP_DL_TIMEOUT = 30       # a lane row's fetch outlives wave 1 (see _RecallLane._one)
 _MASH_JOIN = re.compile(r"\s(?:x|×|vs\.?|versus|\+|&)\s", re.I)
+_MASH_CREDIT = re.compile(r"\s(?:ft|feat|featuring|prod|produced by|with)\b\.?.*?(?=\s(?:x|vs\.?|versus)\s|$)",
+                          re.I)
 
 
 def _mash_layer_rx(words=None):
@@ -7442,8 +7444,10 @@ def mashup_kind(title, song_terms, artist_toks=(), layer_rx=None):
     """"pair" when the title joins the song with something else ("do me a favor x nuts",
     "Lil Peep - Nuts x Summertime Sadness"), "layer" when it carries a layer word ("nuts (anime
     edit)"), else None. The song's words must sit together on one side of the join, with at most
-    two other words beside them that are not the artist's; a join between artists ("Lil Peep x
-    XXXTENTACION - nuts") or inside a producer credit names one song, not two."""
+    one other word beside them that is not the artist's. A join between artists ("Lil Peep x
+    XXXTENTACION - nuts", "Wouldnt Believe It Lil Ethan x Lil Prentice"), or inside a featured or
+    producer credit ("... ft. Trapbaby & Joe Pablo", "(prod. smokeasac x iivi)"), names one song,
+    not two: those two were picked on the kelthraxx clip before this rule (test box, 2026-11-02)."""
     want = set(song_terms or ())
     if not want:
         return None
@@ -7454,13 +7458,15 @@ def mashup_kind(title, song_terms, artist_toks=(), layer_rx=None):
     layered = bool(layer_rx is not None and layer_rx.search(t))
     atoks = set(artist_toks or ())
     for seg in segs:
-        joined = bool(_MASH_JOIN.search(" %s " % seg))
+        # a featured or producer credit runs to the next "x" / "vs" or the end of its segment
+        seg = _MASH_CREDIT.sub(" ", " %s " % seg)
+        joined = bool(_MASH_JOIN.search(seg))
         if not joined and not layered:
             continue
-        for part in (_MASH_JOIN.split(" %s " % seg) if joined else [seg]):
+        for part in (_MASH_JOIN.split(seg) if joined else [seg]):
             words = set(re.findall(r"[a-z0-9]+", EDIT_WORDS.sub(" ", part)))
             extra = [w for w in words if len(w) >= 3 and w not in want and w not in atoks]
-            if want <= words and len(extra) <= 2:
+            if want <= words and len(extra) <= 1:
                 return "pair" if joined else "layer"
     return None
 
@@ -7754,7 +7760,10 @@ class _RecallLane(object):
         if hb is not None:
             rem = hb.remaining()
             wait = 0.0 if hb.dead else (wait if rem is None else min(wait, rem))
-        pending = [f for _c, f in futs if not f.done()]
+        # FIX 7: a mashup lane row is taken when it has finished and never waited for, so the lane
+        # costs no join time (on the kelthraxx clip its two rows held this join the full 4 s)
+        pending = [f for _c, f in futs if not f.done()
+                   and not str(_c.get("recall_why") or "").startswith("mashup")]
         _t = time.time()
         if pending and wait > 0:
             concurrent.futures.wait(pending, timeout=wait)

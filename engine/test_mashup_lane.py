@@ -2,6 +2,7 @@
 _sc_api_search's parsing and _MashupSearch's partial read. Titles and lengths are the real ones
 from the "do me a favor x nuts" clip (vt.tiktok.com/ZSgH4vvMH, 63.8 s). No network.
 run: /usr/bin/python3 test_mashup_lane.py"""
+import concurrent.futures
 import json
 import time
 import unittest
@@ -69,10 +70,21 @@ class Kind(unittest.TestCase):
         self.assertIsNone(self.k("Lil Peep x XXXTENTACION mashup (jocelyn flores x star shopping)"))
         self.assertIsNone(self.k("save that shit (prod. smokeasac x iivi)", {"save", "that", "shit"}))
 
-    def test_the_song_words_stand_together_with_at_most_two_others(self):
+    def test_the_song_words_stand_together_with_at_most_one_other(self):
         self.assertEqual(self.k("nuts rmx x lil peep"), "pair")
         self.assertIsNone(self.k("sam juz nie wiem kim jestem yung adisz x lil peep"))
         self.assertIsNone(self.k("the nuts and bolts of everything here x y"))
+        self.assertIsNone(self.k("nuts tokyo ghoul x kaneki"))   # two other words beside the song
+        self.assertEqual(self.k("nuts tokyo x ghoul"), "pair")   # one is fine
+
+    def test_featured_and_artist_joins_name_one_song(self):
+        wb, luhh = {"wouldnt", "believe"}, {"luhh", "dyl"}
+        # the two rows the lane picked on the kelthraxx clip before this rule (test box, 2026-11-02)
+        self.assertIsNone(self.k("Funny $Money - Wouldnt Believe It ft. Trapbaby & Joe Pablo", wb, luhh))
+        self.assertIsNone(self.k("Wouldnt Believe It Lil Ethan x LIl Prentice", wb, luhh))
+        # a credit runs only to the next x, so a real pair after it still counts
+        self.assertEqual(self.k("nuts ft rainy bear x tokyo ghoul"), "pair")
+        self.assertEqual(self.k("Lil Peep feat. rainy bear - nuts x where is my mind"), "pair")
 
     def test_multi_word_song(self):
         terms = {"teach", "how", "dougie"}
@@ -134,6 +146,39 @@ class Rows(unittest.TestCase):
         a, b = row("a x nuts", 200, 5), row("b x nuts", 30.5, 500)
         out, _ = E.mashup_rows([a, b], [], set(), 0, NUTS, PEEP, cap=1)
         self.assertEqual(out[0]["title"], "b x nuts")
+
+
+class Join(unittest.TestCase):
+    """A mashup lane row is taken when it has finished, and the ranking pass never waits for one."""
+
+    def setUp(self):
+        self.saved = E.RECALL_JOIN_WAIT
+        E.RECALL_JOIN_WAIT = 0.6
+
+    def tearDown(self):
+        E.RECALL_JOIN_WAIT = self.saved
+
+    def lane(self, rows_futs):
+        ln = E._RecallLane(None, None, "/nonexistent")
+        ln.jobs = list(rows_futs)
+        return ln
+
+    def test_a_running_mashup_row_costs_no_wait(self):
+        done = concurrent.futures.Future()
+        done.set_result({"core": 1.0})
+        ln = self.lane([({"recall_why": "mashup:pair"}, concurrent.futures.Future()),
+                        ({"recall_why": "mashup:pair"}, done)])
+        t = time.time()
+        got = ln.join(None)
+        self.assertLess(time.time() - t, 0.2)
+        self.assertEqual(len(got), 1)
+
+    def test_a_running_recall_row_still_gets_its_wait(self):
+        ln = self.lane([({"recall_why": "length"}, concurrent.futures.Future()),
+                        ({"recall_why": "mashup:pair"}, concurrent.futures.Future())])
+        t = time.time()
+        ln.join(None)
+        self.assertGreaterEqual(time.time() - t, 0.5)
 
 
 class Search(unittest.TestCase):
