@@ -89,17 +89,34 @@ class WholeWords(unittest.TestCase):
         self.assertEqual(E._fold_cov(bolt, {"thunder"}), 0.0)
         self.assertEqual(E._fold_cov(row("Imagine Dragons - Thunder (slowed)", 40), {"thunder"}), 1.0)
 
-    def test_one_word_song_needs_the_artist(self):
-        art = ["cult", "member"]
+    def test_one_word_song_needs_the_artist_or_the_word_standing_alone(self):
+        # kyks: Shazam names "Three (Slowed)" by 42RAIN, a re-uploader, so the artist test alone
+        # would find no Cult Member row; the word standing alone as a title part does
         umbrella = row("UMBRELLA, VAMPXL - ONE TWO THREE FOUR (Ultra Slowed down by x)", 150, 50)
         cm = row("cult member  - three (slowed)", 150, 10)
         cm2 = row("Cult_Member - Three (Ultra Slowed + Reverb)", 200, 10, top=2)
-        out, why = E.recall_rows([umbrella, cm, cm2], set(), 167.8, None, {"three"}, art)
+        pk = row("Painkiller x Three Days Grace (Slowed & Bass Boosted)", 150, 900, top=2)
+        out, why = E.recall_rows([umbrella, cm, cm2, pk], set(), 167.8, None, {"three"}, ["42rain"])
         self.assertNotIn(umbrella, out, why)
+        self.assertNotIn(pk, out, why)
         self.assertIn(cm, out, why)
         self.assertIn(cm2, out, why)
-        # no confirmed artist at all: a one-word song picks nothing
-        self.assertEqual(E.recall_rows([cm], set(), 167.8, None, {"three"}, [])[0], [])
+        # the confirmed artist in the row is the other way in
+        art = row("Cult Member three slowed reverb", 150, 10)
+        self.assertEqual(E.recall_rows([art], set(), 167.8, None, {"three"}, ["cult", "member"])[0],
+                         [art])
+        self.assertEqual(E.recall_rows([art], set(), 167.8, None, {"three"}, [])[0], [])
+
+    def test_title_is_song(self):
+        three = {"three"}
+        self.assertTrue(E._title_is_song(row("♪ Three - Cult Member (Ultra Slowed + Reverb + Loop)"
+                                             " // Remixed by RIHART", 200), three))
+        self.assertTrue(E._title_is_song(row("Cult Member - Three (Ultra Slowed + Reverb", 200), three))
+        self.assertFalse(E._title_is_song(row("Animal Ive Become- Three Days Of Grace Slowed", 200), three))
+        thunder = {"thunder"}
+        self.assertTrue(E._title_is_song(row("Imagine Dragons - Thunder (Danny Delgado Remix)", 200), thunder))
+        self.assertFalse(E._title_is_song(row("kitchen kings x astro thunder slowed", 60), thunder))
+        self.assertFalse(E._title_is_song(row("Moska X David Nova - ThunderBolt", 150), thunder))
 
     def test_artist_in_the_uploader_counts(self):
         r = row("Thunder (slowed)", 40, 5, uploader="Imagine Dragons Fan")

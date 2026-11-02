@@ -7256,12 +7256,38 @@ def _names_artist(c, artist_toks):
     return any(_has_word(w, raw) or _has_word(w, fold) for w in (artist_toks or ()))
 
 
+_PART_SEP = re.compile(r"\s*(?:[-–—|~]+|//)\s*")
+_PART_FILL = {"ultra", "super", "perfectly", "tiktok", "loop", "looped", "best", "part", "official",
+              "audio", "lyrics", "video", "prod", "feat", "boosted", "bass", "sped", "down", "speed",
+              "extended", "song", "music"}
+
+
+def _title_is_song(c, song_terms):
+    """The song's own words standing alone as one part of the title (split at a dash, bar, tilde
+    or //, brackets and treatment words removed): "cult member - three (slowed)" and
+    "♪ Three - Cult Member (Ultra Slowed + Reverb)" are uploads OF "Three"; "UMBRELLA, VAMPXL -
+    ONE TWO THREE FOUR (Ultra Slowed)" carries the word inside another title. Needed because
+    Shazam's artist can be a re-uploader's (kyks names "Three (Slowed)" by 42RAIN, so the
+    artist test alone found no Cult Member row at all)."""
+    want = set(song_terms or ())
+    t = fold_name(c.get("title") or "").lower()
+    for part in _PART_SEP.split(t):
+        part = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", part)
+        part = re.sub(r"[\(\[\{][^\)\]\}]*$", " ", part)     # a bracket the title cut off
+        part = EDIT_WORDS.sub(" ", part)
+        words = {w for w in re.findall(r"[a-z0-9]+", part)
+                 if len(w) >= 3 and w not in ORIGINAL_WORDS and w not in _PART_FILL}
+        if words and words == want:
+            return True
+    return False
+
+
 def recall_rows(pool, skip, clip_secs, known_dir, song_terms, artist_toks=None):
     """The recall lane's rows (see RECALL_LANE). Returns (rows, why). Zero network: reads
     title, uploader, duration, plays, source, sc_top. Each row picked is tagged `recall_why`.
     A one-word song ("Three", "Thunder") also needs the confirmed artist (`artist_toks`) in the
-    row: its one word alone let "UMBRELLA, VAMPXL - ONE TWO THREE FOUR (Ultra Slowed)" into the
-    lane on the kyks clip (Cult Member - Three)."""
+    row, or its word standing alone as a title part (_title_is_song): the one word alone let
+    "UMBRELLA, VAMPXL - ONE TWO THREE FOUR (Ultra Slowed)" into the lane on the kyks clip."""
     if not song_terms:
         return [], "no-song-words"
     L = float(clip_secs or 0)
@@ -7276,7 +7302,8 @@ def recall_rows(pool, skip, clip_secs, known_dir, song_terms, artist_toks=None):
         t = fold_name(c.get("title") or "")
         if (_fold_cov(c, song_terms) < 1.0 or _is_compilation(c) or OTHER_RENDITION.search(t)
                 or (c.get("source") == "soundcloud" and abs(_dur_s(c) - 30.0) < 0.01)
-                or (one_word and not _names_artist(c, artist_toks))):
+                or (one_word and not (_names_artist(c, artist_toks)
+                                      or _title_is_song(c, song_terms)))):
             continue
         d = _dur_s(c)
         if L > 0 and 0.5 * L <= d <= short_max and (EDIT_WORDS.search(t) or _SECTION_WORD.search(t)):
