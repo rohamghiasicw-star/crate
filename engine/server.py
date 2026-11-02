@@ -6093,11 +6093,10 @@ def _phase2(ctx, on_cand=None):
             # the bar the walk below was offered nothing. When a verified row does clear the
             # bar, the walk starts there instead, with every gate it runs on any other scan
             # (Ark Patrol's 1.000 at fp 0.554 is refused by the fp floor). The time-reversed
-            # null is one of them, and it does NOT run on a SoundCloud upload whose direct
-            # fetch fails: _time_reversed_null asks dl_clip for cand.m4a, the yt-dlp fallback
-            # writes cand.wav, dl_clip returns None and the control passes (measured on the test
-            # box 2026-11-02 for Fozure's Big League, Thunder, bouch and mason uploads; the
-            # Thunder crown release-next gives rides it too). Row 1 at or above the bar: as before.
+            # null is one of them. Until 2026-11-02 it measured no HLS-only SoundCloud upload
+            # (it asked dl_clip for cand.m4a, see _time_reversed_null); now Hymn's upload
+            # collapses reversed (core 0.306) and Big League passes on arr (CRATE_NULL_ARR).
+            # Row 1 at or above the bar: as before.
             _above = (next((c for c in verified if (c.get("core") or 0) >= E.CORE_KEEP), None)
                       if top and (top.get("core") or 0) < E.CORE_KEEP else None)
             if _above is not None:
