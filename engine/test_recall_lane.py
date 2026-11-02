@@ -162,6 +162,11 @@ class Settled(unittest.TestCase):
         self.assertFalse(E.recall_settled([{"core": 1.0, "fp": 0.9, "vspeed": 1.0}]))
         self.assertFalse(E.recall_settled([self.scored(1.0, 0.90, 1.0, lane=True)]))
 
+    def test_one_row_test_is_the_pool_test(self):
+        rows = [self.scored(1.0, 0.550, 1.0), self.scored(0.97, 0.66, 0.99)]
+        self.assertEqual([E.recall_settles(r) for r in rows], [False, True])
+        self.assertTrue(E.recall_settled(rows))
+
 
 def _noise(secs, seed, lowpass):
     """Synthetic audio with a known spectral tilt: white noise through a one-pole filter."""

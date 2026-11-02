@@ -7219,11 +7219,14 @@ def evidence_rows(rows, clip_secs, known_dir, edit_label, song_terms, artist_hit
 # OWN SLOTS (retry 2026-11-02). Riding wave 1 cost that batch 1.1-6.2 s whenever the lane picked
 # rows (an independent check, release-next vs this branch on one box: bouch 9.2 -> 14.1 s, Hymn
 # 7.6 -> 13.8 s, mason 9.0 -> 13.4 s, Thunder 5.9 -> 9.4 s), because a batch waits for its
-# slowest row and 15-18 rows queued behind 16 workers. Now the lane starts AFTER wave 1, only
-# when wave 1 left the clip unsettled (recall_settled), on its own executor (_RecallLane), and
-# the ranking pass waits for it only when the hunt is still unsettled there. Wave 1 and every
-# wave after it are release-next's, row for row. The rows' scores stay out of the hunt until the
-# ranking pass and count there only on an unsettled hunt. CRATE_RECALL_LANE=0 turns it off.
+# slowest row and 15-18 rows queued behind 16 workers. Now the lane runs on its own executor
+# (_RecallLane), started WITH wave 1 and stopped the moment a wave-1 row settles the clip
+# (recall_settles); the ranking pass waits for it (RECALL_JOIN_WAIT at most) only when the hunt
+# is still unsettled there. Wave 1 and every wave after it download release-next's rows, row for
+# row. Started after wave 1 instead (tried first), kyks' Cult Member rows missed a 4.0 s join by
+# 0.1 s (the hunt went straight from wave 1 to ranking) and Hymn waited 3.0 s. The rows' scores
+# stay out of the hunt until the ranking pass and count there only on an unsettled hunt.
+# CRATE_RECALL_LANE=0 turns it off.
 RECALL_LANE = _speed_flag("CRATE_RECALL_LANE", True)
 RECALL_LEN_DL, RECALL_TOP_DL, RECALL_TOP_MIN = 2, 2, 2
 RECALL_DL_SECS = 30          # a lane row's fetch: verify() still reads its first 20 s (eq_aligned)
@@ -7329,18 +7332,22 @@ def recall_rows(pool, skip, clip_secs, known_dir, song_terms, artist_toks=None):
     return out, "length:%d;sc_first:%d" % (len(sec), len(top))
 
 
-def recall_settled(cands):
-    """Has a scored row (not a lane row) settled the clip? The family wave's test, a row at
+def recall_settles(c):
+    """Does this scored row (not a lane row) settle the clip? The family wave's test, a row at
     CORE_SAME within FAMILY_SETTLED_TOL of the clip's speed, plus raw fp above FP_FLOOR: a row the
     crown's fp floor refuses cannot settle anything. On kyks, "Painkiller x Three Days Grace"
     (core 1.000, vspeed 1.0, fp 0.550) passed the old test, the lane's Cult Member rows were
     dropped, and the walk then refused Painkiller on that very floor and crowned nothing."""
-    return any(c.get("path") and not c.get("recall_lane")
-               and (c.get("core") or 0) >= CORE_SAME
-               and float(c.get("fp") or 0) > FP_FLOOR
-               and abs(float(np.log2(max(0.25, min(4.0, c.get("vspeed") or 1.0)))))
-               <= FAMILY_SETTLED_TOL
-               for c in cands)
+    return bool(c.get("path") and not c.get("recall_lane")
+                and (c.get("core") or 0) >= CORE_SAME
+                and float(c.get("fp") or 0) > FP_FLOOR
+                and abs(float(np.log2(max(0.25, min(4.0, c.get("vspeed") or 1.0)))))
+                <= FAMILY_SETTLED_TOL)
+
+
+def recall_settled(cands):
+    """Has any scored row settled the clip (recall_settles)?"""
+    return any(recall_settles(c) for c in cands)
 
 
 def eq_aligned(clip_audio, cand_path, speed, lag, clip_secs=20, xc=None):
@@ -7405,7 +7412,9 @@ class _RecallLane(object):
     hunt's evidence) and never noted in the hunt budget, which it only reads (`dead`).
     RETENTION: the pulls live in the hunt's tmp; find_edit's wrapper calls close(wait=True)
     before it removes that dir, and a job that finishes after close() removes its own file.
-    Doubles as dl_clip's `abort` (`dead`, `run`), like _DirAlignLane."""
+    close() is safe from any thread: a wave-1 download worker calls it when its row settles the
+    clip, the ranking pass after its join. Doubles as dl_clip's `abort` (`dead`, `run`), like
+    _DirAlignLane."""
 
     def __init__(self, clip_audio, clip_ctx, tmp, hb=None):
         self.clip_audio, self.clip_ctx, self.tmp, self.hb = clip_audio, clip_ctx, tmp, hb
@@ -7416,6 +7425,7 @@ class _RecallLane(object):
         self.procs = set()
         self.t0 = None
         self.waited = None
+        self.stopped_at = None          # seconds after start a settling row stopped the lane
         self.info = {}                  # url -> what the job saw, for the tlog row
 
     @property
@@ -11537,7 +11547,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
 
     _wave1_done = []
     _style_x = []
-    _rc_lane = None                 # FIX 3: the recall lane, when it starts (after wave 1)
+    _rc_lane = None                 # FIX 3: the recall lane, when it starts (with wave 1)
     if cands:
         # carried fast-path rows never take a head slot: they are appended below, the
         # same rule as the creator lane and the comment links, so the 14-row head is the
@@ -11555,16 +11565,13 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _style_x = _style_extra(_style_pool, wave1, core_title)
             tlog("style_quota", 0.0, n=len(_style_x), why=_style_why,
                  titles=[(c.get("title") or "")[:60] for c in _style_x])
-        _tw1 = time.time()
-        n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
-                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit,
-                                wave="dl_wave1")
-        tlog("dl_wave1", time.time() - _tw1, n=n)
-        _wave1_done = [c for c in wave1 if c.get("_done")]
-        # FIX 3: THE RECALL LANE (RECALL_LANE), on its own slots, AFTER wave 1 and only when
-        # wave 1 left the clip unsettled. Only on a song Shazam named and the server trusts (the
-        # style lane's rule): the lane reads the song's own title words, which mean nothing
-        # under a suspect name. Its jobs read snapshots; no row changes until the ranking pass.
+        # FIX 3: THE RECALL LANE (RECALL_LANE) starts WITH wave 1 on its own slots (its own
+        # executor: the wave-1 batch below is release-next's, row for row) and stops the moment
+        # a wave-1 row settles the clip (recall_settles: its yt-dlp is killed, its rows never
+        # count). Only on a song Shazam named and the server trusts (the style lane's rule): the
+        # lane reads the song's own title words, which mean nothing under a suspect name. Its
+        # jobs read snapshots; no row changes until the ranking pass.
+        _w1_hit, _rc_x, _rc_why, _rc_len = _hit, [], "", 0
         if RECALL_LANE and base_title and shazam_reliable:
             try:
                 _rc_len = duration_of(clip_audio) or 0
@@ -11572,12 +11579,9 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _rc_len = 0
             _rc_x, _rc_why = recall_rows(cands, {id(c) for c in wave1 + _style_x}, _rc_len,
                                          known_dir, song_terms, artist_toks)
-            _rc_w1 = recall_settled(cands)
             # HUNT BUDGET: read, never fired: past T with nothing at 0.62 no lane starts
-            _rc_go = (not _rc_w1 and bool(_rc_x)
-                      and (_hb is None or _hb.evidence
-                           or (not _hb.dead and _hb.elapsed() <= _hb.T)))
-            if _rc_go:
+            if _rc_x and (_hb is None or _hb.evidence
+                          or (not _hb.dead and _hb.elapsed() <= _hb.T)):
                 try:                    # NEVER FATAL: no lane = the hunt exactly as without it
                     _rc_lane = _RecallLane(clip_audio, clip_ctx, tmp, _hb)
                     if _closers is not None:
@@ -11588,8 +11592,29 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                     if _rc_lane is not None:
                         _rc_lane.close()
                     _rc_lane = None
+            if _rc_lane is not None:
+
+                def _w1_hit(c, _h=_hit, _l=_rc_lane):
+                    if _h is not None:
+                        _h(c)
+                    if not _l.closed and recall_settles(c):
+                        _l.stopped_at = round(time.time() - (_l.t0 or time.time()), 2)
+                        _l.close()
+        _tw1 = time.time()
+        n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
+                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_w1_hit,
+                                wave="dl_wave1")
+        tlog("dl_wave1", time.time() - _tw1, n=n)
+        _wave1_done = [c for c in wave1 if c.get("_done")]
+        if RECALL_LANE and base_title and shazam_reliable:
+            _rc_w1 = recall_settled(cands)
+            if _rc_w1 and _rc_lane is not None and not _rc_lane.closed:
+                _rc_lane.stopped_at = round(time.time() - (_rc_lane.t0 or time.time()), 2)
+                _rc_lane.close()
             tlog("recall_lane", 0.0, n=len(_rc_x), started=_rc_lane is not None,
-                 settled_wave1=_rc_w1, why=_rc_why, clip_secs=round(_rc_len, 1),
+                 settled_wave1=_rc_w1,
+                 stopped_at=(_rc_lane.stopped_at if _rc_lane is not None else None),
+                 why=_rc_why, clip_secs=round(_rc_len, 1),
                  rows=[[(c.get("title") or "")[:60], c.get("url"), c.get("recall_why")]
                        for c in _rc_x])
     else:
@@ -12179,7 +12204,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 c["recall_dropped"] = True
         try:                        # NEVER FATAL: the log line can never cost the scan
             tlog("recall_lane_end", 0.0, settled=_rc_settled, n=len(_rc_rows),
-                 took=len(_rc_took), waited=_rc_lane.waited,
+                 took=len(_rc_took), waited=_rc_lane.waited, stopped_at=_rc_lane.stopped_at,
                  since_start=round(time.time() - (_rc_lane.t0 or time.time()), 2),
                  rows=[[(c.get("title") or "")[:50], c.get("recall_why"),
                         (c.get("core") if c.get("recall_lane") else None),
