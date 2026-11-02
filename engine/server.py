@@ -3372,7 +3372,12 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
     import verify as _verify
     tmp = tempfile.mkdtemp()
     try:
-        dst = os.path.join(tmp, "cand.m4a")
+        # A .wav name, as every other dl_clip caller passes. dl_clip's yt-dlp fallback writes
+        # "<dst less .wav>.wav" and then checks dst, so "cand.m4a" came back None whenever the
+        # direct fetch failed (a SoundCloud upload with no progressive stream), and the control
+        # passed with nothing measured. Fozure's Big League: None for cand.m4a, 3.5 MB for
+        # cand.wav (test box, 2026-11-01).
+        dst = os.path.join(tmp, "cand.wav")
         # CRATE_SEEK_MOFF: a row scored on a later section is re-measured on THAT section
         # (the candidate's, fetched the same way, or the clip cut where the song starts), so
         # forward and reversed read the same audio the crown was earned on.
