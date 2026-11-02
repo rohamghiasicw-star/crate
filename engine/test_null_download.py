@@ -23,7 +23,8 @@ os.environ.update({"CRATE_TIMING": os.path.join(SCR, "tlog.jsonl"), "PORT": "898
                    "ADDIFY_CORRECTIONS": os.path.join(SCR, "corrections.json"),
                    "ADDIFY_FIXQUEUE": os.path.join(SCR, "fixqueue.jsonl")})
 os.environ.setdefault("CRATE_PHONE_PROBES", "0")
-for k in ("CRATE_NULL_FP", "CRATE_NULL_FP_GUARDED", "CRATE_NULL_FP_GAP"):
+for k in ("CRATE_NULL_FP", "CRATE_NULL_FP_GUARDED", "CRATE_NULL_FP_GAP", "CRATE_NULL_ARR",
+          "CRATE_NULL_ARR_GAP"):
     os.environ.pop(k, None)
 sys.path.insert(0, HERE)
 import crate_engine as E      # noqa: E402
@@ -78,9 +79,13 @@ def ytdlp_fails(args, timeout=None, check=False, kind=None, **kw):
     raise subprocess.CalledProcessError(1, args)
 
 
+FLAT = {"core": 1.0, "fp": 0.80, "arr": 0.50}
+READ = {"fwd": FLAT, "rev": FLAT}       # what verify() returns for the forward / reversed copy
+
+
 def verify_saturated(clip, cand, seconds=20, **k):
     CALLS.append(("verify", (clip, cand, os.path.exists(cand))))
-    return {"core": 1.0, "fp": 0.80, "arr": 0.50}
+    return dict(READ["rev" if os.path.basename(cand).startswith("rev") else "fwd"])
 
 
 def run(direct=direct_fails, section=direct_fails, ytdlp=ytdlp_writes, seek=None):
@@ -132,6 +137,39 @@ try:
     finally:
         E._dl_direct, E._dl_direct_section, E._run_ytdlp, V.verify = REAL
     check("forward core under the floor: no download, no refusal", why is None and not CALLS, CALLS)
+
+    # 6. CRATE_NULL_ARR on the real readings measured on the test box (fixed download, 2026-11-02)
+    check("arr rule is on by default at 0.22", E.NULL_ARR is True and E.NULL_ARR_GAP == 0.22,
+          (E.NULL_ARR, E.NULL_ARR_GAP))
+
+    def real(fwd, rev, arr_on=True):
+        READ["fwd"] = {"core": 1.0, "fp": fwd[0], "arr": fwd[1]}
+        READ["rev"] = {"core": 1.0, "fp": rev[0], "arr": rev[1]}
+        E.NULL_ARR = arr_on
+        try:
+            return run()
+        finally:
+            E.NULL_ARR = True
+            READ["fwd"] = READ["rev"] = FLAT
+
+    BIG, THUNDER = ((0.8583, 0.5550), (0.7899, 0.2605)), ((0.6462, 0.8244), (0.6237, 0.4787))
+    ALBUM = ((0.7835, 0.1007), (0.7638, 0.0762))           # clip 24, Love Sosa album head
+    check("Big League (fp gap 0.068, arr gap 0.295): passes on arr", real(*BIG) is None)
+    row = [l for l in open(os.environ["CRATE_TIMING"]) if '"null_fp"' in l][-1]
+    check("Big League: null_fp row logs the arr reading",
+          '"arr_gap": 0.2945' in row and '"by_arr": true' in row and '"refuse": false' in row, row)
+    check("Big League with CRATE_NULL_ARR off: refused on fp, as before",
+          isinstance(real(*BIG, arr_on=False), str))
+    check("Thunder, issue #15 (fp gap 0.022, arr gap 0.346): passes on arr", real(*THUNDER) is None)
+    why = real(*ALBUM)
+    check("clip 24 album head (fp gap 0.020, arr gap 0.025): still refused",
+          isinstance(why, str) and "time-reversed copy" in why and "arr 0.076 vs 0.101" in why, why)
+    check("arr gap of exactly 0.22 passes (4 dp)", real((0.80, 0.62), (0.75, 0.40)) is None)
+    check("arr gap of 0.2199 refuses", isinstance(real((0.80, 0.6199), (0.75, 0.40)), str))
+    check("fp pass needs no arr (D: fp gap 0.200, arr gap 0.559)",
+          real((0.9458, 0.8137), (0.7455, 0.2550)) is None)
+    check("dead fpcalc (fp 0 vs 0): arr decides", real((0.0, 0.70), (0.0, 0.46)) is None
+          and isinstance(real((0.0, 0.50), (0.0, 0.46)), str))
 finally:
     E._dl_direct, E._dl_direct_section, E._run_ytdlp, V.verify = REAL
     shutil.rmtree(SCR, ignore_errors=True)

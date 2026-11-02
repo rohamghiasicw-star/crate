@@ -495,6 +495,19 @@ NULL_FP = _speed_flag("CRATE_NULL_FP", False)
 # Stricter than NULL_FP: when both flags are on, the guard decides.
 NULL_FP_GUARDED = _speed_flag("CRATE_NULL_FP_GUARDED", True)   # gated 2026-09-29: nullfp prove/PROVE.md, D/07/27/24 x2 + reg x2 + 12 clips ABAB
 NULL_FP_GAP = float(os.environ.get("CRATE_NULL_FP_GAP", 0.10))
+# CRATE_NULL_ARR (2026-11-02, addify-harness/nullwav/REPORT.md). The guarded null reads only fp,
+# and fp is chroma: a beat on one held chord reads nearly the same reversed. Once the null could
+# measure HLS-only SoundCloud uploads (the cand.wav fix) it refused two uploads the owners named
+# as right: Big League fp 0.858 vs 0.790 (gap 0.068), and Thunder, issue #15's reference screen,
+# 0.646 vs 0.624 (0.022). arr is aligned in time and reversal breaks it: 0.555 vs 0.261 (0.295)
+# and 0.824 vs 0.479 (0.346). So a guarded read that misses on fp passes when arr falls by at
+# least NULL_ARR_GAP. Derived as NULL_FP_GAP was: reads with no recording evidence fall by at
+# most 0.160 (1,008 wrong matcher + window pairs) and 0.105 / 0.025 on clip 24's two Love Sosa
+# heads (the album head, saturated, stays refused). The smallest right fall that needs arr is
+# Big League's 0.295. Any gap in 0.161-0.295 makes the same call on all of it; 0.22 sits just
+# under the middle (0.228), as 0.10 does for fp.
+NULL_ARR = _speed_flag("CRATE_NULL_ARR", True)
+NULL_ARR_GAP = float(os.environ.get("CRATE_NULL_ARR_GAP", 0.22))
 # FINAL 2026-09-30 (addify-harness/final/BUILD.md, PROVE in final/SHIP.md).
 #   CRATE_SOUNDPAGE_RETRY  mason stability. TikTok's /embed/music/ answers 503 in bursts (a
 #                          26-byte body in 0.11 s; measured 0 of 8 at 2.5 s spacing and 1 of 6

@@ -3418,19 +3418,30 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
                 # 0.222 / 0.360 / 0.195. Dead fpcalc (0 vs 0) is a gap of 0: refused.
                 _gap = round(ffp - rfp, 4)          # 4 dp, as logged: 0.85-0.75 is 0.100
                 _pass = (_gap >= E.NULL_FP_GAP) if _guard else (rfp < ffp)
+                # CRATE_NULL_ARR: fp is chroma, and a beat on one held chord reads nearly the
+                # same reversed, so a real match can sit under the fp gap (Big League 0.068,
+                # Thunder 0.022). arr is aligned in time and reversal breaks it. A guarded read
+                # that misses on fp passes when arr falls by NULL_ARR_GAP (numbers in crate_engine).
+                fa, ra = float(_fv.get("arr") or 0.0), float(_rv.get("arr") or 0.0)
+                _agap = round(fa - ra, 4)
+                _by_arr = bool(_guard and E.NULL_ARR and not _pass and _agap >= E.NULL_ARR_GAP)
+                _pass = _pass or _by_arr
                 E.tlog("null_fp", 0.0, url=(cand_url or "")[:120], fwd_fp=round(ffp, 4),
                        rev_fp=round(rfp, 4), fwd_core=round(float(_fv.get("core") or 0), 4),
                        rev_core=round(rc, 4), gap=round(_gap, 4), guarded=_guard,
-                       refuse=not _pass)
+                       fwd_arr=round(fa, 4), rev_arr=round(ra, 4), arr_gap=_agap,
+                       by_arr=_by_arr, refuse=not _pass)
                 if _pass:
                     return None
+                _atx = ("; arr %.3f vs %.3f, a gap of %.3f, under %.2f" % (ra, fa, _agap, E.NULL_ARR_GAP)
+                        if _guard and E.NULL_ARR else "")
                 if _guard and rfp < ffp:
                     return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
                             "%.3f, a gap of %.3f, under the %.2f that recording evidence "
-                            "needs), so the match is texture, not this recording"
-                            % (rc, rfp, ffp, _gap, E.NULL_FP_GAP))
+                            "needs%s), so the match is texture, not this recording"
+                            % (rc, rfp, ffp, _gap, E.NULL_FP_GAP, _atx))
                 return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
-                        "%.3f), so the match is texture, not this recording" % (rc, rfp, ffp))
+                        "%.3f%s), so the match is texture, not this recording" % (rc, rfp, ffp, _atx))
             return ("scores %.3f against a time-reversed copy of itself, so the match is "
                     "texture, not this recording" % rc)
         return None
