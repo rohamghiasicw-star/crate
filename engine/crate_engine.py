@@ -7380,6 +7380,7 @@ MASHUP_DL = 3                # lane rows per scan, on the recall lane's slots
 MASHUP_SC_LIMIT = 200        # SoundCloud results read per query
 MASHUP_WAIT = 2.0            # most the lane's start waits for a search still running
 MASHUP_MIN_SECS = 10.0
+MASHUP_DL_TIMEOUT = 30       # a lane row's fetch outlives wave 1 (see _RecallLane._one)
 _MASH_JOIN = re.compile(r"\s(?:x|×|vs\.?|versus|\+|&)\s", re.I)
 
 
@@ -7658,7 +7659,7 @@ class _RecallLane(object):
             self.ex = ThreadPoolExecutor(max_workers=len(rows), thread_name_prefix="recall")
             self.t0 = time.time()
             for i, c in enumerate(rows):
-                snap = {k: c.get(k) for k in ("url", "title", "source")}
+                snap = {k: c.get(k) for k in ("url", "title", "source", "recall_why")}
                 self.jobs.append((c, self.ex.submit(self.one, snap, i)))
 
     @staticmethod
@@ -7710,7 +7711,12 @@ class _RecallLane(object):
         if self.dead:
             return None
         dst = os.path.join(self.tmp, "rc%d.wav" % i)
-        got = dl_clip(snap["url"], dst, seconds=RECALL_DL_SECS, abort=self)
+        # FIX 7: a mashup lane row keeps its fetch alive past wave 1 (MASHUP_DL_TIMEOUT): at the
+        # lane's priority it gets CPU only once wave 1 is done, and dl_clip's 15 s ran out first
+        # on all three mashup rows of the nuts scan (15.8-16.6 s, test box, 2026-11-02)
+        mx = str(snap.get("recall_why") or "").startswith("mashup")
+        got = dl_clip(snap["url"], dst, seconds=RECALL_DL_SECS, abort=self,
+                      **({"timeout": MASHUP_DL_TIMEOUT} if mx else {}))
         inf["dl"] = round(time.time() - t0, 2)
         if not got or self.dead:
             self._drop(dst)
