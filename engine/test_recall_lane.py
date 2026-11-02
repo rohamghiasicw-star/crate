@@ -1,9 +1,18 @@
-"""Offline tests for Fix 3's recall lane (issue #12): recall_rows, _fold_cov and the sc_top count
-_merge_rows writes. Synthetic rows shaped like the two cases it was built on. No network.
+"""Offline tests for Fix 3's recall lane (issue #12): recall_rows, _fold_cov, the sc_top count
+_merge_rows writes, recall_settled, eq_aligned / eq_reread and the lane's own slots (_RecallLane).
+Synthetic rows shaped like the cases it was built on; synthetic audio for the EQ read. No network.
 run: /usr/bin/python3 test_recall_lane.py"""
+import os
+import shutil
+import tempfile
+import threading
+import time
 import unittest
 
+import numpy as np
+
 import crate_engine as E
+import verify as V
 
 # "Lil Baby x 42 Dugg - Big League (unreleased)" in bold maths letters, as Fozure titled it
 BOLD = ("\U0001d40b\U0001d422\U0001d425 \U0001d401\U0001d41a\U0001d41b\U0001d432 \U0001d431 "
@@ -14,9 +23,9 @@ HYMN = {"hymn", "for", "the", "weekend"}
 BIG = {"big", "league"}
 
 
-def row(title, dur, plays=0, src="soundcloud", top=0, url=None):
+def row(title, dur, plays=0, src="soundcloud", top=0, url=None, uploader=""):
     r = {"title": title, "duration": str(dur), "plays": plays, "source": src,
-         "url": url or "https://soundcloud.com/x/" + str(abs(hash(title)))}
+         "uploader": uploader, "url": url or "https://soundcloud.com/x/" + str(abs(hash(title)))}
     if top:
         r["sc_top"] = top
     return r
@@ -72,6 +81,37 @@ class SoundCloudFirst(unittest.TestCase):
         self.assertEqual(out, [])
 
 
+class WholeWords(unittest.TestCase):
+    """The junk an independent check found the lane pulling in on settled hunts (2026-11-02)."""
+
+    def test_a_song_word_inside_a_longer_word_is_not_the_word(self):
+        bolt = row("Moska X David Nova - ThunderBolt", 150, 9, top=2)
+        self.assertEqual(E._fold_cov(bolt, {"thunder"}), 0.0)
+        self.assertEqual(E._fold_cov(row("Imagine Dragons - Thunder (slowed)", 40), {"thunder"}), 1.0)
+
+    def test_one_word_song_needs_the_artist(self):
+        art = ["cult", "member"]
+        umbrella = row("UMBRELLA, VAMPXL - ONE TWO THREE FOUR (Ultra Slowed down by x)", 150, 50)
+        cm = row("cult member  - three (slowed)", 150, 10)
+        cm2 = row("Cult_Member - Three (Ultra Slowed + Reverb)", 200, 10, top=2)
+        out, why = E.recall_rows([umbrella, cm, cm2], set(), 167.8, None, {"three"}, art)
+        self.assertNotIn(umbrella, out, why)
+        self.assertIn(cm, out, why)
+        self.assertIn(cm2, out, why)
+        # no confirmed artist at all: a one-word song picks nothing
+        self.assertEqual(E.recall_rows([cm], set(), 167.8, None, {"three"}, [])[0], [])
+
+    def test_artist_in_the_uploader_counts(self):
+        r = row("Thunder (slowed)", 40, 5, uploader="Imagine Dragons Fan")
+        out, _ = E.recall_rows([r], set(), 25.1, None, {"thunder"}, ["imagine", "dragons"])
+        self.assertEqual(out, [r])
+
+    def test_two_word_songs_keep_working_without_the_artist(self):
+        lavt0c = row("HYMN FOR THE WEEKEND - BASS BOOSTED // SPED UP", 25.881, 89977)
+        out, _ = E.recall_rows([lavt0c], set(), 25.8, None, HYMN, ["coldplay"])
+        self.assertEqual(out, [lavt0c])
+
+
 class MergeCount(unittest.TestCase):
     def test_sc_top_counts_first_soundcloud_results_only(self):
         res = [[{"url": "a", "source": "soundcloud", "query": "q1"},
@@ -83,6 +123,157 @@ class MergeCount(unittest.TestCase):
         m = E._merge_rows(res)
         self.assertEqual([(c["url"], c.get("sc_top")) for c in m],
                          [("a", 2), ("b", 1), ("y", None)])
+
+
+class Settled(unittest.TestCase):
+    @staticmethod
+    def scored(core, fp, v, lane=False):
+        r = {"path": "/x.wav", "core": core, "fp": fp, "vspeed": v}
+        if lane:
+            r["recall_lane"] = True
+        return r
+
+    def test_a_row_the_fp_floor_refuses_does_not_settle(self):
+        painkiller = self.scored(1.0, 0.550, 1.0)          # kyks, independent check P2
+        self.assertFalse(E.recall_settled([painkiller]))
+
+    def test_a_same_speed_row_above_the_floor_settles(self):
+        self.assertTrue(E.recall_settled([self.scored(1.0, 0.70, 1.0006)]))
+
+    def test_off_speed_unscored_or_lane_rows_do_not_settle(self):
+        self.assertFalse(E.recall_settled([self.scored(1.0, 0.90, 0.80)]))
+        self.assertFalse(E.recall_settled([{"core": 1.0, "fp": 0.9, "vspeed": 1.0}]))
+        self.assertFalse(E.recall_settled([self.scored(1.0, 0.90, 1.0, lane=True)]))
+
+
+def _noise(secs, seed, lowpass):
+    """Synthetic audio with a known spectral tilt: white noise through a one-pole filter."""
+    rng = np.random.RandomState(seed)
+    x = rng.randn(int(secs * V.SR)).astype(np.float32)
+    y = np.empty_like(x)
+    acc = 0.0
+    for i in range(len(x)):
+        acc = lowpass * acc + (1.0 - lowpass) * x[i]
+        y[i] = acc
+    y = y / (np.abs(y).max() + 1e-9) * 0.5
+    return y.astype(np.float32)
+
+
+class AlignedEq(unittest.TestCase):
+    """Big League's shape: a 9.8 s clip that sits 16.2 s into the upload, whose first 16.2 s
+    carry a different EQ. The head read compares mismatched stretches; the aligned one does not."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        intro = _noise(16.2, 1, 0.97)          # dark: bass-heavy
+        body = _noise(13.8, 2, 0.30)           # bright
+        up = np.concatenate([intro, body])
+        cls.up = os.path.join(cls.tmp, "up.wav")
+        cls.clip = os.path.join(cls.tmp, "clip.wav")
+        V._write_wav(up, cls.up)
+        V._write_wav(body[:int(9.8 * V.SR)], cls.clip)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_aligned_window_reads_the_same_audio_as_the_same_eq(self):
+        b, s, n = E.eq_aligned(self.clip, self.up, 1.0, -16.2)
+        self.assertAlmostEqual(n, 9.8, places=1)
+        self.assertLess(abs(b), 0.5)
+        self.assertLess(abs(s), 0.2)
+
+    def test_head_window_reads_a_gap_that_is_not_there(self):
+        head = V.verify(self.clip, self.up, 20)
+        self.assertGreater(abs(head["bass_delta"]), 6.0)
+
+    def test_too_little_side_by_side_is_no_reading(self):
+        self.assertIsNone(E.eq_aligned(self.clip, self.up, 1.0, -27.0))   # 3 s overlap
+
+    def test_eq_reread_keeps_the_head_pair_and_skips_seek_rows(self):
+        c = {"path": self.up, "vspeed": 1.0, "lag": -16.2, "bass_delta": -9.0, "slope_delta": -2.0}
+        self.assertTrue(E.eq_reread(c, self.clip))
+        self.assertEqual(c["eq_head"], [-9.0, -2.0])
+        self.assertLess(abs(c["bass_delta"]), 0.5)
+        self.assertAlmostEqual(c["eq_window"], 9.8, places=1)
+        sk = {"path": self.up, "vspeed": 1.0, "lag": -16.2, "bass_delta": -9.0, "seek_at": 40.0}
+        self.assertFalse(E.eq_reread(sk, self.clip))
+        self.assertEqual(sk["bass_delta"], -9.0)
+
+
+class Lane(unittest.TestCase):
+    """_RecallLane with dl_clip and verify() stubbed: own executor, snapshot jobs, join, close."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._dl, self._vf = E.dl_clip, E._verify.verify
+        self.calls = []
+        self.gate = threading.Event()
+
+        def fake_dl(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
+            self.calls.append((url, seconds))
+            if "slow" in url:
+                self.gate.wait(5)
+            if abort is not None and abort.dead:
+                return None
+            V._write_wav(_noise(2.0, 3, 0.5), dst)
+            return dst
+
+        def fake_verify(clip, path, seconds=20, clip_ctx=None):
+            return {"spectral": 0.5, "fp": 0.9, "arr": 0.6, "core": 1.0, "score": 1.0,
+                    "same": True, "speed": 1.0, "bass_delta": 0.1, "lag": 0.0,
+                    "speed_conf": 0.9, "slope_delta": 0.0, "clip_slope": 0.0,
+                    "cand_slope": 0.0, "clip_tilt": 10.0, "cand_tilt": 9.9}
+        E.dl_clip, E._verify.verify = fake_dl, fake_verify
+
+    def tearDown(self):
+        self.gate.set()
+        E.dl_clip, E._verify.verify = self._dl, self._vf
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_jobs_fetch_30_s_and_leave_the_rows_alone_until_join(self):
+        a, b = row("A song (sped up)", 26, url="u-a"), row("A song loop", 30, url="u-b")
+        lane = E._RecallLane("clip.wav", None, self.tmp)
+        lane.start([a, b])
+        got = lane.join(None)
+        lane.close()
+        self.assertEqual(sorted(u for u, _s in self.calls), ["u-a", "u-b"])
+        self.assertTrue(all(s == E.RECALL_DL_SECS for _u, s in self.calls))
+        self.assertNotIn("core", a)                          # the hunt's row was never written
+        self.assertEqual({id(c) for c, _r in got}, {id(a), id(b)})
+        self.assertTrue(all(r["recall_lane"] and r["core"] == 1.0 for _c, r in got))
+
+    def test_join_waits_at_most_its_limit_and_close_stops_the_rest(self):
+        fast, slow = row("A song (sped up)", 26, url="u-fast"), row("A song slow", 30, url="u-slow")
+        lane = E._RecallLane("clip.wav", None, self.tmp)
+        lane.start([fast, slow])
+        old = E.RECALL_JOIN_WAIT
+        E.RECALL_JOIN_WAIT = 0.5
+        try:
+            t0 = time.time()
+            got = lane.join(None)
+            self.assertLess(time.time() - t0, 2.0)
+        finally:
+            E.RECALL_JOIN_WAIT = old
+        self.assertEqual([c for c, _r in got], [fast])
+        lane.close()
+        self.assertTrue(lane.dead)
+        self.gate.set()
+
+    def test_a_dead_budget_means_no_wait(self):
+        class HB(object):
+            dead, T = True, 25.0
+
+            def remaining(self):
+                return 0.0
+        lane = E._RecallLane("clip.wav", None, self.tmp, HB())
+        self.assertTrue(lane.dead)
+        lane.start([row("A song slow", 30, url="u-slow")])
+        t0 = time.time()
+        self.assertEqual(lane.join(HB()), [])
+        self.assertLess(time.time() - t0, 0.5)
+        lane.close()
 
 
 if __name__ == "__main__":

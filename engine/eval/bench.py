@@ -88,7 +88,7 @@ def calls_between(tlog, t0, t1, url):
         if t < t0 or t > t1:
             continue
         s = r.get("stage")
-        if s == "cand_dl":
+        if s in ("cand_dl", "recall_dl"):       # recall_dl: a recall-lane download (own slots)
             n["downloads"] += 1
         elif s == "shazam_probe":
             n["shazam_probes"] += 1

@@ -6033,6 +6033,31 @@ def _phase2(ctx, on_cand=None):
             if _dead:
                 res["dead_links_dropped"] = _dead
                 verified = _live
+            # FIX 3 (retry 2026-11-02): PAST A WEAK ROW 1 (the walk below), EVERY ROW THE WALK
+            # CAN CROWN READS ITS EQ ON THE ALIGNED WINDOW (E.eq_reread, no download), before
+            # any row, gate, figure or bass label reads it. On such a scan release-next crowns
+            # nothing, so no existing crown moves. verify() compares the clip's first 20 s with
+            # the upload's first 20 s, whatever part of the song each is. The recall lane's Big
+            # League crown showed the cost: the 9.8 s reel sits 16.2 s into Fozure's upload, and
+            # that head read (bass -6.83 dB, slope -2.666) put "bass boosted" on the pill and 89
+            # on the card; on the aligned 9.8 s it reads +1.79 / +1.700. Recall-lane rows come
+            # back from the engine already re-read (crate_engine._RecallLane).
+            if (verified and (verified[0].get("core") or 0) < E.CORE_KEEP
+                    and hasattr(E, "eq_reread")):
+                _eqr, _eqt, _eqx = [], time.time(), None
+                for c in verified:
+                    if ((c.get("core") or 0) >= E.CORE_KEEP and c.get("eq_window") is None
+                            and c.get("path")):
+                        if _eqx is None:
+                            try:
+                                _eqx = E._verify._decode(src.get("audio"), 20)
+                            except Exception:
+                                _eqx = None
+                        _eok = E.eq_reread(c, src.get("audio"), xc=_eqx)
+                        _eqr.append([(c.get("title") or "")[:50], _eok, c.get("eq_head"),
+                                     c.get("eq_window")])
+                if _eqr:
+                    E.tlog("eq_reread", time.time() - _eqt, why="past_weak_row1", rows=_eqr)
             for c in verified[:6]:
                 candidates.append(_cand_row(c))
             # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted
@@ -6050,9 +6075,13 @@ def _phase2(ctx, on_cand=None):
             # rescued on their "slowed" titles at core 0.000-0.196 rank over the upload that
             # verifies at core 1.000 but has no "Coldplay" in its title, and with row 1 under
             # the bar the walk below was offered nothing. When a verified row does clear the
-            # bar, the walk starts there instead; every gate and the null control still decide
-            # (Ark Patrol's 1.000 at fp 0.554 is refused by the fp floor). Row 1 at or above
-            # the bar: unchanged.
+            # bar, the walk starts there instead, with every gate it runs on any other scan
+            # (Ark Patrol's 1.000 at fp 0.554 is refused by the fp floor). The time-reversed
+            # null is one of them, and it does NOT run on a SoundCloud upload whose direct
+            # fetch fails: _time_reversed_null asks dl_clip for cand.m4a, the yt-dlp fallback
+            # writes cand.wav, dl_clip returns None and the control passes (measured on the test
+            # box 2026-11-02 for Fozure's Big League, Thunder, bouch and mason uploads; the
+            # Thunder crown release-next gives rides it too). Row 1 at or above the bar: as before.
             _above = (next((c for c in verified if (c.get("core") or 0) >= E.CORE_KEEP), None)
                       if top and (top.get("core") or 0) < E.CORE_KEEP else None)
             if _above is not None:
