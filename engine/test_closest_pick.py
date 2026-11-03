@@ -88,18 +88,96 @@ class Pick(unittest.TestCase):
         self.assertEqual(res["closest"]["why"], "no upload came back")
         self.assertEqual(last_log()["where"], "fast")
 
-    def test_title_must_name_the_song_below_core_same(self):
+    def test_title_must_name_the_song_whatever_the_core(self):
         named = row("Hymn For The Weekend (slowed)", "https://sc/named", 0.70, 55)
         other = row("Some Other Track (slowed)", "https://sc/other", 0.80, 70)
         sure = row("untitled upload", "https://sc/sure", 0.97, 60)
         sw = S._closest_song_words("Hymn for the Weekend")
-        self.assertEqual(sw, {"hymn", "weekend"})
+        self.assertEqual(sw, {"hymn", "for", "weekend"})
         self.assertTrue(S._closest_usable(named, sw))
         self.assertFalse(S._closest_usable(other, sw))      # 0.80 and no song words: cannot stand
-        self.assertTrue(S._closest_usable(sure, sw))        # core at CORE_SAME stands on its own
+        self.assertFalse(S._closest_usable(sure, sw))       # core 0.97 alone no longer stands
         res = found([other, named, sure], song="Hymn for the Weekend")
         S._closest_pick(res)
-        self.assertEqual(res["closest"]["url"], "https://sc/sure")   # highest figure among rows that stand
+        self.assertEqual(res["closest"]["url"], "https://sc/named")
+
+    def test_kyks_a_band_name_holding_the_song_word_is_not_the_song(self):
+        """Test box 2026-11-04, kyks (Shazam "Three (Slowed)", artist 42RAIN): the card picked
+        "Animal Ive Become- Three Days Of Grace Slowed" (core 1.0, refused for tempo)."""
+        rows = [row("Animal Ive Become- Three Days Of Grace Slowed", "https://sc/animal", 1.0, 25, 1.0692, TEMPO, 491937),
+                row("Cult Member - Three (slowed x reverb)", "https://sc/cult", 1.0, 25, 0.601, TEMPO, 1000),
+                row("Three Days Grace - Time Of Dying {slowed + reverb}", "https://sc/tod", 0.775, 39, 1.0, "othersong"),
+                row("ACT A DAMN FOOL (BASS BOOSTED+SLOWED) - THREE 6 MAFIA", "https://sc/3six", 0.765, 21, 0.9002, TEMPO),
+                row("Three Days Grace - Gone Forever Slowed", "https://sc/gone", 0.796, 22, 0.7089, TEMPO),
+                row("Cult Member - Three (Perfectly Slowed)", "https://sc/cult2", 0.826, 23, 0.6379, TEMPO)]
+        res = found(rows, song="Three (Slowed)")
+        res["base_artist"] = "42RAIN"
+        S._closest_pick(res)
+        self.assertEqual((res["closest"]["kind"], res["closest"]["url"]), ("upload", "https://sc/cult"))
+        stood = {r[0][:19] for r in last_log()["rows"] if r[5]}
+        self.assertEqual(stood, {"Cult Member - Three"})
+
+    def test_title_parts(self):
+        sw, aw = S._closest_song_words("nuts (feat. rainy bear)"), S._closest_words("Lil Peep")
+        for t in ("Nuts lil peep x Tokyo ghoul", "Lil Peep - Nuts (ft. Rainy Bear) Slowed",
+                  "lil peep - nuts (ft. rainy bear) (slow + reverb)", "Do me a favour x Nuts"):
+            self.assertTrue(S._closest_names_song(t, sw, aw), t)
+        self.assertFalse(S._closest_names_song("Nuts Days Grace slowed", sw, aw))
+        sw, aw = S._closest_song_words("Big League"), S._closest_words("Lil Baby & 42 Dugg")
+        self.assertTrue(S._closest_names_song("\U0001d40b\U0001d422\U0001d425 \U0001d401\U0001d41a\U0001d41b\U0001d432"
+                                              " - \U0001d401\U0001d422\U0001d420 \U0001d40b\U0001d41e\U0001d41a"
+                                              "\U0001d420\U0001d42e\U0001d41e", sw, aw))   # styled letters fold
+        sw, aw = S._closest_song_words("Wouldn’t Believe (feat. Lil Tony Official)"), S._closest_words("Luhh Dyl")
+        self.assertTrue(S._closest_names_song("Luhh Dyl -Wouldn't Believe - Slowed + reverb (feat. Lil Tony", sw, aw))
+        self.assertFalse(S._closest_names_song("Wouldn't Believe Freestyle (Luhh Dyl, Lil Tony Remix)", sw, aw))
+        sw = S._closest_song_words("Blow (Electro Remix)")
+        self.assertTrue(S._closest_names_song("Kesha - Blow (Hoodtrap Remix)", sw, set()))
+        self.assertFalse(S._closest_names_song("Water x Blow My Mind (Ceeyan Wordplay Edit)", sw, set()))
+        self.assertFalse(S._closest_names_song("anything", set(), set()))     # no song words, nothing stands
+
+    def test_page_rule_matches_the_server(self):
+        """crate.html clStands / clNamesSong must agree with the server on the same titles, and its
+        CL_SKIP must be _CLOSEST_TAGS. Runs the page's own functions in node."""
+        import re as _re
+        import shutil as _sh
+        import subprocess
+        node = _sh.which("node") or _sh.which("nodejs")
+        if not node:
+            self.skipTest("no node")
+        html = open(os.path.join(HERE, "crate.html"), encoding="utf-8").read()
+        skip = _re.search(r"var CL_SKIP=/\^\(([^)]*)\)\$/;", html).group(1).split("|")
+        self.assertEqual({w for w in skip if len(w) >= 3}, {w for w in S._CLOSEST_TAGS if len(w) >= 3})
+        js = []
+        for name in ("CL_NOT_SAME", "CL_SKIP", "CL_SPLIT"):
+            js.append(_re.search(r"^var %s=.*$" % name, html, _re.M).group(0))
+        for fn in ("clWords", "clNamesSong", "clStands"):
+            m = _re.search(r"^function %s\(.*?(?=^function |^var |^/\*)" % fn, html, _re.M | _re.S)
+            js.append(m.group(0))
+        cases = [("Three (Slowed)", "42RAIN", "Animal Ive Become- Three Days Of Grace Slowed"),
+                 ("Three (Slowed)", "42RAIN", "Cult Member - Three (slowed x reverb)"),
+                 ("Three (Slowed)", "42RAIN", "ACT A DAMN FOOL (BASS BOOSTED+SLOWED) - THREE 6 MAFIA"),
+                 ("nuts (feat. rainy bear)", "Lil Peep", "Nuts lil peep x Tokyo ghoul"),
+                 ("nuts (feat. rainy bear)", "Lil Peep", "Lil Peep ft. rainy bear & Lana del Rey - Nuts x Summertime"),
+                 ("nuts (feat. rainy bear)", "Lil Peep", "nuts - lil peep feat. rainy bear (speed up)"),
+                 ("Big League", "Lil Baby & 42 Dugg", "\U0001d401\U0001d422\U0001d420 \U0001d40b\U0001d41e\U0001d41a"
+                                                      "\U0001d420\U0001d42e\U0001d41e (unreleased)"),
+                 ("Wouldn’t Believe (feat. Lil Tony Official)", "Luhh Dyl",
+                  "Luhh Dyl -Wouldn't Believe - Slowed + reverb (feat. Lil Tony"),
+                 ("Blow (Electro Remix)", "Hoodfellas", "Water x Blow My Mind (Ceeyan Wordplay Edit)"),
+                 ("Blow (Electro Remix)", "Hoodfellas", "Kesha – Blow (Hoodtrap Remix)"),
+                 ("Hymn for the Weekend", "Coldplay", "HYMN FOR THE WEEKEND - BASS BOOSTED // SPED UP"),
+                 ("Love Me Like You Do", "Ellie Goulding", "love me like you do slowed"),
+                 ("One", "Metallica", "One (slowed)")]
+        prog = ("var CORE_KEEP=0.5;\n%s\nvar C=%s;\nconsole.log(JSON.stringify(C.map(function(c){"
+                "return clStands({core:1,title:c[2]},{base_song:c[0],base_artist:c[1]});})));"
+                % ("\n".join(js), json.dumps(cases)))
+        f = os.path.join(TMP, "cl.js")
+        open(f, "w", encoding="utf-8").write(prog)
+        got = json.loads(subprocess.run([node, f], capture_output=True, text=True, check=True).stdout)
+        want = [S._closest_usable({"core": 1.0, "title": t}, S._closest_song_words(s), S._closest_words(a))
+                for s, a, t in cases]
+        self.assertEqual(got, want)
+        self.assertEqual(want, [False, True, False, True, True, True, True, True, False, True, True, True, True])
 
     def test_texture_only_and_unconfirmed_rows_cannot_stand(self):
         sw = S._closest_song_words("nuts")

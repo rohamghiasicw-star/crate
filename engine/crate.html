@@ -4100,18 +4100,35 @@ function ncCard(d){
    the smaller speed gap, the higher core, the plays. null = no row can stand, and the card is
    the song itself (ncCard). Never a different song presented as this one. */
 var CL_NOT_SAME={othersong:1,'null':1};
-// server.py _OTHER_SONG_SKIP + _OTHER_SONG_COMMON (3+ letters), the words that name no song
-var CL_SKIP=/^(the|and|feat|with|remix|slowed|sped|reverb|version|edit|mix|official|audio|video|lyrics|original|sound|prod|bass|boosted|loop|hoodtrap|tekk|trap|drill|phonk|house|techno|edm|hiphop|hip|hop|rap|dubstep|jersey|club|funk|bootleg|cover|mashup|nightcore|daycore|tiktok|instrumental|beat|type|music|song|new|best|full|extended|clean|explicit|you|your|this|that|are|was|from|just|have|what|when|one|all|not|but|for|its|name|who|how|why|can|his|her|they|them|our|out|got|get|like|love|lol|bro)$/;
+/* THE TITLE MUST NAME THE SONG (re-test 2026-11-04): server _closest_names_song, same rule. On
+   kyks ("Three (Slowed)") the card picked "Animal Ive Become- Three Days Of Grace Slowed": core
+   1.000 on super slowed audio, and the old test passed it on the word "three" inside the band's
+   name. A row stands only when one part of its title (split at " - ", "|", "//", " x ", "vs",
+   "+", "&", every bracket on its own) is the song's own words and nothing else, once edit tags, a
+   featured or producer credit and the artist's name are out. High core alone no longer stands. */
+// server.py _CLOSEST_TAGS (3+ letters), the words that name no song; test_closest_pick checks the match
+var CL_SKIP=/^(the|and|feat|with|remix|slowed|sped|reverb|version|edit|mix|official|audio|video|lyrics|original|sound|prod|bass|boosted|loop|hoodtrap|tekk|trap|drill|phonk|house|techno|edm|hiphop|hip|hop|rap|dubstep|jersey|club|funk|bootleg|cover|mashup|nightcore|daycore|tiktok|instrumental|beat|type|music|song|new|best|full|extended|clean|explicit|speed|slow|perfectly|super|reverbed|boost|bassboosted|looped|remastered|remaster|acoustic|live|lyric|visualizer|kbps|mp3|yt1s|chopped|screwed|ver)$/;
+var CL_SPLIT=/\s*[-–—|~]+\s+|\s+[-–—|~]+\s*|\/\/|\s(?:x|vs\.?|versus|\+|&)\s/;
 function clWords(s){
-  return String(s||'').toLowerCase().replace(/[\(\[][^\)\]]*[\)\]]/g,' ').split(/[^a-z0-9]+/)
-    .filter(function(w){return w.length>=3&&!CL_SKIP.test(w);});}
+  var t=String(s||'').replace(/['’]/g,'').normalize('NFKD').toLowerCase().replace(/[^\x00-\x7f]/g,'');
+  var out={}; (t.match(/[a-z0-9]+/g)||[]).forEach(function(w){if(w.length>=3&&!CL_SKIP.test(w)) out[w]=1;});
+  return out;}
+function clNamesSong(title,d){
+  var want=clWords(String((d&&d.base_song)||'').replace(/[\(\[\{].*?[\)\]\}]/g,' ')), wk=Object.keys(want);
+  if(!wk.length) return false;
+  var art=clWords(d&&d.base_artist);
+  var t=String(title||'').normalize('NFKD').toLowerCase().replace(/×/g,' x ');
+  var chunks=[t.replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g,' ')];
+  t.replace(/[\(\[\{]([^\)\]\}]*)[\)\]\}]/g,function(m,p){chunks.push(p);return m;});
+  return chunks.some(function(ch){
+    return (' '+ch+' ').split(CL_SPLIT).some(function(seg){
+      var w=clWords(seg.replace(/\b(?:ft|feat|featuring|prod)\b.*$/,' '));
+      var ks=Object.keys(w).filter(function(k){return !(art[k]&&!want[k]);});
+      return ks.length===wk.length&&ks.every(function(k){return want[k];});});});}
 function clStands(c,d){
   if(!c||typeof c.core!=='number'||c.core<CORE_KEEP) return false;
   if(CL_NOT_SAME[(c.gate&&c.gate.kind)||'']) return false;
-  if(c.core>=CORE_SAME) return true;
-  var want=clWords(d&&d.base_song); if(!want.length) return true;
-  var hay=' '+((c.title||'')+' '+(c.uploader||'')).toLowerCase().replace(/[^a-z0-9]+/g,' ')+' ';
-  return want.every(function(w){return w.length<5?hay.indexOf(' '+w+' ')>=0:hay.indexOf(w)>=0;});}
+  return clNamesSong(c.title,d);}
 function closestRow(d,rows){
   var cl=d&&d.closest, i;
   if(cl&&cl.kind==='song') return null;

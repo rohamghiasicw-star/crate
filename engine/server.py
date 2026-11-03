@@ -4539,30 +4539,63 @@ def _write_figs(res):
 _CLOSEST_NOT_SAME = ("othersong", "null")
 
 
+# THE TITLE MUST NAME THE SONG, NOT JUST CONTAIN ITS WORD (re-test 2026-11-04, test box). On kyks
+# (Shazam: "Three (Slowed)") the card picked "Animal Ive Become- Three Days Of Grace Slowed" at 25%:
+# core 1.000 (super slowed audio saturates core, findings/core-saturation.md), refused only for
+# tempo, and the old test passed it because "three" sits inside the band's name. "ACT A DAMN FOOL
+# - THREE 6 MAFIA" and "Three Days Grace - Gone Forever" passed too. Now a row stands only when one
+# part of its title (split at " - ", "|", "//", " x ", "vs", "+", "&", every bracket on its own) is
+# the song's own words and nothing else, once edit tags, a featured or producer credit and the
+# artist's name are taken out. Core alone, however high, no longer puts a row on the card. The page
+# mirrors this rule (crate.html clStands, CL_SKIP = _CLOSEST_TAGS; test_closest_pick checks both).
+_CLOSEST_TAGS = frozenset(_OTHER_SONG_SKIP | {
+    "speed", "slow", "perfectly", "super", "reverbed", "boost", "bassboosted", "looped",
+    "remastered", "remaster", "acoustic", "live", "lyric", "visualizer", "kbps", "mp3", "yt1s",
+    "chopped", "screwed", "ver"})
+_CLOSEST_SPLIT = re.compile(r"\s*[-–—|~]+\s+|\s+[-–—|~]+\s*|//|\s(?:x|vs\.?|versus|\+|&)\s")
+_CLOSEST_CREDIT = re.compile(r"\b(?:ft|feat|featuring|prod)\b.*$")
+
+
+def _closest_words(s):
+    """3+ letter words of `s`, apostrophes dropped (wouldn't = wouldn’t = wouldnt), folded to
+    ASCII, edit tags out."""
+    s = unicodedata.normalize("NFKD", (s or "").replace("'", "").replace("’", "")).lower()
+    s = s.encode("ascii", "ignore").decode()
+    return {w for w in re.findall(r"[a-z0-9]+", s) if len(w) >= 3 and w not in _CLOSEST_TAGS}
+
+
 def _closest_song_words(base_song):
-    """The identified song's own words, the _crown_other_song way (3+ letters, no tags, no
-    filler)."""
-    return {w for w in (E._title_key(base_song or "") or "").split()
-            if len(w) >= 3 and w not in _OTHER_SONG_SKIP and w not in _OTHER_SONG_COMMON}
+    """The identified song's own words: its title without the bracketed parts."""
+    return _closest_words(re.sub(r"[\(\[\{].*?[\)\]\}]", " ", base_song or ""))
 
 
-def _closest_usable(r, song_words):
+def _closest_names_song(title, song_words, artist_words=()):
+    """True when one part of `title` is exactly the song's words (see above)."""
+    if not song_words:
+        return False
+    drop = set(artist_words or ()) - set(song_words)
+    t = unicodedata.normalize("NFKD", title or "").lower().replace("×", " x ")
+    parts = re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t)
+    body = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", t)
+    for chunk in [body] + parts:
+        for seg in _CLOSEST_SPLIT.split(" %s " % chunk):
+            if (_closest_words(_CLOSEST_CREDIT.sub(" ", seg)) - drop) == song_words:
+                return True
+    return False
+
+
+def _closest_usable(r, song_words, artist_words=()):
     """Can this row stand as the closest version? Only an upload tied to the identified recording:
     core at CORE_KEEP or above (the card prints a figure for it, not a word), no engine verdict
-    that it is another song or texture only, and either every word of the song in its title or
-    uploader (short words whole, long words may run together, the _crown_other_song rule) or
-    core at CORE_SAME. A refusal for tempo, EQ, a speed-edit title or an official release still
-    says "this recording, another version", so those rows can stand."""
+    that it is another song or texture only, and a title that names the song
+    (_closest_names_song). A refusal for tempo, EQ, a speed-edit title or an official release
+    still says "this recording, another version", so those rows can stand."""
     core = r.get("core")
     if not isinstance(core, (int, float)) or core < E.CORE_KEEP:
         return False
     if ((r.get("gate") or {}).get("kind") or "") in _CLOSEST_NOT_SAME:
         return False
-    if core >= E.CORE_SAME or not song_words:
-        return True
-    hay = " ".join([E._title_key(r.get("title") or ""), E._title_key(r.get("uploader") or "")])
-    hw = set(hay.split())
-    return all((w in hw) if len(w) < 5 else (w in hay) for w in song_words)
+    return _closest_names_song(r.get("title"), song_words, artist_words)
 
 
 def _closest_key(r):
@@ -4584,7 +4617,8 @@ def _closest_pick(res, where="hunt"):
         ex = res.get("exact") or None
         rows = [r for r in (res.get("candidates") or []) if isinstance(r, dict) and r.get("url")]
         sw = _closest_song_words(res.get("base_song"))
-        ok = [r for r in rows if _closest_usable(r, sw)]
+        aw = _closest_words(res.get("base_artist"))
+        ok = [r for r in rows if _closest_usable(r, sw, aw)]
         if ex and (ex.get("url") or ex.get("title")):
             pick = {"kind": "crown", "url": ex.get("url"), "title": ex.get("title"),
                     "fig": ex.get("fig"), "why": "the crowned upload"}

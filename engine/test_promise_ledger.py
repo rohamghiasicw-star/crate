@@ -162,6 +162,29 @@ def found_bare(n):
     return d
 
 
+SC_BAND = "https://soundcloud.com/ledger-uploader/other-track-test-days-grace-slowed"
+SC_RIGHT = "https://soundcloud.com/ledger-uploader/cult-test-song-slowed-reverb"
+
+
+def nocrown_bandname(n):
+    """Fix 7 re-test (test box 2026-11-04, kyks "Three (Slowed)"): no crown, saved without the
+    engine's pick. The nearest-speed row reads core 1.000 but names another song that only holds
+    the song's word inside a band name ("Animal Ive Become- Three Days Of Grace Slowed"); the right
+    song sits further off the clip's speed at the same figure."""
+    d = _common(n)
+    d.update({"speed": "slowed", "edit_label": "slowed", "edit_certain": False, "fig_pitched": False,
+              "gates_on_rows": True, "decisive": False, "edits_pending": False, "exact": None,
+              "unsure": True, "weak_exact": 1.0,
+              "crown_rejected": "clip plays 7% faster than this upload, so it is a different edit of the same recording",
+              "candidates": [
+                  _row("Other Track- Test Days Of Grace Slowed", SC_BAND, "soundcloud", 1.0, 25, 1.0692, _tempo(7), 491937),
+                  _row("Cult - Test Song (slowed x reverb)", SC_RIGHT, "soundcloud", 1.0, 25, 0.601, _tempo(40), 900)],
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    return d
+
+
 def nomatch(n):
     return {"result": "no_match", "url": CLIP % n, "platform": "tiktok", "handle": "ledger.test"}
 
@@ -185,6 +208,7 @@ SCEN = {
     9: {"final": nocrown_closest(9), "hold": 300},                     # Fix 7: the engine's closest pick
     10: {"final": nocrown_closest(10, with_pick=False), "hold": 300},  # Fix 7: an older answer, no pick
     11: {"final": found_bare(11), "hold": 300},                        # Fix 7: a found answer with no upload
+    12: {"final": nocrown_bandname(12), "hold": 300},                  # Fix 7 re-test: band name holds the song word
 }
 
 
@@ -705,6 +729,20 @@ async def run_browser(L, html, chrome):
                     {"sects": f["sects"], "nca": f["nca"]})
             await ctx.close()
 
+        async def scen12():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 12)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("12 no crown, band name holds the song word", f)
+            top = [r for r in f["rows"] if r["top"]]
+            L.check("R38", "fix7", "A title that only holds the song's word (inside a band name) never reaches the "
+                                   "closest card, whatever its core",
+                    len(top) == 1 and top[0]["href"] == SC_RIGHT and top[0]["cf"] == "25% version match",
+                    {"top": top})
+            await ctx.close()
+
         # ---- 4. replay timing -----------------------------------------------------------------
         async def scen4():
             ctx = await context()
@@ -772,7 +810,8 @@ async def run_browser(L, html, chrome):
         for fn, label in (((scen1, "1. crowned scan: mid-hunt, then the final card"), (scen2, "2. no-crown scan with a preview"), (scen3, "3. no-crown, the links lookup timed out (empty links, no preview)"), (scen4, "4. replay timing"), (scen5, "5. share first paint"), (scen6, "6. paywall counters (the iOS StoreKit path)"),
                            (scen9, "9. no crown, the engine's closest pick (Fix 7)"),
                            (scen10, "10. no crown, an answer saved without the pick (Fix 7)"),
-                           (scen11, "11. found, no upload at all (Fix 7)"))):
+                           (scen11, "11. found, no upload at all (Fix 7)"),
+                           (scen12, "12. no crown, a band name holds the song word (Fix 7 re-test)"))):
             try:
                 await fn()
             except Exception as e:
