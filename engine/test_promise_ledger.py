@@ -136,7 +136,7 @@ def nocrown_closest(n, with_pick=True):
                   _row("Test Song x Other Song (Remix)", SC_OTHER, "soundcloud", 0.724, 23, 0.9625,
                        {"kind": "othersong", "why": "its fingerprint match (fp 0.596) is at the level unrelated "
                                                     "songs reach, so nothing proves it is this recording"}, 54),
-                  _row("Test Song (sped up)", SC_FAST, "soundcloud", 0.906, 25, 0.9018,
+                  _row("Test Artist - Test Song (sped up)", SC_FAST, "soundcloud", 0.906, 25, 0.9018,
                        {"kind": "tempo", "why": "clip plays 10% slower than this upload, so it is a different "
                                                 "edit of the same recording"}, 50909),
                   _row("Test Song (reverb)", SC_WEAK, "soundcloud", 0.30, None, 1.0, None, 12)],
@@ -144,7 +144,7 @@ def nocrown_closest(n, with_pick=True):
                          "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
               "preview_url": PREVIEW})
     if with_pick:
-        d["closest"] = {"kind": "upload", "url": SC_FAST, "title": "Test Song (sped up)", "fig": 25,
+        d["closest"] = {"kind": "upload", "url": SC_FAST, "title": "Test Artist - Test Song (sped up)", "fig": 25,
                         "why": "highest figure of 2 uploads tied to this recording, not crowned (tempo)"}
     return d
 
@@ -164,6 +164,7 @@ def found_bare(n):
 
 SC_BAND = "https://soundcloud.com/ledger-uploader/other-track-test-days-grace-slowed"
 SC_RIGHT = "https://soundcloud.com/ledger-uploader/cult-test-song-slowed-reverb"
+SC_SAMETITLE = "https://soundcloud.com/prosper-thegod/test-song"
 
 
 def nocrown_bandname(n):
@@ -178,7 +179,11 @@ def nocrown_bandname(n):
               "crown_rejected": "clip plays 7% faster than this upload, so it is a different edit of the same recording",
               "candidates": [
                   _row("Other Track- Test Days Of Grace Slowed", SC_BAND, "soundcloud", 1.0, 25, 1.0692, _tempo(7), 491937),
-                  _row("Cult - Test Song (slowed x reverb)", SC_RIGHT, "soundcloud", 1.0, 25, 0.601, _tempo(40), 900)],
+                  _row("Cult - Test Song (slowed x reverb)", SC_RIGHT, "soundcloud", 1.0, 25, 0.601, _tempo(40), 900),
+                  # Big League (2026-11-04): a same-titled song by another artist at core 0.622 (Shazam
+                  # names it another song); below CORE_SAME the artist must be named
+                  _row("Test Song - Prosper Thegod", SC_SAMETITLE, "soundcloud", 0.622, 60, 1.0, None, 50,
+                       uploader="Prosper Thegod")],
               "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
                          "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
               "preview_url": PREVIEW})
@@ -737,8 +742,8 @@ async def run_browser(L, html, chrome):
             f = await pg.evaluate(FACTS)
             closest_fact("12 no crown, band name holds the song word", f)
             top = [r for r in f["rows"] if r["top"]]
-            L.check("R38", "fix7", "A title that only holds the song's word (inside a band name) never reaches the "
-                                   "closest card, whatever its core",
+            L.check("R38", "fix7", "A title that only holds the song's word (inside a band name, any core) or a same-titled "
+                                   "song by another artist (core under CORE_SAME) never reaches the closest card",
                     len(top) == 1 and top[0]["href"] == SC_RIGHT and top[0]["cf"] == "25% version match",
                     {"top": top})
             await ctx.close()

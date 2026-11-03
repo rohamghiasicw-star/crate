@@ -89,15 +89,16 @@ class Pick(unittest.TestCase):
         self.assertEqual(last_log()["where"], "fast")
 
     def test_title_must_name_the_song_whatever_the_core(self):
-        named = row("Hymn For The Weekend (slowed)", "https://sc/named", 0.70, 55)
+        named = row("Coldplay - Hymn For The Weekend (slowed)", "https://sc/named", 0.70, 55)
         other = row("Some Other Track (slowed)", "https://sc/other", 0.80, 70)
         sure = row("untitled upload", "https://sc/sure", 0.97, 60)
-        sw = S._closest_song_words("Hymn for the Weekend")
+        sw, an = S._closest_song_words("Hymn for the Weekend"), S._closest_artist_names("Coldplay")
         self.assertEqual(sw, {"hymn", "for", "weekend"})
-        self.assertTrue(S._closest_usable(named, sw))
-        self.assertFalse(S._closest_usable(other, sw))      # 0.80 and no song words: cannot stand
-        self.assertFalse(S._closest_usable(sure, sw))       # core 0.97 alone no longer stands
+        self.assertTrue(S._closest_usable(named, sw, (), an))
+        self.assertFalse(S._closest_usable(other, sw, (), an))      # 0.80 and no song words: cannot stand
+        self.assertFalse(S._closest_usable(sure, sw, (), an))       # core 0.97 alone no longer stands
         res = found([other, named, sure], song="Hymn for the Weekend")
+        res["base_artist"] = "Coldplay"
         S._closest_pick(res)
         self.assertEqual(res["closest"]["url"], "https://sc/named")
 
@@ -116,6 +117,23 @@ class Pick(unittest.TestCase):
         self.assertEqual((res["closest"]["kind"], res["closest"]["url"]), ("upload", "https://sc/cult"))
         stood = {r[0][:19] for r in last_log()["rows"] if r[5]}
         self.assertEqual(stood, {"Cult Member - Three"})
+
+    def test_big_league_a_same_titled_song_by_someone_else_cannot_stand(self):
+        """Test box 2026-11-04, Big League (IG DeE4Gy2xjUN): "Big league.     Prosper x Tokyo" (core
+        0.622, Shazam: Metizone "Nova Spiral") reached the card at 17%."""
+        rows = [row("Big Baby Tape, 163ONMYNECK, PHARAOH, FACE - FIZZYBREW [HOODTRAP REMIX]", "https://sc/fizzy",
+                    0.711, 20, 0.9002, TEMPO, uploader="eclipsex"),
+                row("Big league.     Prosper x Tokyo", "https://sc/prosper", 0.622, 17, 0.7507, TEMPO,
+                    uploader="Prosper Thegod")]
+        res = found(rows, song="Big League")
+        res["base_artist"] = "Lil Baby & 42 Dugg"
+        S._closest_pick(res)
+        self.assertEqual((res["closest"]["kind"], res["closest"]["url"]), ("song", None))
+        self.assertEqual(S._closest_artist_names("Lil Baby & 42 Dugg"), [{"lil", "baby"}, {"dugg"}])
+        ok = row("42 Dugg - Big League (slowed)", "https://sc/ok", 0.70, 30, 0.9, TEMPO)
+        self.assertTrue(S._closest_usable(ok, S._closest_song_words("Big League"),
+                                          S._closest_words("Lil Baby & 42 Dugg"),
+                                          S._closest_artist_names("Lil Baby & 42 Dugg")))
 
     def test_title_parts(self):
         sw, aw = S._closest_song_words("nuts (feat. rainy bear)"), S._closest_words("Lil Peep")
@@ -148,9 +166,9 @@ class Pick(unittest.TestCase):
         skip = _re.search(r"var CL_SKIP=/\^\(([^)]*)\)\$/;", html).group(1).split("|")
         self.assertEqual({w for w in skip if len(w) >= 3}, {w for w in S._CLOSEST_TAGS if len(w) >= 3})
         js = []
-        for name in ("CL_NOT_SAME", "CL_SKIP", "CL_SPLIT"):
+        for name in ("CL_NOT_SAME", "CL_SKIP", "CL_SPLIT", "CL_ASPLIT"):
             js.append(_re.search(r"^var %s=.*$" % name, html, _re.M).group(0))
-        for fn in ("clWords", "clNamesSong", "clStands"):
+        for fn in ("clWords", "clNamesSong", "clArtistNamed", "clStands"):
             m = _re.search(r"^function %s\(.*?(?=^function |^var |^/\*)" % fn, html, _re.M | _re.S)
             js.append(m.group(0))
         cases = [("Three (Slowed)", "42RAIN", "Animal Ive Become- Three Days Of Grace Slowed"),
@@ -167,29 +185,44 @@ class Pick(unittest.TestCase):
                  ("Blow (Electro Remix)", "Hoodfellas", "Kesha – Blow (Hoodtrap Remix)"),
                  ("Hymn for the Weekend", "Coldplay", "HYMN FOR THE WEEKEND - BASS BOOSTED // SPED UP"),
                  ("Love Me Like You Do", "Ellie Goulding", "love me like you do slowed"),
-                 ("One", "Metallica", "One (slowed)")]
-        prog = ("var CORE_KEEP=0.5;\n%s\nvar C=%s;\nconsole.log(JSON.stringify(C.map(function(c){"
-                "return clStands({core:1,title:c[2]},{base_song:c[0],base_artist:c[1]});})));"
-                % ("\n".join(js), json.dumps(cases)))
+                 ("One", "Metallica", "One (slowed)"),
+                 ("Big League", "Lil Baby & 42 Dugg", "Big league.     Prosper x Tokyo"),
+                 ("Big League", "Lil Baby & 42 Dugg", "42 Dugg - Big League (slowed)")]
+        # every title at core 1.0 (no artist needed) and at 0.7 (artist needed), plus uploader cases
+        rows = [(s_, a_, t_, "", c_) for c_ in (1.0, 0.7) for s_, a_, t_ in cases]
+        rows += [("nuts", "Lil Peep", "nuts slowed", "LiL PEEP edits", 0.7),
+                 ("Big League", "Lil Baby & 42 Dugg", "Big league.     Prosper x Tokyo", "Prosper Thegod", 0.622),
+                 ("Big League", "Lil Baby & 42 Dugg", "Big League", "lil baby fan", 0.6)]
+        prog = ("var CORE_KEEP=0.5, CORE_SAME=0.95;\n%s\nvar C=%s;\nconsole.log(JSON.stringify(C.map(function(c){"
+                "return clStands({core:c[4],title:c[2],uploader:c[3]},{base_song:c[0],base_artist:c[1]});})));"
+                % ("\n".join(js), json.dumps(rows)))
         f = os.path.join(TMP, "cl.js")
         open(f, "w", encoding="utf-8").write(prog)
         got = json.loads(subprocess.run([node, f], capture_output=True, text=True, check=True).stdout)
-        want = [S._closest_usable({"core": 1.0, "title": t}, S._closest_song_words(s), S._closest_words(a))
-                for s, a, t in cases]
+        want = [S._closest_usable({"core": c, "title": t, "uploader": u}, S._closest_song_words(s), S._closest_words(a),
+                                  S._closest_artist_names(a)) for s, a, t, u, c in rows]
         self.assertEqual(got, want)
-        self.assertEqual(want, [False, True, False, True, True, True, True, True, False, True, True, True, True])
+        n = len(cases)
+        self.assertEqual(want[:n], [False, True, False, True, True, True, True, True, False, True, True, True, True,
+                                    False, True])
+        self.assertEqual(want[n:2 * n], [False, False, False, True, True, True, False, True, False, False, False,
+                                         False, False, False, True])
+        self.assertEqual(want[2 * n:], [True, False, True])
 
     def test_texture_only_and_unconfirmed_rows_cannot_stand(self):
-        sw = S._closest_song_words("nuts")
-        self.assertFalse(S._closest_usable(row("nuts", "u", 1.0, 45, gate="null"), sw))
-        self.assertFalse(S._closest_usable(row("nuts", "u", 0.49, None), sw))
-        self.assertFalse(S._closest_usable(row("nuts", "u", None, None), sw))
-        self.assertTrue(S._closest_usable(row("nuts", "u", 0.5, 50), sw))
+        sw, an = S._closest_song_words("nuts"), S._closest_artist_names("Lil Peep")
+        self.assertFalse(S._closest_usable(row("nuts", "u", 1.0, 45, gate="null"), sw, (), an))
+        self.assertFalse(S._closest_usable(row("lil peep - nuts", "u", 0.49, None), sw, (), an))
+        self.assertFalse(S._closest_usable(row("lil peep - nuts", "u", None, None), sw, (), an))
+        self.assertTrue(S._closest_usable(row("lil peep - nuts", "u", 0.5, 50), sw, (), an))
+        self.assertTrue(S._closest_usable(row("nuts", "u", 0.5, 50, uploader="LiL PEEP slowed"), sw, (), an))
+        self.assertFalse(S._closest_usable(row("nuts", "u", 0.94, 50), sw, (), an))   # no artist, under CORE_SAME
+        self.assertTrue(S._closest_usable(row("nuts", "u", 0.95, 50), sw, (), an))    # CORE_SAME needs no artist
 
     def test_ties_go_to_the_smaller_speed_gap_then_core_then_plays(self):
-        a = row("nuts a", "https://sc/a", 0.9, 40, 1.10)
-        b = row("nuts b", "https://sc/b", 0.8, 40, 0.95)
-        c = row("nuts c", "https://sc/c", 0.9, 40, 0.95, plays=10)
+        a = row("lil peep - nuts a", "https://sc/a", 0.9, 40, 1.10)
+        b = row("lil peep - nuts b", "https://sc/b", 0.8, 40, 0.95)
+        c = row("lil peep - nuts c", "https://sc/c", 0.9, 40, 0.95, plays=10)
         res = found([a, b, c])
         S._closest_pick(res)
         self.assertEqual(res["closest"]["url"], "https://sc/c")

@@ -4125,10 +4125,19 @@ function clNamesSong(title,d){
       var w=clWords(seg.replace(/\b(?:ft|feat|featuring|prod)\b.*$/,' '));
       var ks=Object.keys(w).filter(function(k){return !(art[k]&&!want[k]);});
       return ks.length===wk.length&&ks.every(function(k){return want[k];});});});}
+/* A SAME-TITLED SONG BY SOMEONE ELSE (server _closest_artist_named): on Big League the card picked
+   "Big league.     Prosper x Tokyo" at core 0.622, which Shazam calls another song. Below
+   CORE_SAME the title or uploader must name the identified artist too (every word of one name). */
+var CL_ASPLIT=/\s*(?:,|&|\/|\bx\b|\band\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*/;
+function clArtistNamed(c,d){
+  var hay=clWords((c.title||'')+' '+(c.uploader||''));
+  return String((d&&d.base_artist)||'').normalize('NFKD').toLowerCase().split(CL_ASPLIT).some(function(p){
+    var k=Object.keys(clWords(p)); return k.length>0&&k.every(function(w){return hay[w];});});}
 function clStands(c,d){
   if(!c||typeof c.core!=='number'||c.core<CORE_KEEP) return false;
   if(CL_NOT_SAME[(c.gate&&c.gate.kind)||'']) return false;
-  return clNamesSong(c.title,d);}
+  if(!clNamesSong(c.title,d)) return false;
+  return c.core>=CORE_SAME||clArtistNamed(c,d);}
 function closestRow(d,rows){
   var cl=d&&d.closest, i;
   if(cl&&cl.kind==='song') return null;

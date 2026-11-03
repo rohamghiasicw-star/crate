@@ -4584,18 +4584,42 @@ def _closest_names_song(title, song_words, artist_words=()):
     return False
 
 
-def _closest_usable(r, song_words, artist_words=()):
+# A SAME-TITLED SONG BY SOMEONE ELSE (re-test 2026-11-04). On Big League (IG DeE4Gy2xjUN, Lil Baby &
+# 42 Dugg) the card picked "Big league.     Prosper x Tokyo" (uploader Prosper Thegod) at 17%: core
+# 0.622, refused only for tempo. Shazam calls that upload Metizone "Nova Spiral", another song, and
+# a third row on the same clip ("Big Baby Tape ... FIZZYBREW", Shazam: PHARAOH "Шипучка") read core
+# 0.711. Core between CORE_KEEP and CORE_SAME is not proof of the song on its own, so below
+# CORE_SAME the title or uploader must also name the identified artist (every word of one of the
+# names in the credit).
+_CLOSEST_ARTIST_SPLIT = re.compile(r"\s*(?:,|&|/|\bx\b|\band\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*")
+
+
+def _closest_artist_names(base_artist):
+    """The credit's names, each as its word set: "Lil Baby & 42 Dugg" -> [{lil, baby}, {dugg}]."""
+    t = unicodedata.normalize("NFKD", base_artist or "").lower()
+    return [w for w in (_closest_words(p) for p in _CLOSEST_ARTIST_SPLIT.split(t)) if w]
+
+
+def _closest_artist_named(r, artist_names):
+    hay = _closest_words("%s %s" % (r.get("title") or "", r.get("uploader") or ""))
+    return any(n <= hay for n in artist_names or ())
+
+
+def _closest_usable(r, song_words, artist_words=(), artist_names=()):
     """Can this row stand as the closest version? Only an upload tied to the identified recording:
     core at CORE_KEEP or above (the card prints a figure for it, not a word), no engine verdict
-    that it is another song or texture only, and a title that names the song
-    (_closest_names_song). A refusal for tempo, EQ, a speed-edit title or an official release
-    still says "this recording, another version", so those rows can stand."""
+    that it is another song or texture only, a title that names the song (_closest_names_song),
+    and below CORE_SAME the artist named too (_closest_artist_named). A refusal for tempo, EQ, a
+    speed-edit title or an official release still says "this recording, another version", so
+    those rows can stand."""
     core = r.get("core")
     if not isinstance(core, (int, float)) or core < E.CORE_KEEP:
         return False
     if ((r.get("gate") or {}).get("kind") or "") in _CLOSEST_NOT_SAME:
         return False
-    return _closest_names_song(r.get("title"), song_words, artist_words)
+    if not _closest_names_song(r.get("title"), song_words, artist_words):
+        return False
+    return core >= E.CORE_SAME or _closest_artist_named(r, artist_names)
 
 
 def _closest_key(r):
@@ -4618,7 +4642,8 @@ def _closest_pick(res, where="hunt"):
         rows = [r for r in (res.get("candidates") or []) if isinstance(r, dict) and r.get("url")]
         sw = _closest_song_words(res.get("base_song"))
         aw = _closest_words(res.get("base_artist"))
-        ok = [r for r in rows if _closest_usable(r, sw, aw)]
+        an = _closest_artist_names(res.get("base_artist"))
+        ok = [r for r in rows if _closest_usable(r, sw, aw, an)]
         if ex and (ex.get("url") or ex.get("title")):
             pick = {"kind": "crown", "url": ex.get("url"), "title": ex.get("title"),
                     "fig": ex.get("fig"), "why": "the crowned upload"}
