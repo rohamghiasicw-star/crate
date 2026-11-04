@@ -72,11 +72,13 @@ jobs:
         with:
           path: src
       - name: Unpack app and kit
+        env:
+          XC: ${{ matrix.xcode }}
         run: |
           mkdir -p /tmp/kit out/inventory
           ditto -x -k simapp.zip /tmp/app && cp app-info.txt out/
           cat > /tmp/pack.b64 <<'EOF'
-          H4sIAFfo6moC/+y963bbRrIwOr/1FAizbZEJCRLgnQrjkW051sQXbUlOJlvW4gIBUEQEAgwA6hJJWd9rnNc7T3Lq0g00SJCSrUzm
+          H4sIALDo6moC/+y963bbRrIwOr/1FAizbZEJCRLgnQrjkW051sQXbUlOJlvW4gIBUEQEAgwA6hJJWd9rnNc7T3Lq0g00SJCSrUzm
           fHuslZhAoy/V1dXVVdXV1Xpdr//9wLp67VqOG/3tX/LX4L91v41Gs5U9Y7rRMA3zb9rV3/6Cv0WcWBE0/7f/zD+zp80Sb+YOjW6/
           2YX/Oz29Y7Q6Rrez9bcvf//r/+JkMdbn1//SNnBSd1o8x7ud9tL8N1tGs/03o212zXanabYNmP9mp9n8m9b4K+d/FE6t2dnUs2Kv
           MN/l1HX9/33j//VX9UUc1cdeUHeDC21+nUzDoLlVKpXehLbla8dvjjSkEW0SRpqlxd5s4VsJPPvWdbhItEvLP9e1d6HmBmde4Gpj
@@ -472,7 +474,7 @@ jobs:
           AA==
           EOF
           base64 -D -i /tmp/pack.b64 -o /tmp/pack.tgz && tar -xzf /tmp/pack.tgz -C /tmp/kit && ls -la /tmp/kit
-          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer"
+          sudo xcode-select -s "/Applications/Xcode_$XC.app/Contents/Developer"
           xcodebuild -version | tee out/xcode.txt; sw_vers | tee -a out/xcode.txt
           python3 -m pip install --user --break-system-packages -q pillow 2>&1 | tail -2 || python3 -m pip install --user -q pillow 2>&1 | tail -2 || true
       - name: Inventory (every installed Xcode 27.x, device types, runtimes)
