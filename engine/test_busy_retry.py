@@ -25,6 +25,11 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
   Q12 listen mode: /listen busy twice, then found -> song, 3 /listen requests, no busy card
   Q13 listen mode: /listen busy every time -> busy card after 3 requests; Try again sends the
       same recording again (a 4th /listen), it does not just go home
+  round 3 (the engine waits for Shazam's room inside one ask and says so on /progress "sw"):
+  Q14 /base answers after 40 s while /progress reports a Shazam wait from 2 s -> song, no busy
+      card; the dial never goes back, stays under 95 and is still moving in the last 20 s
+  Q15 the same 40 s /base with no wait reported -> the dial passes 96 (the plain timeline: Q14's
+      slower dial comes from the wait signal)
 
 usage:  /usr/bin/python3 test_busy_retry.py [--page crate.html] [--only Q1,Q2] [--expect-old]
 --expect-old runs Q1 and Q8 against a page WITHOUT the fix and passes when the busy card shows
@@ -96,6 +101,11 @@ class Engine:
         acts = self.plan.get(path) or [FOUND]
         return acts[min(n, len(acts) - 1)]
 
+    def _answer(self, path):
+        """round 3: an answer may carry "_delay" (seconds before it is sent, a long ask)"""
+        ans = dict(self._next(path))
+        return ans.pop("_delay", 0), ans
+
     async def handle(self, route):
         req = route.request
         full = req.url.split(ORIGIN, 1)[-1]
@@ -109,14 +119,26 @@ class Engine:
                   "phone_probes": {"on": False}}
             return await route.fulfill(status=200, content_type="application/json", body=json.dumps(hb))
         if path in ("/base", "/edits", "/find", "/listen"):
+            delay, ans = self._answer(path)
+            if delay:
+                await asyncio.sleep(delay)
             return await route.fulfill(status=200, content_type="application/json",
-                                       body=json.dumps(self._next(path)))
+                                       body=json.dumps(ans))
         if path == "/edits/stream":
             ans = self._next(path)
             body = "retry: 3600000\n\nevent: done\ndata: %s\n\n" % json.dumps(ans)
             return await route.fulfill(status=200, content_type="text/event-stream; charset=utf-8", body=body)
         if path == "/progress":
-            return await route.fulfill(status=200, content_type="application/json", body="{}")
+            pr = {}
+            sw_from = self.plan.get("sw_from")           # round 3: the engine waits on Shazam from here
+            if sw_from is not None:
+                t_b = self.base_times()
+                if t_b:
+                    el = time.time() - t_b[0]
+                    pr = {"pct": 24, "label": "Building the fingerprint"}
+                    if el > sw_from:
+                        pr["sw"] = round(el - sw_from, 1)
+            return await route.fulfill(status=200, content_type="application/json", body=json.dumps(pr))
         if path == "/trending":
             return await route.fulfill(status=200, content_type="application/json", body='{"rows":[]}')
         return await route.fulfill(status=404, content_type="application/json", body='{"error":"not found"}')
@@ -343,6 +365,35 @@ async def amain(a):
                                {"/listen": [busy("shazam", 2)]}, steps=steps13, listen=True)
             ok = (r.get("listen_at_card") == 3 and r.get("listen_after_try_again", 0) >= 4
                   and r.get("state_after_try_again") != "idle")
+            res.append((r, ok))
+        for qn, sw_from in (("Q14", 2), ("Q15", None)):
+            if not want(qn) or a.expect_old:
+                continue
+
+            async def steps14(page, eng, ctx):
+                vals = []
+                t_end = time.time() + 39
+                while time.time() < t_end:
+                    try:
+                        vals.append(await page.evaluate("Math.round(pgNow*100)/100"))
+                    except Exception:
+                        vals.append(None)
+                    await page.wait_for_timeout(1000)
+                await wait_for(page, song, 20)
+                return {"dial_each_s": vals}
+            plan = {"/base": [dict(FOUND, _delay=40)]}
+            if sw_from is not None:
+                plan["sw_from"] = sw_from
+            r = await run_case(pw, html, qn + (" a 40 s ask waiting on Shazam: the dial slows" if sw_from is not None
+                                               else " a 40 s ask, no wait reported (control)"),
+                               plan, steps=steps14, secs=70)
+            v = [x for x in r.get("dial_each_s", []) if isinstance(x, (int, float))]
+            mono = all(b >= a_ for a_, b in zip(v, v[1:]))
+            if sw_from is not None:
+                ok = (song(r["cards"]) and not busy_cards(r["cards"]) and len(v) >= 30 and mono
+                      and max(v) < 95 and v[-1] > v[-20])
+            else:
+                ok = song(r["cards"]) and len(v) >= 30 and mono and max(v) > 96
             res.append((r, ok))
         if want("Q8"):
             r = await run_case(pw, html, "Q8 busy (scan gate queue) then found",

@@ -2721,7 +2721,15 @@ var DVP={
   // its creep and eases toward 99.6 (tau 4.5 s, ramped in over kramp), so it keeps
   // moving through the tail instead of sitting at 96-97. rlText floors, so it reads 99 at
   // most; only the answer says 100.
-  wtop:99.6, wtau:4.5};
+  wtop:99.6, wtau:4.5,
+  // FIX 4 round 3 (issue #11): A LONG SCAN. Once the engine has waited a while for Shazam
+  // (/progress "sw") or the page asks again quietly after a busy answer, the dial stops trusting
+  // its usual timeline: from where it stands it climbs in a straight line to wto, reached at
+  // wend (whz s after the scan started, at least wext s from now), and never faster than its own
+  // curve. It never stops, never jumps, never goes back; a wait that outlives wend starts a new
+  // line over the next wext s. Without it the needle read 99 from 106 s on (Thunder on the test
+  // box took 205 s).
+  wto:98.6, whz:240, wext:120};
 /* seconds past 90 at which the steady creep reaches `top` */
 function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau)/P.c); }
 /* the steady curve at virtual second x: [value, speed] */
@@ -2731,7 +2739,14 @@ function dvCurve(P,x){
   if(d<=D1){ val+=P.c*d; sp+=P.c; }
   else { s=d-D1; eb=Math.exp(-s/P.tau2); val+=P.c*D1+P.cf*s+(P.c-P.cf)*P.tau2*(1-eb); sp+=P.cf+(P.c-P.cf)*eb; }
   return val>=DVP.lim?[DVP.lim,0]:[val,sp]; }
-function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null,w:0,wk:0}; }
+function dvNew(P,now){ return {P:P,t:now,t0:now,x:0,k:1,E:0,val:0,sp:0,fin:null,w:0,wk:0,wt0:0,wv0:0,wend:0}; }
+/* FIX 4 round 3: a long scan (see wto above). `minEnd`: the line must not reach wto before it
+   (a quiet retry's wait); a new line starts only when the old one is near its end or too short */
+function dvWait(s,now,minEnd){
+  if(!s||s.fin) return;
+  minEnd=+minEnd||0;
+  if(!s.wend){ s.wt0=now; s.wv0=s.val; s.wend=Math.max(minEnd,now+DVP.wext,s.t0+DVP.whz); return; }
+  if(minEnd>s.wend||now>s.wend-DVP.wext/2){ s.wt0=now; s.wv0=s.val; s.wend=Math.max(minEnd,now+DVP.wext); } }
 /* HUNT BUDGET: the engine is wrapping up: past 90 the dial takes its final stretch */
 function dvWrap(s){ if(s&&!s.fin) s.w=1; }
 /* the engine says this dial should be at least at E: speed up (never jump) until it is */
@@ -2745,7 +2760,10 @@ function dvStep(s,now){
     if(u>=1) h=100; if(h>s.val) s.val=h; return s.val; }
   kt=s.E>s.val+.5?DVP.kmax:1; dk=(DVP.kmax-1)*dt/DVP.kramp;
   s.k=kt>s.k?Math.min(kt,s.k+dk):Math.max(kt,s.k-dk);
-  s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k; if(c[0]>s.val) s.val=c[0];
+  s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k;
+  if(s.wend){ f=(DVP.wto-s.wv0)/Math.max(1,s.wend-s.wt0);   // FIX 4 round 3: a long scan's line
+    u=s.wv0+f*Math.max(0,now-s.wt0); if(u<c[0]){ c=[Math.min(u,DVP.wto),f]; s.sp=Math.min(s.sp,f); } }
+  if(c[0]>s.val) s.val=c[0];
   if(s.w&&s.val>=s.P.e&&s.val<DVP.wtop){       // the final stretch (dvWrap), never backwards
     s.wk=Math.min(1,s.wk+dt/DVP.kramp);
     s.val+=(DVP.wtop-s.val)*(1-Math.exp(-dt/DVP.wtau))*s.wk;
@@ -2782,6 +2800,13 @@ function pgMark(name){
   pgStg=name;
   if(pgS&&!pgLock&&DVP.ahead[name]!=null) dvAhead(pgS,DVP.ahead[name]); }
 function pgStageAt(name){return PG_ORDER.indexOf(pgStg)>=PG_ORDER.indexOf(name);}
+/* FIX 4 round 3: a long scan. The engine has waited PG_WAIT_SW s or more for Shazam's room
+   (/progress "sw"), or the page is about to ask again quietly after a busy answer (`secs`: its
+   wait, plus room for the next ask): the naming dial climbs in a straight line from where it is
+   (dvWait), so a scan that takes minutes keeps a moving number below 99. A short wait (live's
+   one 4 s hold) is below PG_WAIT_SW and changes nothing. */
+var PG_WAIT_SW=8, PG_WAIT_ASK=60;
+function pgWaitFor(secs){ var now=pgClock(); if(pgS&&!pgLock) dvWait(pgS,now,secs?now+secs:0); }
 function pgTick(){
   var now=pgClock(), v;
   if(pgS&&!pgLock){ v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } }
@@ -3162,6 +3187,7 @@ function progPollOn(u){
         // 96), so it only tells us which step the engine has passed. pgMark turns that into
         // the dial's floor for the real time frame. Never 100; only finishing may say 100.
         if(p.label&&p.label!==pgLabel){ pgLabel=p.label; if(!namedEarly&&!pgStageAt('base')) pgScanLabel(p.label); }
+        if(p.sw>=PG_WAIT_SW&&!pgStageAt('base')) pgWaitFor(0);   // FIX 4 round 3: a long wait on Shazam
         if(p.pct>=18) pgMark('audio');
         if(pgStageAt('base')){          // hunt steps only count once the song is in
           // PROGRESS 2026-09-29: the engine's counts feed the hunt (DIALV3: pgHunt -> the tracker
@@ -6113,8 +6139,9 @@ var scanTok=0, p1Busy=false, SCAN_ID='';
    Shazam's own refusals taught it; for a scan keeping its place in the engine's line, a few
    seconds), held inside [BUSY_QUIET_MIN, BUSY_QUIET_MAX] seconds. Two quiet retries always.
    FIX 4 round 2: more only while the engine says asking again is getting somewhere (d.quiet: a
-   Shazam ask that got new answers, which the engine keeps for the next ask, or a scan holding
-   its place in the line), up to BUSY_QUIET_SECS seconds in all (BUSY_QUIET_ASKS asks at most:
+   Shazam ask that got new answers, which the engine keeps for the next ask (round 3: answers
+   replayed from that memo do not count), or a scan holding its place in the line), up to
+   BUSY_QUIET_SECS seconds in all (BUSY_QUIET_ASKS asks at most:
    a line of 20 people on 3 slots takes about 4 minutes to reach the last of them). The
    scan screen stays exactly as it is meanwhile (same headline, same dial, no new step), and
    only an answer still busy after that shows the busy card. Back or a new scan stops the
@@ -6130,6 +6157,7 @@ function baseCall(u,tok){var n=0, t0=Date.now();
   function ask(){return call('/base',u,{kit:true,guard:true,qr:n,alive:function(){return tok===scanTok;}}).then(function(d){
     if(tok!==scanTok||KIT_MOVED) return d;
     var w=busyAgain(d,n,t0); if(w<0) return d;
+    pgWaitFor(w+PG_WAIT_ASK);   // FIX 4 round 3: the dial keeps moving through the quiet retry
     n++; return netSleep(w*1000).then(function(){return tok===scanTok?ask():d;});});}
   return ask();}
 function run(raw){if(busy) return;
