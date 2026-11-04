@@ -498,12 +498,13 @@ FORCED = _contextvars.ContextVar("addify_scan_forced", default=False)
 def scan_begin():
     # answered: calls Shazam itself answered for this scan (memo hits are counted apart).
     # FIX 4, set by server.py: patient = True, False or a callable: does this scan keep waiting
-    # for Shazam's room through refusals (round 3), or stop at its second refusal? waiting /
-    # wait_t0: probes of this scan waiting for a slot right now, and since when (/progress "sw").
+    # for Shazam's room through refusals (round 3), or stop at its second refusal? wait_t0: since
+    # when this scan has been waiting for Shazam without an answer (a refusal or a slot wait
+    # started it, its next answer ends it; /progress "sw").
     d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
          "timeouts": 0, "why": None, "deadline": DEADLINE.get(), "memo": 0,
          "forced": bool(FORCED.get()), "answered": 0, "patient": False,
-         "waiting": 0, "wait_t0": None, "refused": 0}
+         "wait_t0": None, "refused": 0}
     SCAN.set(d)
     return d
 
@@ -518,10 +519,14 @@ def _patient(scan):
 
 
 def shazam_waiting(scan):
-    """Seconds this scan's probes have been waiting for Shazam right now, or 0.0 (/progress)."""
-    if not scan or not scan.get("waiting") or not scan.get("wait_t0"):
-        return 0.0
-    return max(0.0, _time.time() - scan["wait_t0"])
+    """Seconds this scan has been waiting for Shazam without an answer, or 0.0 (/progress)."""
+    t = (scan or {}).get("wait_t0")
+    return max(0.0, _time.time() - t) if t else 0.0
+
+
+def _wait_mark(scan, t=None):
+    if scan is not None and not scan.get("wait_t0"):
+        scan["wait_t0"] = t or _time.time()
 
 
 # SHAZAM ANSWER MEMO (Fix 4, issue #11, 2026-11-01). Shazam lets one datacenter IP make about 5
@@ -639,7 +644,6 @@ class _Pacer(object):
             me = (prio, self.seq)
             self.waiters[me] = me
         t_in = _time.time()
-        waiting = False
         try:
             while True:
                 with self.lock:
@@ -677,22 +681,13 @@ class _Pacer(object):
                         raise Throttled("no Shazam slot for %.0fs (cap %.0fs)"
                                         % (at - t_in, max(0.0, cap)))
                     nap = min(0.25, max(0.02, at - now))
-                    if scan is not None and not waiting and at - now > 0.5:
-                        waiting = True              # /progress "sw": this scan waits on Shazam
-                        scan["waiting"] = scan.get("waiting", 0) + 1
-                        if scan["waiting"] == 1:
-                            scan["wait_t0"] = t_in
+                    if at - now > 0.5:
+                        _wait_mark(scan, t_in)      # /progress "sw": this scan waits on Shazam
                 await asyncio.sleep(nap)
         except BaseException:
             with self.lock:
                 self.waiters.pop(me, None)
             raise
-        finally:
-            if waiting:
-                with self.lock:
-                    scan["waiting"] = max(0, scan.get("waiting", 1) - 1)
-                    if not scan["waiting"]:
-                        scan["wait_t0"] = None
 
     def answered(self, t_sent=None):
         with self.lock:
@@ -866,6 +861,8 @@ async def _paced_shazamio(path, timeout, scan):
             await _PACER.acquire(scan)
         except Throttled:
             _scan_throttled(scan, "slot")
+            if scan is not None:
+                scan["wait_t0"] = None
             raise
         t_sent = _time.time()
         left = max(0.5, timeout - sig_s) if attempt == 1 else timeout
@@ -886,7 +883,10 @@ async def _paced_shazamio(path, timeout, scan):
             raise
         except _Refused as e:
             _PACER.refused(e.status, scan)
+            _wait_mark(scan)
             if attempt >= 2 and (attempt >= PACE_MAX_TRIES or not _patient(scan)):
+                if scan is not None:
+                    scan["wait_t0"] = None
                 with _PACER.lock:
                     _PACER.stats["throttled"] += 1
                 _scan_throttled(scan, "http %s" % e.status if isinstance(e.status, int)
@@ -896,6 +896,7 @@ async def _paced_shazamio(path, timeout, scan):
         _PACER.answered(t_sent)
         if scan is not None:
             scan["answered"] = scan.get("answered", 0) + 1
+            scan["wait_t0"] = None       # an answer: this scan is not waiting any more
         ans = _shazamio_answer(out)
         _memo_put(mkey, ans)
         return ans

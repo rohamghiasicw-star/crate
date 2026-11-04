@@ -438,6 +438,35 @@ class Probe(unittest.TestCase):
         self.assertGreater(seen[0], 0.9)
         self.assertEqual(seen[1], 0.0)
 
+    def test_waiting_spans_refusals(self):
+        """Through a run of refusals the wait is one wait (the page acts from 8 s), and the
+        scan's next answer ends it."""
+        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
+        self.up.n[int((time.time() - self.up.t0) / self.up.W)] = self.up.CAP   # window full now
+        seen = []
+
+        async def run():
+            tok = F.DEADLINE.set(time.time() + 12)
+            d = F.scan_begin()
+            F.DEADLINE.reset(tok)
+            d["patient"] = True
+
+            async def look():
+                for _ in range(40):
+                    seen.append(F.shazam_waiting(d))
+                    await asyncio.sleep(0.1)
+                    if d["answered"]:
+                        break
+            await asyncio.gather(F.shazam_call("/tmp/w_0.wav", 2.0, meta=(0.0, 1.0)), look())
+            seen.append(F.shazam_waiting(d))
+            return d
+        loop = asyncio.new_event_loop()
+        d = loop.run_until_complete(run())
+        loop.close()
+        self.assertGreaterEqual(d["http429"], 2)              # it kept asking through refusals
+        self.assertGreater(max(seen), 1.0)                    # longer than one hold (0.2-0.3 s)
+        self.assertEqual(seen[-1], 0.0)                       # answered: not waiting
+
     def test_deadline_still_caps_the_wait(self):
         now = time.time()
         with F._PACER.lock:
