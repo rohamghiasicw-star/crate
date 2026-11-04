@@ -62,11 +62,12 @@ QUEUE_PLACE_S = float(os.environ.get("ADDIFY_QUEUE_PLACE_S", "180") or 0)
 PLACE_RETRY_S = int(os.environ.get("ADDIFY_PLACE_RETRY_S", "3") or 3)
 # FIX 4: requests from these User-Agent prefixes are background jobs (`batch`), like a request
 # that sends X-Addify-Batch: 1: they never take the gate's last free slot. Comma-separated.
-# addify-prewarm = prewarm.py; appflow/ = the server kit's appflow.py, which regress.sh runs on
-# a server's own engine (round 2: it never declared itself, so a regression run could take the
-# slot a real person needed). X-Addify-Batch: 0 makes any request a user scan again.
-BATCH_UAS = tuple(u.strip() for u in (os.environ.get("ADDIFY_BATCH_UA",
-                                                     "addify-prewarm,appflow/")
+# addify-prewarm = prewarm.py (which also sends the header). X-Addify-Batch: 0 makes any request
+# a user scan again. Round 3: the server kit's appflow.py is NOT on this list. regress.sh runs it
+# on a server's own engine to measure what a user gets, up to 3 clips at once; as a background
+# job a 2-slot box held those clips to 1 slot and queued the rest, so the gate measured a line
+# no user stands in. A run that should yield to users sends X-Addify-Batch: 1 (appflow --batch).
+BATCH_UAS = tuple(u.strip() for u in (os.environ.get("ADDIFY_BATCH_UA", "addify-prewarm")
                                       or "").split(",") if u.strip())
 # ADDIFY_DRAIN_S  on SIGTERM: stop taking scans, let running ones (both halves) finish for up
 #                 to this long, delete their temp audio, exit. 0 = the old instant exit.
@@ -1609,13 +1610,9 @@ _REQ_QR = contextvars.ContextVar("addify_quiet_try", default=None)
 
 def _busy_limit(why):
     if why == "shazam":
-        try:
-            _ln = (_FS.pace_stats() or {}).get("limit_now")
-        except Exception:
-            _ln = None
         return {"shazam_calls": getattr(_FS, "PACE_N", None),
                 "window_s": getattr(_FS, "PACE_WINDOW_S", None),
-                "learned": _ln}               # FIX 4 round 2: what Shazam's 429s taught the pacer
+                "probe_s": getattr(_FS, "PACE_PROBE_S", None)}   # FIX 4 round 3
     return {"queue_full": {"queue_max": SCAN_QUEUE_MAX},
             "queue_wait": {"queue_wait_s": SCAN_QUEUE_WAIT_S, "slots": SCAN_SLOTS},
             "cpu": {"cpu_psi_max": ADMIT_CPU_PSI},
@@ -1637,8 +1634,9 @@ def _busy_running():
     try:
         p = _FS.pace_stats()
         if p:
-            out["pace"] = {k: p.get(k) for k in ("in_window", "limit", "limit_now", "waiting",
-                                                 "hold_s", "http429", "memo_hits", "wall_stops")}
+            out["pace"] = {k: p.get(k) for k in ("in_window", "limit", "waiting", "hold_s",
+                                                 "http429", "memo_hits", "probing", "canaries",
+                                                 "last_stall_s")}
     except Exception:
         pass
     return out
@@ -1651,10 +1649,11 @@ def _busy_result(key, why, t0=None, detail=None):
     Shazam's own 429s taught it (find_song.retry_hint); for a scan that keeps its place in the
     gate's line, a few seconds (it rejoins the line where it was); otherwise BUSY_RETRY_S.
     FIX 4 round 2: `quiet` tells the page whether asking again is making headway, so it keeps
-    asking quietly past its first two retries only while it is: a Shazam busy whose ask got
-    answers from Shazam or resumed from them (each answer is kept in the memo, so the next ask
-    starts past it; `progress`), or a scan waiting in the gate's line (the line moves as scans
-    finish; `ahead` = scans before it). A restart (draining) is not headway."""
+    asking quietly past its first two retries only while it is: a Shazam busy whose ask got NEW
+    answers from Shazam (each is kept in the memo, so the next ask starts past it; round 3:
+    answers replayed from the memo are not headway, `progress` still reports them), or a scan
+    waiting in the gate's line (the line moves as scans finish; `ahead` = scans before it). A
+    restart (draining) is not headway."""
     ra = BUSY_RETRY_S
     quiet, extra = False, {}
     if why == "shazam":
@@ -1666,8 +1665,8 @@ def _busy_result(key, why, t0=None, detail=None):
         if sc is not None:
             extra["progress"] = {"answered": int(sc.get("answered") or 0),
                                  "memo": int(sc.get("memo") or 0)}
-            # headway: Shazam answered this ask, or it resumed a sweep the memo holds
-            quiet = (extra["progress"]["answered"] + extra["progress"]["memo"]) > 0
+            # headway: Shazam gave this ask new answers (round 3: memo replays are not headway)
+            quiet = extra["progress"]["answered"] > 0
     elif why in ("queue_full", "queue_wait", "cpu"):
         quiet = True
         try:
@@ -1814,8 +1813,8 @@ def _is_batch(headers):
 def _name_keepable(scan):
     """FIX 4 round 2: would _name_fallback keep this scan's name right now, by its first rule
     alone? Every answer that named a song named the same one, at least 5 answers in all, from
-    windows at two offsets or an as-posted probe. A quiet retry that can keep its name stops at
-    Shazam's full minute (find_song scan["stop_ok"]); one that cannot waits for the room."""
+    windows at two offsets or an as-posted probe. A scan that can keep its name stops at Shazam's
+    refusal and answers from what it holds (_wait_for_shazam); one that cannot waits."""
     rows = []
     for h in list((scan or {}).get("hits") or []):
         if isinstance(h, dict):
@@ -1826,6 +1825,44 @@ def _name_keepable(scan):
     offs = set(r[1] for r in hits if r[1] is not None)
     return len(offs) >= 2 or any(r[2] is not None and abs(float(r[2]) - 1.0) <= 0.021
                                  for r in hits)
+
+
+# FIX 4 round 3 (issue #11): a first ask whose own Shazam answers number fewer than this waits
+# through Shazam's refusals for room, inside its ask, instead of stopping at the second one, and
+# a throttled scan is never named from the clip's other evidence (credit, caption, comments)
+# unless Shazam itself refused or stalled one of its calls AND (on a first ask) it got at least
+# this many answers. Round 2 stopped Born To Die before its first call and the evidence chain
+# named it "Lana del Ray"; release-next's own scans on the test box stop with 5 to 7 answers.
+SHAZAM_MIN_ANSWERS = int(os.environ.get("ADDIFY_SHAZAM_MIN_ANSWERS", "3") or 3)
+
+
+def _shazam_got(scan):
+    return int((scan or {}).get("answered") or 0) + int((scan or {}).get("memo") or 0)
+
+
+def _wait_for_shazam(scan, quiet_try):
+    """FIX 4 round 3 (find_song scan["patient"]): does this scan keep waiting through Shazam's
+    refusals? Not when its answers already keep a name (it answers from them now, as fast as
+    release-next); always on the page's quiet retry; on a first ask, while it holds fewer than
+    SHAZAM_MIN_ANSWERS answers (with that many it stops at the second refusal and the engine
+    names what it can, as release-next does)."""
+    if NAME_FALLBACK and _name_keepable(scan):
+        return False
+    if quiet_try:
+        return True
+    return _shazam_got(scan) < SHAZAM_MIN_ANSWERS
+
+
+def _evidence_ok(scan, quiet_try):
+    """FIX 4 round 3: may a throttled scan whose Shazam answers do not keep a name be named from
+    the clip's other evidence? Only when Shazam itself refused or stalled one of its calls (our
+    own pacer holding a scan back is never a reason) and, on a first ask, it got at least
+    SHAZAM_MIN_ANSWERS answers. Otherwise it answers busy and the page asks again quietly."""
+    if scan is None:
+        return True
+    if not (int(scan.get("refused") or 0) or int(scan.get("timeouts") or 0)):
+        return False
+    return bool(quiet_try) or _shazam_got(scan) >= SHAZAM_MIN_ANSWERS
 
 
 def _confirmed_hint_name(hint_texts):
@@ -1856,14 +1893,14 @@ def _phase1(url, key, t0):
     E.tlog("request_start", 0.0, url=key)
     # server-kit: every Shazam probe of this scan counts into this record (find_song.SCAN).
     _scan = _FS.scan_begin() if _FS.PACE else None
-    if _scan is not None and (_REQ_QR.get() or 0) >= 1:
-        # FIX 4 round 2: the page's quiet retry waits for Shazam's room inside this ask, unless
-        # what it holds already names the song (see find_song acquire)
-        _scan["patient"] = True
-        if NAME_FALLBACK:
-            _scan["stop_ok"] = lambda: _name_keepable(_scan)
+    _qtry = (_REQ_QR.get() or 0) >= 1                  # FIX 4: the page's quiet retry
+    if _scan is not None:
+        # FIX 4 round 3: whether this scan waits through Shazam's refusals (_wait_for_shazam)
+        _scan["patient"] = lambda: _wait_for_shazam(_scan, _qtry)
     _prog_set(key, 6, "Reading the clip")
     (_PROG.get(key) or {}).pop("named", None)    # a rescan names the song afresh
+    if _scan is not None:
+        (_PROG.get(key) or {})["_shz"] = _scan    # FIX 4 round 3: /progress "sw" reads it
     _p0 = time.time()
     try:
         src = E.get_source(url, defer_crosscheck=True)
@@ -2517,6 +2554,15 @@ def _phase1(url, key, t0):
                 _nfb = (_name_fallback(fp, _scan, src, hint_texts) if NAME_FALLBACK
                         else None)
                 if _nfb is None:
+                    _cleanup(src.get("tmp"))
+                    return _busy_result(key, "shazam", t0, _scan["why"] or "timeout"), None
+                if _nfb["mode"] != "kept" and not _evidence_ok(_scan, _qtry):
+                    # FIX 4 round 3: no name from the clip's comments or caption for a scan
+                    # Shazam never refused, or a first ask with too few answers of its own:
+                    # busy (the page asks again quietly, and waits for Shazam's room)
+                    E.tlog("name_fallback", 0.0, url=key, mode="refused_evidence",
+                           agree=_nfb["agree"], hits=_nfb["hits"], why=_scan["why"] or "timeout",
+                           got=_shazam_got(_scan), refused=int(_scan.get("refused") or 0))
                     _cleanup(src.get("tmp"))
                     return _busy_result(key, "shazam", t0, _scan["why"] or "timeout"), None
                 E.tlog("name_fallback", 0.0, url=key, mode=_nfb["mode"],
@@ -7315,8 +7361,10 @@ def identify_mic(blob, kind):
         with open(raw, "wb") as f:
             f.write(blob)
         _scan = _FS.scan_begin() if _FS.PACE else None      # server-kit, see _phase1
-        if _scan is not None and (_REQ_QR.get() or 0) >= 1:
-            _scan["patient"] = True                          # FIX 4 round 2, see _phase1
+        if _scan is not None:
+            # FIX 4 round 3, see _phase1 (a recording has no comments to name it from)
+            _lq = (_REQ_QR.get() or 0) >= 1
+            _scan["patient"] = lambda: _wait_for_shazam(_scan, _lq)
         loop = asyncio.new_event_loop()
         try:
             fp = loop.run_until_complete(E.fingerprint(raw))
@@ -10756,6 +10804,14 @@ class H(BaseHTTPRequestHandler):
             k = (parse_qs(u.query).get("url") or [""])[0].strip().split("?")[0]
             p = _PROG.get(k) or {}
             out = {"pct": round(float(p.get("pct") or 0), 1), "label": p.get("label") or ""}
+            try:
+                # FIX 4 round 3: this scan is waiting for Shazam's room right now (seconds so
+                # far); the page slows its dial instead of letting it reach the top
+                _sw = _FS.shazam_waiting(p.get("_shz")) if p.get("_shz") is not None else 0.0
+                if _sw > 0:
+                    out["sw"] = round(_sw, 1)
+            except Exception:
+                pass
             if p.get("named"):
                 out["named"] = p["named"]
             if p.get("hunt"):

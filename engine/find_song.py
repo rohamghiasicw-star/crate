@@ -451,22 +451,22 @@ PACE_MAX_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_MAX_WAIT_S", 58))
 PACE_SCAN_WAIT_S = float(os.environ.get("CRATE_SHAZAM_PACE_SCAN_WAIT_S", 62))
 PACE_429_BACKOFF_S = float(os.environ.get("CRATE_SHAZAM_429_BACKOFF_S", 4))
 PACE_TAIL_S = float(os.environ.get("CRATE_SHAZAM_PACE_TAIL_S", 6))
-# FIX 4 round 2 (issue #11, 2026-11-02): WHAT SHAZAM REALLY TAKES FROM THIS ADDRESS. PACE_N is
-# what one address once took; the test box's address now gets 5 to 7 a minute (Thunder on
-# 2026-11-01: 7, 5 and 6 answered in successive minutes, then 429 until the minute turned;
-# release-next held to 5 a minute made a 9-probe scan with 0 refusals). With one route (no
-# CRATE_SHAZAM_PROXIES) a 429 now teaches the pacer: the calls Shazam answered in the last
-# window are what it takes (never fewer than PACE_LEARN_MIN), the pacer holds to that many, and
-# a first ask that meets the full minute stops there, as its second 429 stopped it before,
-# without asking into a minute that is still full (the old 4 s back-off drew 2 more 429s per
-# retry). Its busy answer says when the minute has room (retry_hint), so the page's quiet retry
-# lands on it, and that retry waits inside its own ask for the minutes it needs. One more a
-# window comes back every PACE_LEARN_RELAX_S without a 429. With relays a 429 is one address of
-# several (the next ask goes to another), so nothing is learned there, as before.
-# CRATE_SHAZAM_PACE_LEARN=0 turns learning off.
-PACE_LEARN = os.environ.get("CRATE_SHAZAM_PACE_LEARN", "1").strip() != "0"
-PACE_LEARN_MIN = max(1, int(os.environ.get("CRATE_SHAZAM_PACE_LEARN_MIN", 3)))
-PACE_LEARN_RELAX_S = float(os.environ.get("CRATE_SHAZAM_PACE_LEARN_RELAX_S", 600))
+# FIX 4 round 3 (issue #11, 2026-11-04): PROBE, DON'T PREDICT. Shazam's limit for one address,
+# measured on the test box one call at a time (lab-k4r3/meas w1-w3): a burst of 5 to 7 answers,
+# then 429s, and the room comes back anywhere from 3 s to 62 s later (w1: one answer 34 s after
+# the first call, then refused to 62 s; w2: one answer 3 s after the first 429; w3: refused to
+# 62 s, then one call every 10 s got 11 of 12 answered; 2026-11-01: 6 answered, then 6 more 17 s
+# later). No fixed window fits all of them. Round 2 learned "5 a minute" from a 429 and stopped
+# scans on that prediction before asking: Born To Die went out with 0 calls 36 s after another
+# clip and was named from a comment, where Shazam answered 6 in the same spot. So with one route
+# (no CRATE_SHAZAM_PROXIES) nothing is predicted: calls go until Shazam refuses one; after a 429
+# the next call waits PACE_429_BACKOFF_S, and while Shazam keeps refusing, ONE call at a time
+# (a canary) goes every PACE_PROBE_S, every other probe waiting behind it, until Shazam answers.
+# Whether a scan keeps waiting through refusals is the scan's own call (scan["patient"], set by
+# server.py); a scan that does not wait stops at its second refusal, as on release-next.
+# CRATE_SHAZAM_PROBE_S=0 = the old doubling back-off on one route too.
+PACE_PROBE_S = float(os.environ.get("CRATE_SHAZAM_PROBE_S", "5") or 0)
+PACE_MAX_TRIES = 64                       # refusals one probe may wait through (deadline caps it first)
 
 
 class Throttled(RuntimeError):
@@ -497,23 +497,31 @@ FORCED = _contextvars.ContextVar("addify_scan_forced", default=False)
 
 def scan_begin():
     # answered: calls Shazam itself answered for this scan (memo hits are counted apart).
-    # FIX 4 round 2, set by server.py: patient = this ask is the page's quiet retry; stop_ok =
-    # "this scan's answers already name the song in a way the engine keeps if Shazam stops".
+    # FIX 4, set by server.py: patient = True, False or a callable: does this scan keep waiting
+    # for Shazam's room through refusals (round 3), or stop at its second refusal? waiting /
+    # wait_t0: probes of this scan waiting for a slot right now, and since when (/progress "sw").
     d = {"t0": _time.time(), "sent": 0, "waited": 0.0, "throttled": 0, "http429": 0,
          "timeouts": 0, "why": None, "deadline": DEADLINE.get(), "memo": 0,
-         "forced": bool(FORCED.get()), "answered": 0, "patient": False, "stop_ok": None}
+         "forced": bool(FORCED.get()), "answered": 0, "patient": False,
+         "waiting": 0, "wait_t0": None, "refused": 0}
     SCAN.set(d)
     return d
 
 
-def _stop_ok(scan):
-    f = (scan or {}).get("stop_ok")
-    if f is None:
-        return False
+def _patient(scan):
+    """FIX 4 round 3: should this scan's probe keep waiting through Shazam's refusals?"""
+    p = (scan or {}).get("patient")
     try:
-        return bool(f())
+        return bool(p()) if callable(p) else bool(p)
     except Exception:
         return False
+
+
+def shazam_waiting(scan):
+    """Seconds this scan's probes have been waiting for Shazam right now, or 0.0 (/progress)."""
+    if not scan or not scan.get("waiting") or not scan.get("wait_t0"):
+        return 0.0
+    return max(0.0, _time.time() - scan["wait_t0"])
 
 
 # SHAZAM ANSWER MEMO (Fix 4, issue #11, 2026-11-01). Shazam lets one datacenter IP make about 5
@@ -568,12 +576,10 @@ def _memo_put(key, ans):
 
 def retry_hint(lo=2.0, hi=75.0):
     """Seconds until a retry of a Shazam-busy scan can get its next call out, for the busy
-    answer's retry_after: when the pacer next has a slot, under what Shazam has taught it (a
-    429 on one route holds every probe until a call leaves the learned window, so the hint
-    follows the refusals the scan actually got) and under the 429 hold, plus 1 s. With relays
-    and room in the window the next ask goes to another address, so it is soon. The retried
-    scan reuses every answer it already had (the memo) and waits inside its own ask for the
-    slots after that one. None when pacing is off."""
+    answer's retry_after: when the pacer next has a slot (PACE_N a window, and the 429 hold,
+    which on one route is the next canary's time), plus 1 s. Nothing predicts when Shazam has
+    room (round 3), so the hint is short; the retried scan reuses every answer it already had
+    (the memo) and waits inside its own ask for the room. None when pacing is off."""
     if not PACE:
         return None
     with _PACER.lock:
@@ -593,41 +599,30 @@ class _Pacer(object):
     def __init__(self):
         self.lock = _threading.Lock()
         self.sent = _collections.deque()      # when each recent call went out
-        self.ok = _collections.deque()        # when each recent call Shazam ANSWERED went out
         self.hold_until = 0.0                 # 429 back-off: nobody sends before this
         self.bad_run = 0                      # 429/5xx in a row
-        self.learned = None                   # FIX 4: calls a window this address takes
-        self.learned_at = 0.0
+        self.canary = False                   # FIX 4 round 3: a call sent into a refusal run is out
+        self.canary_t = 0.0
+        self.stall_t0 = None                  # when the current run of 429s began (one route)
         self.waiters = {}                     # ticket -> (priority, ticket)
         self.seq = 0
         self.stats = {"sent": 0, "waited_probes": 0, "wait_s": 0.0, "throttled": 0,
                       "http429": 0, "http5xx": 0, "http4xx": 0, "net_err": 0,
                       "timeouts": 0, "last_wait": 0.0, "last_429": None, "last_err": None,
-                      "memo_hits": 0, "learned": None, "wall_stops": 0}
+                      "memo_hits": 0, "canaries": 0, "last_stall_s": None, "max_stall_s": 0.0}
 
-    def _limit(self, now):
-        """Calls allowed in any PACE_WINDOW_S: PACE_N, or what a 429 taught (FIX 4 round 2),
-        one more back every PACE_LEARN_RELAX_S without another 429."""
-        if self.learned is None:
-            return PACE_N
-        if PACE_LEARN_RELAX_S > 0 and now - self.learned_at >= PACE_LEARN_RELAX_S:
-            steps = int((now - self.learned_at) // PACE_LEARN_RELAX_S)
-            self.learned += steps
-            self.learned_at += steps * PACE_LEARN_RELAX_S
-            if self.learned >= PACE_N:
-                self.learned = None
-            self.stats["learned"] = self.learned
-            if self.learned is None:
-                return PACE_N
-        return min(PACE_N, self.learned)
+    def _probing(self):
+        """One route, PACE_PROBE_S on, and Shazam's last answer was a refusal: one call at a
+        time until it answers again (FIX 4 round 3)."""
+        return PACE_PROBE_S > 0 and len(_SHZ_ROUTES) == 1 and self.bad_run > 0
 
     def _slot_at(self, now, k, n=None):
         """When the (k+1)-th next free slot opens (k=0: the next one), with at most n calls
-        (default: the current limit) in any PACE_WINDOW_S."""
+        (default PACE_N) in any PACE_WINDOW_S, and none before the 429 hold ends."""
         while self.sent and self.sent[0] <= now - PACE_WINDOW_S:
             self.sent.popleft()
         if n is None:
-            n = self._limit(now)
+            n = PACE_N
         base = max(now, self.hold_until)
         i = len(self.sent) + k - n
         if i < 0:
@@ -644,14 +639,22 @@ class _Pacer(object):
             me = (prio, self.seq)
             self.waiters[me] = me
         t_in = _time.time()
+        waiting = False
         try:
             while True:
                 with self.lock:
                     now = _time.time()
                     ahead = sum(1 for w in self.waiters if w < me)
                     at = self._slot_at(now, ahead)
+                    if self._probing() and self.canary and now - self.canary_t < 15.0:
+                        # FIX 4 round 3: a call already went out into Shazam's refusals; the
+                        # rest wait for its answer (expires after 15 s: a probe that timed out)
+                        at = max(at, now + 0.25)
                     if ahead == 0 and at <= now:
                         del self.waiters[me]
+                        if self._probing():
+                            self.canary, self.canary_t = True, now
+                            self.stats["canaries"] += 1
                         self.sent.append(now)
                         w = now - t_in
                         self.stats["sent"] += 1
@@ -663,20 +666,6 @@ class _Pacer(object):
                             scan["sent"] += 1
                             scan["waited"] += w
                         return w
-                    if (self.learned is not None and scan is not None
-                            and at - now > 2 * PACE_429_BACKOFF_S
-                            and (not scan.get("patient") or _stop_ok(scan))):
-                        # FIX 4 round 2: a 429 taught us this address's minute is full. A first
-                        # ask stops here, where its second 429 used to stop it, so whatever the
-                        # engine can already name from what it holds answers as fast as before
-                        # (kyks on the test box: waiting would have cost it ~55 s); its busy
-                        # answer says when the room comes back and the page asks again then.
-                        # That quiet retry (`patient`, server.py) waits for the room inside its
-                        # ask instead (two Shazam minutes an ask, not one), unless it too can
-                        # keep a name. Every answer Shazam gave is kept (the memo).
-                        del self.waiters[me]
-                        self.stats["wall_stops"] += 1
-                        raise Throttled("wall: Shazam's minute is full for %.0fs" % (at - now))
                     cap = PACE_MAX_WAIT_S
                     if scan is not None and scan.get("deadline"):
                         cap = min(cap, scan["deadline"] - PACE_TAIL_S - t_in)
@@ -688,19 +677,32 @@ class _Pacer(object):
                         raise Throttled("no Shazam slot for %.0fs (cap %.0fs)"
                                         % (at - t_in, max(0.0, cap)))
                     nap = min(0.25, max(0.02, at - now))
+                    if scan is not None and not waiting and at - now > 0.5:
+                        waiting = True              # /progress "sw": this scan waits on Shazam
+                        scan["waiting"] = scan.get("waiting", 0) + 1
+                        if scan["waiting"] == 1:
+                            scan["wait_t0"] = t_in
                 await asyncio.sleep(nap)
         except BaseException:
             with self.lock:
                 self.waiters.pop(me, None)
             raise
+        finally:
+            if waiting:
+                with self.lock:
+                    scan["waiting"] = max(0, scan.get("waiting", 1) - 1)
+                    if not scan["waiting"]:
+                        scan["wait_t0"] = None
 
     def answered(self, t_sent=None):
         with self.lock:
             self.bad_run = 0
-            now = _time.time()
-            self.ok.append(t_sent or now)
-            while self.ok and self.ok[0] <= now - PACE_WINDOW_S:
-                self.ok.popleft()
+            self.canary = False
+            if self.stall_t0 is not None:     # how long Shazam's last run of 429s lasted
+                st = round(_time.time() - self.stall_t0, 1)
+                self.stats["last_stall_s"] = st
+                self.stats["max_stall_s"] = max(self.stats["max_stall_s"], st)
+                self.stall_t0 = None
 
     def refused(self, status, scan):
         with self.lock:
@@ -708,21 +710,18 @@ class _Pacer(object):
             self.bad_run += 1
             hold = min(30.0, PACE_429_BACKOFF_S * (2 ** (self.bad_run - 1)))
             until = now + hold
-            if status == 429 and PACE_LEARN and len(_SHZ_ROUTES) == 1:
-                # FIX 4 round 2: one address, so this 429 is Shazam's whole answer for this
-                # server. What it answered in the last window is what it takes; the next call
-                # goes when one leaves that window (never sooner than the old back-off): a
-                # first ask stops at that wall, a quiet retry waits for it (acquire).
-                while self.ok and self.ok[0] <= now - PACE_WINDOW_S:
-                    self.ok.popleft()
-                n_ok = max(PACE_LEARN_MIN, len(self.ok))
-                if self.learned is None or n_ok < self.learned:
-                    self.learned = min(PACE_N, n_ok)
-                self.learned_at = now
-                self.stats["learned"] = self.learned
-                until = max(now + PACE_429_BACKOFF_S, self._slot_at(now, 0))
-                hold = until - now
+            self.canary = False
+            if PACE_PROBE_S > 0 and len(_SHZ_ROUTES) == 1:
+                # FIX 4 round 3: one address. Nothing tells when Shazam has room again (3 to 62 s
+                # measured), so ask: the first retry after the old back-off, then one call every
+                # PACE_PROBE_S while it keeps refusing (acquire lets one out at a time)
+                hold = PACE_429_BACKOFF_S if self.bad_run == 1 else PACE_PROBE_S
+                until = now + hold
+                if status == 429 and self.stall_t0 is None:
+                    self.stall_t0 = now
             self.hold_until = max(self.hold_until, until)
+            if scan is not None:              # FIX 4 round 3: Shazam itself refused this scan
+                scan["refused"] = scan.get("refused", 0) + 1
             if status == 429:
                 self.stats["http429"] += 1
                 self.stats["last_429"] = int(_time.time())
@@ -745,7 +744,7 @@ class _Pacer(object):
             out.update(in_window=len(self.sent), waiting=len(self.waiters),
                        limit=PACE_N, window_s=PACE_WINDOW_S,
                        hold_s=round(max(0.0, self.hold_until - now), 1),
-                       limit_now=self._limit(now))   # FIX 4: PACE_N or what a 429 taught
+                       probing=self._probing())      # FIX 4 round 3: one call at a time now
             return out
 
 
@@ -831,7 +830,10 @@ def _count_hit(scan, hit, meta=None):
 
 async def _paced_shazamio(path, timeout, scan):
     """shazamio under the pacer: signature, a slot, one request, one retry on a refusal (the
-    retry waits out the hold in acquire(); on one route that hold is what the 429 taught)."""
+    retry waits out the hold in acquire()). FIX 4 round 3: a `patient` scan (server.py) keeps
+    retrying through refusals, one canary call every PACE_PROBE_S on one route, until Shazam
+    answers or the wait passes the scan's deadline (Throttled "slot"); any other scan stops at
+    the second refusal, as on release-next. Nothing stops a probe before Shazam refused it."""
     import aiohttp
     shz = _oneshot_shazam()
     loop = asyncio.get_event_loop()
@@ -859,11 +861,11 @@ async def _paced_shazamio(path, timeout, scan):
             if scan is not None:
                 scan["memo"] = scan.get("memo", 0) + 1
             return ans
-    for attempt in (1, 2):
+    for attempt in range(1, PACE_MAX_TRIES + 1):
         try:
             await _PACER.acquire(scan)
-        except Throttled as e:
-            _scan_throttled(scan, "wall" if str(e).startswith("wall") else "slot")
+        except Throttled:
+            _scan_throttled(scan, "slot")
             raise
         t_sent = _time.time()
         left = max(0.5, timeout - sig_s) if attempt == 1 else timeout
@@ -878,11 +880,13 @@ async def _paced_shazamio(path, timeout, scan):
             except (aiohttp.ClientError, OSError) as e:
                 raise _Refused("net %s" % type(e).__name__)
         except asyncio.TimeoutError:
+            with _PACER.lock:
+                _PACER.canary = False    # no answer either way: the next probe may ask
             _scan_timeout(scan)          # the engine's stall path; server.py sees the count
             raise
         except _Refused as e:
             _PACER.refused(e.status, scan)
-            if attempt == 2:
+            if attempt >= 2 and (attempt >= PACE_MAX_TRIES or not _patient(scan)):
                 with _PACER.lock:
                     _PACER.stats["throttled"] += 1
                 _scan_throttled(scan, "http %s" % e.status if isinstance(e.status, int)

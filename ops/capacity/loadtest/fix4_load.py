@@ -17,7 +17,8 @@ Scenarios:
   burst20     20 people tap at the same instant
   burst20rev  20 people at once, and a reviewer 10 s later
   bgrev       3 background jobs (X-Addify-Batch: 1) start first, the reviewer 1 s later
-  bgua        the same with jobs that only say who they are by User-Agent (appflow/1)
+  bgua        the same with jobs that only say who they are by User-Agent (addify-prewarm/1;
+              round 3: appflow/1 is a user scan unless it sends X-Addify-Batch: 1)
 
 usage: python3 fix4_load.py --target http://127.0.0.1:18788 --scenario burst20rev --page new
                             --out rows.jsonl [--tag t]"""
@@ -113,8 +114,8 @@ plan = {"reviewer": [("reviewer", 0.0, "fix4-load/1", False)],
                        + [("reviewer", 10.0, "fix4-load/1", False)]),
         "bgrev": [("bg0", 0.0, "fix4-load/1", True), ("bg1", 0.2, "fix4-load/1", True),
                   ("bg2", 0.4, "fix4-load/1", True), ("reviewer", 1.0, "fix4-load/1", False)],
-        "bgua": [("bg0", 0.0, "appflow/1", False), ("bg1", 0.2, "appflow/1", False),
-                 ("bg2", 0.4, "appflow/1", False), ("reviewer", 1.0, "fix4-load/1", False)]
+        "bgua": [("bg0", 0.0, "addify-prewarm/1", False), ("bg1", 0.2, "addify-prewarm/1", False),
+                 ("bg2", 0.4, "addify-prewarm/1", False), ("reviewer", 1.0, "fix4-load/1", False)]
         }[a.scenario]
 res, lock, ths = [], threading.Lock(), []
 

@@ -7,13 +7,16 @@
   * the scan gate keeps its last free slot for a user scan when a background job asks
   * every busy answer logs the limit it hit, what was running and the page's quiet retry number
   round 2:
-  * the pacer learns what Shazam takes from its own 429s (one route only); a first ask that
-    meets the full minute stops there (as at its second 429 before) and retry_after says when it
-    frees; the page's quiet retry (patient) waits for the room unless it can keep its name
   * a gate refusal keeps the scan's place in line; the next ask rejoins there
   * the request budget: calls counted per scan half, searches and downloads capped
   * early names are held from a refused or long-waiting scan; busy bodies carry Retry-After,
-    `quiet` and progress; appflow is a background job
+    `quiet` and progress
+  round 3:
+  * the pacer predicts nothing: a call goes until Shazam refuses one; after a 429 one canary at
+    a time every CRATE_SHAZAM_PROBE_S; a patient scan waits through refusals to its deadline,
+    any other stops at its second refusal; /progress can tell a scan is waiting
+  * who waits (_wait_for_shazam) and who may be named from comments (_evidence_ok)
+  * only new Shazam answers are headway; appflow is a user scan unless it says otherwise
 
 run: /usr/bin/python3 test_fix4_busy.py"""
 import asyncio
@@ -39,7 +42,8 @@ os.environ.update({"ADDIFY_CORRECTIONS": os.path.join(TMP, "corrections.json"),
                    "CRATE_SHAZAM_BACKEND": "shazamio", "CRATE_SHAZAM_PACE": "1",
                    "CRATE_SHAZAM_PACE_N": "5", "CRATE_SHAZAM_PACE_WINDOW_S": "3",
                    "CRATE_SHAZAM_PACE_MAX_WAIT_S": "4", "CRATE_SHAZAM_PACE_SCAN_WAIT_S": "5",
-                   "CRATE_SHAZAM_429_BACKOFF_S": "0.2", "CRATE_SHAZAM_MEMO_S": "1200"})
+                   "CRATE_SHAZAM_429_BACKOFF_S": "0.2", "CRATE_SHAZAM_MEMO_S": "1200",
+                   "CRATE_SHAZAM_PROBE_S": "0.3"})
 sys.path.insert(0, HERE)
 import find_song as F       # noqa: E402
 import server as S          # noqa: E402
@@ -102,11 +106,10 @@ def probe(path, forced=False, timeout=2.0):
 def reset_pacer():
     with F._PACER.lock:
         F._PACER.sent.clear()
-        F._PACER.ok.clear()
         F._PACER.hold_until = 0.0
         F._PACER.bad_run = 0
-        F._PACER.learned = None
-        F._PACER.learned_at = 0.0
+        F._PACER.canary = False
+        F._PACER.stall_t0 = None
     with F._MEMO_LOCK:
         F._MEMO.clear()
     CALLS.update(n=0, mode="ok")
@@ -207,8 +210,8 @@ class Memo(unittest.TestCase):
 
 
 class RetryHint(unittest.TestCase):
-    """retry_after for a Shazam busy = when the pacer next has a slot (+1 s), under what a 429
-    taught it and under the hold; clamped to [2, 75] by default."""
+    """retry_after for a Shazam busy = when the pacer next has a slot (+1 s): PACE_N a window and
+    the hold; clamped to [2, 75] by default."""
     def setUp(self):
         reset_pacer()
 
@@ -233,14 +236,6 @@ class RetryHint(unittest.TestCase):
             F._PACER.hold_until = time.time() + 30
         self.assertEqual(F.retry_hint(), 31)
         self.assertEqual(F.retry_hint(hi=20), 20)
-
-    def test_learned_limit_counts(self):
-        """2 calls in the window and Shazam taught 2: the next slot is when the older leaves."""
-        now = time.time()
-        with F._PACER.lock:
-            F._PACER.sent.extend([now - 0.2, now - 0.1])
-            F._PACER.learned, F._PACER.learned_at = 2, now
-        self.assertEqual(F.retry_hint(lo=0.0), 4)             # 2.8 s + 1 s, rounded
 
 
 class Shazam429(object):
@@ -282,8 +277,8 @@ def scan_probes(paths, deadline_s=None, timeout=2.0, patient=False, stop_ok=None
     return out["ans"], out["scan"]
 
 
-class Learn(unittest.TestCase):
-    """FIX 4 round 2: one route, a 429 teaches the pacer what Shazam takes."""
+class Probe(unittest.TestCase):
+    """FIX 4 round 3: one route, nothing predicted; Shazam's own refusals decide."""
     def setUp(self):
         reset_pacer()
         F.MEMO_S = 0                                          # every probe really asks
@@ -297,108 +292,161 @@ class Learn(unittest.TestCase):
         F._SHZ_ROUTES[:] = self.routes
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 4.0, 5.0
 
-    def test_429_teaches_the_limit_and_the_scan_stops_at_the_wall(self):
+    def test_a_scan_right_after_another_still_asks(self):
+        """Born To Die on 2026-11-01: 36 s after another clip the round 2 pacer sent 0 calls.
+        Calls in the window below PACE_N and no hold: the call goes now."""
+        now = time.time()
+        with F._PACER.lock:
+            F._PACER.sent.extend([now - 0.5] * 4)             # another scan's calls, 4 of 5
+            F._PACER.stall_t0 = None
+        t0 = time.time()
+        ans, sc = scan_probes(["/tmp/b_0.wav"])
+        self.assertIsInstance(ans[0], dict)
+        self.assertEqual((sc["sent"], sc["answered"], sc["throttled"]), (1, 1, 0))
+        self.assertLess(time.time() - t0, 0.3)
+
+    def test_a_first_ask_stops_at_its_second_refusal(self):
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
         t0 = time.time()
         ans, sc = scan_probes(["/tmp/l_%d.wav" % i for i in range(5)])
         self.assertTrue(all(isinstance(a, dict) for a in ans[:3]), ans)   # Shazam took 3
-        self.assertIsInstance(ans[3], F.Throttled)            # the 4th met the full minute
-        self.assertEqual(F._PACER.learned, 3)
-        self.assertEqual((sc["http429"], sc["why"], sc["answered"]), (1, "wall", 3))
-        self.assertLess(time.time() - t0, 1.5)                # stopped, did not wait the minute out
-        self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), 1, self.up.log)   # no 2nd 429
-        ra = F.retry_hint(lo=0.0)
-        self.assertTrue(2 <= ra <= 4, ra)                     # when the 3 s window has room again
+        self.assertIsInstance(ans[3], F.Throttled)            # refused twice, as release-next
+        self.assertIsInstance(ans[4], F.Throttled)            # scan already throttled: no call
+        self.assertEqual((sc["http429"], sc["refused"], sc["why"], sc["answered"]),
+                         (2, 2, "http 429", 3))
+        self.assertLess(time.time() - t0, 1.5)
+        self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), 2, self.up.log)
 
-    def test_after_learning_the_pacer_holds_to_it(self):
+    def test_a_patient_scan_waits_through_refusals(self):
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        scan_probes(["/tmp/m_%d.wav" % i for i in range(4)])  # learns 3
-        n429 = sum(1 for _t, st in self.up.log if st == 429)
-        time.sleep(3.2)                                       # a fresh minute
-        ans, sc = scan_probes(["/tmp/n_%d.wav" % i for i in range(4)])
-        self.assertEqual([isinstance(a, dict) for a in ans], [True, True, True, False], ans)
-        self.assertEqual(sum(1 for _t, st in self.up.log if st == 429), n429)   # paced, not refused
-        self.assertEqual((sc["http429"], sc["why"]), (0, "wall"))
-
-    def test_relays_learn_nothing(self):
-        F._SHZ_ROUTES[:] = ["", "http://relay.invalid:8888"]
-        with F._PACER.lock:
-            F._PACER.ok.extend([time.time()] * 3)
-        h = F._PACER.refused(429, None)
-        self.assertIsNone(F._PACER.learned)
-        self.assertAlmostEqual(h, 0.2, places=2)              # today's back-off
-
-    def test_relaxes_back(self):
-        with F._PACER.lock:
-            F._PACER.learned, F._PACER.learned_at = 3, time.time() - 2.5
-        relax = F.PACE_LEARN_RELAX_S
-        try:
-            F.PACE_LEARN_RELAX_S = 1.0
-            self.assertEqual(F.pace_stats()["limit_now"], 5)  # 3 + 2 steps = PACE_N: back to normal
-            self.assertIsNone(F._PACER.learned)
-        finally:
-            F.PACE_LEARN_RELAX_S = relax
-
-    def _full_learned_window(self, age=0.1):
-        now = time.time()
-        with F._PACER.lock:
-            F._PACER.learned, F._PACER.learned_at = 3, now
-            F._PACER.sent.extend([now - age] * 3)            # full: the oldest leaves in 3 s - age
-
-    def test_any_scan_stops_at_the_full_learned_window(self):
-        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        self._full_learned_window()
-        t0 = time.time()
-        ans, sc = scan_probes(["/tmp/p_0.wav"])
-        self.assertIsInstance(ans[0], F.Throttled)
-        self.assertLess(time.time() - t0, 0.5)                # no wait
-        self.assertEqual((sc["why"], sc["sent"]), ("wall", 0))
-        self.assertGreaterEqual(F._PACER.stats["wall_stops"], 1)
-
-    def test_a_quiet_retry_waits_for_the_room(self):
-        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        self._full_learned_window()
-        ans, sc = scan_probes(["/tmp/p_1.wav"], patient=True, stop_ok=lambda: False)
-        self.assertIsInstance(ans[0], dict)
-        self.assertGreater(sc["waited"], 2.0)
+        ans, sc = scan_probes(["/tmp/q_%d.wav" % i for i in range(5)], deadline_s=12.0,
+                              patient=True)
+        self.assertTrue(all(isinstance(a, dict) for a in ans), ans)
+        self.assertEqual(sc["answered"], 5)
+        self.assertGreaterEqual(sc["http429"], 1)
         self.assertEqual(sc["throttled"], 0)
-
-    def test_a_quiet_retry_that_keeps_its_name_stops(self):
-        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        self._full_learned_window()
-        t0 = time.time()
-        ans, sc = scan_probes(["/tmp/p_2.wav"], patient=True, stop_ok=lambda: True)
-        self.assertIsInstance(ans[0], F.Throttled)
-        self.assertLess(time.time() - t0, 0.5)
-        self.assertEqual(sc["why"], "wall")
-
-    def test_a_short_wait_still_waits(self):
-        """Room in under 2x the 429 back-off (0.4 s here): the probe waits, as before."""
-        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
-        self._full_learned_window(age=2.75)                   # room in ~0.25 s
-        ans, sc = scan_probes(["/tmp/r_0.wav"])
-        self.assertIsInstance(ans[0], dict)
         self.assertGreater(sc["waited"], 0.1)
+        self.assertGreaterEqual(F._PACER.stats["canaries"], 1)
+        self.assertIsNotNone(F._PACER.stats["last_stall_s"])
 
-    def test_no_learning_no_stop(self):
-        """Without a 429 (live with relays never learns) a waiting probe waits as before."""
+    def test_patient_can_be_a_question(self):
+        """scan["patient"] may be a callable (server.py _wait_for_shazam), asked at each refusal."""
+        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
+        asked = []
+        ans, sc = scan_probes(["/tmp/v_%d.wav" % i for i in range(4)], deadline_s=12.0,
+                              patient=lambda: asked.append(1) or False)
+        self.assertIsInstance(ans[3], F.Throttled)
+        self.assertTrue(asked)
+
+    def test_one_canary_at_a_time(self):
+        """While Shazam refuses, two scans' probes never have two calls out at once."""
+        F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 20.0, 21.0
+        out = {"now": 0, "pmax": 0, "probing_calls": 0}
+        up = self.up
+
+        async def send(sig=None):
+            out["now"] += 1
+            if F._PACER._probing():                           # sent into a run of refusals
+                out["probing_calls"] += 1
+                out["pmax"] = max(out["pmax"], out["now"])
+            try:
+                await asyncio.sleep(0.05)
+                return await up.send(sig)
+            finally:
+                out["now"] -= 1
+        FakeShazam.send_recognize_request_v2 = lambda me, sig=None: send(sig)
+        with F._PACER.lock:                                   # Shazam just refused once
+            F._PACER.bad_run, F._PACER.hold_until = 1, time.time() + 0.2
+        up.n[int((time.time() - up.t0) / up.W)] = up.CAP      # and this window is full
+
+        async def two():
+            async def one(tag):
+                tok = F.DEADLINE.set(time.time() + 30.0)
+                d = F.scan_begin()
+                F.DEADLINE.reset(tok)
+                d["patient"] = True
+                r = []
+                for i in range(3):
+                    r.append(await F.shazam_call("/tmp/c_%s%d.wav" % (tag, i), 2.0,
+                                                 meta=(float(i), 1.0)))
+                return r
+            return await asyncio.gather(one("a"), one("b"))
+        loop = asyncio.new_event_loop()
+        res = loop.run_until_complete(two())
+        loop.close()
+        self.assertTrue(all(isinstance(a, dict) for r in res for a in r), res)
+        self.assertGreaterEqual(sum(1 for _t, st in up.log if st == 429), 1)
+        self.assertGreaterEqual(out["probing_calls"], 1)
+        self.assertEqual(out["pmax"], 1)                      # one canary out at a time
+
+    def test_the_canary_lapses(self):
+        """A canary that never came back (a timeout) frees the next probe after 15 s at most."""
+        with F._PACER.lock:
+            F._PACER.bad_run, F._PACER.canary, F._PACER.canary_t = 1, True, time.time() - 16
+        ans, sc = scan_probes(["/tmp/z_0.wav"])
+        self.assertIsInstance(ans[0], dict)
+
+    def test_relays_keep_the_doubling_back_off(self):
+        F._SHZ_ROUTES[:] = ["", "http://relay.invalid:8888"]
+        h1 = F._PACER.refused(429, None)
+        h2 = F._PACER.refused(429, None)
+        self.assertAlmostEqual(h1, 0.2, places=2)
+        self.assertAlmostEqual(h2, 0.4, places=2)
+        self.assertFalse(F._PACER._probing())
+
+    def test_one_route_probes_on_a_steady_beat(self):
+        h1 = F._PACER.refused(429, None)
+        h2 = F._PACER.refused(429, None)
+        h3 = F._PACER.refused(429, None)
+        self.assertAlmostEqual(h1, 0.2, places=2)             # the old first back-off
+        self.assertAlmostEqual(h2, 0.3, places=2)             # then CRATE_SHAZAM_PROBE_S
+        self.assertAlmostEqual(h3, 0.3, places=2)
+        self.assertTrue(F._PACER._probing())
+        F._PACER.answered()
+        self.assertFalse(F._PACER._probing())
+
+    def test_no_429_waits_as_before(self):
+        """PACE_N full and no refusal: a waiting probe waits for its slot, as before."""
         F.PACE_MAX_WAIT_S, F.PACE_SCAN_WAIT_S = 8.0, 9.0
         now = time.time()
         with F._PACER.lock:
-            F._PACER.sent.extend([now - 0.1] * 5)             # PACE_N full, nothing learned
+            F._PACER.sent.extend([now - 0.1] * 5)
         ans, sc = scan_probes(["/tmp/r_1.wav"])
         self.assertIsInstance(ans[0], dict)
         self.assertGreater(sc["waited"], 2.0)
 
+    def test_waiting_shows(self):
+        """While a scan's probe waits for its slot, shazam_waiting says for how long."""
+        now = time.time()
+        with F._PACER.lock:
+            F._PACER.sent.extend([now - 0.1] * 5)             # the next slot is ~2.9 s away
+        seen = []
+
+        async def run():
+            tok = F.DEADLINE.set(time.time() + 10)
+            d = F.scan_begin()
+            F.DEADLINE.reset(tok)
+
+            async def look():
+                await asyncio.sleep(1.2)
+                seen.append(F.shazam_waiting(d))
+            await asyncio.gather(F.shazam_call("/tmp/s_0.wav", 2.0, meta=(0.0, 1.0)), look())
+            seen.append(F.shazam_waiting(d))
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(run())
+        loop.close()
+        self.assertGreater(seen[0], 0.9)
+        self.assertEqual(seen[1], 0.0)
+
     def test_deadline_still_caps_the_wait(self):
         now = time.time()
         with F._PACER.lock:
-            F._PACER.sent.extend([now - 0.1] * 5)             # PACE_N full, nothing learned
+            F._PACER.sent.extend([now - 0.1] * 5)             # PACE_N full
         t0 = time.time()
-        ans, sc = scan_probes(["/tmp/t_0.wav"], deadline_s=0.5)
+        ans, sc = scan_probes(["/tmp/t_0.wav"], deadline_s=0.5, patient=True)
         self.assertIsInstance(ans[0], F.Throttled)            # slot is past its deadline
         self.assertLess(time.time() - t0, 0.5)
-        self.assertEqual(sc["why"], "slot")
+        self.assertEqual((sc["why"], sc["refused"]), ("slot", 0))   # the pacer, not Shazam
 
     def test_answered_counts_only_real_answers(self):
         F.MEMO_S = 1200.0
@@ -406,6 +454,42 @@ class Learn(unittest.TestCase):
         _, s2 = scan_probes(["/tmp/u_0.wav", "/tmp/u_1.wav", "/tmp/u_2.wav"])
         self.assertEqual(s1["answered"], 2)
         self.assertEqual((s2["answered"], s2["memo"]), (1, 2))
+
+
+class WhoWaits(unittest.TestCase):
+    """server.py _wait_for_shazam (find_song scan["patient"]) and _evidence_ok."""
+    def sc(self, answered=0, memo=0, refused=0, timeouts=0, hits=None):
+        return {"answered": answered, "memo": memo, "refused": refused, "timeouts": timeouts,
+                "hits": hits or []}
+
+    def test_first_ask_waits_until_it_has_answers(self):
+        self.assertTrue(S._wait_for_shazam(self.sc(0), False))      # Born To Die: wait
+        self.assertTrue(S._wait_for_shazam(self.sc(2), False))
+        self.assertFalse(S._wait_for_shazam(self.sc(3), False))     # release-next's stop
+        self.assertFalse(S._wait_for_shazam(self.sc(1, 2), False))  # memo answers count
+
+    def test_quiet_retry_always_waits_unless_it_keeps_its_name(self):
+        self.assertTrue(S._wait_for_shazam(self.sc(9), True))
+        keep = self.sc(5, hits=[{"t": "Song", "off": 0.0, "rate": 1.0}] +
+                       [{"t": "", "off": float(i), "rate": 1.0} for i in range(4)])
+        nf = S.NAME_FALLBACK
+        try:
+            S.NAME_FALLBACK = True
+            self.assertFalse(S._wait_for_shazam(keep, True))
+            self.assertFalse(S._wait_for_shazam(keep, False))
+            S.NAME_FALLBACK = False
+            self.assertTrue(S._wait_for_shazam(keep, True))
+        finally:
+            S.NAME_FALLBACK = nf
+
+    def test_evidence_only_after_shazam_itself_refused(self):
+        self.assertTrue(S._evidence_ok(None, False))
+        self.assertFalse(S._evidence_ok(self.sc(0), False))          # the pacer held it: never
+        self.assertFalse(S._evidence_ok(self.sc(6), True))
+        self.assertFalse(S._evidence_ok(self.sc(0, refused=2), False))   # too few answers
+        self.assertTrue(S._evidence_ok(self.sc(3, refused=2), False))    # release-next's kyks
+        self.assertTrue(S._evidence_ok(self.sc(0, refused=5), True))     # waited a whole ask
+        self.assertTrue(S._evidence_ok(self.sc(4, timeouts=1), False))
 
 
 _orig_send = FakeShazam.send_recognize_request_v2
@@ -700,7 +784,8 @@ class Headers(unittest.TestCase):
 
     def test_batch_classes(self):
         self.assertTrue(S._is_batch({"User-Agent": "addify-prewarm/1"}))
-        self.assertTrue(S._is_batch({"User-Agent": "appflow/1"}))
+        self.assertFalse(S._is_batch({"User-Agent": "appflow/1"}))      # round 3: a user scan
+        self.assertTrue(S._is_batch({"X-Addify-Batch": "1", "User-Agent": "appflow/1"}))
         self.assertTrue(S._is_batch({"X-Addify-Batch": "1", "User-Agent": "Mozilla/5.0"}))
         self.assertFalse(S._is_batch({"X-Addify-Batch": "0", "User-Agent": "appflow/1"}))
         self.assertFalse(S._is_batch({"User-Agent": "Mozilla/5.0 (iPhone)"}))
@@ -730,7 +815,7 @@ class BusyLog(unittest.TestCase):
         r = self.rows()[n0]
         self.assertEqual(r["why"], "shazam")
         self.assertEqual(r["detail"], "http 429")
-        self.assertEqual(r["limit"], {"shazam_calls": 5, "window_s": 3.0, "learned": 5})
+        self.assertEqual(r["limit"], {"shazam_calls": 5, "window_s": 3.0, "probe_s": 0.3})
         self.assertEqual(r["quiet_try"], 2)
         self.assertEqual(r["retry_after"], 4)
         self.assertEqual(r["pace"]["in_window"], 5)
@@ -744,11 +829,12 @@ class BusyLog(unittest.TestCase):
             res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "slot")
             self.assertIs(res["quiet"], True)
             self.assertEqual(res["progress"], {"answered": 3, "memo": 7})
-            d.update(answered=0)                              # resumed from the memo: headway
-            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "wall")
-            self.assertIs(res["quiet"], True)
+            d.update(answered=0)                              # round 3: memo replays are not headway
+            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "slot")
+            self.assertIs(res["quiet"], False)
+            self.assertEqual(res["progress"], {"answered": 0, "memo": 7})
             d.update(answered=0, memo=0)                      # nothing at all this ask
-            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "wall")
+            res = S._busy_result("https://www.tiktok.com/@t/video/3", "shazam", time.time(), "slot")
             self.assertIs(res["quiet"], False)
         finally:
             F.SCAN.set(None)
