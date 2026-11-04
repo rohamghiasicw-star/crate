@@ -33,7 +33,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Synthetic payloads. Same keys as a real /edits payload; base = final minus the hunt-only keys.
 # --------------------------------------------------------------------------------------------
 FINAL_KEYS = ("candidates", "exact", "crown_rejected", "weak_exact", "unsure", "source_at_speed",
-              "gates_on_rows", "fig_pitched", "decisive", "similar_edits", "figs", "crowd_version", "vocals")
+              "gates_on_rows", "fig_pitched", "decisive", "similar_edits", "figs", "crowd_version", "vocals",
+              "closest")
 SONG, ARTIST = "Test Song", "Test Artist"
 CLIP = "https://www.tiktok.com/@ledger.test/video/70000000000000000%02d"
 SC_CROWN = "https://soundcloud.com/ledger-uploader/test-song-slowed"
@@ -113,6 +114,119 @@ def nocrown(n, links=True):
     return d
 
 
+SC_SLOW = "https://soundcloud.com/ledger-uploader/test-song-slowed-17"
+SC_FAST = "https://soundcloud.com/ledger-uploader/test-song-sped-up-10"
+SC_OTHER = "https://soundcloud.com/ledger-uploader/test-song-x-other-song"
+SC_WEAK = "https://soundcloud.com/ledger-uploader/test-song-reverb-weak"
+
+
+def nocrown_closest(n, with_pick=True):
+    """Fix 7 (issue #13): the "do me a favor x nuts" shape. No crown; two uploads of the song at the
+    wrong speed (refused for tempo, both print 25), one different mashup (refused as another song)
+    and one weak row. The engine's pick (server _closest_pick) is the one nearer the clip's speed."""
+    d = _common(n)
+    d.update({"speed": "as posted", "edit_label": "as posted", "edit_certain": False, "fig_pitched": False,
+              "gates_on_rows": True, "decisive": False, "edits_pending": False, "exact": None,
+              "unsure": True, "weak_exact": 1.0,
+              "crown_rejected": "clip plays 17% faster than this upload, so it is a different edit of the same recording",
+              "candidates": [
+                  _row("Test Song (slowed)", SC_SLOW, "soundcloud", 1.0, 25, 1.1745,
+                       {"kind": "tempo", "why": "clip plays 17% faster than this upload, so it is a different "
+                                                "edit of the same recording"}, 36710),
+                  _row("Test Song x Other Song (Remix)", SC_OTHER, "soundcloud", 0.724, 23, 0.9625,
+                       {"kind": "othersong", "why": "its fingerprint match (fp 0.596) is at the level unrelated "
+                                                    "songs reach, so nothing proves it is this recording"}, 54),
+                  _row("Test Artist - Test Song (sped up)", SC_FAST, "soundcloud", 0.906, 25, 0.9018,
+                       {"kind": "tempo", "why": "clip plays 10% slower than this upload, so it is a different "
+                                                "edit of the same recording"}, 50909),
+                  _row("Test Song (reverb)", SC_WEAK, "soundcloud", 0.30, None, 1.0, None, 12)],
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    if with_pick:
+        d["closest"] = {"kind": "upload", "url": SC_FAST, "title": "Test Artist - Test Song (sped up)", "fig": 25,
+                        "why": "highest figure of 2 uploads tied to this recording, not crowned (tempo)"}
+    return d
+
+
+def found_bare(n):
+    """A found answer with no upload at all (the fast path's plain original): Fix 7 still ends it
+    on the closest version card, the song itself."""
+    d = _common(n)
+    d.update({"speed": "as posted", "edit_label": "as posted", "edit_certain": True, "decisive": False,
+              "edits_pending": False, "exact": None, "candidates": [],
+              "closest": {"kind": "song", "url": None, "title": SONG, "fig": None, "why": "no upload came back"},
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    return d
+
+
+SC_BAND = "https://soundcloud.com/ledger-uploader/other-track-test-days-grace-slowed"
+SC_RIGHT = "https://soundcloud.com/ledger-uploader/cult-test-song-slowed-reverb"
+SC_SAMETITLE = "https://soundcloud.com/prosper-thegod/test-song"
+
+
+def nocrown_bandname(n):
+    """Fix 7 re-test (test box 2026-11-04, kyks "Three (Slowed)"): no crown, saved without the
+    engine's pick. The nearest-speed row reads core 1.000 but names another song that only holds
+    the song's word inside a band name ("Animal Ive Become- Three Days Of Grace Slowed"); the right
+    song sits further off the clip's speed at the same figure."""
+    d = _common(n)
+    d.update({"speed": "slowed", "edit_label": "slowed", "edit_certain": False, "fig_pitched": False,
+              "gates_on_rows": True, "decisive": False, "edits_pending": False, "exact": None,
+              "unsure": True, "weak_exact": 1.0,
+              "crown_rejected": "clip plays 7% faster than this upload, so it is a different edit of the same recording",
+              "candidates": [
+                  _row("Other Track- Test Days Of Grace Slowed", SC_BAND, "soundcloud", 1.0, 25, 1.0692, _tempo(7), 491937),
+                  _row("Cult - Test Song (slowed x reverb)", SC_RIGHT, "soundcloud", 1.0, 25, 0.601, _tempo(40), 900),
+                  # Big League (2026-11-04): a same-titled song by another artist at core 0.622 (Shazam
+                  # names it another song); below CORE_SAME the artist must be named
+                  _row("Test Song - Prosper Thegod", SC_SAMETITLE, "soundcloud", 0.622, 60, 1.0, None, 50,
+                       uploader="Prosper Thegod")],
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    return d
+
+
+SC_SRC = "https://soundcloud.com/ledger-uploader/test-song-source"
+SC_SLOWBASS = "https://soundcloud.com/ledger-uploader/test-song-slowed-bass-boosted"
+SC_SPED = "https://soundcloud.com/ledger-uploader/test-song-sped-up-20"
+SC_DREAMS = "https://soundcloud.com/ledger-uploader/other-dreams-slowed-down"
+
+
+def source_crown(n, with_other=True):
+    """Fix 8 (issue #14): the Wildest Dreams shape (vt.tiktok.com/ZSgxkbbqo, test box 2026-11-04).
+    The crown is the SOURCE, a plain upload the clip was re-pitched from (core 0.856 at vspeed
+    0.8817, version figure 50). With `with_other`, another upload of the song stands as the closest
+    version (core 0.88, 88) and a third sits in the fold; without it the only other row is a
+    different song under SHELF_FLOOR, so the closest card is the song itself."""
+    d = _common(n)
+    src = _row("test song", SC_SRC, "soundcloud", 0.856, 50, 0.8817, None, 127, uploader="ledger-source")
+    src["cut_from"] = 0.8817
+    rows = [dict(src)]
+    if with_other:
+        rows += [_row("Test Artist - Test Song (slowed + bass boosted)", SC_SLOWBASS, "soundcloud", 0.88, 88, 1.004,
+                      None, 4000),
+                 _row("Test Song (sped up)", SC_SPED, "soundcloud", 0.99, 25, 0.80, _tempo(20), 900)]
+    rows += [_row("Other - Dreams (slowed down)", SC_DREAMS, "soundcloud", 0.109, None, 0.9905, None, 103396)]
+    d.update({"speed": "slowed ~0.88x + bass boosted", "edit_label": "slowed ~0.88x", "edit_certain": True,
+              "fig_pitched": True, "gates_on_rows": True, "decisive": False, "edits_pending": False,
+              "crown_is_source": True, "exact": src, "candidates": rows,
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    srcd = {"url": SC_SRC, "title": "test song", "fig": 50}
+    d["closest"] = ({"kind": "upload", "url": SC_SLOWBASS, "title": rows[1]["title"], "fig": 88, "source": srcd,
+                     "why": "highest figure of 2 uploads tied to this recording; the crown is the recording "
+                            "this clip was cut from"} if with_other else
+                    {"kind": "song", "url": None, "title": SONG, "fig": None, "source": srcd,
+                     "why": "none of 2 uploads is tied to this recording; the crown is the recording this "
+                            "clip was cut from"})
+    return d
+
+
 def nomatch(n):
     return {"result": "no_match", "url": CLIP % n, "platform": "tiktok", "handle": "ledger.test"}
 
@@ -133,6 +247,12 @@ SCEN = {
     6: {"final": crowned(6), "hold": 300},
     7: {"final": crowned(7), "hold": 300},
     8: {"final": crowned(8), "hold": 300},
+    9: {"final": nocrown_closest(9), "hold": 300},                     # Fix 7: the engine's closest pick
+    10: {"final": nocrown_closest(10, with_pick=False), "hold": 300},  # Fix 7: an older answer, no pick
+    11: {"final": found_bare(11), "hold": 300},                        # Fix 7: a found answer with no upload
+    12: {"final": nocrown_bandname(12), "hold": 300},                  # Fix 7 re-test: band name holds the song word
+    13: {"final": source_crown(13), "hold": 300},                      # Fix 8: source card + closest card
+    14: {"final": source_crown(14, with_other=False), "hold": 300},    # Fix 8: source card, nothing else stands
 }
 
 
@@ -322,7 +442,9 @@ FACTS = r"""() => {
     sects:[].map.call(R.querySelectorAll('.sect'),function(e){return e.textContent.trim();}),
     rows:trk.map(function(a){var p=a.querySelectorAll('.pl'); return {href:a.getAttribute('href'), target:a.getAttribute('target'),
       n_pl:p.length, ipopen:!!(p[0]&&p[0].hasAttribute('data-ipopen')), dplay:p[0]?p[0].getAttribute('data-play'):null,
-      top:a.classList.contains('top'), vis:vis(a)};}),
+      top:a.classList.contains('top'), vis:vis(a), cf:((a.querySelector('.cf')||{}).textContent||'').trim()};}),
+    nca:[].map.call(R.querySelectorAll('.nca'),function(e){return {vis:vis(e), line:((e.querySelector('.ncl')||{}).textContent||'').trim()};}),
+    fold:((R.querySelector('details.othv summary')||{}).textContent||'').replace(/\s+/g,' ').trim(),
     livelist:!!document.getElementById('livelist'),
     cover:ap?{inline:ap.classList.contains('inline'), vis:vis(ap), live:ap.classList.contains('live'),
       ytid:ap.getAttribute('data-ytid'), url:ap.getAttribute('data-url')}:null,
@@ -449,6 +571,21 @@ async def run_browser(L, html, chrome):
                 timeout=timeout)
             await pg.wait_for_timeout(2400)       # title/tracker fade-in (07710dd) and the landing
 
+        # Fix 7 (issue #13): every scan that names a song ends on a closest version card (Konnor,
+        # with Fix 6's Thunder layout), and the old negative lines never come back. Each scenario
+        # that names a song files its final card here; the two checks after the loop read them all.
+        CLOSEST_HEADS = ("The exact version playing", "The closest version we found",
+                         "The recording this clip was cut from")
+        OLD_LINES = ("No upload of this exact version found yet", "No upload at this exact speed yet",
+                     "No close version found", "nothing worth listing")
+        seen_closest = []
+
+        def closest_fact(label, f):
+            heads = [s for s in f["sects"] if s in CLOSEST_HEADS]
+            card = any(r["top"] and r["vis"] for r in f["rows"]) or any(x["vis"] for x in f["nca"])
+            old = [t for t in OLD_LINES if t.lower() in (f["text"] or "").lower()]
+            seen_closest.append({"scan": label, "heads": heads, "card": card, "old": old})
+
         # ---- 1. crowned scan: mid-hunt, then the final card -----------------------------------
         async def scen1():
             ctx = await context()
@@ -473,6 +610,7 @@ async def run_browser(L, html, chrome):
                     len(mid["rows"]) == 0, "rows mid-hunt=%d livelist=%s" % (len(mid["rows"]), mid["livelist"]))
             await wait_final(pg)
             f = await pg.evaluate(FACTS)
+            closest_fact("1 crowned", f)
             rows = f["rows"]
             L.check("R3", "ff5a064,7517583", "Every version row has its own play triangle",
                     bool(rows) and all(r["n_pl"] == 1 for r in rows), "rows=%d n_pl=%s" % (len(rows), [r["n_pl"] for r in rows]))
@@ -552,8 +690,11 @@ async def run_browser(L, html, chrome):
             await scan(pg, 2)
             await wait_final(pg)
             f = await pg.evaluate(FACTS)
-            L.check("R17", "c57455e", "With no crown the heading names the song ('The song'), not 'Our pick'",
-                    "The song" in f["sects"] and "Our pick" not in f["sects"], f["sects"])
+            closest_fact("2 no crown, weak rows", f)
+            # c57455e promised "The song", not "Our pick", over the no-crown card. Fix 7 (issue #13,
+            # Konnor) replaces the heading with the closest version card; "never Our pick" stands.
+            L.check("R17", "c57455e,fix7", "With no crown the heading is 'The closest version we found', never 'Our pick'",
+                    "The closest version we found" in f["sects"] and "Our pick" not in f["sects"], f["sects"])
             L.check("R18", "b1339d4", "The no-crown song card has its play button (plays in the app)",
                     any(x["ipopen"] and x["vis"] for x in f["nca_pl"]), f["nca_pl"])
             L.check("R19", "386cc4e", "The cover carries the play button on a no-crown result too",
@@ -576,12 +717,134 @@ async def run_browser(L, html, chrome):
             await scan(pg, 3)
             await wait_final(pg)
             f = await pg.evaluate(FACTS)
+            closest_fact("3 no crown, no links", f)
             tiles = [t["t"] for t in f["openin"]]
             L.check("R22", "dc7016a", "Open in row survives an empty links lookup (search tiles fill in)",
                     len(tiles) >= 4, tiles)
             L.info("I1", "b1339d4,386cc4e", "KNOWN GAP: with no crown and a timed-out links lookup there is no play button",
                    "cover=%s nca_pl=%s (server.py:2525-2556 swallows the 6 s links timeout; ncPlay has nothing to play)"
                    % (f["cover"], f["nca_pl"]))
+            await ctx.close()
+
+        # ---- 9 / 10 / 11. Fix 7 (issue #13): the closest version card with no crown ----------------
+        async def scen9():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 9)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("9 no crown, engine pick", f)
+            top = [r for r in f["rows"] if r["top"]]
+            L.check("R31", "fix7", "No crown: the engine's closest pick is on the closest version card at its real figure",
+                    "The closest version we found" in f["sects"] and len(top) == 1 and top[0]["href"] == SC_FAST
+                    and top[0]["cf"] == "25% version match" and not f["nca"],
+                    {"sects": f["sects"], "top": top, "nca": f["nca"]})
+            L.check("R32", "fix7", "The closest card is never repeated in the fold, and a different song is never on it",
+                    f["fold"].startswith("Other versions we checked") and f["fold"].endswith("3")
+                    and all(r["href"] != SC_OTHER for r in top)
+                    and sum(1 for r in f["rows"] if r["href"] == SC_FAST) == 1, {"fold": f["fold"]})
+            L.check("R33", "-", "No uncaught page errors during the closest-card scan", not ctx.errors, ctx.errors[:3])
+            await ctx.close()
+
+        async def scen10():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 10)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("10 no crown, older answer", f)
+            top = [r for r in f["rows"] if r["top"]]
+            L.check("R34", "fix7", "An answer saved without the engine's pick gets the same card by the page's rule "
+                                   "(figure, then speed gap), never the other-song row",
+                    len(top) == 1 and top[0]["href"] == SC_FAST and top[0]["cf"] == "25% version match",
+                    {"top": top})
+            await ctx.close()
+
+        async def scen11():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 11)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("11 found, no upload", f)
+            L.check("R35", "fix7", "A found answer with no upload still ends on the closest version card: the song itself",
+                    "The closest version we found" in f["sects"] and any(x["vis"] and x["line"] == "The original release"
+                                                                          for x in f["nca"]),
+                    {"sects": f["sects"], "nca": f["nca"]})
+            await ctx.close()
+
+        async def scen12():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 12)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("12 no crown, band name holds the song word", f)
+            top = [r for r in f["rows"] if r["top"]]
+            L.check("R38", "fix7", "A title that only holds the song's word (inside a band name, any core) or a same-titled "
+                                   "song by another artist (core under CORE_SAME) never reaches the closest card",
+                    len(top) == 1 and top[0]["href"] == SC_RIGHT and top[0]["cf"] == "25% version match",
+                    {"top": top})
+            await ctx.close()
+
+        # ---- 13 / 14. Fix 8 (issue #14): the recording this clip was cut from ------------------
+        SRC_HEAD = "The recording this clip was cut from"
+
+        async def scen13():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 13)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("13 source crown + another upload", f)
+            top = [r for r in f["rows"] if r["top"]]
+            sec = [x for x in f["sects"] if x in (SRC_HEAD, "The closest version we found")]
+            L.check("R39", "fix8", "A source crown keeps its card and the closest version card follows it with the "
+                                   "best other upload, at its own figure; the fold repeats neither",
+                    sec == [SRC_HEAD, "The closest version we found"] and len(top) == 2
+                    and top[0]["href"] == SC_SRC and top[1]["href"] == SC_SLOWBASS
+                    and top[1]["cf"] == "88% version match" and f["fold"] == "Other versions we checked · 1"
+                    and sum(1 for r in f["rows"] if r["href"] == SC_SRC) == 1
+                    and sum(1 for r in f["rows"] if r["href"] == SC_SLOWBASS) == 1,
+                    {"sects": f["sects"], "top": top, "fold": f["fold"]})
+            L.check("R40", "fix8", "The source card prints its recording match (core, speed taken out), not the "
+                                   "50 floor the speed gap gives its version figure",
+                    bool(top) and top[0]["cf"] == "86% recording match", top[:1])
+            n_ipl = await pg.evaluate("()=>document.querySelectorAll('#ipl').length")
+            L.check("R41", "-", "One in-app player on the source screen, and no uncaught page errors",
+                    n_ipl == 1 and not ctx.errors, {"ipl": n_ipl, "errors": ctx.errors[:3]})
+            await ctx.close()
+
+        async def scen14():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 14)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("14 source crown, nothing else stands", f)
+            top = [r for r in f["rows"] if r["top"]]
+            sec = [x for x in f["sects"] if x in (SRC_HEAD, "The closest version we found")]
+            n_ipl = await pg.evaluate("()=>document.querySelectorAll('#ipl').length")
+            L.check("R42", "fix8", "With nothing else tied to the recording, the source card is followed by the "
+                                   "song itself as the closest version, and no fold",
+                    sec == [SRC_HEAD, "The closest version we found"] and len(top) == 1
+                    and top[0]["href"] == SC_SRC and top[0]["cf"] == "86% recording match"
+                    and any(x["vis"] and x["line"] == "The original release" for x in f["nca"])
+                    and not f["fold"] and n_ipl == 1,
+                    {"sects": f["sects"], "top": top, "nca": f["nca"], "fold": f["fold"], "ipl": n_ipl})
+            ok, why = False, "no song card play button"
+            if any(x["ipopen"] and x["vis"] for x in f["nca_pl"]):
+                n0 = len(ctx.popups)
+                await pg.locator(".nca .pl").first.tap()
+                await pg.wait_for_timeout(1500)
+                g = await pg.evaluate(FACTS)
+                atitle = await pg.evaluate("()=>{var e=document.getElementById('ipl'); return e?e.getAttribute('data-atitle'):null;}")
+                ok = (bool(g["band"]) and g["band"]["vis"] and g["band"]["audio"]
+                      and g["band"]["audio_paused"] is False and len(ctx.popups) == n0 and atitle == SONG)
+                why = {"band": g["band"], "atitle": atitle}
+            L.check("R43", "b1339d4,fix8", "Under a source card the song card's play button plays the preview in the "
+                                           "app, labelled with the song", ok, why)
+            L.check("R44", "-", "No uncaught page errors during the source-only scan", not ctx.errors, ctx.errors[:3])
             await ctx.close()
 
         # ---- 4. replay timing -----------------------------------------------------------------
@@ -648,12 +911,24 @@ async def run_browser(L, html, chrome):
                     f2["paywall"], "paywall=%s state=%s" % (f2["paywall"], f2["state"]))
             await ctx.close()
 
-        for fn, label in (((scen1, "1. crowned scan: mid-hunt, then the final card"), (scen2, "2. no-crown scan with a preview"), (scen3, "3. no-crown, the links lookup timed out (empty links, no preview)"), (scen4, "4. replay timing"), (scen5, "5. share first paint"), (scen6, "6. paywall counters (the iOS StoreKit path)"))):
+        for fn, label in (((scen1, "1. crowned scan: mid-hunt, then the final card"), (scen2, "2. no-crown scan with a preview"), (scen3, "3. no-crown, the links lookup timed out (empty links, no preview)"), (scen4, "4. replay timing"), (scen5, "5. share first paint"), (scen6, "6. paywall counters (the iOS StoreKit path)"),
+                           (scen9, "9. no crown, the engine's closest pick (Fix 7)"),
+                           (scen10, "10. no crown, an answer saved without the pick (Fix 7)"),
+                           (scen11, "11. found, no upload at all (Fix 7)"),
+                           (scen12, "12. no crown, a band name holds the song word (Fix 7 re-test)"),
+                           (scen13, "13. source crown with another upload (Fix 8)"),
+                           (scen14, "14. source crown, nothing else stands (Fix 8)"))):
             try:
                 await fn()
             except Exception as e:
                 L.rows.append({"id": "H", "commit": "-", "promise": "scenario finished: " + label, "status": "FAIL",
                                "detail": "%s: %s" % (type(e).__name__, str(e)[:240])})
+        miss = [x for x in seen_closest if not (x["heads"] and x["card"])]
+        L.check("R36", "fix7", "Every scan that names a song ends on a closest version card (%d scans)" % len(seen_closest),
+                len(seen_closest) >= 6 and not miss, miss or [x["scan"] + ": " + x["heads"][0] for x in seen_closest])
+        old = [x for x in seen_closest if x["old"]]
+        L.check("R37", "fix7", "The old negative lines never appear ('No upload of this exact version found yet' and kin)",
+                not old, old)
         await b.close()
     mock.stop()
 

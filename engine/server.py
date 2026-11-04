@@ -1713,6 +1713,7 @@ def _phase1(url, key, t0):
                 base.update(result="found", from_credit=True,
                             base_song=ct, base_artist=ca, edit_certain=False,
                             speed="as posted", decisive=False, exact=None, candidates=[])
+                _closest_pick(base, where="credit")     # FIX 7: the song itself, logged
             return base, None
         raise
     res = {
@@ -4521,6 +4522,168 @@ def _write_figs(res):
         E.tlog("write_figs", 0.0, error=type(_ex).__name__)
 
 
+# ------------- THE CLOSEST VERSION, ON EVERY SCAN THAT NAMES A SONG (FIX 7, issue #13) -------------
+# Konnor: "Whenever a song is identified, a closest version card must be shown ... If no candidate
+# can be confirmed as the same audio ... show ... the identified song itself (the original
+# release) as the closest version we found. Do not promote a different song as if it were the
+# same audio." Measured on vt.tiktok.com/ZSgH4vvMH (Lil Peep "nuts"): six uploads came back, five
+# of them nuts at 8-20% off the clip's speed (core 0.74-1.00, refused for tempo) and one a
+# different mashup (refused, fp 0.596), so nothing was crowned and the page fell back to "Normal
+# speed. No upload of this exact version found yet." This names the card for every found answer
+# and logs why, display only: it never changes the crown, the rows or their figures.
+#   crown   the crowned upload, as today
+#   upload  no crown: the row with the highest figure (`fig`, the number the card prints) among
+#           rows the audio ties to this recording (_closest_usable); ties go to the smaller speed
+#           gap, then core, then plays
+#   song    no such row: the identified song itself
+# FIX 8 (issue #14): when the crown is the SOURCE (res["crown_is_source"], the plain upload the
+# clip was re-pitched from), the page shows it under "The recording this clip was cut from" and
+# the pick above runs as if nothing were crowned, over every row but that one. `source` on the
+# pick names it, and the log says `source_only` when no other upload could stand.
+_CLOSEST_NOT_SAME = ("othersong", "null")
+
+
+# THE TITLE MUST NAME THE SONG, NOT JUST CONTAIN ITS WORD (re-test 2026-11-04, test box). On kyks
+# (Shazam: "Three (Slowed)") the card picked "Animal Ive Become- Three Days Of Grace Slowed" at 25%:
+# core 1.000 (super slowed audio saturates core, findings/core-saturation.md), refused only for
+# tempo, and the old test passed it because "three" sits inside the band's name. "ACT A DAMN FOOL
+# - THREE 6 MAFIA" and "Three Days Grace - Gone Forever" passed too. Now a row stands only when one
+# part of its title (split at " - ", "|", "//", " x ", "vs", "+", "&", every bracket on its own) is
+# the song's own words and nothing else, once edit tags, a featured or producer credit and the
+# artist's name are taken out. Core alone, however high, no longer puts a row on the card. The page
+# mirrors this rule (crate.html clStands, CL_SKIP = _CLOSEST_TAGS; test_closest_pick checks both).
+_CLOSEST_TAGS = frozenset(_OTHER_SONG_SKIP | {
+    "speed", "slow", "perfectly", "super", "reverbed", "boost", "bassboosted", "looped",
+    "remastered", "remaster", "acoustic", "live", "lyric", "visualizer", "kbps", "mp3", "yt1s",
+    "chopped", "screwed", "ver"})
+_CLOSEST_SPLIT = re.compile(r"\s*[-–—|~]+\s+|\s+[-–—|~]+\s*|//|\s(?:x|vs\.?|versus|\+|&)\s")
+_CLOSEST_CREDIT = re.compile(r"\b(?:ft|feat|featuring|prod)\b.*$")
+
+
+def _closest_words(s):
+    """3+ letter words of `s`, apostrophes dropped (wouldn't = wouldn’t = wouldnt), folded to
+    ASCII, edit tags out."""
+    s = unicodedata.normalize("NFKD", (s or "").replace("'", "").replace("’", "")).lower()
+    s = s.encode("ascii", "ignore").decode()
+    return {w for w in re.findall(r"[a-z0-9]+", s) if len(w) >= 3 and w not in _CLOSEST_TAGS}
+
+
+def _closest_song_words(base_song):
+    """The identified song's own words: its title without the bracketed parts."""
+    return _closest_words(re.sub(r"[\(\[\{].*?[\)\]\}]", " ", base_song or ""))
+
+
+def _closest_names_song(title, song_words, artist_words=()):
+    """True when one part of `title` is exactly the song's words (see above)."""
+    if not song_words:
+        return False
+    drop = set(artist_words or ()) - set(song_words)
+    t = unicodedata.normalize("NFKD", title or "").lower().replace("×", " x ")
+    parts = re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t)
+    body = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", t)
+    for chunk in [body] + parts:
+        for seg in _CLOSEST_SPLIT.split(" %s " % chunk):
+            if (_closest_words(_CLOSEST_CREDIT.sub(" ", seg)) - drop) == song_words:
+                return True
+    return False
+
+
+# A SAME-TITLED SONG BY SOMEONE ELSE (re-test 2026-11-04). On Big League (IG DeE4Gy2xjUN, Lil Baby &
+# 42 Dugg) the card picked "Big league.     Prosper x Tokyo" (uploader Prosper Thegod) at 17%: core
+# 0.622, refused only for tempo. Shazam calls that upload Metizone "Nova Spiral", another song, and
+# a third row on the same clip ("Big Baby Tape ... FIZZYBREW", Shazam: PHARAOH "Шипучка") read core
+# 0.711. Core between CORE_KEEP and CORE_SAME is not proof of the song on its own, so below
+# CORE_SAME the title or uploader must also name the identified artist (every word of one of the
+# names in the credit).
+_CLOSEST_ARTIST_SPLIT = re.compile(r"\s*(?:,|&|/|\bx\b|\band\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*")
+
+
+def _closest_artist_names(base_artist):
+    """The credit's names, each as its word set: "Lil Baby & 42 Dugg" -> [{lil, baby}, {dugg}]."""
+    t = unicodedata.normalize("NFKD", base_artist or "").lower()
+    return [w for w in (_closest_words(p) for p in _CLOSEST_ARTIST_SPLIT.split(t)) if w]
+
+
+def _closest_artist_named(r, artist_names):
+    hay = _closest_words("%s %s" % (r.get("title") or "", r.get("uploader") or ""))
+    return any(n <= hay for n in artist_names or ())
+
+
+def _closest_usable(r, song_words, artist_words=(), artist_names=()):
+    """Can this row stand as the closest version? Only an upload tied to the identified recording:
+    core at CORE_KEEP or above (the card prints a figure for it, not a word), no engine verdict
+    that it is another song or texture only, a title that names the song (_closest_names_song),
+    and below CORE_SAME the artist named too (_closest_artist_named). A refusal for tempo, EQ, a
+    speed-edit title or an official release still says "this recording, another version", so
+    those rows can stand."""
+    core = r.get("core")
+    if not isinstance(core, (int, float)) or core < E.CORE_KEEP:
+        return False
+    if ((r.get("gate") or {}).get("kind") or "") in _CLOSEST_NOT_SAME:
+        return False
+    if not _closest_names_song(r.get("title"), song_words, artist_words):
+        return False
+    return core >= E.CORE_SAME or _closest_artist_named(r, artist_names)
+
+
+def _closest_key(r):
+    fig = r.get("fig")
+    v = r.get("vspeed")
+    gap = (abs(math.log2(v)) if isinstance(v, (int, float)) and v > 0 and not r.get("tempo_unmeasured")
+           else 9.0)
+    return (-(fig if isinstance(fig, (int, float)) else -1), round(gap, 4),
+            -float(r.get("core") or 0), -int(r.get("plays") or 0))
+
+
+def _closest_pick(res, where="hunt"):
+    """res["closest"] = {kind, url, title, fig, why} for a found answer (see above), and one
+    `closest_pick` log row with every row's core, figure, speed, verdict and whether it could
+    stand. Never fatal."""
+    try:
+        if res.get("result") != "found" or not res.get("base_song"):
+            return
+        ex = res.get("exact") or None
+        rows = [r for r in (res.get("candidates") or []) if isinstance(r, dict) and r.get("url")]
+        sw = _closest_song_words(res.get("base_song"))
+        aw = _closest_words(res.get("base_artist"))
+        an = _closest_artist_names(res.get("base_artist"))
+        ok = [r for r in rows if _closest_usable(r, sw, aw, an)]
+        src = None
+        if ex and res.get("crown_is_source") and ex.get("url"):
+            # FIX 8 (issue #14): a source crown is the recording the clip was cut from, not a
+            # version of the edit, so it gets its own card and the closest version card names
+            # the best OTHER upload tied to this recording; with none, the song itself.
+            src = {"url": ex.get("url"), "title": ex.get("title"), "fig": ex.get("fig")}
+            ok = [r for r in ok if r.get("url") != ex.get("url")]
+            ex = None
+        if ex and (ex.get("url") or ex.get("title")):
+            pick = {"kind": "crown", "url": ex.get("url"), "title": ex.get("title"),
+                    "fig": ex.get("fig"), "why": "the crowned upload"}
+        elif ok:
+            c = sorted(ok, key=_closest_key)[0]
+            gk = (c.get("gate") or {}).get("kind")
+            pick = {"kind": "upload", "url": c.get("url"), "title": c.get("title"), "fig": c.get("fig"),
+                    "why": "highest figure of %d upload%s tied to this recording%s" % (
+                        len(ok), "" if len(ok) == 1 else "s",
+                        (", not crowned (%s)" % gk) if gk else "")}
+        else:
+            pick = {"kind": "song", "url": None, "title": res.get("base_song"), "fig": None,
+                    "why": ("none of %d uploads is tied to this recording" % len(rows)) if rows
+                           else "no upload came back"}
+        if src is not None:
+            pick["source"] = src
+            pick["why"] += "; the crown is the recording this clip was cut from"
+        res["closest"] = pick
+        E.tlog("closest_pick", 0.0, where=where, url=res.get("url"), kind=pick["kind"],
+               title=(pick.get("title") or "")[:80], chosen=pick.get("url"), fig=pick.get("fig"),
+               why=pick["why"], n=len(rows), usable=len(ok),
+               source=(src or {}).get("url"), source_only=bool(src is not None and pick["kind"] == "song"),
+               rows=[[(r.get("title") or "")[:50], r.get("core"), r.get("fig"), r.get("vspeed"),
+                      (r.get("gate") or {}).get("kind"), any(r is o for o in ok)] for r in rows[:12]])
+    except Exception as _ex:
+        E.tlog("closest_pick", 0.0, where=where, error=type(_ex).__name__)
+
+
 # ------------- SIMILAR EDITS (CRATE_DIR_ALIGN, closest-only redesign) -------------
 # find_edit's lane hands back result["similar_edits"] (crate_engine DIR_ALIGN): uploads whose
 # matching SECTION it found later in the upload, on two clip windows at one speed, a few percent
@@ -5645,6 +5808,7 @@ def _fast_original_finish(ctx, d):
     res["candidates"] = []
     res["decisive"] = False
     res["fast_original"] = {"score": d["score"], "parts": d["parts"]}
+    _closest_pick(res, where="fast")      # FIX 7: no rows, so the card is the song itself
     res["edits_pending"] = False
     res["hunted"] = True                  # its replay shows the exact-version step too
     res["secs"] = round(time.time() - t0, 1)
@@ -6033,6 +6197,31 @@ def _phase2(ctx, on_cand=None):
             if _dead:
                 res["dead_links_dropped"] = _dead
                 verified = _live
+            # FIX 3 (retry 2026-11-02): PAST A WEAK ROW 1 (the walk below), EVERY ROW THE WALK
+            # CAN CROWN READS ITS EQ ON THE ALIGNED WINDOW (E.eq_reread, no download), before
+            # any row, gate, figure or bass label reads it. On such a scan release-next crowns
+            # nothing, so no existing crown moves. verify() compares the clip's first 20 s with
+            # the upload's first 20 s, whatever part of the song each is. The recall lane's Big
+            # League crown showed the cost: the 9.8 s reel sits 16.2 s into Fozure's upload, and
+            # that head read (bass -6.83 dB, slope -2.666) put "bass boosted" on the pill and 89
+            # on the card; on the aligned 9.8 s it reads +1.79 / +1.700. Recall-lane rows come
+            # back from the engine already re-read (crate_engine._RecallLane).
+            if (verified and (verified[0].get("core") or 0) < E.CORE_KEEP
+                    and hasattr(E, "eq_reread")):
+                _eqr, _eqt, _eqx = [], time.time(), None
+                for c in verified:
+                    if ((c.get("core") or 0) >= E.CORE_KEEP and c.get("eq_window") is None
+                            and c.get("path")):
+                        if _eqx is None:
+                            try:
+                                _eqx = E._verify._decode(src.get("audio"), 20)
+                            except Exception:
+                                _eqx = None
+                        _eok = E.eq_reread(c, src.get("audio"), xc=_eqx)
+                        _eqr.append([(c.get("title") or "")[:50], _eok, c.get("eq_head"),
+                                     c.get("eq_window")])
+                if _eqr:
+                    E.tlog("eq_reread", time.time() - _eqt, why="past_weak_row1", rows=_eqr)
             for c in verified[:6]:
                 candidates.append(_cand_row(c))
             # NEVER CROWN BELOW THE KEEP BAR. verified[] can contain candidates admitted
@@ -6044,6 +6233,27 @@ def _phase2(ctx, on_cand=None):
             # A confident wrong answer is worse than an honest miss, so below the bar we
             # report the song and no exact version.
             top = verified[0] if verified else None
+            # FIX 3 (issue #12): A ROW RANKED UNDER THE BAR NO LONGER HIDES ONE ABOVE IT.
+            # rank_key puts the artist tier above audio merit (the Ark Patrol case), so on the
+            # Hymn For The Weekend clip (vt.tiktok.com/ZSgA99P91) three "Coldplay"-titled rows
+            # rescued on their "slowed" titles at core 0.000-0.196 rank over the upload that
+            # verifies at core 1.000 but has no "Coldplay" in its title, and with row 1 under
+            # the bar the walk below was offered nothing. When a verified row does clear the
+            # bar, the walk starts there instead, with every gate it runs on any other scan
+            # (Ark Patrol's 1.000 at fp 0.554 is refused by the fp floor). The time-reversed
+            # null is one of them, and it does NOT run on a SoundCloud upload whose direct
+            # fetch fails: _time_reversed_null asks dl_clip for cand.m4a, the yt-dlp fallback
+            # writes cand.wav, dl_clip returns None and the control passes (measured on the test
+            # box 2026-11-02 for Fozure's Big League, Thunder, bouch and mason uploads; the
+            # Thunder crown release-next gives rides it too). Row 1 at or above the bar: as before.
+            _above = (next((c for c in verified if (c.get("core") or 0) >= E.CORE_KEEP), None)
+                      if top and (top.get("core") or 0) < E.CORE_KEEP else None)
+            if _above is not None:
+                E.tlog("crown_past_weak_row1", 0.0, row1=(top.get("title") or "")[:60],
+                       row1_core=round(top.get("core") or 0, 3),
+                       to=(_above.get("title") or "")[:60],
+                       to_core=round(_above.get("core") or 0, 3))
+                top = _above
             if top and (top.get("core") or 0) < E.CORE_KEEP:
                 # Below the bar we refuse to CROWN - a confident wrong answer is worse
                 # than an honest miss, which is why this gate exists. But throwing the
@@ -6796,6 +7006,7 @@ def _phase2(ctx, on_cand=None):
                 and "pitch kept" not in res["speed"]):
             res["speed"] = res["speed"] + ", pitch kept"       # CRATE_TEMPO_KEPT: display
         _write_figs(res)
+        _closest_pick(res)               # FIX 7: names the closest version card, display only
         _similar_edits(res, edit, measured, edit_label, base_title)    # CRATE_DIR_ALIGN, adds only
         res["edits_pending"] = False
         res["hunted"] = True             # SPEED FIX 1: a replay of this answer shows the hunt step

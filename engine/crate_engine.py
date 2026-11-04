@@ -1323,6 +1323,132 @@ def tlog(stage, secs, **kw):
         pass
 
 
+# FIX 3 (issue #12): ONE ROW PER HUNT THAT SAYS WHERE EVERY CANDIDATE WENT. Konnor: "Keep the
+# raw scores, speed ratio and reasons in logs". Every downloaded row is listed with its scores
+# and what happened to it; CRATE_POOL_LOG=1 adds the rows that were found and never downloaded,
+# in download-priority order, which is what tells "never searched" from "found, not downloaded".
+# Read only: nothing here writes to a row. No-op without CRATE_TIMING.
+POOL_LOG = _speed_flag("CRATE_POOL_LOG", False)
+
+
+def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt", since=None):
+    if not _TLOG_PATH:
+        return
+    try:
+        rk = {id(c): i for i, c in enumerate(ranked or [])}
+        kp = {id(c) for c in keep or []}
+        qi = {q: i for i, q in enumerate(queries or [])}
+        rows, n_dl, n_fail = [], 0, 0
+        for i, c in enumerate(cands or []):
+            done = bool(c.get("_done"))
+            scored = bool(c.get("path"))
+            if done:
+                n_dl += 1
+                if not scored:
+                    n_fail += 1
+            if not (done or POOL_LOG):
+                continue
+            why = ("ranked" if id(c) in rk else "kept" if id(c) in kp
+                   else "under_keep" if scored else "recall_dropped" if c.get("recall_dropped")
+                   else "dl_failed" if done else "not_downloaded")
+            r = {"i": i, "u": c.get("url"), "src": c.get("source"),
+                 "t": (c.get("title") or "")[:70], "d": int(_dur_s(c)),
+                 "p": c.get("plays") or 0, "why": why}
+            q = c.get("query")
+            r["q"] = qi.get(q, (q or "")[:40] if q else None)
+            if scored:
+                r.update(core=round(float(c.get("core") or 0), 3),
+                         fp=round(float(c.get("fp") or 0), 3),
+                         v=round(float(c.get("vspeed_locked") or c.get("vspeed") or 0), 3))
+            if id(c) in rk:
+                r["rank"] = rk[id(c)]
+            lanes = [k for k in ("creator_upload", "rescue_q", "hint_mash", "family_wave",
+                                 "fast_carry", "comment_link", "sc_first", "recall_lane",
+                                 "mashup_lane")
+                     if c.get(k)]
+            if c.get("sc_top"):
+                r["sc_top"] = c.get("sc_top")
+            if lanes:
+                r["lane"] = lanes
+            rows.append(r)
+        tlog("hunt_pool", 0.0, where=where, n=len(cands or []), downloaded=n_dl,
+             dl_failed=n_fail, kept=len(kp), ranked=len(rk), full=POOL_LOG,
+             queries=list(queries or [])[:24], rows=rows)
+    except Exception as e:
+        tlog("hunt_pool", 0.0, where=where, error=type(e).__name__)
+    platform_health(cands, ranked, keep, since=since, where=where)
+
+
+# FIX 8 (issue #14): A HEALTH LINE PER PLATFORM ON EVERY SCAN, and a warning when a popular song
+# comes back thin. Konnor: "per platform, the queries run, results returned, results kept, results
+# dropped (with reasons) and errors", and "an automated warning when a very popular song returns
+# fewer than a handful of candidates on a platform". Measured on vt.tiktok.com/ZSgxkbbqo (Wildest
+# Dreams, test box, 7f42ee8): 347 rows found, 30 downloaded, 19 of them failed (17 of 17 YouTube),
+# 3 kept, all SoundCloud, and no log line said so. Read only, no-op without CRATE_TIMING.
+UNDER_MIN_KEPT = 3            # "a handful": fewer kept rows than this on a popular song warns
+UNDER_POP_PLAYS = 1000000     # popular = a row with this many plays, or UNDER_POP_ROWS found
+UNDER_POP_ROWS = 100
+
+
+def platform_health(cands, ranked=(), keep=(), since=None, where="hunt"):
+    if not _TLOG_PATH:
+        return
+    try:
+        rk = {id(c) for c in ranked or []}
+        kp = {id(c) for c in keep or []}
+        per = {}
+        for c in cands or []:
+            src = c.get("source") or "other"
+            h = per.setdefault(src, {"found": 0, "downloaded": 0, "dl_failed": 0, "scored": 0,
+                                     "under_keep": 0, "kept": 0, "ranked": 0, "not_downloaded": 0,
+                                     "top_plays": 0})
+            h["found"] += 1
+            h["top_plays"] = max(h["top_plays"], int(c.get("plays") or 0))
+            if c.get("_done"):
+                h["downloaded"] += 1
+                if not c.get("path"):
+                    h["dl_failed"] += 1
+                else:
+                    h["scored"] += 1
+                    if id(c) in rk:
+                        h["ranked"] += 1
+                    elif id(c) in kp:
+                        h["kept"] += 1
+                    else:
+                        h["under_keep"] += 1
+            else:
+                h["not_downloaded"] += 1
+        qset = {c.get("query") for c in cands or [] if c.get("query")}
+        srch = search_health(since, qset, early=since - 120) if since else {}
+        for src, s in srch.items():
+            per.setdefault(src, {"found": 0, "downloaded": 0, "dl_failed": 0, "scored": 0,
+                                 "under_keep": 0, "kept": 0, "ranked": 0, "not_downloaded": 0,
+                                 "top_plays": 0})["search"] = s
+        tlog("platform_health", 0.0, where=where, platforms=per)
+        n_found = sum(h["found"] for h in per.values())
+        popular = (n_found >= UNDER_POP_ROWS
+                   or any(h["top_plays"] >= UNDER_POP_PLAYS for h in per.values()))
+        for src, h in per.items():
+            good = h["kept"] + h["ranked"]
+            if popular and good < UNDER_MIN_KEPT and (h["found"] or h.get("search")):
+                s = h.get("search") or {}
+                why = []
+                if s.get("errors") or s.get("timeouts"):
+                    why.append("%d searches failed" % (s.get("errors", 0) + s.get("timeouts", 0)))
+                if h["dl_failed"]:
+                    why.append("%d of %d downloads failed" % (h["dl_failed"], h["downloaded"]))
+                if h["under_keep"]:
+                    why.append("%d scored under the keep bar" % h["under_keep"])
+                if h["not_downloaded"]:
+                    why.append("%d found, never downloaded" % h["not_downloaded"])
+                tlog("under_delivery", 0.0, where=where, src=src, kept=good, found=h["found"],
+                     downloaded=h["downloaded"], dl_failed=h["dl_failed"],
+                     search_rows=s.get("rows"), search_failed=s.get("errors", 0) + s.get("timeouts", 0),
+                     why=why)
+    except Exception as e:
+        tlog("platform_health", 0.0, where=where, error=type(e).__name__)
+
+
 # ---------------------------------------------------------------- tiktok fetch
 # The plain HTML page walls hard when hit repeatedly. TikTok's own item-detail
 # API returns the same music.playUrl and rarely walls, and curl_cffi impersonates
@@ -7148,6 +7274,596 @@ def evidence_rows(rows, clip_secs, known_dir, edit_label, song_terms, artist_hit
     return out, ";".join(why)
 
 
+# FIX 3 (issue #12, Konnor: "If an upload of that audio exists, Addify must find it"). THE
+# RECALL LANE: up to RECALL_LEN_DL + RECALL_TOP_DL rows the main search already returned and the
+# 14-row head left out. Two signals the head never reads:
+#   * LENGTH: a short upload near the clip's own length, titled with the whole song plus an
+#     edit or section word, the same test as the length lane (evidence_rows) without needing a
+#     measured direction. Hymn For The Weekend (vt.tiktok.com/ZSgA99P91, 25.8 s clip): Lavt0c's
+#     "HYMN FOR THE WEEKEND - BASS BOOSTED // SPED UP" (25.9 s) verifies at core 1.000, fp 0.906,
+#     speed 1.000, and sat at 180 of 364 in the download order because its title has no
+#     "Coldplay"; the length lane never ran because the hunt had no measured direction.
+#   * FIRST ON SOUNDCLOUD for RECALL_TOP_MIN+ of our own queries (`sc_top`, _merge_rows), with
+#     the whole song title read through fold_name. Big League (instagram.com/reel/DeE4Gy2xjUN):
+#     Fozure's upload, titled in bold maths letters, was SoundCloud's first answer to 12 of 15
+#     queries, verifies at core 1.000, fp 0.858, speed 1.000, and sat at 322 of 337 because the
+#     title check reads only plain letters.
+# OWN SLOTS (retry 2026-11-02). Riding wave 1 cost that batch 1.1-6.2 s whenever the lane picked
+# rows (an independent check, release-next vs this branch on one box: bouch 9.2 -> 14.1 s, Hymn
+# 7.6 -> 13.8 s, mason 9.0 -> 13.4 s, Thunder 5.9 -> 9.4 s), because a batch waits for its
+# slowest row and 15-18 rows queued behind 16 workers. Now the lane runs on its own executor
+# (_RecallLane) at the lowest CPU priority (RECALL_NICE), started WITH wave 1 and stopped the
+# moment a wave-1 row settles the clip (recall_settles); the ranking pass waits for it
+# (RECALL_JOIN_WAIT at most) only when the hunt is still unsettled there. Wave 1 and every wave
+# after it download release-next's rows, row for row. Started after wave 1 instead (tried
+# first), kyks' Cult Member rows missed a 4.0 s join by 0.1 s (the hunt went straight from wave 1
+# to ranking) and Hymn waited 3.0 s; started with wave 1 at normal priority, kyks' wave 1 went
+# 12.4 -> 19.0 s. The rows' scores stay out of the hunt until the ranking pass and count there
+# only on an unsettled hunt. CRATE_RECALL_LANE=0 turns it off.
+RECALL_LANE = _speed_flag("CRATE_RECALL_LANE", True)
+RECALL_LEN_DL, RECALL_TOP_DL, RECALL_TOP_MIN = 2, 2, 2
+RECALL_DL_SECS = 30          # a lane row's fetch: verify() still reads its first 20 s (eq_aligned)
+RECALL_JOIN_WAIT = 4.0       # the ranking pass waits at most this for a lane row still running
+RECALL_NICE = 15             # how much lower a lane job's CPU priority is (Linux; see _RecallLane)
+EQ_ALIGN_MIN = 5.0           # eq_aligned needs this much clip and upload side by side
+
+
+def _has_word(term, text):
+    """`term` in `text` as a whole word (letters and digits are word characters, so "Cult_Member"
+    carries "cult" and "ThunderBolt" does not carry "thunder")."""
+    return re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(term), text) is not None
+
+
+def _fold_cov(c, song_terms):
+    """song_cov on WHOLE words, read through fold_name as well as the raw title (a term counts
+    when either form carries it), so a title in a styled font is not a title with no words. A
+    substring test let "Moska X David Nova - ThunderBolt" into the lane on a Thunder clip."""
+    if not song_terms:
+        return 1.0
+    raw = (c.get("title") or "").lower()
+    fold = fold_name(c.get("title") or "").lower()
+    return (sum(1 for t in song_terms if _has_word(t, raw) or _has_word(t, fold))
+            / float(len(song_terms)))
+
+
+def _names_artist(c, artist_toks):
+    """The confirmed artist as a whole word in the title or uploader, raw or folded."""
+    hay = "%s %s" % (c.get("title") or "", c.get("uploader") or "")
+    raw, fold = hay.lower(), fold_name(hay).lower()
+    return any(_has_word(w, raw) or _has_word(w, fold) for w in (artist_toks or ()))
+
+
+_PART_SEP = re.compile(r"\s*(?:[-–—|~]+|//)\s*")
+_PART_FILL = {"ultra", "super", "perfectly", "tiktok", "loop", "looped", "best", "part", "official",
+              "audio", "lyrics", "video", "prod", "feat", "boosted", "bass", "sped", "down", "speed",
+              "extended", "song", "music"}
+
+
+def _title_is_song(c, song_terms):
+    """The song's own words standing alone as one part of the title (split at a dash, bar, tilde
+    or //, brackets and treatment words removed): "cult member - three (slowed)" and
+    "♪ Three - Cult Member (Ultra Slowed + Reverb)" are uploads OF "Three"; "UMBRELLA, VAMPXL -
+    ONE TWO THREE FOUR (Ultra Slowed)" carries the word inside another title. Needed because
+    Shazam's artist can be a re-uploader's (kyks names "Three (Slowed)" by 42RAIN, so the
+    artist test alone found no Cult Member row at all)."""
+    want = set(song_terms or ())
+    t = fold_name(c.get("title") or "").lower()
+    for part in _PART_SEP.split(t):
+        part = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", part)
+        part = re.sub(r"[\(\[\{][^\)\]\}]*$", " ", part)     # a bracket the title cut off
+        part = EDIT_WORDS.sub(" ", part)
+        words = {w for w in re.findall(r"[a-z0-9]+", part)
+                 if len(w) >= 3 and w not in ORIGINAL_WORDS and w not in _PART_FILL}
+        if words and words == want:
+            return True
+    return False
+
+
+def recall_rows(pool, skip, clip_secs, known_dir, song_terms, artist_toks=None):
+    """The recall lane's rows (see RECALL_LANE). Returns (rows, why). Zero network: reads
+    title, uploader, duration, plays, source, sc_top. Each row picked is tagged `recall_why`.
+    A one-word song ("Three", "Thunder") also needs the confirmed artist (`artist_toks`) in the
+    row, or its word standing alone as a title part (_title_is_song): the one word alone let
+    "UMBRELLA, VAMPXL - ONE TWO THREE FOUR (Ultra Slowed)" into the lane on the kyks clip."""
+    if not song_terms:
+        return [], "no-song-words"
+    L = float(clip_secs or 0)
+    kd = known_dir or ""
+    rx = _FAST_SLOW_CLAIM if "slow" in kd else (_FAST_QUICK_CLAIM if "sped" in kd else None)
+    short_max = max(90.0, 3.0 * L)
+    one_word = len(song_terms) < 2
+    sec, top = [], []
+    for i, c in enumerate(pool or []):
+        if id(c) in skip or c.get("_done") or c.get("fast_carry"):
+            continue
+        t = fold_name(c.get("title") or "")
+        if (_fold_cov(c, song_terms) < 1.0 or _is_compilation(c) or OTHER_RENDITION.search(t)
+                or (c.get("source") == "soundcloud" and abs(_dur_s(c) - 30.0) < 0.01)
+                or (one_word and not (_names_artist(c, artist_toks)
+                                      or _title_is_song(c, song_terms)))):
+            continue
+        d = _dur_s(c)
+        if L > 0 and 0.5 * L <= d <= short_max and (EDIT_WORDS.search(t) or _SECTION_WORD.search(t)):
+            sec.append((0 if (rx and rx.search(t)) else 1, abs(float(np.log(d / L))),
+                        -(c.get("plays") or 0), i, c))
+        if (c.get("sc_top") or 0) >= RECALL_TOP_MIN:
+            top.append((-(c.get("sc_top") or 0), -(c.get("plays") or 0), i, c))
+    sec.sort(key=lambda x: x[:4])
+    top.sort(key=lambda x: x[:3])
+    out = []
+    for x in sec[:RECALL_LEN_DL]:
+        x[-1]["recall_why"] = "length"
+        out.append(x[-1])
+    n_top = 0
+    for x in top:
+        if n_top >= RECALL_TOP_DL:
+            break
+        if any(o is x[-1] for o in out):
+            continue
+        x[-1]["recall_why"] = "sc_first:%d" % (x[-1].get("sc_top") or 0)
+        out.append(x[-1])
+        n_top += 1
+    return out, "length:%d;sc_first:%d" % (len(sec), len(top))
+
+
+def recall_settles(c):
+    """Does this scored row (not a lane row) settle the clip? The family wave's test, a row at
+    CORE_SAME within FAMILY_SETTLED_TOL of the clip's speed, plus raw fp above FP_FLOOR: a row the
+    crown's fp floor refuses cannot settle anything. On kyks, "Painkiller x Three Days Grace"
+    (core 1.000, vspeed 1.0, fp 0.550) passed the old test, the lane's Cult Member rows were
+    dropped, and the walk then refused Painkiller on that very floor and crowned nothing."""
+    return bool(c.get("path") and not c.get("recall_lane")
+                and (c.get("core") or 0) >= CORE_SAME
+                and float(c.get("fp") or 0) > FP_FLOOR
+                and abs(float(np.log2(max(0.25, min(4.0, c.get("vspeed") or 1.0)))))
+                <= FAMILY_SETTLED_TOL)
+
+
+def recall_settled(cands):
+    """Has any scored row settled the clip (recall_settles)?"""
+    return any(recall_settles(c) for c in cands)
+
+
+# FIX 7 (issue #13, Konnor: mashups and edits with an extra audio layer). THE MASHUP LANE.
+# Shazam names the loudest song and nothing else. On vt.tiktok.com/ZSgH4vvMH every 12 s window
+# reads "nuts" (Lil Peep) and the Tokyo Ghoul dialogue laid over it is never named (whisper hears
+# "Do me a favor, okay?"). The uploads of that exact audio are titled "do me a favor x nuts",
+# "Nuts lil peep x Tokyo ghoul" and "Do me a favour x Nuts": each verifies against the clip at
+# core 1.000, fp 0.936-0.969 on its first 20 s, speed 1.000, and its reversed copy falls to core
+# 0.33-0.36. None is reachable from the song at the depth the main search reads: SoundCloud put
+# them at 43, 99 and 130 of "nuts x" and nowhere in the first 50 of "nuts mashup", "nuts anime"
+# or "nuts edit", and that scan's own "<song> x" / "<song> mashup" queries were cut by QUERY_CAP
+# (four comment hints took 12 of the 16 slots).
+# So: "<song> <word>" for each MASHUP_WORDS entry, plus "<A> x <B>" both ways when the mashup
+# pass proved a second song, each MASHUP_SC_LIMIT deep on SoundCloud's own track search (the
+# api-v2 endpoint yt-dlp's scsearch reads, with the client id every SoundCloud download already
+# uses; one request per query, all of them about 1 s, started beside the main search). Rows
+# whose title joins the song with something else (x, vs, +, &) or carries a layer word are
+# ordered by length nearest the clip (a TikTok sound's upload is usually its own length: the two
+# 63.9 s copies come first for the 63.8 s clip) and the first MASHUP_DL ride the recall lane's
+# own slots. They count only where the recall lane's rows do: on a hunt nothing else settled,
+# verified against the clip like every other row. CRATE_MASHUP_LANE=0 turns it off;
+# CRATE_MASHUP_WORDS (comma separated) replaces the word list.
+MASHUP_LANE = _speed_flag("CRATE_MASHUP_LANE", True)
+MASHUP_WORDS = tuple(w.strip().lower() for w in os.environ.get(
+    "CRATE_MASHUP_WORDS", "x,mashup,edit,anime,gym,phonk").split(",") if w.strip())
+MASHUP_DL = 3                # lane rows per scan, on the recall lane's slots
+MASHUP_SC_LIMIT = 200        # SoundCloud results read per query
+MASHUP_WAIT = 2.0            # most the lane's start waits for a search still running
+MASHUP_MIN_SECS = 10.0
+MASHUP_DL_TIMEOUT = 30       # a lane row's fetch outlives wave 1 (see _RecallLane._one)
+_MASH_JOIN = re.compile(r"\s(?:x|×|vs\.?|versus|\+|&)\s", re.I)
+_MASH_CREDIT = re.compile(r"\s(?:ft|feat|featuring|prod|produced by|with)\b\.?.*?(?=\s(?:x|vs\.?|versus)\s|$)",
+                          re.I)
+
+
+def _mash_layer_rx(words=None):
+    """The layer words of MASHUP_WORDS ("x" is a joiner, not a word) as one regex."""
+    ws = [w for w in (MASHUP_WORDS if words is None else words) if w and w != "x"]
+    if not ws:
+        return None
+    alts = [r"mash ?up" if w == "mashup" else re.escape(w) for w in ws]
+    return re.compile(r"\b(?:%s)\b" % "|".join(alts), re.I)
+
+
+def mashup_queries(base_title, pair=None, words=None):
+    """The lane's searches: "<song> <word>" per MASHUP_WORDS entry, and "<A> x <B>" both ways
+    when `pair` (the mashup pass's two songs) names a second song."""
+    core = _clean(re.sub(r"[\(\[].*?[\)\]]", "", base_title or "").strip() or base_title or "")
+    if not core:
+        return []
+    out = []
+
+    def add(q):
+        q = _clean(q)
+        if q and q.lower() not in {o.lower() for o in out}:
+            out.append(q)
+    for w in (MASHUP_WORDS if words is None else words):
+        add("%s %s" % (core, w))
+    if pair and len(pair) >= 2:
+        ck = _title_key(core)
+        for b in [p for p in pair[:2] if p and _title_key(p) != ck][:1]:
+            add("%s x %s" % (core, b))
+            add("%s x %s" % (b, core))
+    return out
+
+
+def _sc_api_search(q, limit=MASHUP_SC_LIMIT, timeout=12):
+    """SoundCloud's own track search, `limit` deep in one request -> pool rows with the keys
+    _run_search_raw writes. Tracks SoundCloud only lets stream as a 30 s snippet (policy SNIP)
+    or not at all (BLOCK) are left out: their audio cannot be checked."""
+    cid = _sc_client_id()
+    url = ("https://api-v2.soundcloud.com/search/tracks?q=%s&limit=%d&client_id=%s"
+           % (urllib.parse.quote(q), int(limit), cid))
+    r = _cffi_get(url, timeout=timeout)
+    if getattr(r, "status_code", 200) != 200:
+        raise RuntimeError("soundcloud search http %s" % getattr(r, "status_code", "?"))
+    rows = []
+    for i, t in enumerate(json.loads(r.text).get("collection") or []):
+        u = (t.get("permalink_url") or "").strip()
+        if not u.startswith("https://soundcloud.com/") or (t.get("policy") or "") in ("SNIP", "BLOCK"):
+            continue
+        rows.append({"title": t.get("title") or "", "uploader": (t.get("user") or {}).get("username") or "",
+                     "url": u, "source": "soundcloud",
+                     "duration": round(float(t.get("duration") or 0) / 1000.0, 3),
+                     "plays": int(t.get("playback_count") or 0), "likes": int(t.get("likes_count") or 0),
+                     "query": q, "thumb": _thumb(t.get("artwork_url") or ""), "mashup_rank": i + 1})
+    return rows
+
+
+def mashup_kind(title, song_terms, artist_toks=(), layer_rx=None):
+    """"pair" when the title joins the song with something else ("do me a favor x nuts",
+    "Lil Peep - Nuts x Summertime Sadness"), "layer" when it carries a layer word ("nuts (anime
+    edit)"), else None. The song's words must sit together on one side of the join, with at most
+    one other word beside them that is not the artist's. A join between artists ("Lil Peep x
+    XXXTENTACION - nuts", "Wouldnt Believe It Lil Ethan x Lil Prentice"), or inside a featured or
+    producer credit ("... ft. Trapbaby & Joe Pablo", "(prod. smokeasac x iivi)"), names one song,
+    not two: those two were picked on the kelthraxx clip before this rule (test box, 2026-11-02)."""
+    want = set(song_terms or ())
+    if not want:
+        return None
+    t = fold_name((title or "").replace("×", " x ")).lower()    # the fold drops a bare ×
+    brk = re.findall(r"[\(\[\{]([^\)\]\}]*)[\)\]\}]", t)
+    body = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", t)
+    segs = [s for s in re.split(r"\s+[-–—|~]+\s+|//", body) if s.strip()] + brk
+    layered = bool(layer_rx is not None and layer_rx.search(t))
+    atoks = set(artist_toks or ())
+    for seg in segs:
+        # a featured or producer credit runs to the next "x" / "vs" or the end of its segment
+        seg = _MASH_CREDIT.sub(" ", " %s " % seg)
+        joined = bool(_MASH_JOIN.search(seg))
+        if not joined and not layered:
+            continue
+        for part in (_MASH_JOIN.split(seg) if joined else [seg]):
+            words = set(re.findall(r"[a-z0-9]+", EDIT_WORDS.sub(" ", part)))
+            extra = [w for w in words if len(w) >= 3 and w not in want and w not in atoks]
+            if want <= words and len(extra) <= 1:
+                return "pair" if joined else "layer"
+    return None
+
+
+def _mash_url(u):
+    u = (u or "").split("?")[0].split("#")[0].rstrip("/").lower()
+    return u.replace("://m.soundcloud.com/", "://soundcloud.com/").replace("://www.soundcloud.com/",
+                                                                         "://soundcloud.com/")
+
+
+def mashup_rows(rows, pool, skip, clip_secs, song_terms, artist_toks=(), cap=MASHUP_DL):
+    """The mashup lane's picks from its search rows. -> (rows, why). Zero network. A row the
+    pool already holds is taken as that same object unless the hunt already has it (`skip`,
+    `_done`, a carried row); every other pick is a NEW object, tagged `mashup_new`, which the
+    ranking pass adds to the pool only once the lane has scored it."""
+    L = float(clip_secs or 0)
+    lrx = _mash_layer_rx()
+    have = {_mash_url(c.get("url")): c for c in (pool or [])}
+    seen, keep = set(), []
+    for c in rows or []:
+        u = _mash_url(c.get("url"))
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        d = _dur_s(c)
+        t = fold_name(c.get("title") or "")
+        if d < MASHUP_MIN_SECS or _is_compilation(c) or OTHER_RENDITION.search(t):
+            continue
+        k = mashup_kind(c.get("title"), song_terms, artist_toks, lrx)
+        if not k:
+            continue
+        p = have.get(u)
+        if p is not None and (id(p) in skip or p.get("_done") or p.get("fast_carry") or p.get("path")):
+            continue
+        keep.append(((abs(float(np.log(max(d, 1.0) / L))) if L > 0 else 0.0),
+                     0 if k == "pair" else 1, -(c.get("plays") or 0), len(keep), k, c, p))
+    keep.sort(key=lambda x: x[:4])
+    out = []
+    for x in keep[:max(0, int(cap))]:
+        k, c, p = x[4], x[5], x[6]
+        row = p if p is not None else dict(c, mashup_new=True)
+        row["recall_why"] = "mashup:%s" % k
+        row["mashup_lane"] = True
+        out.append(row)
+    return out, "rows:%d;paired:%d" % (len(seen), len(keep))
+
+
+class _MashupSearch(object):
+    """The mashup lane's searches (see MASHUP_LANE), started now on their own executor (shut
+    down at once with wait=False, the _LaneSearch rule) and read when wave 1 starts. Never fatal:
+    a search that fails or is still out after MASHUP_WAIT adds nothing."""
+
+    def __init__(self, queries):
+        self.t0 = time.time()
+        self.queries = list(queries or [])
+        self.futs = []
+        if self.queries:
+            ex = ThreadPoolExecutor(max_workers=min(8, len(self.queries)), thread_name_prefix="mashup")
+            self.futs = [ex.submit(_sc_api_search, q) for q in self.queries]
+            ex.shutdown(wait=False)
+
+    def rows(self, pool, skip, clip_secs, song_terms, artist_toks=()):
+        t0 = time.time()
+        if self.futs:
+            _cf_wait(self.futs, timeout=MASHUP_WAIT)
+        waited = round(time.time() - t0, 2)
+        per, got, errs = [], [], 0
+        for q, f in zip(self.queries, self.futs):
+            if not f.done():
+                per.append([q, None])
+                continue
+            try:
+                r = f.result()
+            except Exception as e:
+                errs += 1
+                per.append([q, type(e).__name__])
+                continue
+            per.append([q, len(r)])
+            got.extend(r)
+        out, why = mashup_rows(got, pool, skip, clip_secs, song_terms, artist_toks)
+        tlog("mashup_lane", time.time() - self.t0, queries=per, errors=errs, waited=waited, why=why,
+             rows=[[(c.get("title") or "")[:60], c.get("url"), _dur_s(c), c.get("recall_why"),
+                    bool(c.get("mashup_new"))] for c in out])
+        return out, why
+
+
+def eq_aligned(clip_audio, cand_path, speed, lag, clip_secs=20, xc=None):
+    """verify()'s two EQ legs (bass_delta on the speed-matched upload, slope_delta on the raw
+    one) read on the ALIGNED window: the clip's first `clip_secs` against the stretch of the
+    upload it sits in, the same length on both sides. verify() reads the clip's first 20 s
+    against the upload's first 20 s, whatever part of the song that is. `lag` is verify()'s own
+    (-lag = where the clip starts in the speed-matched upload). -> (bass, slope, secs), or None
+    with under EQ_ALIGN_MIN seconds side by side.
+    Big League (9.8 s reel, 16.2 s into Fozure's upload, chromaprint slide 0.940): the head read
+    is bass -6.83 / slope -2.666 (3.8 s of the 20 s overlap the clip), the aligned read
+    +1.79 / +1.700, and +1.78 / +1.624 on 5 s of the same stretch. Where the clip starts at the
+    upload's start (Hymn 0.1 s, bouch 0.3 s, mason 0.0 s, Thunder 0.9 s in) both reads agree."""
+    SR = _verify.SR
+    if xc is None:                      # a caller re-reading several rows decodes the clip once
+        xc = _verify._decode(clip_audio, clip_secs)
+    xk = _verify._decode(cand_path, 3 * clip_secs)
+    s = float(min(2.0, max(0.5, speed or 1.0)))
+    xs = _verify._resample_by(xk, s)
+    d = -float(lag or 0.0)
+    c0, k0 = (0.0, d) if d >= 0 else (-d, 0.0)
+    n = min(len(xc) / float(SR) - c0, len(xs) / float(SR) - k0, float(clip_secs))
+    if n < EQ_ALIGN_MIN:
+        return None
+    cx = xc[int(c0 * SR):int((c0 + n) * SR)]
+    ks = xs[int(k0 * SR):int((k0 + n) * SR)]
+    kr = xk[int(k0 * s * SR):int((k0 + n) * s * SR)]
+    if min(len(cx), len(ks), len(kr)) < EQ_ALIGN_MIN * SR * 0.9:
+        return None
+    return (round(_verify._tilt_db(cx) - _verify._tilt_db(ks), 2),
+            round(_verify._tilt_slope(cx) - _verify._tilt_slope(kr), 3), round(n, 1))
+
+
+def eq_reread(c, clip_audio, xc=None):
+    """The row's EQ legs re-read on the aligned window (eq_aligned) from the audio it already
+    has, in place: `eq_head` keeps verify()'s own pair, `eq_window` the seconds read. No
+    download. False (row untouched) when the window is too short or anything fails. A row
+    CRATE_SEEK_MOFF scored on a later section already compared that section with the clip
+    window it matched, so it is left as it is."""
+    if c.get("eq_window") is not None:
+        return True
+    if c.get("seek_at") is not None or c.get("seek_clip_at") is not None:
+        return False
+    try:
+        eq = eq_aligned(clip_audio, c.get("path"), c.get("vspeed"), c.get("lag"), xc=xc)
+    except Exception:
+        eq = None
+    if not eq:
+        return False
+    c["eq_head"] = [c.get("bass_delta"), c.get("slope_delta")]
+    c["bass_delta"], c["slope_delta"], c["eq_window"] = eq
+    return True
+
+
+class _RecallLane(object):
+    """THE RECALL LANE'S OWN SLOTS (see RECALL_LANE). `start(rows)` downloads every row on the
+    lane's one executor (RECALL_DL_SECS each) and verifies it against the clip exactly as a head
+    row is verified (the first 20 s); the EQ legs are then re-read on the aligned window
+    (eq_aligned), which the 30 s fetch can cover. A job reads a SNAPSHOT and returns the scores;
+    nothing here writes to a row, so the hunt cannot see a lane row until the ranking pass takes
+    the finished jobs (`join`). Not counted in the scan's download tally (a lane pull is never the
+    hunt's evidence) and never noted in the hunt budget, which it only reads (`dead`).
+    RETENTION: the pulls live in the hunt's tmp; find_edit's wrapper calls close(wait=True)
+    before it removes that dir, and a job that finishes after close() removes its own file.
+    close() is safe from any thread: a wave-1 download worker calls it when its row settles the
+    clip, the ranking pass after its join. Doubles as dl_clip's `abort` (`dead`, `run`), like
+    _DirAlignLane."""
+
+    def __init__(self, clip_audio, clip_ctx, tmp, hb=None):
+        self.clip_audio, self.clip_ctx, self.tmp, self.hb = clip_audio, clip_ctx, tmp, hb
+        self.lock = threading.Lock()
+        self.jobs = []                  # [(row, future)]
+        self.ex = None
+        self.closed = False
+        self.procs = set()
+        self.t0 = None
+        self.waited = None
+        self.stopped_at = None          # seconds after start a settling row stopped the lane
+        self.info = {}                  # url -> what the job saw, for the tlog row
+
+    @property
+    def dead(self):
+        return bool(self.closed or (self.hb is not None and self.hb.dead))
+
+    def run(self, args, timeout):
+        """dl_clip's yt-dlp fallback: own process group, killed by close()."""
+        with self.lock:
+            if self.dead:
+                return False
+            p = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            self.procs.add(p)
+        try:
+            try:
+                p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _killpg(p)
+                p.wait()
+                return False
+            return p.returncode == 0 and not self.dead
+        except Exception:
+            _killpg(p)
+            return False
+        finally:
+            with self.lock:
+                self.procs.discard(p)
+
+    def start(self, rows):
+        with self.lock:
+            if self.closed or not rows:
+                return
+            self.ex = ThreadPoolExecutor(max_workers=len(rows), thread_name_prefix="recall")
+            self.t0 = time.time()
+            for i, c in enumerate(rows):
+                snap = {k: c.get(k) for k in ("url", "title", "source", "recall_why")}
+                self.jobs.append((c, self.ex.submit(self.one, snap, i)))
+
+    @staticmethod
+    def _drop(path):
+        """RETENTION: the file and anything yt-dlp left beside it."""
+        if path:
+            for f in [path] + _glob.glob(_glob.escape(os.path.splitext(path)[0]) + ".*"):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _yield_cpu(inf):
+        """LOWEST CPU PRIORITY FOR THIS JOB (Linux, where nice is per thread and every child
+        process inherits it: yt-dlp, ffmpeg, fpcalc). Wave 1 keeps 4 vCPUs busy on its own; run
+        beside it at the same priority, three lane jobs took kyks' wave 1 from 12.4 s to 19.0 s
+        and their own downloads from ~4 s to ~19 s (test box, 2026-11-02). Lowered, the lane
+        takes only CPU wave 1 leaves idle and its network waits still overlap wave 1. Raising a
+        nice value back needs privilege, so the lane's own threads are the only ones touched."""
+        if not sys.platform.startswith("linux") or RECALL_NICE <= 0:
+            return
+        try:
+            tid = threading.get_native_id()
+            cur = os.getpriority(os.PRIO_PROCESS, tid)
+            os.setpriority(os.PRIO_PROCESS, tid, min(19, cur + RECALL_NICE))
+            inf["nice"] = os.getpriority(os.PRIO_PROCESS, tid)
+        except Exception as e:
+            inf["nice"] = type(e).__name__
+
+    def one(self, snap, i):
+        t0 = time.time()
+        inf = {}
+        self._yield_cpu(inf)
+        try:
+            return self._one(snap, i, inf, t0)
+        except Exception as e:
+            inf["err"] = type(e).__name__
+            return None
+        finally:
+            inf["secs"] = round(time.time() - t0, 2)
+            self.info[snap.get("url")] = inf
+            if "dl" in inf:                 # one row per download the lane made (calls per scan)
+                tlog("recall_dl", time.time() - t0, url=(snap.get("url") or "")[:120],
+                     source=snap.get("source"), ok=bool(inf.get("ok")), dl=inf.get("dl"),
+                     core=inf.get("core"), fp=inf.get("fp"))
+
+    def _one(self, snap, i, inf, t0):
+        if self.dead:
+            return None
+        dst = os.path.join(self.tmp, "rc%d.wav" % i)
+        # FIX 7: a mashup lane row keeps its fetch alive past wave 1 (MASHUP_DL_TIMEOUT): at the
+        # lane's priority it gets CPU only once wave 1 is done, and dl_clip's 15 s ran out first
+        # on all three mashup rows of the nuts scan (15.8-16.6 s, test box, 2026-11-02)
+        mx = str(snap.get("recall_why") or "").startswith("mashup")
+        got = dl_clip(snap["url"], dst, seconds=RECALL_DL_SECS, abort=self,
+                      **({"timeout": MASHUP_DL_TIMEOUT} if mx else {}))
+        inf["dl"] = round(time.time() - t0, 2)
+        if not got or self.dead:
+            self._drop(dst)
+            inf["ok"] = False
+            return None
+        v = _verify.verify(self.clip_audio, got, clip_ctx=self.clip_ctx)
+        try:
+            _sp = _log_spec(_load(got, 20))     # _spec_of on the same 20 s a head row reads
+        except Exception:
+            _sp = None
+        row = dict(_spec=_sp, path=got, spectral=v["spectral"], fp=v["fp"],
+                   arr=v["arr"], core=v["core"], vscore=v["score"], score=v["score"],
+                   same=v["same"], vspeed=v["speed"], bass_delta=v["bass_delta"], lag=v["lag"],
+                   speed_conf=v.get("speed_conf"), slope_delta=v.get("slope_delta"),
+                   clip_slope=v.get("clip_slope"), cand_slope=v.get("cand_slope"),
+                   clip_tilt=v["clip_tilt"], cand_tilt=v["cand_tilt"], recall_lane=True)
+        inf.update(ok=True, core=v.get("core"), fp=v.get("fp"))
+        eq_reread(row, self.clip_audio)
+        inf["eq"] = [row.get("eq_head"), row.get("eq_window")]
+        if self.dead:
+            self._drop(got)
+            return None
+        return row
+
+    def join(self, hb):
+        """The ranking pass's join: -> [(row, scores)] for the jobs that finished. Waits at most
+        RECALL_JOIN_WAIT for jobs still running and, while the hunt budget's cap is live, never
+        past it; once the budget is dead it takes only what has finished. Starts nothing and
+        never touches the budget. What it does not take, close() stops."""
+        with self.lock:
+            futs = list(self.jobs)
+        if not futs:
+            return []
+        wait = RECALL_JOIN_WAIT
+        if hb is not None:
+            rem = hb.remaining()
+            wait = 0.0 if hb.dead else (wait if rem is None else min(wait, rem))
+        # FIX 7: a mashup lane row is taken when it has finished and never waited for, so the lane
+        # costs no join time (on the kelthraxx clip its two rows held this join the full 4 s)
+        pending = [f for _c, f in futs if not f.done()
+                   and not str(_c.get("recall_why") or "").startswith("mashup")]
+        _t = time.time()
+        if pending and wait > 0:
+            concurrent.futures.wait(pending, timeout=wait)
+        self.waited = round(time.time() - _t, 2)
+        out = []
+        for c, f in futs:
+            if f.done() and not f.cancelled():
+                try:
+                    got = f.result()
+                except Exception:
+                    got = None
+                if got:
+                    out.append((c, got))
+        return out
+
+    def close(self, wait=False):
+        """Stop every job: nothing new starts (run() refuses once closed), yt-dlp is killed,
+        queued jobs are cancelled. wait=True also waits for a running job's current step, so
+        no write can land after the caller removes the dir (find_edit's wrapper)."""
+        with self.lock:
+            self.closed = True
+            procs = list(self.procs)
+            ex = self.ex
+        for p in procs:
+            _killpg(p)
+        if ex is not None:
+            ex.shutdown(wait=wait, cancel_futures=True)
+
+
 def _num(s):
     try:
         return int(s)
@@ -7337,10 +8053,13 @@ class _YTSearchWorker(object):
                 return None
         if not w[0].wait(timeout):
             self.waiters.pop(rid, None)
+            _srch_err("timeout")               # FIX 8: recorded, not an empty answer
             return ""                          # timed out: [] like the killed subprocess
         d = w[1]
         if d is None:
             return None                        # worker died under us: caller falls back
+        if d.get("err") and not (d.get("text") or "").strip():
+            _srch_err("error: %s" % _one_line(str(d.get("err"))))
         return d.get("text") or ""
 
 
@@ -7358,8 +8077,10 @@ def _search_text_inproc(prefix, q):
         try:
             return f.result(timeout=SEARCH_TIMEOUT)
         except concurrent.futures.TimeoutError:
+            _srch_err("timeout")               # FIX 8: recorded, not an empty answer
             return ""
-        except Exception:
+        except Exception as e:
+            _srch_err("error: %s: %s" % (type(e).__name__, _one_line(str(e))))
             return ""                          # the CLI prints nothing on an error too
     return None
 
@@ -7464,21 +8185,109 @@ def _run_search(spec):
     return _run_search_raw(spec)
 
 
-def _run_search_raw(spec):
+# FIX 8 (issue #14): A FAILED SEARCH IS NOT AN EMPTY ONE. Every search path used to turn an error
+# into "" or [] (a SoundCloud API refusal, a yt-dlp crash, the YouTube worker's own error text, a
+# timeout), so a platform that failed read exactly like a platform with no uploads, and nothing
+# logged it. Now each spec records its outcome (rows, or the error), an error (not a timeout: one
+# costs up to SEARCH_TIMEOUT again) is retried once, and pool_log reports both per platform.
+# CRATE_SEARCH_RETRY=0 keeps the recording and drops the retry.
+SEARCH_RETRY = _speed_flag("CRATE_SEARCH_RETRY", True)
+_SRCH_TL = threading.local()        # the error of the search this thread just ran, or None
+_SEARCH_LOG = _collections.deque(maxlen=4000)   # (t, source, query, rows, err, tries)
+_SEARCH_LOG_LOCK = threading.Lock()
+
+
+def _srch_err(e):
+    _SRCH_TL.err = e
+
+
+def _run_search_once(spec):
+    """-> (rows, err). err None = the search answered (an empty answer is a real empty)."""
     prefix, src, q = spec
-    out = None
+    out, err = None, None
     if SPEED_INPROC_SEARCH:
+        _srch_err(None)
         try:
             out = _search_text_inproc(prefix, q)
-        except Exception:
+        except Exception as e:
             out = None
+        if out is not None:
+            err = getattr(_SRCH_TL, "err", None)
     if out is None:
         try:
-            out = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
-                                                  "--print", _SEARCH_FMT],
-                             capture_output=True, text=True, timeout=25).stdout
-        except Exception:
-            return []
+            cp = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                                 "--print", _SEARCH_FMT],
+                            capture_output=True, text=True, timeout=25)
+            out = cp.stdout or ""
+            err = None
+            if not out.strip() and getattr(cp, "returncode", 0):
+                err = "exit %s: %s" % (cp.returncode, _one_line(getattr(cp, "stderr", "") or ""))
+        except subprocess.TimeoutExpired:
+            return [], "timeout"
+        except Exception as e:
+            return [], "error: %s" % type(e).__name__
+    return _parse_search(out, src, q), err
+
+
+def _one_line(s):
+    """An error text cut to one short line, URLs out (they can carry tokens)."""
+    s = re.sub(r"https?://\S+", "<url>", (s or "").strip().splitlines()[-1] if (s or "").strip() else "")
+    return s[:140]
+
+
+def _run_search_raw(spec):
+    rows, err = _run_search_once(spec)
+    tries, note = 1, err
+    if err and err != "timeout" and SEARCH_RETRY:
+        time.sleep(0.4)
+        rows2, err2 = _run_search_once(spec)
+        tries = 2
+        if not err2:
+            rows, err, note = rows2, None, "recovered"
+        elif len(rows2) > len(rows):
+            rows = rows2
+    with _SEARCH_LOG_LOCK:
+        _SEARCH_LOG.append((time.time(), spec[1], spec[2], len(rows), note, tries))
+    if err:
+        tlog("search_error", 0.0, src=spec[1], q=spec[2][:60], err=str(err)[:160], tries=tries)
+    return rows
+
+
+def search_health(since, queries=None, early=None):
+    """Per platform, the searches run since `since` (epoch s): specs, rows returned, empty
+    answers, errors and timeouts (after the retry), retried, recovered. A search between `early`
+    and `since` counts only when its query is in `queries` (the hunt's own searches, prefetched
+    while the song was being named). The log is process-wide, so two scans at once can share a
+    window."""
+    qs = set(queries or ())
+    last = {}
+    with _SEARCH_LOG_LOCK:
+        for t, src, q, n, err, tries in _SEARCH_LOG:
+            if t >= since or (early is not None and t >= early and q in qs):
+                last[(src, q)] = (n, err, tries)
+    out = {}
+    for (src, q), (n, err, tries) in last.items():
+        h = out.setdefault(src, {"specs": 0, "rows": 0, "empty": 0, "errors": 0, "timeouts": 0,
+                                 "retried": 0, "recovered": 0, "failed_q": []})
+        h["specs"] += 1
+        h["rows"] += n
+        h["retried"] += int(tries > 1)
+        if err == "recovered":
+            h["recovered"] += 1
+        elif err == "timeout":
+            h["timeouts"] += 1
+            h["failed_q"].append(q[:50])
+        elif err:
+            h["errors"] += 1
+            h["failed_q"].append(q[:50])
+        elif not n:
+            h["empty"] += 1
+    for h in out.values():
+        h["failed_q"] = h["failed_q"][:6]
+    return out
+
+
+def _parse_search(out, src, q):
     rows = []
     for line in out.splitlines():
         parts = line.split("\t")
@@ -7548,14 +8357,22 @@ def _merge_rows(results, dedup=True):
     whichever query happened to run first: on #30 "( slowed down ) love me like you do"
     was returned by both "<artist> <song> slowed" and "<song> slowed down" and landed in
     the first lane, where it was one of seventeen "slowed" rows instead of the best row
-    of the lane built to find it. Every other caller keeps the old behaviour."""
-    cands, seen = [], set()
+    of the lane built to find it. Every other caller keeps the old behaviour.
+
+    FIX 3 (issue #12): each row also carries `sc_top`, how many of these searches put it
+    FIRST on SoundCloud. Read only by the recall lane (recall_rows); nothing else sees it."""
+    cands, seen, firsts = [], set(), {}
     for rows in results:
-        for r in rows:
+        for j, r in enumerate(rows):
+            if j == 0 and r.get("source") == "soundcloud":
+                firsts[r["url"]] = firsts.get(r["url"], 0) + 1
             k = r["url"] if dedup else (r["query"], r["url"])
             if k in seen:
                 continue
             seen.add(k); cands.append(r)
+    for c in cands:
+        if c["url"] in firsts:
+            c["sc_top"] = firsts[c["url"]]
     return cands
 
 
@@ -10492,6 +11309,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     clip is scored on is unchanged and the only reachable outcome is that a new,
     audio-verified candidate wins."""
     _hb = _hunt_budget()     # HUNT BUDGET: None unless the phase-2 hunt armed it (flag on)
+    _t_body = time.time()    # FIX 8: the window platform_health reads the search log from
     # `queries` is the list build_queries has always returned; `rescue_q` holds the
     # treatment forms its cap cut off (see QUERY_CAP), searched on their own lane below.
     queries, rescue_q = build_queries(credit_title, credit_author, base_title,
@@ -10778,6 +11596,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                         _dm = {id(c) for c in _demote}
                         good = ([c for c in good if id(c) not in _dm]
                                 + [c for c in good if id(c) in _dm])
+                    pool_log(hc, good, good, hq, where="fast", since=_t_body)     # FIX 3: log only
                     return {"queries": hq, "ranked": good, "decisive": True,
                             "clip_ok": True, "bass_boosted": False,
                             "clip_tilt": 0.0, "target_tilt": 0.0,
@@ -10856,6 +11675,16 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     # hunt up; its rows are appended to the download list (RESCUE_DL), never put in the
     # head.
     _rx_lane = _LaneSearch(rescue_q, 8) if rescue_q else None
+    # FIX 7: THE MASHUP LANE's searches (MASHUP_LANE) start beside the main search; read when the
+    # recall lane starts with wave 1. Same trust rule as that lane: a song Shazam named and the
+    # server trusts.
+    _mx_search = None
+    if MASHUP_LANE and RECALL_LANE and base_title and shazam_reliable:
+        try:                        # NEVER FATAL: no lane = the hunt exactly as without it
+            _mx_search = _MashupSearch(mashup_queries(base_title, pair))
+        except Exception as e:
+            tlog("mashup_lane", 0.0, setup_error=type(e).__name__)
+            _mx_search = None
     _hm_q = _hint_mash_queries(hints, base_title)
     _hm_lanes = [_LaneSearch([q], 6) for q in _hm_q]
     # ROOTFIX A/D lanes (CRATE_POSTED_LANE / CRATE_MASHUP_HALVES): nothing unless a flag is on
@@ -11123,6 +11952,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
 
     _wave1_done = []
     _style_x = []
+    _rc_lane = None                 # FIX 3: the recall lane, when it starts (with wave 1)
     if cands:
         # carried fast-path rows never take a head slot: they are appended below, the
         # same rule as the creator lane and the comment links, so the 14-row head is the
@@ -11140,12 +11970,68 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                 _style_x = _style_extra(_style_pool, wave1, core_title)
             tlog("style_quota", 0.0, n=len(_style_x), why=_style_why,
                  titles=[(c.get("title") or "")[:60] for c in _style_x])
+        # FIX 3: THE RECALL LANE (RECALL_LANE) starts WITH wave 1 on its own slots (its own
+        # executor: the wave-1 batch below is release-next's, row for row) and stops the moment
+        # a wave-1 row settles the clip (recall_settles: its yt-dlp is killed, its rows never
+        # count). Only on a song Shazam named and the server trusts (the style lane's rule): the
+        # lane reads the song's own title words, which mean nothing under a suspect name. Its
+        # jobs read snapshots; no row changes until the ranking pass.
+        _w1_hit, _rc_x, _rc_why, _rc_len = _hit, [], "", 0
+        if RECALL_LANE and base_title and shazam_reliable:
+            try:
+                _rc_len = duration_of(clip_audio) or 0
+            except Exception:
+                _rc_len = 0
+            _rc_x, _rc_why = recall_rows(cands, {id(c) for c in wave1 + _style_x}, _rc_len,
+                                         known_dir, song_terms, artist_toks)
+            # FIX 7: the mashup lane's picks ride the same slots, after the recall rows
+            if _mx_search is not None:
+                try:
+                    _mx_x, _mx_why = _mx_search.rows(
+                        cands, {id(c) for c in wave1 + _style_x + _rc_x}, _rc_len,
+                        song_terms, artist_toks)
+                    _rc_x = _rc_x + _mx_x
+                    _rc_why = "%s;mashup:%d" % (_rc_why, len(_mx_x))
+                except Exception as e:
+                    tlog("mashup_lane", 0.0, error=type(e).__name__)
+            # HUNT BUDGET: read, never fired: past T with nothing at 0.62 no lane starts
+            if _rc_x and (_hb is None or _hb.evidence
+                          or (not _hb.dead and _hb.elapsed() <= _hb.T)):
+                try:                    # NEVER FATAL: no lane = the hunt exactly as without it
+                    _rc_lane = _RecallLane(clip_audio, clip_ctx, tmp, _hb)
+                    if _closers is not None:
+                        _closers.append(_rc_lane)   # find_edit's wrapper closes it before the dirs go
+                    _rc_lane.start(_rc_x)
+                except Exception as e:
+                    tlog("recall_lane", 0.0, setup_error=type(e).__name__)
+                    if _rc_lane is not None:
+                        _rc_lane.close()
+                    _rc_lane = None
+            if _rc_lane is not None:
+
+                def _w1_hit(c, _h=_hit, _l=_rc_lane):
+                    if _h is not None:
+                        _h(c)
+                    if not _l.closed and recall_settles(c):
+                        _l.stopped_at = round(time.time() - (_l.t0 or time.time()), 2)
+                        _l.close()
         _tw1 = time.time()
         n = _download_and_score(wave1 + _style_x, clip_audio, tmp, 0,
-                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_hit,
+                                max_dl + len(_style_x), clip_ctx=clip_ctx, on_scored=_w1_hit,
                                 wave="dl_wave1")
         tlog("dl_wave1", time.time() - _tw1, n=n)
         _wave1_done = [c for c in wave1 if c.get("_done")]
+        if RECALL_LANE and base_title and shazam_reliable:
+            _rc_w1 = recall_settled(cands)
+            if _rc_w1 and _rc_lane is not None and not _rc_lane.closed:
+                _rc_lane.stopped_at = round(time.time() - (_rc_lane.t0 or time.time()), 2)
+                _rc_lane.close()
+            tlog("recall_lane", 0.0, n=len(_rc_x), started=_rc_lane is not None,
+                 settled_wave1=_rc_w1,
+                 stopped_at=(_rc_lane.stopped_at if _rc_lane is not None else None),
+                 why=_rc_why, clip_secs=round(_rc_len, 1),
+                 rows=[[(c.get("title") or "")[:60], c.get("url"), c.get("recall_why")]
+                       for c in _rc_x])
     else:
         n = 0
 
@@ -11711,6 +12597,42 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
         tlog("creator_align", time.time() - _ta0, n=len(_align),
              hit=sum(1 for c in _align if c.get("aligned_at") is not None))
 
+    # FIX 3: THE RECALL LANE'S ROWS COUNT ONLY ON A HUNT NOTHING ELSE SETTLED (RECALL_LANE,
+    # recall_settled). Settled here, the lane is closed without a wait and the ranking below is
+    # the one it would have been; unsettled, the finished jobs (waited for at most
+    # RECALL_JOIN_WAIT) join the pool as ordinary scored rows. A row the hunt downloaded itself
+    # meanwhile keeps the hunt's own reading.
+    if _rc_lane is not None:
+        _rc_settled = recall_settled(cands)
+        _rc_got = [] if _rc_settled else _rc_lane.join(_hb)
+        _rc_lane.close()
+        _rc_took = []
+        for c, r in _rc_got:
+            if c.get("_done") or c.get("path"):
+                continue
+            c.update(r)
+            c["_done"] = True
+            if c.get("mashup_new") and not any(c is x for x in cands):
+                _term_hits([c])         # FIX 7: a mashup lane row joins the pool only now
+                cands.append(c)
+            _rc_took.append(c)
+        _rc_rows = [c for c, _f in _rc_lane.jobs]
+        for c in _rc_rows:
+            if not any(c is t for t in _rc_took) and not c.get("path"):
+                c["recall_dropped"] = True
+        try:                        # NEVER FATAL: the log line can never cost the scan
+            tlog("recall_lane_end", 0.0, settled=_rc_settled, n=len(_rc_rows),
+                 took=len(_rc_took), waited=_rc_lane.waited, stopped_at=_rc_lane.stopped_at,
+                 since_start=round(time.time() - (_rc_lane.t0 or time.time()), 2),
+                 rows=[[(c.get("title") or "")[:50], c.get("recall_why"),
+                        (c.get("core") if c.get("recall_lane") else None),
+                        (c.get("fp") if c.get("recall_lane") else None),
+                        (c.get("vspeed") if c.get("recall_lane") else None),
+                        c.get("eq_head"), c.get("eq_window"),
+                        _rc_lane.info.get(c.get("url"))] for c in _rc_rows])
+        except Exception:
+            pass
+
     if SEEK_MOFF:
         seek_settle(cands, "rank")          # CRATE_SEEK_MOFF v2: aligned against aligned
     # ---- CRATE_DIR_ALIGN (similar edits only, see DIR_ALIGN): the readings the lane finished go
@@ -12273,6 +13195,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     if _corr_rows:
         result["corr_rows"] = [{"url": c.get("url"), "core": c.get("core"),
                                 "editmatch": c.get("editmatch")} for c in _corr_rows]
+    pool_log(cands, ranked, keep, queries, since=_t_body)     # FIX 3: log only, reads the rows
     return result
 
 

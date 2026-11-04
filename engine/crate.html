@@ -3689,12 +3689,21 @@ function confChip(c,full){
     tip='Not this version: '+m.eq+'. A version we ruled out counts half, so it never sits above one that passed.';
   else
     tip=(m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
-        (m.refused==='source'?'The recording this clip was cut from. ':'')+
+        (m.refused==='source'?'The recording this clip was cut from: the figure is how closely the audio matches it with the speed change taken out. ':'')+
         'Same recording: '+(m.core>=CORE_SAME?'strong':m.core>=0.62?'likely':
             m.core>=CORE_KEEP?'partial':'not confirmed')+
           '. Speed: '+m.speed+'. EQ: '+m.eq+'. Exact only when all three agree. '+
           'Good evidence, not proof.';
   var lbl=m.exact?'Exact match':m.pct===null?m.word:m.pct+(full?'% version match':'% match');
+  // FIX 8 (issue #14): THE SOURCE PRINTS ITS RECORDING MATCH. Its version figure is the speed leg
+  // at work: the clip is this recording re-pitched, so the gap sends it to the 50 floor
+  // (Wildest Dreams: core 0.856, 12% off, printed "50% version match"), which reads as "half like
+  // the clip" on the one upload the audio says the clip came from. The card prints what the
+  // audio measured instead, the same-recording score with the speed taken out (core), never
+  // above 100, and the reason beside it says the speed. Display only: the row still sorts and
+  // the engine still ranks on its version figure.
+  if(m.refused==='source' && typeof m.core==='number')
+    lbl=Math.round(Math.min(1,m.core)*100)+(full?'% recording match':'% recording');
   return '<span class="cf s'+vtier(m)+'" title="'+esc(tip)+'">'+esc(lbl)+'</span>'+
     (m.why?'<span class="cfw">'+esc(m.why)+'</span>':'');}
 function confRule(v){
@@ -4074,11 +4083,17 @@ function ncSaid(d){
   var s=d&&d.source_at_speed, sp=ncSpeed(d);
   if(s&&s.title) return {title:s.title+' (the original'+(sp?', '+sp:', re-pitched')+')', url:''};
   return {title:String(d.base_song||'')+(sp?' ('+sp+')':''), url:''};}
+/* FIX 7 (issue #13, Konnor: "Whenever a song is identified, a closest version card must be
+   shown ... if there is none, the identified song itself (the original release) as the closest
+   version we found"). This card is now that last case, under "The closest version we found":
+   the song itself, called what it is. The old lines ("Normal speed. No upload of this exact
+   version found yet." / "The original, slowed ~0.85x. No upload at this exact speed yet.") were
+   a negative headline on a result that named the song, and they said the speed a second time;
+   the version pill above already carries it (Fix 6: say the speed once, in the pill). */
 function ncCard(d){
-  var s=(d&&d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null, sp=ncSpeed(d);
+  var s=(d&&d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
   var ttl=s?s.title:String(d.base_song||''), who=s?(s.artist||''):String(d.base_artist||'');
-  var line=s ? 'The original'+(sp?', '+sp:', re-pitched')+'. No upload at this exact speed yet.'
-             : (sp?sp.charAt(0).toUpperCase()+sp.slice(1)+'. ':'')+'No upload of this exact version found yet.';
+  var line='The original release';
   var pp=ncPlay(d), btn='';
   if(pp){
     var plbl=ncLabel(d,pp);
@@ -4089,6 +4104,63 @@ function ncCard(d){
     '<span class="tt"><div class="nm">'+esc(ttl)+'</div>'+
     (who?'<div class="by">'+esc(who)+'</div>':'')+
     '<div class="ncl">'+esc(line)+'</div></span>'+btn+'</div>';}
+/* FIX 7: THE CLOSEST VERSION WITH NO CROWN. Which row stands on the closest version card when
+   nothing was crowned: the engine's own pick (server `_closest_pick`, logged with its reason)
+   when the payload carries one, else the same rule here for an older saved answer. A row can
+   stand only when the audio ties it to the identified recording: core at CORE_KEEP or more (it
+   prints a figure, not a word), no "different song" or "texture only" verdict, and every word
+   of the song in its title or uploader unless core reaches CORE_SAME. Highest figure first, then
+   the smaller speed gap, the higher core, the plays. null = no row can stand, and the card is
+   the song itself (ncCard). Never a different song presented as this one. */
+var CL_NOT_SAME={othersong:1,'null':1};
+/* THE TITLE MUST NAME THE SONG (re-test 2026-11-04): server _closest_names_song, same rule. On
+   kyks ("Three (Slowed)") the card picked "Animal Ive Become- Three Days Of Grace Slowed": core
+   1.000 on super slowed audio, and the old test passed it on the word "three" inside the band's
+   name. A row stands only when one part of its title (split at " - ", "|", "//", " x ", "vs",
+   "+", "&", every bracket on its own) is the song's own words and nothing else, once edit tags, a
+   featured or producer credit and the artist's name are out. High core alone no longer stands. */
+// server.py _CLOSEST_TAGS (3+ letters), the words that name no song; test_closest_pick checks the match
+var CL_SKIP=/^(the|and|feat|with|remix|slowed|sped|reverb|version|edit|mix|official|audio|video|lyrics|original|sound|prod|bass|boosted|loop|hoodtrap|tekk|trap|drill|phonk|house|techno|edm|hiphop|hip|hop|rap|dubstep|jersey|club|funk|bootleg|cover|mashup|nightcore|daycore|tiktok|instrumental|beat|type|music|song|new|best|full|extended|clean|explicit|speed|slow|perfectly|super|reverbed|boost|bassboosted|looped|remastered|remaster|acoustic|live|lyric|visualizer|kbps|mp3|yt1s|chopped|screwed|ver)$/;
+var CL_SPLIT=/\s*[-–—|~]+\s+|\s+[-–—|~]+\s*|\/\/|\s(?:x|vs\.?|versus|\+|&)\s/;
+function clWords(s){
+  var t=String(s||'').replace(/['’]/g,'').normalize('NFKD').toLowerCase().replace(/[^\x00-\x7f]/g,'');
+  var out={}; (t.match(/[a-z0-9]+/g)||[]).forEach(function(w){if(w.length>=3&&!CL_SKIP.test(w)) out[w]=1;});
+  return out;}
+function clNamesSong(title,d){
+  var want=clWords(String((d&&d.base_song)||'').replace(/[\(\[\{].*?[\)\]\}]/g,' ')), wk=Object.keys(want);
+  if(!wk.length) return false;
+  var art=clWords(d&&d.base_artist);
+  var t=String(title||'').normalize('NFKD').toLowerCase().replace(/×/g,' x ');
+  var chunks=[t.replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g,' ')];
+  t.replace(/[\(\[\{]([^\)\]\}]*)[\)\]\}]/g,function(m,p){chunks.push(p);return m;});
+  return chunks.some(function(ch){
+    return (' '+ch+' ').split(CL_SPLIT).some(function(seg){
+      var w=clWords(seg.replace(/\b(?:ft|feat|featuring|prod)\b.*$/,' '));
+      var ks=Object.keys(w).filter(function(k){return !(art[k]&&!want[k]);});
+      return ks.length===wk.length&&ks.every(function(k){return want[k];});});});}
+/* A SAME-TITLED SONG BY SOMEONE ELSE (server _closest_artist_named): on Big League the card picked
+   "Big league.     Prosper x Tokyo" at core 0.622, which Shazam calls another song. Below
+   CORE_SAME the title or uploader must name the identified artist too (every word of one name). */
+var CL_ASPLIT=/\s*(?:,|&|\/|\bx\b|\band\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*/;
+function clArtistNamed(c,d){
+  var hay=clWords((c.title||'')+' '+(c.uploader||''));
+  return String((d&&d.base_artist)||'').normalize('NFKD').toLowerCase().split(CL_ASPLIT).some(function(p){
+    var k=Object.keys(clWords(p)); return k.length>0&&k.every(function(w){return hay[w];});});}
+function clStands(c,d){
+  if(!c||typeof c.core!=='number'||c.core<CORE_KEEP) return false;
+  if(CL_NOT_SAME[(c.gate&&c.gate.kind)||'']) return false;
+  if(!clNamesSong(c.title,d)) return false;
+  return c.core>=CORE_SAME||clArtistNamed(c,d);}
+function closestRow(d,rows){
+  var cl=d&&d.closest, i;
+  if(cl&&cl.kind==='song') return null;
+  if(cl&&cl.kind==='upload'&&cl.url)
+    for(i=0;i<rows.length;i++) if(rows[i]&&rows[i].url===cl.url&&clStands(rows[i],d)) return rows[i];
+  var ok=rows.filter(function(c){return clStands(c,d);});
+  if(!ok.length) return null;
+  var gap=function(c){var v=c.vspeed; return (typeof v==='number'&&v>0&&!c.tempo_unmeasured)?Math.abs(Math.log2(v)):9;};
+  return ok.map(function(c,i){return {c:c,i:i,f:vfig(vmatch(c))};})
+    .sort(function(a,b){return (b.f-a.f)||(gap(a.c)-gap(b.c))||((b.c.core||0)-(a.c.core||0))||((b.c.plays||0)-(a.c.plays||0))||(a.i-b.i);})[0].c;}
 /* NO-CROWN PLAY (Roham 2026-09-30 18:34, MONTAGEM COMA). What the song card's play button
    plays, or null for no button (never a dead one). It plays THE SONG the card names: an exact
    SoundCloud track or YouTube video from the engine's own d.links, else the 30 s official preview
@@ -4126,13 +4198,16 @@ function ncPlay(d){
   return null;}
 /* The ring band under the song card: the same #ipl markup the crown's band uses (renderResult
    wires #iplbtn / #iplx by id), plus what an audio preview needs to draw its box. */
+/* The labels the band shows while it plays the song card's official preview (ipOpenAud). */
+function ncAudAttrs(d){
+  var pp=ncPlay(d); if(!pp||!pp.aud) return '';
+  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
+  return ' data-atitle="'+esc(s?s.title:(d.base_song||''))+'" data-awho="'+esc(s?(s.artist||''):(d.base_artist||''))+'"'+
+    ' data-afrom="'+esc(pp.from)+'"'+(pp.orig?' data-aorig="1"':'');}
 function ncBand(d){
   var pp=ncPlay(d); if(!pp) return '';
-  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
   var art=String(d.art||''); if(!/^https:\/\//i.test(art)) art='';
-  return '<div class="ipl" id="ipl" hidden'+(art?' data-art="'+esc(art)+'"':'')+
-      (pp.aud?' data-atitle="'+esc(s?s.title:(d.base_song||''))+'" data-awho="'+esc(s?(s.artist||''):(d.base_artist||''))+'"'+
-        ' data-afrom="'+esc(pp.from)+'"'+(pp.orig?' data-aorig="1"':''):'')+'>'+
+  return '<div class="ipl" id="ipl" hidden'+(art?' data-art="'+esc(art)+'"':'')+ncAudAttrs(d)+'>'+
     '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
       '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
       '<span class="ipgl">'+IC.pause+'</span>'+
@@ -4858,6 +4933,9 @@ function renderResult(d,partial){
      order. Konnor (job 567): the rows under the crown sort highest match first (byMatch). */
   var shelf='', plain=false;   // plain = the clip is the track itself, no edit to show
   var noCrown=false;           // a shelf rendered that explicitly declines to crown one
+  // FIX 7: the closest version card when it is the song itself (ncCard), with its play band
+  var songShelf=function(){return '<div class="sect">The closest version we found</div>'+
+    '<div class="list">'+ncCard(d)+'</div>'+ncBand(d);};
   /* SAME FIGURE AS THE ROWS. This note used to compare raw core and print it, so the
      one line meant to temper the crown printed "(100% vs 93%)" - core shown as 100%, the
      exact overclaim the chips no longer make - and read against rows that now carry a
@@ -4926,6 +5004,22 @@ function renderResult(d,partial){
     // APPLYALL 2026-09-29 (review finding 19): rows the verifier rejected (core under
     // SHELF_FLOOR, "No audio match") are never shown, crowned or not - same filter as the held list
     var others=cands.filter(function(c){return c.url!==ex.url&&(c.core||0)>=SHELF_FLOOR;});
+    // FIX 8 (issue #14, Konnor: keep the source card, "It must NOT replace the other results").
+    // A source crown is the recording the clip was cut from, not a version of the edit, so the
+    // closest version card follows it: the best OTHER upload tied to this recording (closestRow,
+    // the engine's logged pick when the payload has one), else the song itself (Fix 7). The fold
+    // below never repeats either card.
+    if(xsrc){
+      var _scl=closestRow(d,byMatch(others));
+      shelf+='<div class="sect">The closest version we found</div>'+
+        (_scl?'<div class="list">'+trackRow(_scl,true,'',false,{rank:2})+'</div>'
+             :'<div class="list">'+ncCard(d)+'</div>'+
+              // one #ipl on the page: the crown's inline player when it has one, carrying the
+              // song card's preview labels, else the song card's own band
+              (inlinePlayer?'':ncBand(d)));
+      if(!_scl && inlinePlayer)
+        shelf=shelf.replace('<div class="ipl" id="ipl" hidden','<div class="ipl" id="ipl" hidden'+ncAudAttrs(d));
+      if(_scl) others=others.filter(function(c){return c!==_scl;});}
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
@@ -4952,7 +5046,7 @@ function renderResult(d,partial){
       '<span>Other versions we checked · '+others.length+'</span>'+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       _shown.map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>';}}
+        return trackRow(c,false,'',false,{rank:i+(xsrc&&_scl?3:2)});}).join('')+'</div></details>';}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
@@ -4968,9 +5062,11 @@ function renderResult(d,partial){
   // 0.70 to 1.00, nothing shown). Now the list is hidden only when no row clears
   // SHELF_FLOOR (Roham: "if its a 0% match, why even put it there?"), and any settled
   // payload with rows reaches the list below. The /base screen mid-hunt is unchanged.
+  // FIX 7 (issue #13): every branch below that names a song without a crown ends on the closest
+  // version card. With no upload that can stand there (closestRow), the card is the song itself.
   else if((d.unsure || !partial) && cands.length && !d.crown_rejected && !d.crowd_version
           && !cands.some(function(c){return (c.core||0) >= SHELF_FLOOR;})
-          && (!famSpeed(d) || famSpeed(d)==='as posted') && !(d.reupload && !famSpeed(d))){ shelf=''; plain=true; }
+          && (!famSpeed(d) || famSpeed(d)==='as posted') && !(d.reupload && !famSpeed(d))){ shelf=songShelf(); plain=true; }
   else if((d.unsure || !partial) && cands.length){
     // HELD BACK, NOT EMPTY-HANDED. Two different things end up here and they used to
     // print the same sentence: a genuine score-floor miss (best core under CORE_KEEP),
@@ -5013,14 +5109,11 @@ function renderResult(d,partial){
     var _dropped = cands.length - _kept.length;
     if(!_kept.length){
       noCrown=true;
-      // CRATE_DIR_ALIGN: when a Similar edit group follows (simEdits below), the "nothing worth
-      // listing" note would argue with it, so the heading stands alone.
-      shelf='<div class="sect">No close version found</div>'+crowdCard+
-        (simEditsListed(d) ? '' :
-        '<div class="trainnote">The search found '+
-        cands.length+' upload'+(cands.length===1?'':'s')+' of this song and none of them '+
-        'matched the clip audio, so there is nothing worth listing. The song above is '+
-        'still the answer.</div>');
+      // FIX 7: was "No close version found" over "The search found N uploads of this song and
+      // none of them matched the clip audio, so there is nothing worth listing", a negative
+      // headline on a result that named the song. No upload matched, so the closest version
+      // card is the song itself.
+      shelf=songShelf();
     } else {
     cands = _kept;
     noCrown=true;
@@ -5054,14 +5147,22 @@ function renderResult(d,partial){
     // found nothing. With no crown there is no pick, so the heading names what the card is:
     // the song. A crowned card never reaches this branch (its heading is "The exact version
     // playing" / "The closest version we found" / "The recording this clip was cut from").
-    var _ork=byMatch(cands);
-    shelf='<div class="sect">The song</div>'+crowdCard+
-      '<div class="list">'+ncCard(d)+'</div>'+ncBand(d)+
-      '<details class="othv"><summary>'+
-        '<span>Other versions we checked · '+_ork.length+'</span>'+
+    // FIX 7 (issue #13, Konnor: "THE CLOSEST VERSION MUST BE SHOWN 100% OF THE TIME", and Fix 6:
+    // the Thunder layout on every scan). The heading is "The closest version we found", never
+    // "Our pick". On the card: the upload that can stand as the closest version (closestRow:
+    // the engine's logged pick, tied to this recording by audio) at its own real figure, the
+    // "NN% version match" chip and its own honest note; else the song itself (ncCard). The fold
+    // holds the rest and never repeats the card; with nothing left it is not drawn.
+    var _ork=byMatch(cands), _cl=closestRow(d,_ork);
+    var _rest=_cl?_ork.filter(function(c){return c!==_cl;}):_ork;
+    shelf='<div class="sect">The closest version we found</div>'+crowdCard+
+      (_cl?'<div class="list">'+trackRow(_cl,true,'',false,{rank:1})+'</div>'
+          :'<div class="list">'+ncCard(d)+'</div>'+ncBand(d))+
+      (_rest.length?'<details class="othv"><summary>'+
+        '<span>Other versions we checked · '+_rest.length+'</span>'+
         '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
-        _ork.slice(0,12).map(function(c,i){
-          return trackRow(c,false,'',false,{rank:i+1});}).join('')+'</div></details>';
+        _rest.slice(0,12).map(function(c,i){
+          return trackRow(c,false,'',false,{rank:i+(_cl?2:1)});}).join('')+'</div></details>':'');
     }}
   // ONE SEQUENCE (Roham 2026-09-26: "the hunting the exact version and finding the exact version
   // should be one sequence"). The hunt used to show its own 0-100% bar here, then a different
@@ -5078,7 +5179,10 @@ function renderResult(d,partial){
   // the fuckin no separate found". He is right. The card already says Original. Saying it
   // again in the negative reads as a failure on the one kind of clip that went perfectly,
   // and a plain song is the most common thing anyone will ever scan.
-  else{shelf=''; plain=true;}
+  // FIX 7 (issue #13): still no negative line, but no empty result either. With no upload to
+  // show, the closest version card is the song itself (Konnor: "the identified song itself
+  // (the original release) as the closest version we found").
+  else{shelf=songShelf(); plain=true;}
   // KONNOR 2026-09-30 ("make sure nothing is showing before the full squiggly is done"):
   // while the wave runs (partial render or the tracker) no version of any kind is drawn,
   // whichever path called us (a fold before /health's features landed drew the list).
