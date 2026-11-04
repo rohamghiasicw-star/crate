@@ -3373,7 +3373,12 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
     import verify as _verify
     tmp = tempfile.mkdtemp()
     try:
-        dst = os.path.join(tmp, "cand.m4a")
+        # A .wav name, as every other dl_clip caller passes. dl_clip's yt-dlp fallback writes
+        # "<dst less .wav>.wav" and then checks dst, so "cand.m4a" came back None whenever the
+        # direct fetch failed (a SoundCloud upload with no progressive stream), and the control
+        # passed with nothing measured. Fozure's Big League: None for cand.m4a, 3.5 MB for
+        # cand.wav (test box, 2026-11-01).
+        dst = os.path.join(tmp, "cand.wav")
         # CRATE_SEEK_MOFF: a row scored on a later section is re-measured on THAT section
         # (the candidate's, fetched the same way, or the clip cut where the song starts), so
         # forward and reversed read the same audio the crown was earned on.
@@ -3414,19 +3419,30 @@ def _time_reversed_null(clip_audio, cand_url, fwd_core, floor=0.999, seek=None):
                 # 0.222 / 0.360 / 0.195. Dead fpcalc (0 vs 0) is a gap of 0: refused.
                 _gap = round(ffp - rfp, 4)          # 4 dp, as logged: 0.85-0.75 is 0.100
                 _pass = (_gap >= E.NULL_FP_GAP) if _guard else (rfp < ffp)
+                # CRATE_NULL_ARR: fp is chroma, and a beat on one held chord reads nearly the
+                # same reversed, so a real match can sit under the fp gap (Big League 0.068,
+                # Thunder 0.022). arr is aligned in time and reversal breaks it. A guarded read
+                # that misses on fp passes when arr falls by NULL_ARR_GAP (numbers in crate_engine).
+                fa, ra = float(_fv.get("arr") or 0.0), float(_rv.get("arr") or 0.0)
+                _agap = round(fa - ra, 4)
+                _by_arr = bool(_guard and E.NULL_ARR and not _pass and _agap >= E.NULL_ARR_GAP)
+                _pass = _pass or _by_arr
                 E.tlog("null_fp", 0.0, url=(cand_url or "")[:120], fwd_fp=round(ffp, 4),
                        rev_fp=round(rfp, 4), fwd_core=round(float(_fv.get("core") or 0), 4),
                        rev_core=round(rc, 4), gap=round(_gap, 4), guarded=_guard,
-                       refuse=not _pass)
+                       fwd_arr=round(fa, 4), rev_arr=round(ra, 4), arr_gap=_agap,
+                       by_arr=_by_arr, refuse=not _pass)
                 if _pass:
                     return None
+                _atx = ("; arr %.3f vs %.3f, a gap of %.3f, under %.2f" % (ra, fa, _agap, E.NULL_ARR_GAP)
+                        if _guard and E.NULL_ARR else "")
                 if _guard and rfp < ffp:
                     return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
                             "%.3f, a gap of %.3f, under the %.2f that recording evidence "
-                            "needs), so the match is texture, not this recording"
-                            % (rc, rfp, ffp, _gap, E.NULL_FP_GAP))
+                            "needs%s), so the match is texture, not this recording"
+                            % (rc, rfp, ffp, _gap, E.NULL_FP_GAP, _atx))
                 return ("scores %.3f against a time-reversed copy of itself (raw fp %.3f vs "
-                        "%.3f), so the match is texture, not this recording" % (rc, rfp, ffp))
+                        "%.3f%s), so the match is texture, not this recording" % (rc, rfp, ffp, _atx))
             return ("scores %.3f against a time-reversed copy of itself, so the match is "
                     "texture, not this recording" % rc)
         return None
@@ -6241,11 +6257,10 @@ def _phase2(ctx, on_cand=None):
             # the bar the walk below was offered nothing. When a verified row does clear the
             # bar, the walk starts there instead, with every gate it runs on any other scan
             # (Ark Patrol's 1.000 at fp 0.554 is refused by the fp floor). The time-reversed
-            # null is one of them, and it does NOT run on a SoundCloud upload whose direct
-            # fetch fails: _time_reversed_null asks dl_clip for cand.m4a, the yt-dlp fallback
-            # writes cand.wav, dl_clip returns None and the control passes (measured on the test
-            # box 2026-11-02 for Fozure's Big League, Thunder, bouch and mason uploads; the
-            # Thunder crown release-next gives rides it too). Row 1 at or above the bar: as before.
+            # null is one of them. Until 2026-11-02 it measured no HLS-only SoundCloud upload
+            # (it asked dl_clip for cand.m4a, see _time_reversed_null); now Hymn's upload
+            # collapses reversed (core 0.306) and Big League passes on arr (CRATE_NULL_ARR).
+            # Row 1 at or above the bar: as before.
             _above = (next((c for c in verified if (c.get("core") or 0) >= E.CORE_KEEP), None)
                       if top and (top.get("core") or 0) < E.CORE_KEEP else None)
             if _above is not None:
