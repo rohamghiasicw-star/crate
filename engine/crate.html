@@ -5497,8 +5497,20 @@ var STORE=!!(window.ADDIFY_NATIVE&&window.ADDIFY_NATIVE.store&&window.webkit&&
   window.webkit.messageHandlers&&window.webkit.messageHandlers.addifyStore);
 var PAYWALL_ON=STORE, PRO=false;
 function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.postMessage(Object.assign({op:op},extra||{}));}
+/* 2026-11-04 sim: a purchase that lands later (Ask to Buy approval, an interrupted purchase
+   fixed in Settings) or an expiry/refund only showed after a relaunch, because the page read
+   the entitlement once at boot. It now rereads on every return to the app and, while a
+   purchase is pending, every 15 s; Plus turning on closes the paywall and scans the clip
+   that the paywall stopped. */
+var PW_AFTER='', pendT=0;
+function proOn(){PRO=true; var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; paintPill(); try{renderProf();}catch(e){}
+  if(PW_AFTER){var l=PW_AFTER; PW_AFTER=''; setTimeout(function(){run(l);},300);}}
 function storeRefresh(){if(!STORE) return Promise.resolve(false);
-  return storeCall('status').then(function(r){PRO=!!(r&&r.pro); paintPill(); return PRO;},function(){return PRO;});}
+  return storeCall('status').then(function(r){var was=PRO; PRO=!!(r&&r.pro); paintPill();
+    if(PRO&&!was) proOn(); else if(was&&!PRO){try{renderProf();}catch(e){}} return PRO;},function(){return PRO;});}
+function pollPending(){clearInterval(pendT); var n=0;
+  pendT=setInterval(function(){if(++n>40||PRO){clearInterval(pendT); return;} storeRefresh();},15000);}
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&STORE) storeRefresh();});
 function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
@@ -5544,7 +5556,7 @@ function openPaywall(){
       'cancel in your Apple ID settings. A free trial becomes a paid subscription unless cancelled at least 24 hours before it ends. <a href="'+legalURL('terms')+'" target="_blank">Terms of Use</a> · '+
       '<a href="'+legalURL('privacy')+'" target="_blank">Privacy Policy</a></p></div>';
   ov.hidden=false;
-  document.getElementById('pwx').onclick=function(){ov.hidden=true;};
+  document.getElementById('pwx').onclick=function(){ov.hidden=true; PW_AFTER='';};
   var busyBuy=false;
   // No products, a refusal or a plan without a price: say so and offer Try again, which asks
   // StoreKit again. While it asks, the box reads "Loading prices...", never a bare "/ month".
@@ -5563,15 +5575,15 @@ function openPaywall(){
       [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
         if(busyBuy) return; busyBuy=true; pwMsg('');
         storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
-          if(r&&r.pro){PRO=true; ov.hidden=true; paintPill(); try{renderProf();}catch(e){} return;}
-          var e=(r&&r.error)||''; if(e==='pending') pwMsg('Your purchase is waiting for approval.');
+          if(r&&r.pro){proOn(); return;}
+          var e=(r&&r.error)||''; if(e==='pending'){pwMsg('Your purchase is pending. Plus unlocks as soon as the App Store confirms it.'); pollPending();}
           else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
         },function(){busyBuy=false; pwMsg('The purchase did not go through. Try again.');});};});
     },noPlans);};
   loadPlans();
   document.getElementById('pwr').onclick=function(){pwMsg('Checking your Apple ID...');
     storeCall('restore').then(function(r){PRO=!!(r&&r.pro); paintPill();
-      if(PRO){ov.hidden=true; try{renderProf();}catch(e){}} else pwMsg('No active subscription found on this Apple ID.');},
+      if(PRO){proOn();} else pwMsg('No active subscription found on this Apple ID.');},
       function(){pwMsg('Could not reach the App Store. Try again.');});};}
 if(STORE) setTimeout(storeRefresh,0);
 function speedKind(sp){sp=(sp||'').toLowerCase();
@@ -6102,7 +6114,7 @@ var curURL='';
 var scanTok=0, p1Busy=false, SCAN_ID='';
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
-    if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){openPaywall(); return;}} var p=parseLink(raw);
+    if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){PW_AFTER=raw||''; openPaywall(); return;}} var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
