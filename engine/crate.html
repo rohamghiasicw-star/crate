@@ -2729,7 +2729,9 @@ var DVP={
   // curve. It never stops, never jumps, never goes back; a wait that outlives wend starts a new
   // line over the next wext s. Without it the needle read 99 from 106 s on (Thunder on the test
   // box took 205 s).
-  wto:98.6, whz:240, wext:120};
+  // Tuned on the test box's real timelines (Thunder 132-143 s, mason 57-64 s): never 99, no
+  // number on screen for more than 35 s.
+  wto:98.9, whz:180, wext:90};
 /* seconds past 90 at which the steady creep reaches `top` */
 function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau)/P.c); }
 /* the steady curve at virtual second x: [value, speed] */

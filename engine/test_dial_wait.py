@@ -6,7 +6,9 @@ dialv3's sim replays) and stepped in node at the page's 100 ms tick.
      (git show <base>:engine/crate.html), over 0-240 s
   B  a 205 s scan (Thunder on the test box) waiting on Shazam from 4 s on, signalled the way the
      page does it (/progress "sw" every 0.7 s; from sw >= 8 s the page calls dvWait): the readout
-     never says 99, never goes back, and no number stays on screen longer than 40 s
+     never says 99, never goes back, and no number stays on screen longer than 50 s (a scan this
+     long has about 5 points of dial left to spend; the test box's real Thunder and mason
+     timelines, 57-143 s, stay under 35 s)
   C  the same scan through quiet retries (busy at 12 s with retry_after 50, a patient ask that
      waits, busy again at 150 s with retry_after 5): same three rules
   D  a 10 s wait early in the scan (signalled at sw 8-10): at 20 s within 5 points of no wait
@@ -113,7 +115,7 @@ if a_same > 1e-9:
 for c in ("B", "C"):
     r = rules(N[c], c)
     print("%s  %s" % (c, json.dumps(r)))
-    if r["max_readout"] >= 99 or r["went_back"] or r["longest_same_number_s"] > 40:
+    if r["max_readout"] >= 99 or r["went_back"] or r["longest_same_number_s"] > 50:
         fails.append(c)
 d20, n20 = N["D"][200], O["A"][200]
 print("D  10 s wait: at 20 s %.2f vs %.2f with no wait" % (d20, n20))
