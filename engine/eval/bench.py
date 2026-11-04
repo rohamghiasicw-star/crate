@@ -18,7 +18,8 @@ probes, read from the rows the engine wrote while that scan ran.
 
 Adding a case is one line in bench_cases.jsonl:
   {"name": "...", "clip": "<tiktok or instagram link>", "expect": ["<upload url>", ...],
-   "kind": "exact|closest|best_known", "source": "who reported it", "note": "..."}
+   "kind": "exact|closest|best_known|source", "source": "who reported it", "note": "...",
+   "near": ["<upload urls the audio rates close but not confirmed>"]}
 "clip": null keeps a case on the list as pending (no link yet). "expect_titles" may name the
 right upload by its exact title instead of its URL (the regression clips are kept that way).
 
