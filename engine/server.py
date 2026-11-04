@@ -7381,7 +7381,12 @@ def identify_mic(blob, kind):
             fp = loop.run_until_complete(E.fingerprint(raw))
         finally:
             loop.close()
-        if _scan is not None and (_scan["throttled"] or (_scan.get("timeouts") and not fp)):
+        # 2026-11-04 sim: a quiet room sends ~19 probes, and at the measured 6.7% timeout rate one
+        # stray timeout made 3 listens in 4 answer "Addify is busy" on an idle server. Busy now
+        # needs real throttling, or timeouts on at least as many probes as answered.
+        _to = int(_scan.get("timeouts") or 0) if _scan is not None else 0
+        _ok = int(_scan.get("answered") or 0) if _scan is not None else 0
+        if _scan is not None and (_scan["throttled"] or (_to and not fp and _to >= _ok)):
             out = _busy_result("listen", "shazam", t0, _scan["why"] or "timeout")
             out["listen"] = True
             return out
