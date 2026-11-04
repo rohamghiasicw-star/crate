@@ -478,9 +478,9 @@ class Ledger:
 # --------------------------------------------------------------------------------------------
 def static_checks(L, html):
     s = html.decode("utf-8", "replace")
-    L.check("S1", "5e20237", "NEWFLOW stays off for everyone (NEWFLOW_ALL=false)",
-            re.search(r"\bvar NEWFLOW_ALL\s*=\s*false\s*;", s) is not None,
-            (re.search(r"var NEWFLOW_ALL\s*=\s*[^;]+;", s) or [None])[0])
+    L.check("S1", "5e20237,release-prep", "The dormant NEWFLOW onboarding and payment sheet are gone from the page (2.3.1)",
+            re.search(r"NEWFLOW|openOnb4|openPaywall5|oneLeftShow", s) is None,
+            (re.search(r"NEWFLOW|openOnb4|openPaywall5|oneLeftShow", s) or [None])[0])
     m1 = re.search(r"REPLAY_NAME_MS\s*=\s*\[(\d+)\s*,\s*(\d+)\]", s)
     m2 = re.search(r"REPLAY_HUNT_MS\s*=\s*\[(\d+)\s*,\s*(\d+)\]", s)
     lo = (int(m1.group(1)) + int(m2.group(1))) if (m1 and m2) else 0
