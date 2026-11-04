@@ -6,7 +6,7 @@
 # gate (it puts back what ran before). PROMISE_GATE=skip PROMISE_GATE_WHY='...' skips it on purpose;
 # the skip and its reason are printed into the deploy log, never silent.
 # Put repo HEAD (or any commit with server mode in it) on the server, the safe way. Run on this Mac:
-#   ./deploy-head.sh <IP>                      origin/shazamkit-testflight HEAD
+#   ./deploy-head.sh <IP>                      origin/release-next HEAD
 #   ./deploy-head.sh <IP> <sha|ref>            that commit (it must be on GitHub)
 #   ./deploy-head.sh <IP> --rollback           back to the release that ran before the last deploy
 #   ./deploy-head.sh <IP> [...] --dry-run      fetch and print the plan; change nothing
@@ -61,7 +61,7 @@ elif [ "${PROMISE_GATE:-on}" = "skip" ]; then
   echo "   SKIPPED ON PURPOSE: ${PROMISE_GATE_WHY:-no reason given}"
 else
   git -C "$REPO" fetch -q origin || { echo "FAILED: git fetch in $REPO (the gate needs the commit)"; exit 1; }
-  [ -n "$TARGET" ] || TARGET="origin/shazamkit-testflight"
+  [ -n "$TARGET" ] || TARGET="origin/release-next"
   LIVE_SHA="$("${SSH[@]}" 'basename "$(readlink -f /opt/addify/app)"' 2>/dev/null | cut -d- -f1 || true)"
   echo "   target $(git -C "$REPO" rev-parse --short "$TARGET" 2>/dev/null || echo "$TARGET"), live ${LIVE_SHA:-unknown}"
   grc=0
