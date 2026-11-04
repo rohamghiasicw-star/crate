@@ -8,7 +8,10 @@ Runs every case in bench_cases.jsonl through an engine the way the app does (/ba
   top3   it is in the first three of crown + rows
   time   seconds from /base to the end of the stream
   card   the card the scan ends on (FIX 7, issue #13): crown, upload or song; "none" means a found
-         scan with no closest version card, which --strict fails
+         scan with no closest version card, which --strict fails. FIX 8 (issue #14): a source crown
+         reads "source+upload" or "source+song" (the closest card under the source card)
+With --tlog the calls also carry, per platform (FIX 8), [found, downloaded, download failed,
+kept, searches failed] and how many under-delivery warnings the scan logged.
 With --tlog <engine timing log> it also counts what each scan cost: candidate downloads
 (cand_dl rows), search requests (one SoundCloud + one YouTube request per query) and Shazam
 probes, read from the rows the engine wrote while that scan ran.
@@ -99,6 +102,15 @@ def calls_between(tlog, t0, t1, url):
             n["search_requests"] += 2 * int(r.get("nq") or 0)
         elif s == "mashup_lane":                # FIX 7: one SoundCloud request per query
             n["search_requests"] += len(r.get("queries") or [])
+        elif s == "platform_health" and r.get("where") == "hunt":
+            # FIX 8 (issue #14): per platform, found / downloaded / failed / kept, and failed searches
+            for src, h in (r.get("platforms") or {}).items():
+                sh = h.get("search") or {}
+                n.setdefault("platforms", {})[src] = [h.get("found"), h.get("downloaded"), h.get("dl_failed"),
+                                                      (h.get("kept") or 0) + (h.get("ranked") or 0),
+                                                      (sh.get("errors") or 0) + (sh.get("timeouts") or 0)]
+        elif s == "under_delivery":
+            n["under_delivery"] = n.get("under_delivery", 0) + 1
     return n
 
 
@@ -109,6 +121,9 @@ def closest_card(final):
     if final.get("result") != "found":
         return None
     ex = final.get("exact") or {}
+    if final.get("crown_is_source") and ex.get("url"):
+        # FIX 8 (issue #14): the source card, then the closest version card under it
+        return "source+" + ((final.get("closest") or {}).get("kind") or "none")
     if ex.get("url") or ex.get("title"):
         return "crown"
     return (final.get("closest") or {}).get("kind") or "none"
@@ -193,9 +208,10 @@ def main():
         print("recall %d/%d  top1 %d/%d  top3 %d/%d  median %.1fs  closest card %d/%d" % (
             sum(r["found"] for r in res), n, sum(r["top1"] for r in res), n,
             sum(r["top3"] for r in res), n, sorted(r["secs"] for r in res)[n // 2],
-            sum(r["closest"] != "none" for r in fnd), len(fnd)))
+            sum(not r["closest"].endswith("none") for r in fnd), len(fnd)))
     # FIX 7: a scan that named a song and ends without a closest version card fails --strict too
-    if a.strict and any((r["kind"] == "exact" and not r["top1"]) or r["closest"] == "none" for r in res):
+    if a.strict and any((r["kind"] == "exact" and not r["top1"]) or (r["closest"] or "").endswith("none")
+                        for r in res):
         sys.exit(1)
 
 

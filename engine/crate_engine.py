@@ -1331,7 +1331,7 @@ def tlog(stage, secs, **kw):
 POOL_LOG = _speed_flag("CRATE_POOL_LOG", False)
 
 
-def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
+def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt", since=None):
     if not _TLOG_PATH:
         return
     try:
@@ -1376,6 +1376,77 @@ def pool_log(cands, ranked=(), keep=(), queries=(), where="hunt"):
              queries=list(queries or [])[:24], rows=rows)
     except Exception as e:
         tlog("hunt_pool", 0.0, where=where, error=type(e).__name__)
+    platform_health(cands, ranked, keep, since=since, where=where)
+
+
+# FIX 8 (issue #14): A HEALTH LINE PER PLATFORM ON EVERY SCAN, and a warning when a popular song
+# comes back thin. Konnor: "per platform, the queries run, results returned, results kept, results
+# dropped (with reasons) and errors", and "an automated warning when a very popular song returns
+# fewer than a handful of candidates on a platform". Measured on vt.tiktok.com/ZSgxkbbqo (Wildest
+# Dreams, test box, 7f42ee8): 347 rows found, 30 downloaded, 19 of them failed (17 of 17 YouTube),
+# 3 kept, all SoundCloud, and no log line said so. Read only, no-op without CRATE_TIMING.
+UNDER_MIN_KEPT = 3            # "a handful": fewer kept rows than this on a popular song warns
+UNDER_POP_PLAYS = 1000000     # popular = a row with this many plays, or UNDER_POP_ROWS found
+UNDER_POP_ROWS = 100
+
+
+def platform_health(cands, ranked=(), keep=(), since=None, where="hunt"):
+    if not _TLOG_PATH:
+        return
+    try:
+        rk = {id(c) for c in ranked or []}
+        kp = {id(c) for c in keep or []}
+        per = {}
+        for c in cands or []:
+            src = c.get("source") or "other"
+            h = per.setdefault(src, {"found": 0, "downloaded": 0, "dl_failed": 0, "scored": 0,
+                                     "under_keep": 0, "kept": 0, "ranked": 0, "not_downloaded": 0,
+                                     "top_plays": 0})
+            h["found"] += 1
+            h["top_plays"] = max(h["top_plays"], int(c.get("plays") or 0))
+            if c.get("_done"):
+                h["downloaded"] += 1
+                if not c.get("path"):
+                    h["dl_failed"] += 1
+                else:
+                    h["scored"] += 1
+                    if id(c) in rk:
+                        h["ranked"] += 1
+                    elif id(c) in kp:
+                        h["kept"] += 1
+                    else:
+                        h["under_keep"] += 1
+            else:
+                h["not_downloaded"] += 1
+        qset = {c.get("query") for c in cands or [] if c.get("query")}
+        srch = search_health(since, qset, early=since - 120) if since else {}
+        for src, s in srch.items():
+            per.setdefault(src, {"found": 0, "downloaded": 0, "dl_failed": 0, "scored": 0,
+                                 "under_keep": 0, "kept": 0, "ranked": 0, "not_downloaded": 0,
+                                 "top_plays": 0})["search"] = s
+        tlog("platform_health", 0.0, where=where, platforms=per)
+        n_found = sum(h["found"] for h in per.values())
+        popular = (n_found >= UNDER_POP_ROWS
+                   or any(h["top_plays"] >= UNDER_POP_PLAYS for h in per.values()))
+        for src, h in per.items():
+            good = h["kept"] + h["ranked"]
+            if popular and good < UNDER_MIN_KEPT and (h["found"] or h.get("search")):
+                s = h.get("search") or {}
+                why = []
+                if s.get("errors") or s.get("timeouts"):
+                    why.append("%d searches failed" % (s.get("errors", 0) + s.get("timeouts", 0)))
+                if h["dl_failed"]:
+                    why.append("%d of %d downloads failed" % (h["dl_failed"], h["downloaded"]))
+                if h["under_keep"]:
+                    why.append("%d scored under the keep bar" % h["under_keep"])
+                if h["not_downloaded"]:
+                    why.append("%d found, never downloaded" % h["not_downloaded"])
+                tlog("under_delivery", 0.0, where=where, src=src, kept=good, found=h["found"],
+                     downloaded=h["downloaded"], dl_failed=h["dl_failed"],
+                     search_rows=s.get("rows"), search_failed=s.get("errors", 0) + s.get("timeouts", 0),
+                     why=why)
+    except Exception as e:
+        tlog("platform_health", 0.0, where=where, error=type(e).__name__)
 
 
 # ---------------------------------------------------------------- tiktok fetch
@@ -7982,10 +8053,13 @@ class _YTSearchWorker(object):
                 return None
         if not w[0].wait(timeout):
             self.waiters.pop(rid, None)
+            _srch_err("timeout")               # FIX 8: recorded, not an empty answer
             return ""                          # timed out: [] like the killed subprocess
         d = w[1]
         if d is None:
             return None                        # worker died under us: caller falls back
+        if d.get("err") and not (d.get("text") or "").strip():
+            _srch_err("error: %s" % _one_line(str(d.get("err"))))
         return d.get("text") or ""
 
 
@@ -8003,8 +8077,10 @@ def _search_text_inproc(prefix, q):
         try:
             return f.result(timeout=SEARCH_TIMEOUT)
         except concurrent.futures.TimeoutError:
+            _srch_err("timeout")               # FIX 8: recorded, not an empty answer
             return ""
-        except Exception:
+        except Exception as e:
+            _srch_err("error: %s: %s" % (type(e).__name__, _one_line(str(e))))
             return ""                          # the CLI prints nothing on an error too
     return None
 
@@ -8109,21 +8185,109 @@ def _run_search(spec):
     return _run_search_raw(spec)
 
 
-def _run_search_raw(spec):
+# FIX 8 (issue #14): A FAILED SEARCH IS NOT AN EMPTY ONE. Every search path used to turn an error
+# into "" or [] (a SoundCloud API refusal, a yt-dlp crash, the YouTube worker's own error text, a
+# timeout), so a platform that failed read exactly like a platform with no uploads, and nothing
+# logged it. Now each spec records its outcome (rows, or the error), an error (not a timeout: one
+# costs up to SEARCH_TIMEOUT again) is retried once, and pool_log reports both per platform.
+# CRATE_SEARCH_RETRY=0 keeps the recording and drops the retry.
+SEARCH_RETRY = _speed_flag("CRATE_SEARCH_RETRY", True)
+_SRCH_TL = threading.local()        # the error of the search this thread just ran, or None
+_SEARCH_LOG = _collections.deque(maxlen=4000)   # (t, source, query, rows, err, tries)
+_SEARCH_LOG_LOCK = threading.Lock()
+
+
+def _srch_err(e):
+    _SRCH_TL.err = e
+
+
+def _run_search_once(spec):
+    """-> (rows, err). err None = the search answered (an empty answer is a real empty)."""
     prefix, src, q = spec
-    out = None
+    out, err = None, None
     if SPEED_INPROC_SEARCH:
+        _srch_err(None)
         try:
             out = _search_text_inproc(prefix, q)
-        except Exception:
+        except Exception as e:
             out = None
+        if out is not None:
+            err = getattr(_SRCH_TL, "err", None)
     if out is None:
         try:
-            out = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
-                                                  "--print", _SEARCH_FMT],
-                             capture_output=True, text=True, timeout=25).stdout
-        except Exception:
-            return []
+            cp = _run_ytdlp(ytdlp_for(prefix) + [prefix + q, "--flat-playlist",
+                                                 "--print", _SEARCH_FMT],
+                            capture_output=True, text=True, timeout=25)
+            out = cp.stdout or ""
+            err = None
+            if not out.strip() and getattr(cp, "returncode", 0):
+                err = "exit %s: %s" % (cp.returncode, _one_line(getattr(cp, "stderr", "") or ""))
+        except subprocess.TimeoutExpired:
+            return [], "timeout"
+        except Exception as e:
+            return [], "error: %s" % type(e).__name__
+    return _parse_search(out, src, q), err
+
+
+def _one_line(s):
+    """An error text cut to one short line, URLs out (they can carry tokens)."""
+    s = re.sub(r"https?://\S+", "<url>", (s or "").strip().splitlines()[-1] if (s or "").strip() else "")
+    return s[:140]
+
+
+def _run_search_raw(spec):
+    rows, err = _run_search_once(spec)
+    tries, note = 1, err
+    if err and err != "timeout" and SEARCH_RETRY:
+        time.sleep(0.4)
+        rows2, err2 = _run_search_once(spec)
+        tries = 2
+        if not err2:
+            rows, err, note = rows2, None, "recovered"
+        elif len(rows2) > len(rows):
+            rows = rows2
+    with _SEARCH_LOG_LOCK:
+        _SEARCH_LOG.append((time.time(), spec[1], spec[2], len(rows), note, tries))
+    if err:
+        tlog("search_error", 0.0, src=spec[1], q=spec[2][:60], err=str(err)[:160], tries=tries)
+    return rows
+
+
+def search_health(since, queries=None, early=None):
+    """Per platform, the searches run since `since` (epoch s): specs, rows returned, empty
+    answers, errors and timeouts (after the retry), retried, recovered. A search between `early`
+    and `since` counts only when its query is in `queries` (the hunt's own searches, prefetched
+    while the song was being named). The log is process-wide, so two scans at once can share a
+    window."""
+    qs = set(queries or ())
+    last = {}
+    with _SEARCH_LOG_LOCK:
+        for t, src, q, n, err, tries in _SEARCH_LOG:
+            if t >= since or (early is not None and t >= early and q in qs):
+                last[(src, q)] = (n, err, tries)
+    out = {}
+    for (src, q), (n, err, tries) in last.items():
+        h = out.setdefault(src, {"specs": 0, "rows": 0, "empty": 0, "errors": 0, "timeouts": 0,
+                                 "retried": 0, "recovered": 0, "failed_q": []})
+        h["specs"] += 1
+        h["rows"] += n
+        h["retried"] += int(tries > 1)
+        if err == "recovered":
+            h["recovered"] += 1
+        elif err == "timeout":
+            h["timeouts"] += 1
+            h["failed_q"].append(q[:50])
+        elif err:
+            h["errors"] += 1
+            h["failed_q"].append(q[:50])
+        elif not n:
+            h["empty"] += 1
+    for h in out.values():
+        h["failed_q"] = h["failed_q"][:6]
+    return out
+
+
+def _parse_search(out, src, q):
     rows = []
     for line in out.splitlines():
         parts = line.split("\t")
@@ -11145,6 +11309,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     clip is scored on is unchanged and the only reachable outcome is that a new,
     audio-verified candidate wins."""
     _hb = _hunt_budget()     # HUNT BUDGET: None unless the phase-2 hunt armed it (flag on)
+    _t_body = time.time()    # FIX 8: the window platform_health reads the search log from
     # `queries` is the list build_queries has always returned; `rescue_q` holds the
     # treatment forms its cap cut off (see QUERY_CAP), searched on their own lane below.
     queries, rescue_q = build_queries(credit_title, credit_author, base_title,
@@ -11431,7 +11596,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
                         _dm = {id(c) for c in _demote}
                         good = ([c for c in good if id(c) not in _dm]
                                 + [c for c in good if id(c) in _dm])
-                    pool_log(hc, good, good, hq, where="fast")     # FIX 3: log only
+                    pool_log(hc, good, good, hq, where="fast", since=_t_body)     # FIX 3: log only
                     return {"queries": hq, "ranked": good, "decisive": True,
                             "clip_ok": True, "bass_boosted": False,
                             "clip_tilt": 0.0, "target_tilt": 0.0,
@@ -13030,7 +13195,7 @@ async def _find_edit_body(clip_audio, credit_title, credit_author, base_title, b
     if _corr_rows:
         result["corr_rows"] = [{"url": c.get("url"), "core": c.get("core"),
                                 "editmatch": c.get("editmatch")} for c in _corr_rows]
-    pool_log(cands, ranked, keep, queries)     # FIX 3: log only, reads the rows
+    pool_log(cands, ranked, keep, queries, since=_t_body)     # FIX 3: log only, reads the rows
     return result
 
 

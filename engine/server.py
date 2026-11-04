@@ -4536,6 +4536,10 @@ def _write_figs(res):
 #           rows the audio ties to this recording (_closest_usable); ties go to the smaller speed
 #           gap, then core, then plays
 #   song    no such row: the identified song itself
+# FIX 8 (issue #14): when the crown is the SOURCE (res["crown_is_source"], the plain upload the
+# clip was re-pitched from), the page shows it under "The recording this clip was cut from" and
+# the pick above runs as if nothing were crowned, over every row but that one. `source` on the
+# pick names it, and the log says `source_only` when no other upload could stand.
 _CLOSEST_NOT_SAME = ("othersong", "null")
 
 
@@ -4644,6 +4648,14 @@ def _closest_pick(res, where="hunt"):
         aw = _closest_words(res.get("base_artist"))
         an = _closest_artist_names(res.get("base_artist"))
         ok = [r for r in rows if _closest_usable(r, sw, aw, an)]
+        src = None
+        if ex and res.get("crown_is_source") and ex.get("url"):
+            # FIX 8 (issue #14): a source crown is the recording the clip was cut from, not a
+            # version of the edit, so it gets its own card and the closest version card names
+            # the best OTHER upload tied to this recording; with none, the song itself.
+            src = {"url": ex.get("url"), "title": ex.get("title"), "fig": ex.get("fig")}
+            ok = [r for r in ok if r.get("url") != ex.get("url")]
+            ex = None
         if ex and (ex.get("url") or ex.get("title")):
             pick = {"kind": "crown", "url": ex.get("url"), "title": ex.get("title"),
                     "fig": ex.get("fig"), "why": "the crowned upload"}
@@ -4658,10 +4670,14 @@ def _closest_pick(res, where="hunt"):
             pick = {"kind": "song", "url": None, "title": res.get("base_song"), "fig": None,
                     "why": ("none of %d uploads is tied to this recording" % len(rows)) if rows
                            else "no upload came back"}
+        if src is not None:
+            pick["source"] = src
+            pick["why"] += "; the crown is the recording this clip was cut from"
         res["closest"] = pick
         E.tlog("closest_pick", 0.0, where=where, url=res.get("url"), kind=pick["kind"],
                title=(pick.get("title") or "")[:80], chosen=pick.get("url"), fig=pick.get("fig"),
                why=pick["why"], n=len(rows), usable=len(ok),
+               source=(src or {}).get("url"), source_only=bool(src is not None and pick["kind"] == "song"),
                rows=[[(r.get("title") or "")[:50], r.get("core"), r.get("fig"), r.get("vspeed"),
                       (r.get("gate") or {}).get("kind"), any(r is o for o in ok)] for r in rows[:12]])
     except Exception as _ex:

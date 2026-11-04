@@ -190,6 +190,43 @@ def nocrown_bandname(n):
     return d
 
 
+SC_SRC = "https://soundcloud.com/ledger-uploader/test-song-source"
+SC_SLOWBASS = "https://soundcloud.com/ledger-uploader/test-song-slowed-bass-boosted"
+SC_SPED = "https://soundcloud.com/ledger-uploader/test-song-sped-up-20"
+SC_DREAMS = "https://soundcloud.com/ledger-uploader/other-dreams-slowed-down"
+
+
+def source_crown(n, with_other=True):
+    """Fix 8 (issue #14): the Wildest Dreams shape (vt.tiktok.com/ZSgxkbbqo, test box 2026-11-04).
+    The crown is the SOURCE, a plain upload the clip was re-pitched from (core 0.856 at vspeed
+    0.8817, version figure 50). With `with_other`, another upload of the song stands as the closest
+    version (core 0.88, 88) and a third sits in the fold; without it the only other row is a
+    different song under SHELF_FLOOR, so the closest card is the song itself."""
+    d = _common(n)
+    src = _row("test song", SC_SRC, "soundcloud", 0.856, 50, 0.8817, None, 127, uploader="ledger-source")
+    src["cut_from"] = 0.8817
+    rows = [dict(src)]
+    if with_other:
+        rows += [_row("Test Artist - Test Song (slowed + bass boosted)", SC_SLOWBASS, "soundcloud", 0.88, 88, 1.004,
+                      None, 4000),
+                 _row("Test Song (sped up)", SC_SPED, "soundcloud", 0.99, 25, 0.80, _tempo(20), 900)]
+    rows += [_row("Other - Dreams (slowed down)", SC_DREAMS, "soundcloud", 0.109, None, 0.9905, None, 103396)]
+    d.update({"speed": "slowed ~0.88x + bass boosted", "edit_label": "slowed ~0.88x", "edit_certain": True,
+              "fig_pitched": True, "gates_on_rows": True, "decisive": False, "edits_pending": False,
+              "crown_is_source": True, "exact": src, "candidates": rows,
+              "links": [{"name": "Apple Music", "kind": "apple", "exact": True,
+                         "url": "https://music.apple.com/us/album/test-song/1?i=2"}],
+              "preview_url": PREVIEW})
+    srcd = {"url": SC_SRC, "title": "test song", "fig": 50}
+    d["closest"] = ({"kind": "upload", "url": SC_SLOWBASS, "title": rows[1]["title"], "fig": 88, "source": srcd,
+                     "why": "highest figure of 2 uploads tied to this recording; the crown is the recording "
+                            "this clip was cut from"} if with_other else
+                    {"kind": "song", "url": None, "title": SONG, "fig": None, "source": srcd,
+                     "why": "none of 2 uploads is tied to this recording; the crown is the recording this "
+                            "clip was cut from"})
+    return d
+
+
 def nomatch(n):
     return {"result": "no_match", "url": CLIP % n, "platform": "tiktok", "handle": "ledger.test"}
 
@@ -214,6 +251,8 @@ SCEN = {
     10: {"final": nocrown_closest(10, with_pick=False), "hold": 300},  # Fix 7: an older answer, no pick
     11: {"final": found_bare(11), "hold": 300},                        # Fix 7: a found answer with no upload
     12: {"final": nocrown_bandname(12), "hold": 300},                  # Fix 7 re-test: band name holds the song word
+    13: {"final": source_crown(13), "hold": 300},                      # Fix 8: source card + closest card
+    14: {"final": source_crown(14, with_other=False), "hold": 300},    # Fix 8: source card, nothing else stands
 }
 
 
@@ -748,6 +787,66 @@ async def run_browser(L, html, chrome):
                     {"top": top})
             await ctx.close()
 
+        # ---- 13 / 14. Fix 8 (issue #14): the recording this clip was cut from ------------------
+        SRC_HEAD = "The recording this clip was cut from"
+
+        async def scen13():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 13)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("13 source crown + another upload", f)
+            top = [r for r in f["rows"] if r["top"]]
+            sec = [x for x in f["sects"] if x in (SRC_HEAD, "The closest version we found")]
+            L.check("R39", "fix8", "A source crown keeps its card and the closest version card follows it with the "
+                                   "best other upload, at its own figure; the fold repeats neither",
+                    sec == [SRC_HEAD, "The closest version we found"] and len(top) == 2
+                    and top[0]["href"] == SC_SRC and top[1]["href"] == SC_SLOWBASS
+                    and top[1]["cf"] == "88% version match" and f["fold"] == "Other versions we checked · 1"
+                    and sum(1 for r in f["rows"] if r["href"] == SC_SRC) == 1
+                    and sum(1 for r in f["rows"] if r["href"] == SC_SLOWBASS) == 1,
+                    {"sects": f["sects"], "top": top, "fold": f["fold"]})
+            L.check("R40", "fix8", "The source card prints its recording match (core, speed taken out), not the "
+                                   "50 floor the speed gap gives its version figure",
+                    bool(top) and top[0]["cf"] == "86% recording match", top[:1])
+            n_ipl = await pg.evaluate("()=>document.querySelectorAll('#ipl').length")
+            L.check("R41", "-", "One in-app player on the source screen, and no uncaught page errors",
+                    n_ipl == 1 and not ctx.errors, {"ipl": n_ipl, "errors": ctx.errors[:3]})
+            await ctx.close()
+
+        async def scen14():
+            ctx = await context()
+            pg = await page(ctx)
+            await scan(pg, 14)
+            await wait_final(pg)
+            f = await pg.evaluate(FACTS)
+            closest_fact("14 source crown, nothing else stands", f)
+            top = [r for r in f["rows"] if r["top"]]
+            sec = [x for x in f["sects"] if x in (SRC_HEAD, "The closest version we found")]
+            n_ipl = await pg.evaluate("()=>document.querySelectorAll('#ipl').length")
+            L.check("R42", "fix8", "With nothing else tied to the recording, the source card is followed by the "
+                                   "song itself as the closest version, and no fold",
+                    sec == [SRC_HEAD, "The closest version we found"] and len(top) == 1
+                    and top[0]["href"] == SC_SRC and top[0]["cf"] == "86% recording match"
+                    and any(x["vis"] and x["line"] == "The original release" for x in f["nca"])
+                    and not f["fold"] and n_ipl == 1,
+                    {"sects": f["sects"], "top": top, "nca": f["nca"], "fold": f["fold"], "ipl": n_ipl})
+            ok, why = False, "no song card play button"
+            if any(x["ipopen"] and x["vis"] for x in f["nca_pl"]):
+                n0 = len(ctx.popups)
+                await pg.locator(".nca .pl").first.tap()
+                await pg.wait_for_timeout(1500)
+                g = await pg.evaluate(FACTS)
+                atitle = await pg.evaluate("()=>{var e=document.getElementById('ipl'); return e?e.getAttribute('data-atitle'):null;}")
+                ok = (bool(g["band"]) and g["band"]["vis"] and g["band"]["audio"]
+                      and g["band"]["audio_paused"] is False and len(ctx.popups) == n0 and atitle == SONG)
+                why = {"band": g["band"], "atitle": atitle}
+            L.check("R43", "b1339d4,fix8", "Under a source card the song card's play button plays the preview in the "
+                                           "app, labelled with the song", ok, why)
+            L.check("R44", "-", "No uncaught page errors during the source-only scan", not ctx.errors, ctx.errors[:3])
+            await ctx.close()
+
         # ---- 4. replay timing -----------------------------------------------------------------
         async def scen4():
             ctx = await context()
@@ -816,7 +915,9 @@ async def run_browser(L, html, chrome):
                            (scen9, "9. no crown, the engine's closest pick (Fix 7)"),
                            (scen10, "10. no crown, an answer saved without the pick (Fix 7)"),
                            (scen11, "11. found, no upload at all (Fix 7)"),
-                           (scen12, "12. no crown, a band name holds the song word (Fix 7 re-test)"))):
+                           (scen12, "12. no crown, a band name holds the song word (Fix 7 re-test)"),
+                           (scen13, "13. source crown with another upload (Fix 8)"),
+                           (scen14, "14. source crown, nothing else stands (Fix 8)"))):
             try:
                 await fn()
             except Exception as e:

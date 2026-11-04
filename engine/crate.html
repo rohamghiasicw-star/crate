@@ -3685,12 +3685,21 @@ function confChip(c,full){
     tip='Not this version: '+m.eq+'. A version we ruled out counts half, so it never sits above one that passed.';
   else
     tip=(m.level?'Level with our pick: it scores higher only on the first 20 seconds of audio, which cannot tell versions of one recording apart, and it measures no closer on speed or EQ. ':'')+
-        (m.refused==='source'?'The recording this clip was cut from. ':'')+
+        (m.refused==='source'?'The recording this clip was cut from: the figure is how closely the audio matches it with the speed change taken out. ':'')+
         'Same recording: '+(m.core>=CORE_SAME?'strong':m.core>=0.62?'likely':
             m.core>=CORE_KEEP?'partial':'not confirmed')+
           '. Speed: '+m.speed+'. EQ: '+m.eq+'. Exact only when all three agree. '+
           'Good evidence, not proof.';
   var lbl=m.exact?'Exact match':m.pct===null?m.word:m.pct+(full?'% version match':'% match');
+  // FIX 8 (issue #14): THE SOURCE PRINTS ITS RECORDING MATCH. Its version figure is the speed leg
+  // at work: the clip is this recording re-pitched, so the gap sends it to the 50 floor
+  // (Wildest Dreams: core 0.856, 12% off, printed "50% version match"), which reads as "half like
+  // the clip" on the one upload the audio says the clip came from. The card prints what the
+  // audio measured instead, the same-recording score with the speed taken out (core), never
+  // above 100, and the reason beside it says the speed. Display only: the row still sorts and
+  // the engine still ranks on its version figure.
+  if(m.refused==='source' && typeof m.core==='number')
+    lbl=Math.round(Math.min(1,m.core)*100)+(full?'% recording match':'% recording');
   return '<span class="cf s'+vtier(m)+'" title="'+esc(tip)+'">'+esc(lbl)+'</span>'+
     (m.why?'<span class="cfw">'+esc(m.why)+'</span>':'');}
 function confRule(v){
@@ -4185,13 +4194,16 @@ function ncPlay(d){
   return null;}
 /* The ring band under the song card: the same #ipl markup the crown's band uses (renderResult
    wires #iplbtn / #iplx by id), plus what an audio preview needs to draw its box. */
+/* The labels the band shows while it plays the song card's official preview (ipOpenAud). */
+function ncAudAttrs(d){
+  var pp=ncPlay(d); if(!pp||!pp.aud) return '';
+  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
+  return ' data-atitle="'+esc(s?s.title:(d.base_song||''))+'" data-awho="'+esc(s?(s.artist||''):(d.base_artist||''))+'"'+
+    ' data-afrom="'+esc(pp.from)+'"'+(pp.orig?' data-aorig="1"':'');}
 function ncBand(d){
   var pp=ncPlay(d); if(!pp) return '';
-  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null;
   var art=String(d.art||''); if(!/^https:\/\//i.test(art)) art='';
-  return '<div class="ipl" id="ipl" hidden'+(art?' data-art="'+esc(art)+'"':'')+
-      (pp.aud?' data-atitle="'+esc(s?s.title:(d.base_song||''))+'" data-awho="'+esc(s?(s.artist||''):(d.base_artist||''))+'"'+
-        ' data-afrom="'+esc(pp.from)+'"'+(pp.orig?' data-aorig="1"':''):'')+'>'+
+  return '<div class="ipl" id="ipl" hidden'+(art?' data-art="'+esc(art)+'"':'')+ncAudAttrs(d)+'>'+
     '<button class="ipbtn" id="iplbtn" type="button" aria-label="Pause">'+
       '<svg class="iprg" viewBox="0 0 64 64" aria-hidden="true"><circle class="iprgbg" cx="32" cy="32" r="29"/><circle class="iprgfg" cx="32" cy="32" r="29"/></svg>'+
       '<span class="ipgl">'+IC.pause+'</span>'+
@@ -4988,6 +5000,22 @@ function renderResult(d,partial){
     // APPLYALL 2026-09-29 (review finding 19): rows the verifier rejected (core under
     // SHELF_FLOOR, "No audio match") are never shown, crowned or not - same filter as the held list
     var others=cands.filter(function(c){return c.url!==ex.url&&(c.core||0)>=SHELF_FLOOR;});
+    // FIX 8 (issue #14, Konnor: keep the source card, "It must NOT replace the other results").
+    // A source crown is the recording the clip was cut from, not a version of the edit, so the
+    // closest version card follows it: the best OTHER upload tied to this recording (closestRow,
+    // the engine's logged pick when the payload has one), else the song itself (Fix 7). The fold
+    // below never repeats either card.
+    if(xsrc){
+      var _scl=closestRow(d,byMatch(others));
+      shelf+='<div class="sect">The closest version we found</div>'+
+        (_scl?'<div class="list">'+trackRow(_scl,true,'',false,{rank:2})+'</div>'
+             :'<div class="list">'+ncCard(d)+'</div>'+
+              // one #ipl on the page: the crown's inline player when it has one, carrying the
+              // song card's preview labels, else the song card's own band
+              (inlinePlayer?'':ncBand(d)));
+      if(!_scl && inlinePlayer)
+        shelf=shelf.replace('<div class="ipl" id="ipl" hidden','<div class="ipl" id="ipl" hidden'+ncAudAttrs(d));
+      if(_scl) others=others.filter(function(c){return c!==_scl;});}
     // MORE LIKE THIS EDIT (Konnor's ask). Show the whole verified shelf, not five of it:
     // when the crown is slightly off, the right upload is usually sitting two rows down,
     // and a list you can scan through is worth paying for even when the top pick misses.
@@ -5014,7 +5042,7 @@ function renderResult(d,partial){
       '<span>Other versions we checked · '+others.length+'</span>'+
       '<span class="cv">'+IC.chev+'</span></summary><div class="list">'+
       _shown.map(function(c,i){
-        return trackRow(c,false,'',false,{rank:i+2});}).join('')+'</div></details>';}}
+        return trackRow(c,false,'',false,{rank:i+(xsrc&&_scl?3:2)});}).join('')+'</div></details>';}}
   // THE CLIP IS JUST THE TRACK, AND WE FOUND NOTHING BETTER. No crown, nothing near the
   // bar, and the speed read says the clip is unedited - so there is no edit to show and
   // the shelf is a list of things that are NOT the answer. Measured on a plain Funkytown
