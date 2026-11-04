@@ -485,6 +485,35 @@ class Probe(unittest.TestCase):
         self.assertEqual((s2["answered"], s2["memo"]), (1, 2))
 
 
+class ProgressWait(unittest.TestCase):
+    """/progress carries "sw" while the scan behind it waits for Shazam (round 3: do_GET has a
+    local find_song import, so the lookup lives in a module function)."""
+    class Fake(S.H):
+        def __init__(self, path):
+            self.path, self.headers, self.client_address, self.out = path, {}, ("127.0.0.1", 1), None
+
+        def _send(self, code, obj):
+            self.out = obj
+
+    def test_sw_while_waiting_and_not_after(self):
+        key = "https://vt.tiktok.com/ZSprogwait1/"
+        S._prog_set(key, 24, "Building the fingerprint")
+        d = F.scan_begin()
+        try:
+            S._PROG[key]["_shz"] = d
+            F._wait_mark(d, time.time() - 9.5)
+            f = self.Fake("/progress?url=" + key)
+            f.do_GET()
+            self.assertGreaterEqual(f.out.get("sw", 0), 9.5)
+            d["wait_t0"] = None
+            f = self.Fake("/progress?url=" + key)
+            f.do_GET()
+            self.assertNotIn("sw", f.out)
+        finally:
+            F.SCAN.set(None)
+            S._PROG.pop(key, None)
+
+
 class WhoWaits(unittest.TestCase):
     """server.py _wait_for_shazam (find_song scan["patient"]) and _evidence_ok."""
     def sc(self, answered=0, memo=0, refused=0, timeouts=0, hits=None):

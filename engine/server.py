@@ -1090,6 +1090,17 @@ def _prog_set(key, pct, label=None):
     p["t"] = time.time()
 
 
+def _scan_wait_s(p):
+    """FIX 4 round 3 (/progress "sw"): seconds the scan behind this progress entry has been
+    waiting for Shazam without an answer, or 0.0. A module function: do_GET imports find_song
+    as a local name further down, so the module alias is not visible inside it."""
+    try:
+        sc = (p or {}).get("_shz")
+        return round(_FS.shazam_waiting(sc), 1) if sc is not None else 0.0
+    except Exception:
+        return 0.0
+
+
 def _prog_named(key, hit, t0, via=None, speed=None):
     """The engine decided the song before the fingerprint finished (E.SPEED_EARLY_NAME):
     park it where /progress can hand it to the page. Per scan, keyed by the clip, so two
@@ -10804,14 +10815,9 @@ class H(BaseHTTPRequestHandler):
             k = (parse_qs(u.query).get("url") or [""])[0].strip().split("?")[0]
             p = _PROG.get(k) or {}
             out = {"pct": round(float(p.get("pct") or 0), 1), "label": p.get("label") or ""}
-            try:
-                # FIX 4 round 3: this scan is waiting for Shazam's room right now (seconds so
-                # far); the page slows its dial instead of letting it reach the top
-                _sw = _FS.shazam_waiting(p.get("_shz")) if p.get("_shz") is not None else 0.0
-                if _sw > 0:
-                    out["sw"] = round(_sw, 1)
-            except Exception:
-                pass
+            _sw = _scan_wait_s(p)        # FIX 4 round 3: waiting for Shazam's room right now
+            if _sw > 0:
+                out["sw"] = _sw
             if p.get("named"):
                 out["named"] = p["named"]
             if p.get("hunt"):
