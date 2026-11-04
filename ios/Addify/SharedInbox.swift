@@ -14,6 +14,13 @@ enum AppGroup {
     /* Falling back to .standard means a misconfigured entitlement degrades to "the app
        still works, shares do not arrive" instead of a crash at launch. */
     static var defaults: UserDefaults { UserDefaults(suiteName: id) ?? .standard }
+
+    /* True only when this build is actually signed with the group (the system hands out its
+       container). Without it each process gets a private suite, so the inbox never reaches
+       the app and the share extension must not promise that it will. */
+    static var isShared: Bool {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) != nil
+    }
 }
 
 /* ---------- shared inbox ----------

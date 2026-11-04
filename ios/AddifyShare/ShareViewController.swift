@@ -104,9 +104,18 @@ final class ShareViewController: UIViewController {
         guard !finished else { return }
         if !SharedInbox.hasPending { finish(error: false); return }
         if afterTap {
-            showCard(title: "Open Addify to scan it",
-                     body: "iOS did not let Addify open from here. Open Addify from your home screen and this video starts scanning right away.",
-                     primary: nil)
+            if AppGroup.isShared {
+                showCard(title: "Open Addify to scan it",
+                         body: "iOS did not let Addify open from here. Open Addify from your home screen and this video starts scanning right away.",
+                         primary: nil)
+            } else {
+                /* No app group in this build: the inbox stays in the extension, so hand the user
+                   the link instead of promising a scan that would never start. */
+                UIPasteboard.general.string = link
+                showCard(title: "Link copied",
+                         body: "iOS did not let Addify open from here. Open Addify and paste the link on Home to scan it.",
+                         primary: nil)
+            }
         } else {
             showCard(title: "Addify has this video",
                      body: "Tap Open Addify to scan it now.",
