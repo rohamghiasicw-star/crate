@@ -3112,7 +3112,11 @@ var hgFin=null, hgFinP=null, hgFinTok=0, WL_HOLD=1.85;
 var hgShown=true, hgShowQ=[];
 function hgHide(){ hgShown=false; hgShowQ=[]; }
 function hgShow(){ var q=hgShowQ; hgShown=true; hgShowQ=[]; wvPaintHunt(wvAt(wvH,pgClock())); q.forEach(function(r){ r(); }); }
-function hgShowWait(){ return hgShown?Promise.resolve():new Promise(function(r){ hgShowQ.push(r); }); }
+/* 2026-11-04 sim: when the finish reveal never ran (app backgrounded mid-scan, or a second link
+   right after the first) nothing called hgShow, so the card sat at "100% Matching the edit" with no
+   crown for good. A waiter now forces the reveal after 2 s, unless a newer scan replaced the queue. */
+function hgShowWait(){ return hgShown?Promise.resolve():new Promise(function(r){ hgShowQ.push(r); var q=hgShowQ;
+  setTimeout(function(){ if(!hgShown&&hgShowQ===q) hgShow(); },2000); }); }
 function hgLand(){ return (hgHandP||Promise.resolve()).then(hgDone).then(function(){
   if(!hgS) return;
   return wvReach(wvH).then(hgShowWait).then(function(){ return wlSleep(wvReduced()?300:WL_HOLD*1000); }); }); }
