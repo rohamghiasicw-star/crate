@@ -174,7 +174,7 @@ final class EngineBridge: ObservableObject {
         haptic.notificationOccurred(.success)
         withAnimation { toast = payload }
         if !isActive { postNotification(payload) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             if self?.toast?.id == payload.id { withAnimation { self?.toast = nil } }
         }
     }

@@ -53,8 +53,10 @@ struct ContentView: View {
             }
 
             if let t = bridge.toast {
+                /* Tap only dismisses. The toast sits over the result header, so a tap meant for
+                   Back or Share used to open the crowned upload in Safari (2026-11-04 sim, SE and
+                   iPad). The card underneath already has every open button. */
                 ResultToast(payload: t) {
-                    if let u = t.exactURL { bridge.openExternal(u) }
                     withAnimation { bridge.toast = nil }
                 }
                 .padding(.top, 8)

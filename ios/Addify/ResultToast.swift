@@ -3,8 +3,7 @@ import SwiftUI
 /* ---------- native result toast ----------
    crate.html's finish() posts the landed result through the 'addify' message handler.
    The page already shows the card; the toast exists for the two moments the page cannot
-   cover: the haptic tick, and a tap that hands the crowned upload straight to the music
-   app. Tap = open the exact edit (or dismiss when there is no crown). */
+   cover: the haptic tick and a glanceable line. Tap = dismiss; it never leaves the app. */
 struct ResultToast: View {
     let payload: ResultPayload
     let onTap: () -> Void
@@ -31,10 +30,6 @@ struct ResultToast: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if payload.exactURL != nil {
-                    Image(systemName: "arrow.up.forward.app")
-                        .foregroundStyle(.secondary)
-                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
