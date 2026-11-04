@@ -51,7 +51,7 @@ body{
   background-image:
     radial-gradient(80% 50% at 50% 0%, color-mix(in oklab,var(--accent) 30%,transparent), transparent 66%);
   background-attachment:fixed;
-  display:flex; justify-content:center;
+  display:flex; flex-direction:column; align-items:center;
   padding:22px 16px 40px;
 }
 ::selection{background:var(--accent); color:#fff}
@@ -100,7 +100,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
 </head>
 <body>
 <a class="backbar" href="/" onclick="if(history.length>1){history.back();return false;}" aria-label="Back to Addify">&#8249; Back</a>
-<style>.backbar{position:sticky;top:0;z-index:5;display:block;padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;font:600 16px/1.2 -apple-system,system-ui,sans-serif;color:#9d93f5;text-decoration:none;background:rgba(15,13,21,.92);backdrop-filter:blur(8px)}</style>
+<style>.backbar{align-self:stretch;position:sticky;top:0;z-index:5;display:block;padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;font:600 16px/1.2 -apple-system,system-ui,sans-serif;color:#9d93f5;text-decoration:none;background:rgba(15,13,21,.92);backdrop-filter:blur(8px)}</style>
 <div class="page">
   <div class="top">
     <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</a>
