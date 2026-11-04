@@ -14,7 +14,8 @@ Scenarios (each in a fresh browser context, scan started the way a share starts 
   E  the phone is offline (navigator.onLine false) -> "You're offline"; network back -> runs
   F  /base dies while the page is in the background -> no card, retried once visible
   G  /health reports a newer build (stale-shell reload) -> no offline card before the reload
-  H  /base answers busy (rate_limited + busy) -> the busy card exactly as before, no retry
+  H  /base answers busy (rate_limited + busy) -> FIX 4: two quiet retries (retry_after), then
+     the busy card; never the offline card (test_busy_retry.py covers the rest)
 
 Every scenario records each card the page ever painted (a MutationObserver in an init
 script, kept in sessionStorage so it survives the reload in G).
@@ -34,7 +35,7 @@ CLIP = "https://www.tiktok.com/@addifytest/video/7400000000000000001"
 BASE = {"result": "found", "base_song": "Retry Test Song", "base_artist": "Test Artist",
         "edits_pending": False, "candidates": [], "exact": None, "speed": "as posted",
         "url": CLIP, "platform": "tiktok", "secs": 4.2, "win": None, "clip_secs": 12.0}
-BUSY = {"result": "rate_limited", "busy": "shazam", "retry_after": 20, "url": CLIP,
+BUSY = {"result": "rate_limited", "busy": "shazam", "retry_after": 3, "url": CLIP,
         "error": "Addify is busy right now. Try again in a minute.", "secs": 0.1}
 
 INIT = r"""
@@ -240,9 +241,10 @@ async def amain(a):
                   r["page_loads"] == 2 and song(r["cards"]) and not offline_card(r["cards"]))
             results.append((r, ok))
         if want("H") and not a.expect_old:
-            r = await run_case(pw, html, "H engine busy (unchanged)", {"/base": ["busy"]})
+            r = await run_case(pw, html, "H engine busy: two quiet retries, then the busy card",
+                               {"/base": ["busy"]}, secs=20)
             ok = (any(x.startswith("card:Addify is busy") for x in r["cards"])
-                  and r["hits"].get("/base") == 1 and not offline_card(r["cards"]))
+                  and r["hits"].get("/base") == 3 and not offline_card(r["cards"]))
             results.append((r, ok))
     return results
 

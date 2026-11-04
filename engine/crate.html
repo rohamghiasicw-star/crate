@@ -2324,7 +2324,7 @@ function call(path,url,opt){
   if(moved) return {result:'moved'};
   return checkEngine().then(function(up){if(!up) return RELOADING?{result:'moved'}:downResult();
   var kit=(opt&&opt.kit)?kitStart():'';
-  var sq=(opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'';
+  var sq=((opt&&opt.scan)?'&scan='+encodeURIComponent(opt.scan):'')+((opt&&opt.qr)?'&qr='+opt.qr:'');   // FIX 4: qr = quiet retry number, for the engine's busy log
   // CALL-RETRY: the same URL (same kit id) on every retry, so a /base that did reach the
   // engine is joined, not started again, and its phone probes keep their session
   return netJSON(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq,{alive:opt&&opt.alive})
@@ -2721,7 +2721,17 @@ var DVP={
   // its creep and eases toward 99.6 (tau 4.5 s, ramped in over kramp), so it keeps
   // moving through the tail instead of sitting at 96-97. rlText floors, so it reads 99 at
   // most; only the answer says 100.
-  wtop:99.6, wtau:4.5};
+  wtop:99.6, wtau:4.5,
+  // FIX 4 round 3 (issue #11): A LONG SCAN. Once the engine has waited a while for Shazam
+  // (/progress "sw") or the page asks again quietly after a busy answer, the dial stops trusting
+  // its usual timeline: from where it stands it climbs in a straight line to wto, reached at
+  // wend (whz s after the scan started, at least wext s from now), and never faster than its own
+  // curve. It never stops, never jumps, never goes back; a wait that outlives wend starts a new
+  // line over the next wext s. Without it the needle read 99 from 106 s on (Thunder on the test
+  // box took 205 s).
+  // Tuned on the test box's real timelines (Thunder 132-143 s, mason 57-64 s): never 99, no
+  // number on screen for more than 35 s.
+  wto:98.9, whz:180, wext:90};
 /* seconds past 90 at which the steady creep reaches `top` */
 function dvD1(P){ return Math.max(0,(DVP.top-P.e-(P.v-P.c)*P.tau)/P.c); }
 /* the steady curve at virtual second x: [value, speed] */
@@ -2731,7 +2741,14 @@ function dvCurve(P,x){
   if(d<=D1){ val+=P.c*d; sp+=P.c; }
   else { s=d-D1; eb=Math.exp(-s/P.tau2); val+=P.c*D1+P.cf*s+(P.c-P.cf)*P.tau2*(1-eb); sp+=P.cf+(P.c-P.cf)*eb; }
   return val>=DVP.lim?[DVP.lim,0]:[val,sp]; }
-function dvNew(P,now){ return {P:P,t:now,x:0,k:1,E:0,val:0,sp:0,fin:null,w:0,wk:0}; }
+function dvNew(P,now){ return {P:P,t:now,t0:now,x:0,k:1,E:0,val:0,sp:0,fin:null,w:0,wk:0,wt0:0,wv0:0,wend:0}; }
+/* FIX 4 round 3: a long scan (see wto above). `minEnd`: the line must not reach wto before it
+   (a quiet retry's wait); a new line starts only when the old one is near its end or too short */
+function dvWait(s,now,minEnd){
+  if(!s||s.fin) return;
+  minEnd=+minEnd||0;
+  if(!s.wend){ s.wt0=now; s.wv0=s.val; s.wend=Math.max(minEnd,now+DVP.wext,s.t0+DVP.whz); return; }
+  if(minEnd>s.wend||now>s.wend-DVP.wext/2){ s.wt0=now; s.wv0=s.val; s.wend=Math.max(minEnd,now+DVP.wext); } }
 /* HUNT BUDGET: the engine is wrapping up: past 90 the dial takes its final stretch */
 function dvWrap(s){ if(s&&!s.fin) s.w=1; }
 /* the engine says this dial should be at least at E: speed up (never jump) until it is */
@@ -2745,7 +2762,10 @@ function dvStep(s,now){
     if(u>=1) h=100; if(h>s.val) s.val=h; return s.val; }
   kt=s.E>s.val+.5?DVP.kmax:1; dk=(DVP.kmax-1)*dt/DVP.kramp;
   s.k=kt>s.k?Math.min(kt,s.k+dk):Math.max(kt,s.k-dk);
-  s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k; if(c[0]>s.val) s.val=c[0];
+  s.x+=s.k*dt; c=dvCurve(s.P,s.x); s.sp=c[1]*s.k;
+  if(s.wend){ f=(DVP.wto-s.wv0)/Math.max(1,s.wend-s.wt0);   // FIX 4 round 3: a long scan's line
+    u=s.wv0+f*Math.max(0,now-s.wt0); if(u<c[0]){ c=[Math.min(u,DVP.wto),f]; s.sp=Math.min(s.sp,f); } }
+  if(c[0]>s.val) s.val=c[0];
   if(s.w&&s.val>=s.P.e&&s.val<DVP.wtop){       // the final stretch (dvWrap), never backwards
     s.wk=Math.min(1,s.wk+dt/DVP.kramp);
     s.val+=(DVP.wtop-s.val)*(1-Math.exp(-dt/DVP.wtau))*s.wk;
@@ -2782,6 +2802,13 @@ function pgMark(name){
   pgStg=name;
   if(pgS&&!pgLock&&DVP.ahead[name]!=null) dvAhead(pgS,DVP.ahead[name]); }
 function pgStageAt(name){return PG_ORDER.indexOf(pgStg)>=PG_ORDER.indexOf(name);}
+/* FIX 4 round 3: a long scan. The engine has waited PG_WAIT_SW s or more for Shazam's room
+   (/progress "sw"), or the page is about to ask again quietly after a busy answer (`secs`: its
+   wait, plus room for the next ask): the naming dial climbs in a straight line from where it is
+   (dvWait), so a scan that takes minutes keeps a moving number below 99. A short wait (live's
+   one 4 s hold) is below PG_WAIT_SW and changes nothing. */
+var PG_WAIT_SW=8, PG_WAIT_ASK=60;
+function pgWaitFor(secs){ var now=pgClock(); if(pgS&&!pgLock) dvWait(pgS,now,secs?now+secs:0); }
 function pgTick(){
   var now=pgClock(), v;
   if(pgS&&!pgLock){ v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } }
@@ -3166,6 +3193,7 @@ function progPollOn(u){
         // 96), so it only tells us which step the engine has passed. pgMark turns that into
         // the dial's floor for the real time frame. Never 100; only finishing may say 100.
         if(p.label&&p.label!==pgLabel){ pgLabel=p.label; if(!namedEarly&&!pgStageAt('base')) pgScanLabel(p.label); }
+        if(p.sw>=PG_WAIT_SW&&!pgStageAt('base')) pgWaitFor(0);   // FIX 4 round 3: a long wait on Shazam
         if(p.pct>=18) pgMark('audio');
         if(pgStageAt('base')){          // hunt steps only count once the song is in
           // PROGRESS 2026-09-29: the engine's counts feed the hunt (DIALV3: pgHunt -> the tracker
@@ -4512,9 +4540,15 @@ function renderResult(d,partial){
   // server-kit: the one-server engine's own scan gate or Shazam pacing answered busy (d.busy:
   // "queue", "shazam", "starved", "draining"). It is not TikTok, so it gets its own words. Only the
   // server sends d.busy (the limit case above is the engine's per-user scan limit).
-  if(d.result==='rate_limited'&&d.busy){setEndTitle(d); result.innerHTML=errCard('sat','Addify is busy','Lots of scans right now.<br>Try again in a minute.','<button class="cta" id="retrybtn">Try again</button>');
+  // FIX 4 (issue #11): this card only shows once the page's quiet retries (baseCall) are spent.
+  // It says what happened and that it passes; Try again runs the same link again.
+  if(d.result==='rate_limited'&&d.busy){setEndTitle(d);
+    var _bw=d.busy==='shazam'?'Too many song lookups in the last minute.':
+            d.busy==='draining'?'Addify is restarting for an update.':'Lots of scans at once right now.';
+    result.innerHTML=errCard('sat','Addify is busy',_bw+'<br>It clears up in about a minute.','<button class="cta" id="retrybtn">Try again</button>');
     var _rbb=document.getElementById('retrybtn');
-    if(_rbb) _rbb.onclick=function(){var u=curURL; goHome(); if(u) run(u);};
+    // FIX 4 round 2: a listen scan has no link; Try again sends its recording again
+    if(_rbb) _rbb.onclick=function(){var u=curURL, lb=(!u&&LISTEN_BLOB)?LISTEN_BLOB:null; goHome(); if(u) run(u); else if(lb) sendListen(lb);};
     return;}
   // APPLYALL 2026-09-29 (build 3): plain words, and a Try again button (the card was a dead end)
   if(d.result==='rate_limited'){setEndTitle(d); result.innerHTML=errCard('sat','TikTok is busy','TikTok is limiting requests right now.<br>Wait a moment and try again.','<button class="cta" id="retrybtn">Try again</button>');
@@ -5633,7 +5667,7 @@ var PW_DUE=false;
 function scanNote(failed){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_SCANS-scansUsed());
   var n=document.getElementById('scannote');
   if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status'); document.body.appendChild(n);}
-  n.textContent=(failed?"No song found, so it didn't count. ":'')+left+(NEWFLOW?' free':'')+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');
+  n.textContent=(failed==='busy'?"That scan didn't count. ":failed?"No song found, so it didn't count. ":'')+left+(NEWFLOW?' free':'')+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');   // FIX 4: a busy scan found nothing because it never ran
   clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}
 function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; var c=countedURLs(), i=c.indexOf(u);
   if(i<0) return; c.splice(i,1); lsSet(scanKey()+'-urls',c);
@@ -6220,6 +6254,34 @@ var curURL='';
    callbacks check it before they touch the screen. p1Busy is "this scan's /base has not
    answered yet", the window in which Back cancels the scan outright. */
 var scanTok=0, p1Busy=false, SCAN_ID='';
+/* FIX 4 (issue #11, Konnor: "Make the app retry once or twice quietly before it shows anything").
+   A scan the engine answered busy (its scan gate, or its Shazam minute ran out; never the
+   per-user scan limit, busy:"limit") is asked again, quietly, after the wait the engine
+   suggested (retry_after: for a Shazam busy, when its Shazam pacer next has room under what
+   Shazam's own refusals taught it; for a scan keeping its place in the engine's line, a few
+   seconds), held inside [BUSY_QUIET_MIN, BUSY_QUIET_MAX] seconds. Two quiet retries always.
+   FIX 4 round 2: more only while the engine says asking again is getting somewhere (d.quiet: a
+   Shazam ask that got new answers, which the engine keeps for the next ask (round 3: answers
+   replayed from that memo do not count), or a scan holding its place in the line), up to
+   BUSY_QUIET_SECS seconds in all (BUSY_QUIET_ASKS asks at most:
+   a line of 20 people on 3 slots takes about 4 minutes to reach the last of them). The
+   scan screen stays exactly as it is meanwhile (same headline, same dial, no new step), and
+   only an answer still busy after that shows the busy card. Back or a new scan stops the
+   retries. Each retry tells the engine its number (&qr=), which it writes on a busy it logs. */
+var BUSY_QUIET_N=2, BUSY_QUIET_ASKS=24, BUSY_QUIET_SECS=360, BUSY_QUIET_MIN=2, BUSY_QUIET_MAX=75;
+function busyQuiet(d){return !!(d&&d.result==='rate_limited'&&d.busy&&d.busy!=='limit');}
+/* seconds to wait before asking again after `n` quiet retries (since t0), or -1: show it */
+function busyAgain(d,n,t0){
+  if(!busyQuiet(d)) return -1;
+  if(n>=BUSY_QUIET_N&&!(d.quiet===true&&n+1<BUSY_QUIET_ASKS&&Date.now()-t0<BUSY_QUIET_SECS*1000)) return -1;
+  return Math.min(BUSY_QUIET_MAX,Math.max(BUSY_QUIET_MIN,+d.retry_after||20));}
+function baseCall(u,tok){var n=0, t0=Date.now();
+  function ask(){return call('/base',u,{kit:true,guard:true,qr:n,alive:function(){return tok===scanTok;}}).then(function(d){
+    if(tok!==scanTok||KIT_MOVED) return d;
+    var w=busyAgain(d,n,t0); if(w<0) return d;
+    pgWaitFor(w+PG_WAIT_ASK);   // FIX 4 round 3: the dial keeps moving through the quiet retry
+    n++; return netSleep(w*1000).then(function(){return tok===scanTok?ask():d;});});}
+  return ask();}
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
     if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){PW_AFTER=raw||''; openPaywall(); return;}} var p=parseLink(raw);
@@ -6258,7 +6320,7 @@ function run(raw){if(busy) return;
   // it reports its own milestones now (one per candidate checked), so stopping here would
   // hand the bar back to guesswork for the part of the lookup that takes the most time.
   // finish() stops it.
-  return call('/base',p.url,{kit:true,guard:true,alive:function(){return tok===scanTok;}}).then(function(d){   // CALL-RETRY: no retry for a cancelled scan
+  return baseCall(p.url,tok).then(function(d){   // CALL-RETRY: no retry for a cancelled scan; FIX 4: quiet retries on busy
     if(tok!==scanTok) return;        // APPLYALL 2026-09-29 (finding 15): cancelled before it answered
     if(d&&d.result==='moved') return;  // NAMING 2026-09-30: the page is moving to the app's engine with this link
     if(KIT_MOVED&&d&&(d.result==='rate_limited'||d.result==='engine_down'||d.result==='error')){
@@ -6568,7 +6630,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
     var q=lsGet('addify-queue','[]');
     if(q.indexOf(curURL)<0){q.push(curURL); lsSet('addify-queue',q);}}
   if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
-    try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(true); }catch(e){}   // Konnor: failed scans don't count, say so
+    try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(d.result==='rate_limited'?'busy':true); }catch(e){}   // Konnor: failed scans don't count, say so
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
       logUnmatched(curURL, d.handle);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
@@ -7016,19 +7078,32 @@ function cleanupListen(){
   if(startListen._ac){try{startListen._ac.close();}catch(e){} startListen._ac=null;}
   if(lStream){lStream.getTracks().forEach(function(t){t.stop();}); lStream=null;}}
 function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
+/* FIX 4 round 2: listen mode gets the same quiet retries as a link scan (busyAgain): a busy
+   /listen answer sends the SAME recording again after retry_after (the engine kept the Shazam
+   answers its windows already got), and the busy card's Try again sends it once more
+   (LISTEN_BLOB, the last recording; a listen scan has no link for run()). Back stops it. */
+var LISTEN_BLOB=null;
+function listenCall(blob,tok){var n=0, t0=Date.now();
+  function ask(){return fetch(ENGINE+'/listen'+(n?'?qr='+n:''),{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
+    .then(function(r){return r.json();}).catch(function(){return downResult();})   // CALL-RETRY: offline vs no answer (a POST: not retried)
+    .then(function(d){
+      if(tok!==scanTok||leftScan) return d;
+      var w=busyAgain(d,n,t0); if(w<0) return d;
+      n++; return netSleep(w*1000).then(function(){return (tok===scanTok&&!leftScan)?ask():d;});});}
+  return ask();}
 function sendListen(blob){
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   // APPLYALL 2026-09-29 (review finding 15): listen mode ends any running link scan first, so
   // the old /base answer or hunt budget cannot draw over the listen result
   endHunt(); huntEnd(); scanTok++; p1Busy=false;   // PROGRESS 2026-09-29: the hunt poll too
+  var tok=scanTok; LISTEN_BLOB=blob;
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
   headline('Finding song'); say('Building the audio fingerprint');
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
-  fetch(ENGINE+'/listen',{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob})
-    .then(function(r){return r.json();}).catch(function(){return downResult();})   // CALL-RETRY: offline vs no answer (a POST: not retried)
+  listenCall(blob,tok)
     .then(function(d){
       if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
       setWindow(null, d&&d.clip_secs);

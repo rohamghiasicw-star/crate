@@ -132,8 +132,26 @@ _DL_LOCK = threading.Lock()
 # once its sound-page lane came back empty after 10.7 s (alone: 1 hint in 5.1-6.5 s), so the
 # hunt never searched the mashup's name and crowned a different upload at core 1.0.
 # Unset (the Mac): no tally is ever set, submit is not touched, every path is the old one.
+#
+# REQUEST BUDGET PER SCAN (FIX 4 round 2, issue #11, Konnor: "Keep a request budget per scan,
+# and report the number of calls per scan before and after ... the accuracy fixes (Fix 3, 7,
+# 8) will add more search calls"). The tally also counts every outbound call its scan half
+# makes, by kind (budget_call): "search" (a SoundCloud/YouTube search, prefetched ones
+# included), "download" (a candidate download, dl_clip), "section" (a ranged read of a
+# candidate's media), "tiktok" (a TikTok page, API, embed or video fetch), "tikwm" (the comment
+# mirror) and "web" (any other fetch through the same client). Searches and downloads, the two
+# the accuracy fixes grow, have a ceiling per scan half: past it a search returns no rows and a
+# download is not started, logged once per kind (budget_over). The ceilings sit above the most
+# any scan made on the test box (14 days, 227 scans: 43 downloads; about 34 searches fired
+# early plus the hunt's own), so no scan today reaches them. Shazam is budgeted by its pacer;
+# server.py adds its numbers (sent, memo, 429) to the scan_budget row it writes per half.
+# 0 = no ceiling. Unset tally (the Mac): nothing counted, nothing refused.
+BUDGET_CAPS = {"search": int(os.environ.get("CRATE_BUDGET_SEARCH", "96") or 0),
+               "download": int(os.environ.get("CRATE_BUDGET_DOWNLOAD", "64") or 0)}
+
+
 class ScanTally(object):
-    __slots__ = ("lock", "dl", "killed", "ev_lost", "ev_why", "t0")
+    __slots__ = ("lock", "dl", "killed", "ev_lost", "ev_why", "t0", "calls", "over")
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -142,6 +160,8 @@ class ScanTally(object):
         self.ev_lost = 0
         self.ev_why = []
         self.t0 = time.time()
+        self.calls = {}
+        self.over = {}
 
     def download(self, killed):
         with self.lock:
@@ -155,13 +175,44 @@ class ScanTally(object):
             if len(self.ev_why) < 8:
                 self.ev_why.append(str(why)[:60])
 
+    def call(self, kind):
+        """Count one outbound call of `kind`. -> False when it would pass the kind's ceiling
+        (it is then counted as over, not made)."""
+        cap = BUDGET_CAPS.get(kind) or 0
+        with self.lock:
+            n = self.calls.get(kind, 0)
+            if cap and n >= cap:
+                self.over[kind] = self.over.get(kind, 0) + 1
+                first = self.over[kind] == 1
+            else:
+                self.calls[kind] = n + 1
+                return True
+        if first:
+            tlog("budget_over", time.time() - self.t0, kind=kind, cap=cap)
+        return False
+
     def snapshot(self):
         with self.lock:
             return {"dl": self.dl, "killed": self.killed, "ev_lost": self.ev_lost,
-                    "ev_why": list(self.ev_why)}
+                    "ev_why": list(self.ev_why), "calls": dict(self.calls),
+                    "over": dict(self.over)}
 
 
 SCAN_TALLY = _contextvars.ContextVar("addify_scan_tally", default=None)
+
+
+def budget_call(kind):
+    """FIX 4 round 2: count one outbound call of `kind` on this scan half's tally. False = past
+    the kind's ceiling, so the caller does not make it. Outside a tallied scan: True, nothing
+    counted."""
+    t = SCAN_TALLY.get()
+    return True if t is None else t.call(kind)
+
+
+def _fetch_kind(url):
+    u = (url or "").lower()
+    return "tikwm" if "tikwm.com" in u else ("tiktok" if ("tiktok" in u or "musical.ly" in u)
+                                             else "web")
 
 
 def evidence_lost(why):
@@ -1468,6 +1519,7 @@ def platform_health(cands, ranked=(), keep=(), since=None, where="hunt"):
 # a real browser's TLS so the request looks legit. oEmbed always answers and gives
 # the credit even when everything else is throttled.
 def _cffi_get(url, timeout=25, referer=None):
+    budget_call(_fetch_kind(url))      # FIX 4: counted per scan (tiktok / tikwm / web), never refused
     _tikwm_space(url)                  # server-kit: box-wide tikwm spacing, off on the Mac
     hdr = {"Referer": referer} if referer else {}
     if HAVE_CFFI:
@@ -1518,6 +1570,7 @@ def _fast_full(url):
         if _RL is not None and _RL.STRICT_LINKS and not _RL.url_ok(u):
             break                        # APPLYALL 2026-09-29: never follow a hop off the allowlist
         try:
+            budget_call(_fetch_kind(u))  # FIX 4: counted per scan
             r = creq.get(u, impersonate="chrome", allow_redirects=False, timeout=8)
             loc = r.headers.get("location")
         except Exception:
@@ -2521,6 +2574,8 @@ def producer_handle_tracks(handle, base_title=None, cap=3):
     beats are real uploads but not this answer. Each kept row is resolved to its
     permalink because the flat search returns api.soundcloud.com ids, which slug-derived
     titles and dedup keys both choke on."""
+    if not budget_call("search"):        # FIX 4: past the scan's search ceiling, no rows
+        return []
     try:
         j = _sc_json_inproc("scsearch10:%s" % handle, flat=True) if SPEED_INPROC_SEARCH else None
         if j is None:
@@ -2952,6 +3007,7 @@ def tt_video_audio(full_url, tmp, seconds=30):
         want = min(vsize, int(vsize * (seconds + 6) / vdur) + 262_144)
         want = max(want, 1_500_000)
         try:
+            budget_call("tiktok")        # FIX 4: counted per scan
             if HAVE_CFFI:
                 rr = creq.get(vu, impersonate="chrome", timeout=30,
                               headers={"Range": "bytes=0-%d" % (want - 1)})
@@ -3066,6 +3122,7 @@ def _tt_video_audio_after(full_url, tmp, gate, seconds=30):
     wav = os.path.join(tmp, "v.wav")
     _t = time.time()
     try:
+        budget_call("tiktok")            # FIX 4: counted per scan
         if HAVE_CFFI:
             rr = creq.get(vu, impersonate="chrome", timeout=left, headers=hdr)
             ok = rr.status_code in (200, 206)
@@ -3315,7 +3372,9 @@ def _sound_page_alt(mid):
                 _SP_ALT_INFLIGHT.discard(k)
             tlog("sound_page_alt", time.time() - t0, ok=ok, st=st)
     try:
-        threading.Thread(target=_run, name="soundpage-alt", daemon=True).start()
+        # FIX 4: started with the caller's context, so its fetch counts on that scan's budget
+        threading.Thread(target=_contextvars.copy_context().run, args=(_run,),
+                         name="soundpage-alt", daemon=True).start()
     except Exception:
         with _SP_LOCK:
             _SP_ALT_INFLIGHT.discard(k)
@@ -8217,6 +8276,8 @@ def _srch_err(e):
 def _run_search_once(spec):
     """-> (rows, err). err None = the search answered (an empty answer is a real empty)."""
     prefix, src, q = spec
+    if not budget_call("search"):        # FIX 4: past the scan's search ceiling, no rows
+        return [], None
     out, err = None, None
     if SPEED_INPROC_SEARCH:
         _srch_err(None)
@@ -8631,6 +8692,8 @@ def web_search_edits(queries, budget=None):
             if not out:
                 _google_mark_walled()
     if _web is not None:
+        for _q in (queries or []):
+            budget_call("web")             # FIX 4: counted per scan (one search per query)
         try:
             for r in _web.web_audio_search(queries, budget=budget if budget is not None
                                            else max(2.0, WEB_DEADLINE - 2.0)):
@@ -8643,6 +8706,7 @@ def web_search_edits(queries, budget=None):
 
 def _meta(url):
     """plays + title for a single URL (web results don't carry play counts)."""
+    budget_call("meta")                    # FIX 4: counted per scan
     try:
         out = _run_ytdlp(ytdlp_for(url) + [url, "--skip-download", "--print",
                                       "%(view_count)s\t%(title)s\t%(uploader)s\t%(thumbnail)s"],
@@ -8870,6 +8934,8 @@ def dl_clip(url, dst, seconds=20, timeout=15, abort=None, ytck=None):
     `ytck` (YOUTUBE COOKIE FILE, a _YtCkfScan or None): a YouTube row whose download failed on
     today's route may take one capped download with the cookie file (_dl_yt_ckf). None (every
     caller but _download_and_score, and every scan while the file is missing) = today's path."""
+    if not budget_call("download"):    # FIX 4: past the scan's download ceiling, not started
+        return None
     if DM_ON and _is_dm(url):
         return _dl_dm(url, dst, 0.0, seconds, timeout, abort)
     is_yt = "youtube.com" in url or "youtu.be" in url
@@ -9268,6 +9334,7 @@ def dl_section(url, dst, start, seconds=20, timeout=15, abort=None, direct_only=
     the same 6 s direct budget and the same subprocess fallback (yt-dlp --download-sections,
     which handles HLS), the same hunt-budget kill. None on any failure. `direct_only` skips the
     subprocess: the prefetch uses it so that no yt-dlp can outlive the hunt that asked."""
+    budget_call("section")             # FIX 4: counted per scan, never refused
     start = max(0.0, float(start))
     if DM_ON and _is_dm(url):
         # DAILYMOTION: no direct path exists, so a direct-only fetch cannot be served

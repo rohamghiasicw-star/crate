@@ -32,7 +32,7 @@ import urllib.request
 
 
 def _get(base, path, timeout=30, key=None):
-    h = {"User-Agent": "addify-prewarm/1"}
+    h = {"User-Agent": "addify-prewarm/1", "X-Addify-Batch": "1"}   # never the gate's last slot
     if key:
         h["X-Addify-Admin"] = key
     return urllib.request.urlopen(urllib.request.Request(base + path, headers=h),
