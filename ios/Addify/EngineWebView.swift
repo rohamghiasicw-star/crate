@@ -511,15 +511,18 @@ final class AddifyStore {
         return await isPro()
     }
 
-    static func periodName(_ p: Product.SubscriptionPeriod) -> String {
-        let unit: String
-        switch p.unit {
-        case .day: unit = "day"
-        case .week: unit = "week"
-        case .month: unit = "month"
-        case .year: unit = "year"
-        @unknown default: unit = ""
+    static func unitName(_ u: Product.SubscriptionPeriod.Unit) -> String {
+        switch u {
+        case .day: return "day"
+        case .week: return "week"
+        case .month: return "month"
+        case .year: return "year"
+        @unknown default: return ""
         }
+    }
+
+    static func periodName(_ p: Product.SubscriptionPeriod) -> String {
+        let unit = unitName(p.unit)
         return p.value == 1 ? unit : "\(p.value) \(unit)s"
     }
 }
@@ -545,13 +548,18 @@ final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
         case "products":
             var list: [[String: Any]] = []
             for p in await store.load() {
+                /* "amount" is StoreKit's own price as a number, so the page can work out the yearly
+                   saving (kfix-9 paywall) without reading a formatted string. */
                 var row: [String: Any] = ["id": p.id, "name": p.displayName, "price": p.displayPrice,
+                    "amount": NSDecimalNumber(decimal: p.price).doubleValue,
                     "period": p.subscription.map { AddifyStore.periodName($0.subscriptionPeriod) } ?? ""]
                 /* Konnor's paywall rules: a 3-day free trial on yearly. Shown only when App Store
                    Connect has the offer AND this Apple ID is still eligible for it. */
                 if let sub = p.subscription, let intro = sub.introductoryOffer, intro.paymentMode == .freeTrial,
                    await sub.isEligibleForIntroOffer {
                     row["trial"] = AddifyStore.periodName(intro.period) + " free"
+                    row["trialValue"] = intro.period.value
+                    row["trialUnit"] = AddifyStore.unitName(intro.period.unit)
                 }
                 list.append(row)
             }
