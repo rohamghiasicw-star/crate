@@ -6602,7 +6602,7 @@ function embedFor(url, src){
   if(src==='soundcloud'||/soundcloud\.com/.test(url))
     return 'https://w.soundcloud.com/player/?url='+encodeURIComponent(url)+
            '&auto_play=true&hide_related=true&show_comments=false&show_teaser=false'+
-           '&visual=false&color=%237c8cff';
+           '&download=false&buying=false&sharing=false&visual=false&color=%237c8cff';
   // Mirror server.py's _YT_ID exactly so every YouTube link the engine recognises also
   // plays in the sheet instead of falling through to window.open (which is what "takes me
   // to YouTube" was): a v= param anywhere in the query, youtu.be, /shorts/, /embed/, /v/,
@@ -6767,7 +6767,7 @@ function ipOpenSC(url, ipl, slot){
   var art=ipl.getAttribute('data-art')||'';
   var src='https://w.soundcloud.com/player/?url='+encodeURIComponent(url)+
     '&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false'+
-    '&show_teaser=false&visual=true&color=%237c8cff';
+    '&show_teaser=false&download=false&buying=false&sharing=false&visual=true&color=%237c8cff';
   slot.innerHTML='<iframe id="ipframe" title="Player" allow="autoplay; encrypted-media" src="'+esc(src)+'"></iframe>'+
     (art?'<img class="ipposter" alt="" src="'+esc(art)+'" onerror="this.remove()">':'');
   var gen=_ipGen, _reveal=function(){slot.classList.add('playing');};
