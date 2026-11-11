@@ -677,22 +677,54 @@ canvas#tlwave{width:100%;height:36px;display:block}
   font-size:13px;font-weight:700;padding:8px 15px;border-radius:999px;opacity:0;transition:opacity .25s,transform .25s;z-index:85;pointer-events:none}
 .scannote.on{opacity:1;transform:translate(-50%,0)}
 @media (prefers-reduced-motion:reduce){.scannote{transition:none}}
-.pw{position:fixed;inset:0;z-index:90;background:rgba(8,6,14,.72);display:flex;align-items:flex-end;justify-content:center}
+/* PAYWALL, Option A (Konnor, Telegram 2061-2063, 2026-11-10; branch kfix-9-paywall). A half-screen
+   sheet over the real screen, dimmed with 60% black. Colours are his spec's fixed values in both
+   themes: calm, dark, one purple accent, no gradients or glow. The button block sticks to the
+   bottom, so with large text the plans scroll and the button never leaves the screen. */
+.pw{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;
+  touch-action:none;animation:pwFade .22s ease-out}
 .pw[hidden]{display:none}
-.pwc{position:relative;width:100%;max-width:480px;background:var(--raise);color:var(--text);border-radius:22px 22px 0 0;
-  padding:26px 20px calc(20px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px}
-.pwx{position:absolute;top:12px;right:12px;width:32px;height:32px;background:none;border:0;color:var(--muted)}
-.pwx svg{width:18px;height:18px}
-.pwh{font-size:21px;font-weight:800}
-.pwp{margin:0;color:var(--muted);font-size:14px;line-height:1.45}
-.pwb{display:flex;flex-direction:column;gap:10px}
-.pwbuy{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--accent);color:#fff;border:0;
-  border-radius:14px;padding:15px 16px;font:inherit;font-size:15px;text-align:left}
-.pwbuy span{font-weight:700}
-.pwm{font-size:13px;color:var(--muted)}
-.pwr{align-self:center;background:none;border:0;color:var(--text);font:inherit;font-size:13.5px;text-decoration:underline;padding:6px}
-.pwf{margin:0;font-size:11px;line-height:1.45;color:var(--faint)}
-.pwf a{color:var(--muted)}
+.pws{position:relative;width:100%;max-width:480px;max-height:calc(100% - env(safe-area-inset-top) - 16px);overflow-y:auto;
+  overscroll-behavior:contain;touch-action:pan-y;background:#16161A;color:#fff;border-radius:28px 28px 0 0;
+  box-shadow:0 -12px 32px rgba(0,0,0,.4);padding:10px 20px 0;animation:pwUp .28s cubic-bezier(.2,.8,.2,1)}
+.pws:focus{outline:none}
+.pwgrab{width:40px;height:5px;border-radius:3px;background:#3A3A42;margin:0 auto 16px}
+.pwtop{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.pwh{margin:0;font-size:28px;line-height:1.15;font-weight:700;letter-spacing:-.01em}
+.pwx{flex:none;width:44px;height:44px;margin:-6px -12px 0 0;display:grid;place-items:center;background:none;border:0;
+  color:#8E8E93;border-radius:22px;-webkit-tap-highlight-color:transparent}
+.pwx svg{width:20px;height:20px}
+.pwsub{margin:4px 0 16px;font-size:14px;line-height:1.4;color:#AEAEB2}
+.pwplans{display:flex;flex-direction:column;gap:10px}
+.pwplan{display:flex;align-items:center;gap:12px;width:100%;padding:14px;border-radius:14px;background:#1C1C21;
+  border:1px solid #2A2A30;color:#fff;font:inherit;text-align:left;-webkit-tap-highlight-color:transparent}
+.pwplan[aria-checked="true"]{border-color:#7566F0;box-shadow:inset 0 0 0 1px #7566F0}
+.pwdot{flex:none;width:22px;height:22px;border-radius:50%;box-shadow:inset 0 0 0 2px #5A5A62;display:grid;place-items:center;color:#fff}
+.pwplan[aria-checked="true"] .pwdot{background:#7566F0;box-shadow:none}
+.pwdot svg{width:13px;height:13px;display:none}
+.pwplan[aria-checked="true"] .pwdot svg{display:block}
+.pwname{flex:1;min-width:0}
+.pwname b{font-size:16px;font-weight:600}
+.pwtag{display:inline-block;margin-left:8px;padding:2px 6px;border-radius:6px;background:#123A24;color:#6EE7A0;
+  font-size:10px;font-weight:700;letter-spacing:.04em;vertical-align:2px;white-space:nowrap}
+.pwname small{display:block;margin-top:3px;font-size:12.5px;line-height:1.35;color:#AEAEB2}
+.pwprice{flex:none;text-align:right}
+.pwprice b{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.pwprice small{display:block;margin-top:1px;font-size:12px;color:#AEAEB2}
+.pwwait{padding:22px 14px;border-radius:14px;background:#1C1C21;border:1px solid #2A2A30;color:#AEAEB2;font-size:14px;text-align:center}
+.pwfoot{position:sticky;bottom:0;background:#16161A;padding:16px 0 calc(22px + env(safe-area-inset-bottom))}
+.pwgo{display:block;width:100%;min-height:54px;padding:8px 20px;border:0;border-radius:27px;background:#6355E0;color:#fff;
+  font:inherit;font-size:17px;font-weight:600;-webkit-tap-highlight-color:transparent}
+.pwgo:active{background:#5446D2}
+.pwgo:disabled{opacity:.5}
+.pwmsg{margin:10px 0 0;font-size:13px;line-height:1.4;color:#fff;text-align:center}
+.pwlegal{margin:10px 0 0;font-size:11.5px;line-height:1.45;color:#AEAEB2;text-align:center}
+.pwlinks{margin:6px 0 0;font-size:11.5px;line-height:1.45;color:#AEAEB2;text-align:center}
+.pwlinks a{color:#fff;font-weight:600;text-decoration:underline;padding:10px 2px;margin:-10px 0}
+.pw button:focus-visible,.pw a:focus-visible{outline:2px solid #7566F0;outline-offset:2px}
+@keyframes pwUp{from{transform:translateY(100%)}to{transform:none}}
+@keyframes pwFade{from{background:rgba(0,0,0,0)}to{background:rgba(0,0,0,.6)}}
+@media (prefers-reduced-motion:reduce){.pw,.pws{animation:none}}
 .upbtn{background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;padding:8px 14px;
   border-radius:var(--r-pill)}
 .setrow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 12px;
@@ -5511,51 +5543,93 @@ function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.
   pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
   pill.textContent = PRO ? 'Unlimited' : left+' scan'+(left===1?'':'s')+' left';   // Konnor: the counter reads "0 scans left"
   pill.onclick = PRO ? null : openPaywall;}
+/* PAYWALL, Option A (Konnor, Telegram 2061-2063, 2026-11-10). Same triggers as before: the pill,
+   the You tab's Get Addify Plus, a new clip once the 5 free scans are used, and back home after
+   the 5th scan. Only the look and the words changed. Every price, billing period and trial comes
+   from StoreKit through addifyStore; nothing here is typed in by hand. SAVE % is worked out from
+   the two StoreKit prices and rounded down, so it never claims more than the real saving. The
+   button only offers a trial when StoreKit says this Apple ID gets one on the selected plan.
+   Terms and Privacy open the same pages App Store Connect links to. */
+var PW_TERMS='https://support.addify.app/terms.html', PW_PRIVACY='https://support.addify.app/privacy.html';
 function pwMsg(t){var m=document.getElementById('pwm'); if(m){m.textContent=t; m.hidden=!t;}}
+function closePaywall(){var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; PW_AFTER='';}
+function pwAmount(q){if(q&&typeof q.amount==='number'&&q.amount>0) return q.amount;
+  // builds before kfix-9 send only the display string: read it only when it is one plain number
+  var m=String((q&&q.price)||'').match(/^[^\d]*(\d+)[.,](\d{2})[^\d]*$/); return m?+(m[1]+'.'+m[2]):0;}
+function pwTrial(q){if(!q||!q.trial) return null; var n=+q.trialValue||0, u=q.trialUnit||'';
+  if(!u){var m=String(q.trial).match(/^(?:(\d+)\s+)?(day|week|month|year)s?\b/); if(!m) return null; n=m[1]?+m[1]:1; u=m[2];}
+  if(!n) n=1; return {n:n, unit:u, words:n+' '+u+(n===1?'':'s')+' free', btn:'Start '+n+'-'+u+' free trial'};}
+function pwPer(q){return q.period||'';}
+function pwEvery(q){return q.period==='year'?'yearly':q.period==='month'?'monthly':'every '+q.period;}
 function openPaywall(){
   if(!STORE) return;
   var ov=document.getElementById('paywall');
   if(!ov){ov=document.createElement('div'); ov.id='paywall'; ov.className='pw'; document.body.appendChild(ov);}
-  var used=scansUsed()>=FREE_SCANS;
-  ov.innerHTML='<div class="pwc" role="dialog" aria-modal="true" aria-labelledby="pwh">'+
-    '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button>'+
-    '<b class="pwh" id="pwh">Addify Plus</b>'+
-    '<p class="pwp">'+(used?'You have used your '+FREE_SCANS+' free scans. ':'')+
-      'Unlimited scans. Addify names the song, finds the closest version and tells you when it isn\'t sure. Scans that find nothing never count.</p>'+
-    '<div class="pwb" id="pwb"><span class="pwm">Loading prices...</span></div>'+
-    '<span class="pwm" id="pwm" hidden></span>'+
-    '<button class="pwr" id="pwr">Restore purchases</button>'+
-    '<p class="pwf">Auto-renewing subscription. Payment is charged to your Apple ID and renews '+
-      'at the same price unless cancelled at least 24 hours before the period ends. Manage or '+
-      'cancel in your Apple ID settings. A free trial becomes a paid subscription unless cancelled at least 24 hours before it ends. <a href="'+legalURL('terms')+'" target="_blank">Terms of Use</a> · '+
-      '<a href="'+legalURL('privacy')+'" target="_blank">Privacy Policy</a></p></div>';
+  var left=Math.max(0,FREE_SCANS-scansUsed());
+  var sub=(left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
+    'Go unlimited and keep finding versions.';
+  ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-labelledby="pwh" tabindex="-1">'+
+    '<div class="pwgrab" aria-hidden="true"></div>'+
+    '<div class="pwtop"><h2 class="pwh" id="pwh">Addify+</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
+    '<p class="pwsub">'+esc(sub)+'</p>'+
+    '<div class="pwplans" id="pwb" role="radiogroup" aria-label="Plans"></div>'+
+    '<div class="pwfoot"><button class="pwgo" id="pwgo" disabled>Continue</button>'+
+      '<p class="pwmsg" id="pwm" role="status" hidden></p>'+
+      '<p class="pwlegal" id="pwlegal" hidden></p>'+
+      '<p class="pwlinks"><a href="'+PW_TERMS+'" target="_blank">Terms of Use</a> · '+
+        '<a href="'+PW_PRIVACY+'" target="_blank">Privacy Policy</a> · '+
+        '<a href="#" id="pwr" role="button">Restore purchases</a></p></div></div>';
   ov.hidden=false;
-  document.getElementById('pwx').onclick=function(){ov.hidden=true; PW_AFTER='';};
-  var busyBuy=false;
-  // No products, a refusal or a plan without a price: say so and offer Try again, which asks
-  // StoreKit again. While it asks, the box reads "Loading prices...", never a bare "/ month".
-  var noPlans=function(){var b=document.getElementById('pwb'); if(!b) return;
-    b.innerHTML='<span class="pwm">Couldn\'t load prices right now.</span><button class="cta" id="pwretry">Try again</button>';
-    document.getElementById('pwretry').onclick=loadPlans;};
-  var loadPlans=function(){
-    var b0=document.getElementById('pwb'); if(b0) b0.innerHTML='<span class="pwm">Loading prices...</span>';
+  var S=ov.querySelector('.pws'), go=document.getElementById('pwgo'), plans=[], sel=-1, busyBuy=false;
+  try{S.focus({preventScroll:true});}catch(e){}
+  document.getElementById('pwx').onclick=closePaywall;
+  ov.onclick=function(e){if(e.target===ov) closePaywall();};
+  // drag the sheet down to close it (the handle says it can be dragged)
+  var y0=null, dy=0;
+  S.addEventListener('touchstart',function(e){if(S.scrollTop>0||e.touches.length!==1){y0=null; return;}
+    y0=e.touches[0].clientY; dy=0; S.style.transition='none';},{passive:true});
+  S.addEventListener('touchmove',function(e){if(y0===null) return; dy=Math.max(0,e.touches[0].clientY-y0);
+    S.style.transform=dy?'translateY('+dy+'px)':'';},{passive:true});
+  S.addEventListener('touchend',function(){if(y0===null) return; y0=null; S.style.transition='transform .2s ease';
+    S.style.transform=''; if(dy>90) closePaywall();});
+  var paint=function(){var b=document.getElementById('pwb'); if(!b) return;
+    var y=null, mo=null; plans.forEach(function(q){if(q.period==='year') y=q; else if(q.period==='month') mo=q;});
+    var save=0; if(y&&mo&&pwAmount(y)&&pwAmount(mo)) save=Math.floor((1-pwAmount(y)/(12*pwAmount(mo)))*100);
+    b.innerHTML=plans.map(function(q,i){var t=pwTrial(q), on=i===sel;
+      var name=q.period==='year'?'Yearly':q.period==='month'?'Monthly':esc(q.name||'Addify Plus');
+      var line=t?esc(t.words)+', then billed '+esc(pwEvery(q)):(q.period==='year'?'Billed every year':q.period==='month'?'Billed every month':'Billed '+esc(pwEvery(q)));
+      return '<button class="pwplan" role="radio" aria-checked="'+on+'" data-i="'+i+'">'+
+        '<span class="pwdot" aria-hidden="true">'+IC.tick+'</span>'+
+        '<span class="pwname"><b>'+name+'</b>'+(q===y&&save>0?'<span class="pwtag">SAVE '+save+'%</span>':'')+'<small>'+line+'</small></span>'+
+        '<span class="pwprice"><b>'+esc(q.price)+'</b><small>per '+esc(pwPer(q))+'</small></span></button>';}).join('');
+    [].forEach.call(b.querySelectorAll('.pwplan'),function(r){r.onclick=function(){sel=+r.getAttribute('data-i'); pwMsg(''); paint();};});
+    var q=plans[sel], t=pwTrial(q), lg=document.getElementById('pwlegal');
+    go.disabled=busyBuy; go.textContent=t?t.btn:'Continue';
+    lg.textContent=(t?t.words+', then ':'')+q.price+' per '+pwPer(q)+'. Auto-renews until cancelled. '+
+      'Cancel anytime in your Apple ID settings at least 24 hours before renewal.';
+    lg.hidden=false; go.onclick=buy;};
+  var buy=function(){var q=plans[sel]; if(busyBuy||!q) return; busyBuy=true; go.disabled=true; pwMsg('');
+    storeCall('buy',{id:q.id}).then(function(r){busyBuy=false; go.disabled=false;
+      if(r&&r.pro){proOn(); return;}
+      var e=(r&&r.error)||''; if(e==='pending'){pwMsg('Your purchase is pending. Plus unlocks as soon as the App Store confirms it.'); pollPending();}
+      else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
+    },function(){busyBuy=false; go.disabled=false; pwMsg('The purchase did not go through. Try again.');});};
+  // No products, a refusal or a plan without a price: say so, and the button asks StoreKit again.
+  // While it asks, the box reads "Loading prices..." and the button can't be pressed.
+  var noPlans=function(){var b=document.getElementById('pwb'); if(!b) return; plans=[]; sel=-1;
+    b.innerHTML='<div class="pwwait">Couldn\'t load prices right now.</div>';
+    document.getElementById('pwlegal').hidden=true; go.disabled=false; go.textContent='Try again'; go.onclick=loadPlans;};
+  var loadPlans=function(){var b0=document.getElementById('pwb'); if(!b0) return; pwMsg('');
+    b0.innerHTML='<div class="pwwait">Loading prices...</div>'; document.getElementById('pwlegal').hidden=true;
+    go.disabled=true; go.textContent='Continue'; go.onclick=null;
     storeCall('products').then(function(ps){
-      var b=document.getElementById('pwb'); if(!b) return;
-      ps=Array.isArray(ps)?ps.filter(function(q){return q&&q.id&&q.price;}):[];
+      ps=Array.isArray(ps)?ps.filter(function(q){return q&&q.id&&q.price&&q.period;}):[];
       if(!ps.length){noPlans(); return;}
-      // the plan's name is StoreKit's display name, so the sheet and Apple's purchase sheet agree
-      b.innerHTML=ps.map(function(q){return '<button class="pwbuy" data-id="'+esc(q.id)+'"><b>'+('Addify Plus'+(q.period==='year'?' Yearly':q.period==='month'?' Monthly':''))+
-        '</b><span>'+(q.trial?esc(q.trial)+', then ':'')+esc(q.price)+(q.period?' / '+esc(q.period):'')+'</span></button>';}).join('');
-      [].forEach.call(b.querySelectorAll('.pwbuy'),function(btn){btn.onclick=function(){
-        if(busyBuy) return; busyBuy=true; pwMsg('');
-        storeCall('buy',{id:btn.getAttribute('data-id')}).then(function(r){busyBuy=false;
-          if(r&&r.pro){proOn(); return;}
-          var e=(r&&r.error)||''; if(e==='pending'){pwMsg('Your purchase is pending. Plus unlocks as soon as the App Store confirms it.'); pollPending();}
-          else if(e&&e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
-        },function(){busyBuy=false; pwMsg('The purchase did not go through. Try again.');});};});
+      var rank=function(q){return q.period==='year'?0:q.period==='month'?1:2;};
+      plans=ps.sort(function(a,b){return rank(a)-rank(b);}); sel=0; paint();   // yearly first and selected
     },noPlans);};
   loadPlans();
-  document.getElementById('pwr').onclick=function(){pwMsg('Checking your Apple ID...');
+  document.getElementById('pwr').onclick=function(e){e.preventDefault(); pwMsg('Checking your Apple ID...');
     storeCall('restore').then(function(r){PRO=!!(r&&r.pro); paintPill();
       if(PRO){proOn();} else pwMsg('No active subscription found on this Apple ID.');},
       function(){pwMsg('Could not reach the App Store. Try again.');});};}
@@ -7192,6 +7266,7 @@ document.getElementById('onb').addEventListener('click',function(e){
   checkEngine().then(function(up){if(!up) return;
     lsSet('addify-queue',[]); onbQuiet=true; run(q[0]); onbQuiet=false;});})();
 window.addEventListener('keydown',function(e){if(e.key==='Escape'){
+  var pwo=document.getElementById('paywall'); if(pwo&&!pwo.hidden){closePaywall(); return;}
   var pk=document.getElementById('picker'); if(!pk.hidden){pk.hidden=true; return;}
   var ipl=document.getElementById('ipl'); if(ipl&&!ipl.hidden){ipClose(); return;}
   var pw=document.getElementById('player'); if(pw&&!pw.hidden){closePlayer(); return;}
