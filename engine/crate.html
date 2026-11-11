@@ -3566,8 +3566,15 @@ function confChip(c,full){
   // the engine still ranks on its version figure.
   if(m.refused==='source' && typeof m.core==='number')
     lbl=Math.round(Math.min(1,m.core)*100)+(full?'% recording match':'% recording');
+  // FIX 6 (issue #15, Konnor: "Say the speed once only, in the pill"). On a card (full) the
+  // speed gap leaves the note: kyks' closest card read "25% version match  Different edit · clip
+  // 40% slower" under a "Slowed" pill. The word stays ("Different edit", "EQ 7.1 dB off") and the
+  // gap stays in the chip's tooltip and on the rows in the fold. The source card keeps its line
+  // ("Source recording · clip 12% slower"), the one on Kmac's Wildest Dreams reference screen.
+  var why=m.why;
+  if(full && m.refused!=='source') why=why.replace(/(^|\s·\s)clip \d[^·]*$/,'').trim();
   return '<span class="cf s'+vtier(m)+'" title="'+esc(tip)+'">'+esc(lbl)+'</span>'+
-    (m.why?'<span class="cfw">'+esc(m.why)+'</span>':'');}
+    (why?'<span class="cfw">'+esc(why)+'</span>':'');}
 function confRule(v){
   if(v===null||v===undefined) return '';
   return '<span class="cfl s'+confTier(v)+'"><i style="width:'+Math.max(2,confPct(v))+'%"></i></span>';}
@@ -5142,8 +5149,12 @@ function renderResult(d,partial){
 
      Naming the song is still a real result, so this does not downgrade to a failure.
      It just stops the header claiming the half we did not get. */
+  // FIX 6 (issue #15): the Thunder reference reads "Match found", and every scan that names a song
+  // now ends on a closest version card (Fix 7), so no shelf under it says "we did not crown one"
+  // any more. A no-crown shelf that still draws that card reads "Match found" too; the card's own
+  // figure says how close it is.
   if(!partial) document.getElementById('matchttl').textContent =
-      noCrown ? 'Song identified' : 'Match found';
+      (noCrown && !/The closest version we found/.test(shelf)) ? 'Song identified' : 'Match found';
   // inlinePlayer is rendered inside the crown card (in `shelf`), not here, so the video
   // opens on the card the user tapped. It stays out of this concat to avoid a second copy.
   // COVER PLAY: the cover's band. A crown's band sits on the crown card and the no-crown band under

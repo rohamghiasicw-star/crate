@@ -1,0 +1,236 @@
+{
+ "borntodie_no_upload": {
+  "artist": "Lana Del Rey",
+  "fold": "",
+  "fold_rows": 0,
+  "header": "Match found",
+  "pill": "Slowed ~0.86x",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "line": "The original release",
+    "song": "Born To Die"
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Born To Die",
+  "xchip": ""
+ },
+ "borntodie_source_and_closest": {
+  "artist": "Lana Del Rey",
+  "fold": "Other versions we checked · 1",
+  "fold_rows": 1,
+  "header": "Match found",
+  "pill": "Slowed ~0.86x · edit by @Interscope Records",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The recording this clip was cut from"
+   },
+   {
+    "fig": "100% recording match",
+    "href": "https://soundcloud.com/interscope/lana-del-rey-born-to-die-1",
+    "plays": "11M plays",
+    "src": "SoundCloud",
+    "title": "Lana Del Rey - Born To Die",
+    "why": "Source recording · clip 14% slower"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "fig": "25% version match",
+    "href": "https://soundcloud.com/ifeels4fe/born-to-die-lana-del-rey-f-ck",
+    "plays": "3.3M plays",
+    "src": "SoundCloud",
+    "title": "BORN TO DIE by lana del rey (f*ck you hard in the pouring rain) (slowed down)",
+    "why": "Different edit"
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Born To Die",
+  "xchip": ""
+ },
+ "bouch_crown": {
+  "artist": "Hoodfellas",
+  "fold": "Other versions we checked · 1",
+  "fold_rows": 1,
+  "header": "Match found",
+  "pill": "",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "fig": "90% version match",
+    "href": "https://soundcloud.com/slakcn/this-place-about-to-blow-hoodtrap-mylancore-remix-prod-kryd",
+    "plays": "1.4M plays",
+    "src": "SoundCloud",
+    "title": "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix) Prod. Kryd",
+    "why": ""
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix) Prod. Kryd",
+  "xchip": ""
+ },
+ "kelthraxx_song_card": {
+  "artist": "Luhh Dyl",
+  "fold": "Other versions we checked · 2",
+  "fold_rows": 2,
+  "header": "Match found",
+  "pill": "",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "line": "The original release",
+    "song": "Wouldn’t Believe (feat. Lil Tony Official)"
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Wouldn’t Believe (feat. Lil Tony Official)",
+  "xchip": ""
+ },
+ "kyks_closest_upload": {
+  "artist": "42RAIN",
+  "fold": "Other versions we checked · 5",
+  "fold_rows": 5,
+  "header": "Match found",
+  "pill": "Slowed",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "fig": "25% version match",
+    "href": "https://soundcloud.com/somaliraider456/cult-member-three-slowed-x",
+    "plays": "1.2M plays",
+    "src": "SoundCloud",
+    "title": "Cult Member - Three (slowed x reverb)",
+    "why": "Different edit"
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Three (Slowed)",
+  "xchip": ""
+ },
+ "nuts_crown": {
+  "artist": "Lil Peep",
+  "fold": "Other versions we checked · 5",
+  "fold_rows": 5,
+  "header": "Match found",
+  "pill": "",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The exact version playing"
+   },
+   {
+    "fig": "Exact match",
+    "href": "https://soundcloud.com/user-483488835/nuts-lil-peep-x-tokyo-ghoul-1",
+    "plays": "41K plays",
+    "src": "SoundCloud",
+    "title": "Nuts lil peep x Tokyo ghoul",
+    "why": ""
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Nuts lil peep x Tokyo ghoul",
+  "xchip": "Matched - exact version"
+ },
+ "thunder": {
+  "artist": "Imagine Dragons",
+  "fold": "Other versions we checked · 2",
+  "fold_rows": 2,
+  "header": "Match found",
+  "pill": "Slowed ~0.80x · edit by @Josiahlifts",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "fig": "90% version match",
+    "href": "https://soundcloud.com/josiah-copeland-251812065/thunder-slowed-imagine-dragons",
+    "plays": "48K plays",
+    "src": "SoundCloud",
+    "title": "Thunder slowed imagine dragons",
+    "why": ""
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Thunder slowed imagine dragons",
+  "xchip": ""
+ },
+ "wildest_source_only": {
+  "artist": "Taylor Swift",
+  "fold": "Other versions we checked · 1",
+  "fold_rows": 1,
+  "header": "Match found",
+  "pill": "Slowed ~0.88x + bass boosted · edit by @sterlings.aep",
+  "shelf": [
+   {
+    "sect": "Open in"
+   },
+   {
+    "sect": "The recording this clip was cut from"
+   },
+   {
+    "fig": "86% recording match",
+    "href": "https://soundcloud.com/shepherdess-99/wildest-dreams",
+    "plays": "127 plays",
+    "src": "SoundCloud",
+    "title": "wildest dreams",
+    "why": "Source recording · clip 12% slower"
+   },
+   {
+    "sect": "The closest version we found"
+   },
+   {
+    "line": "The original release",
+    "song": "Wildest Dreams (Taylor's Version)"
+   },
+   {
+    "sect": "Add to another playlist"
+   }
+  ],
+  "title": "Wildest Dreams (Taylor's Version)",
+  "xchip": ""
+ }
+}
