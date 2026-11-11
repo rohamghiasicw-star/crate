@@ -107,14 +107,14 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   </div>
   <h1>Privacy policy</h1>
   <p class="lede">Addify names the exact version of the song playing in a clip. Here's what that takes, what it doesn't, and what happens to it. Written from what the app and its server actually do.</p>
-  <p class="eff">Effective 31 October 2026</p>
+  <p class="eff">Effective 11 November 2026</p>
 
   <div class="card">
     <h2>The short version</h2>
     <ul>
       <li><b>No accounts.</b> No sign-up, no email, no password. What you save lives on your phone.</li>
       <li><b>Audio is never kept.</b> Clip audio and your 12-second recordings are used for one lookup, then deleted.</li>
-      <li><b>No analytics, no ads, no tracking.</b> No third-party SDKs, and nothing follows you across apps or websites.</li>
+      <li><b>No analytics SDKs, no ads, no tracking.</b> The only outside code is YouTube's and SoundCloud's own players, loaded when you tap play. Nothing follows you across apps or websites.</li>
       <li><b>You can erase what you sent.</b> <span class="path">Profile &rsaquo; Delete account</span> removes your votes from our server and clears the app.</li>
     </ul>
     <div class="callout"><b>We don't collect:</b> your name, email, phone number, contacts, location, photos, payment details, advertising ID or device identifiers. The microphone is used only for the 12 seconds after you tap to listen.</div>
@@ -134,7 +134,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
       <li>The clip's public caption and comments may be read to help name the song.</li>
       <li>If the clip has vocals over another beat, the server may turn a few seconds of the words into text on the server itself (no outside service), then look those lines up on Genius. The words you see under a result come from that.</li>
       <li>To find the exact upload, the server searches SoundCloud and YouTube and fetches short pieces of candidate uploads to compare against the clip. Those pieces are deleted after the comparison. They're never stored and never offered to you as a download.</li>
-      <li>The finished answer (song, artist, speed, links and the clip link) is saved on our server for up to 14 days so the same clip is instant next time. It holds no audio and nothing about who asked.</li>
+      <li>The finished answer (song, artist, speed, links and the clip link) is saved on our server so the same clip is instant next time: up to 90 days for an answer we confirmed, 14 days for the rest. It holds no audio and nothing about who asked.</li>
     </ul>
   </div>
   <div class="card">
@@ -151,7 +151,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   </div>
   <div class="card">
     <h2>You play a preview</h2>
-    <p>When you tap play, the app opens YouTube's or SoundCloud's own player inside the app and loads their player scripts. From then on your phone talks to YouTube or SoundCloud directly: they receive your IP address and device details and may use their own cookies or storage, under their privacy policies. Cover art and thumbnails load from YouTube, SoundCloud and Apple image servers the same way. Other buttons (Spotify, Apple Music, TikTok) open those apps or sites.</p>
+    <p>When you tap play, the app opens YouTube's or SoundCloud's own player inside the app and loads their player scripts. From then on your phone talks to YouTube or SoundCloud directly: they receive your IP address and device details and may use their own cookies or storage, under their privacy policies. Cover art and thumbnails load from YouTube, SoundCloud, Apple, TikTok and Instagram image servers the same way. Other buttons (Spotify, Apple Music, TikTok) open those apps or sites.</p>
     <p>Addify uses YouTube API Services. What YouTube and Google do with data from their player is covered by the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
   </div>
   <div class="card">
@@ -180,14 +180,15 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
     <div class="rows">
       <div class="row"><div class="who">Apple (Shazam)</div><div class="what">An audio signature made from a piece of the clip or of your 12-second recording, from your phone's ShazamKit or from our server. Never the recording itself.</div></div>
       <div class="row"><div class="who">TikTok, Instagram</div><div class="what">The link you shared, so the clip's public page, caption and comments can be read.</div></div>
-      <div class="row"><div class="who">tikwm.com</div><div class="what">A TikTok mirror our server may use as a backup to fetch a clip or its comments. It receives the link you shared.</div></div>
+      <div class="row"><div class="who">tikwm.com</div><div class="what">A TikTok mirror our server uses to read a clip's comments, and sometimes the clip itself. It receives the link you shared.</div></div>
       <div class="row"><div class="who">SoundCloud, YouTube</div><div class="what">Search words built from the song, the artist and the uploader's handle, or the words you typed. When you play a preview, their player talks to your phone directly.</div></div>
       <div class="row"><div class="who">Genius</div><div class="what">Lyric lines heard in the clip, or the words you typed in search.</div></div>
       <div class="row"><div class="who">Google, Brave, DuckDuckGo</div><div class="what">Title-based searches when the server looks for an edit's name.</div></div>
       <div class="row"><div class="who">Apple Music, Deezer</div><div class="what">The song and artist, to build the links under a result.</div></div>
       <div class="row"><div class="who">tokchart.com</div><div class="what">Asked by our server for the trending chart. Nothing about you is sent.</div></div>
       <div class="row"><div class="who">Telegram</div><div class="what">When you tap X: a message to the developer with the clip link, the answer the app gave and your pick.</div></div>
-      <div class="row"><div class="who">Cloudflare</div><div class="what">Carries traffic between the app and our server, like any network provider.</div></div>
+      <div class="row"><div class="who">DigitalOcean</div><div class="what">Hosts our server in New York and carries all traffic between the app and the server.</div></div>
+      <div class="row"><div class="who">GitHub</div><div class="what">When the app opens or comes back to the front, it reads a small public file on GitHub to find our server. GitHub sees your IP address and device type.</div></div>
     </div>
     <p>Every service listed here gives the data it receives from Addify the same or equal protection as this policy. We send them nothing beyond what's listed.</p>
   </div>
@@ -196,12 +197,12 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   <div class="card">
     <ul>
       <li><b>Audio:</b> deleted at the end of each lookup. Never written anywhere else.</li>
-      <li><b>Answers for a link:</b> up to 14 days on our server.</li>
+      <li><b>Answers for a link:</b> up to 90 days on our server for an answer we confirmed, 14 days for the rest.</li>
       <li><b>Search results:</b> about 15 minutes, in server memory.</li>
       <li><b>Your check or X, your picks and no-match answers</b> (and the fix-list copy of an X): until you erase them.</li>
       <li><b>Corrections list:</b> a clip link and the right upload for it, kept so that clip keeps getting the right answer. Nothing about who reported it.</li>
-      <li><b>Your IP address:</b> it reaches our server with each request, as with any website. We don't store your full IP address. Our web server keeps a short access log to keep the service working (time, page requested, response code, device type and only the first part of the network address, for example 17.0.0.0), deleted after 14 days. If abuse limits are on, the server counts requests against a salted hash of the address, kept in memory only and gone when the server restarts.</li>
-      <li><b>Timing log:</b> the server keeps a log of how long each step took, with the clip link and the song searches it made. No audio, no IP address, nothing that identifies you.</li>
+      <li><b>Your IP address:</b> it reaches our server with each request, as with any website. We don't store your full IP address. Our web server keeps a short access log to keep the service working (time, page requested, response code, device type, only the first part of the network address, for example 17.0.0.0, and for some requests the clip links involved), deleted after 14 days. If abuse limits are on, the server counts requests against a salted hash of the address, kept in memory only and gone when the server restarts.</li>
+      <li><b>Timing log:</b> the server keeps a log of how long each step took, with the clip link and the song searches it made, kept 7 days. No audio, no IP address, nothing that identifies you.</li>
     </ul>
   </div>
 
@@ -240,7 +241,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
     <p><b>Addify</b><br><!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--></p>
   </div>
 
-  <div class="foot"><a href="privacy.html">Privacy</a><span class="dot">&middot;</span><a href="support.html">Support</a><span class="dot">&middot;</span><a href="terms.html">Terms</a><span class="dot">&middot;</span><span>Effective 31 October 2026</span></div>
+  <div class="foot"><a href="privacy.html">Privacy</a><span class="dot">&middot;</span><a href="support.html">Support</a><span class="dot">&middot;</span><a href="terms.html">Terms</a><span class="dot">&middot;</span><span>Effective 11 November 2026</span></div>
 </div>
 </body>
 </html>
