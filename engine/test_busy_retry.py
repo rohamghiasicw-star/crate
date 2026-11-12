@@ -16,8 +16,8 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
   Q6  Back during the quiet wait          -> no further /base ask
   Q7  hunt answers busy (starved)         -> the named song stays, final, no busy card, page free
   Q8  /base busy (scan gate queue), then found -> song (gate busy is retried too)
-  Q9  busy with a 10 s retry_after, then found -> the scan dial keeps moving through the wait
-      (sampled each second, never back to 0, never stuck)
+  Q9  busy with a 10 s retry_after, then found -> the scan dial holds still through the quiet wait and
+      says why (reviewer runs 2, CHAOS-1: it used to keep climbing), never goes back, then lands on 100
   round 2 (the engine's busy answer says whether asking again is getting somewhere: quiet):
   Q10 /base busy with quiet:true four times, then found -> song, 5 asks, no busy card
   Q11 /base busy with quiet:true every time -> the busy card once about 40 s of quiet asks are spent
@@ -286,21 +286,23 @@ async def amain(a):
             res.append((r, ok))
         if want("Q9") and not a.expect_old:
             async def steps9(page, eng, ctx):
-                vals = []
+                vals = []; st = ""
                 t_end = time.time() + 14
                 while time.time() < t_end:
                     try:
                         vals.append(await page.evaluate("Math.round(pgNow*10)/10"))
+                        if len(vals) == 4:
+                            st = await page.evaluate("(document.querySelector('#dial .wv-st .on')||{}).textContent||''")
                     except Exception:
                         vals.append(None)
                     await page.wait_for_timeout(1000)
                 await wait_for(page, song, 15)
-                return {"dial_each_s": vals}
-            r = await run_case(pw, html, "Q9 the dial keeps moving through a quiet retry",
+                return {"dial_each_s": vals, "status_in_wait": st}
+            r = await run_case(pw, html, "Q9 the dial holds still through a quiet retry and says why",
                                {"/base": [busy("shazam", 10), FOUND]}, steps=steps9)
             v = [x for x in r.get("dial_each_s", []) if isinstance(x, (int, float))]
             ok = (song(r["cards"]) and len(v) >= 10 and all(b >= a_ for a_, b in zip(v, v[1:]))
-                  and v[-1] > v[1] and min(v[1:]) > 0)
+                  and len(set(v[1:8])) == 1 and v[-1] == 100 and "keeping your place" in (r.get("status_in_wait") or ""))
             res.append((r, ok))
         if want("Q6") and not a.expect_old:
             async def steps6(page, eng, ctx):

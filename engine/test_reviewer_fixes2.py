@@ -729,7 +729,7 @@ async def main(html, only):
                 hits.append(await pg.evaluate(HIT, "#scanpill"))
                 a5 = await pg.evaluate("()=>{var p=document.getElementById('scanpill'); return {tag:p.tagName, type:p.type, home:document.querySelectorAll('#s-home h1,#s-home h2').length, you:document.querySelectorAll('#s-prof h1,#s-prof h2').length};}")
                 await pg.evaluate("()=>renderResult({result:'no_match',url:'%s'},false)" % (CLIP % 5))
-                a5["errcard"] = await pg.evaluate("()=>document.querySelectorAll('#result h2').length")
+                a5["errcard"] = await pg.evaluate("()=>document.querySelectorAll('#result h1,#result h2,#result [role=\"heading\"]').length")
                 # contrast, dark theme then light, measured from pixels
                 async def contrast(sel, mode="vis"):
                     await pg.evaluate("(s)=>{var e=document.querySelector(s); e.scrollIntoView({block:'center'});}", sel); await pg.wait_for_timeout(150)

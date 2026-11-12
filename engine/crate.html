@@ -1783,10 +1783,10 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 .obflow .fl{font-size:max(11px, calc(11.4 * var(--k)))}
 .obstep .sn{font-size:max(11px, calc(10.5 * var(--k)))}
 .obstep .sx{font-size:max(11px, calc(12.4 * var(--k)))}
-/* A11Y-5: headings a screen reader can jump to, hidden where the screen already shows the name */
+/* A11Y-5: headings a screen reader can jump to, hidden where the screen already shows the name (error card
+   titles stay <b> with role="heading", so they look and read as before) */
 .vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .vh:focus,#app:focus{outline:none}
-.note h2.nh{display:block;font-size:16px;font-weight:700;line-height:1.5;margin:12px 0 5px}
 /* IAP-1: plan rows locked while a purchase runs */
 .pwplan:disabled{opacity:.6}
 /* BN-1: Delete account could not reach the server */
@@ -3995,7 +3995,7 @@ function livePaint(freshURL){
   box.innerHTML='';
   var t=document.getElementById('progtxt2');
   if(t&&LIVE.length) t.textContent=LIVE.length===1?'1 version verified':LIVE.length+' versions verified';}
-function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<h2 class="nh">'+esc(title)+'</h2><span>'+esc(body)+'</span></div></div>';}
+function noteCard(title,body){return '<div class="card"><div class="note">'+discIll()+'<b role="heading" aria-level="2">'+esc(title)+'</b><span>'+esc(body)+'</span></div></div>';}
 function prow(label,song,artist,kind){var q=encodeURIComponent((artist?artist+' ':'')+song);
   var url=kind==='spotify'?'https://open.spotify.com/search/'+q:
           kind==='apple'?'https://music.apple.com/search?term='+q:
@@ -4015,7 +4015,7 @@ function errLinkKind(e){e=String(e||'');
   return '';}
 function errCard(icon,head,sub,extra){
   return '<div class="card"><div class="note"><div class="bigq '+(icon==='lock'?'lock':'warn')+'">'+
-    (icon==='lock'?IC.lock:icon==='sat'?IC.sat:'?')+'</div><h2 class="nh">'+esc(head)+'</h2><span>'+sub+'</span>'+(extra||'')+'</div></div>';}
+    (icon==='lock'?IC.lock:icon==='sat'?IC.sat:'?')+'</div><b role="heading" aria-level="2">'+esc(head)+'</b><span>'+sub+'</span>'+(extra||'')+'</div></div>';}
 /* Keep the row ids we created so "Delete account" can actually erase them server-side.
    Feedback you cannot point at is feedback you cannot withdraw. */
 function sendFeedback(obj){
