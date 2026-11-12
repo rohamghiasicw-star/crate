@@ -73,6 +73,20 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isTrusted(URL(string: "https://www.addify.app")), false, "untrusted: subdomain")
         eq(EngineConfig.isTrusted(URL(string: "https://165-22-231-221.sslip.io")), false, "untrusted: host not compiled in")
         eq(EngineConfig.isTrusted(URL(string: "about:blank")), false, "untrusted: about:blank")
+
+        // the app page: crate.html's own paths on a compiled-in address, never the legal pages
+        eq(EngineConfig.isAppPage(A), true, "app page: bare address")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/")), true, "app page: /")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/?code=abc&state=xyz")), true, "app page: Spotify return")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/share?url=https%3A%2F%2Fvt.tiktok.com%2FZS4a5JyXE%2F")), true, "app page: share landing")
+        eq(EngineConfig.isAppPage(URL(string: "https://161-35-185-80.sslip.io/index.html")), true, "app page: index.html, other address")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/crate.html")), true, "app page: crate.html")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/privacy")), false, "not app page: /privacy")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/support.html")), false, "not app page: /support.html")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/terms")), false, "not app page: /terms")
+        eq(EngineConfig.isAppPage(URL(string: "https://addify.app/review")), false, "not app page: /review")
+        eq(EngineConfig.isAppPage(URL(string: "https://www.addify.app/")), false, "not app page: untrusted host")
+        eq(EngineConfig.isAppPage(nil), false, "not app page: nil")
         eq(EngineConfig.isTrusted(nil), false, "untrusted: nil")
 
         // the directory can only pick a compiled-in address

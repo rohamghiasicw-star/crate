@@ -22,11 +22,14 @@ struct ResultToast: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(2)
                         .foregroundStyle(.primary)
+                    /* Matches the card's own heading, THE CLOSEST VERSION WE FOUND. One line, cut at
+                       the end, so a long uploader name is what gets shortened, never the label. */
                     if let who = payload.uploader, !who.isEmpty {
-                        Text("Crowned: \(who)")
+                        Text("Closest version: \(who)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 0)

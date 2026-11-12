@@ -8,7 +8,7 @@
 #     profile) and report whether both bundles carry the app group.
 #  3. Ad hoc sign the step-1 archive by hand with each target's entitlements file and report
 #     the same. The job fails unless step 2 or step 3 carries the group into both bundles.
-#  4. On the Release binaries: no Debug-only Settings screen, the export handler and the
+#  4. On the Release binaries: no Debug-only Settings screen, the export and open-settings handlers and the
 #     photo-library purpose string present (the extension's sharedApplication fallback is reported).
 set -u -o pipefail
 cd "$(dirname "$0")/../.."
@@ -83,8 +83,10 @@ if [ -f "$app/Addify" ]; then
     echo "  note extension keeps the runtime sharedApplication fallback"
   else echo "  ok   extension does not name sharedApplication"; fi
   # Swift keeps string literals of 15 bytes or less inside the code, so only long names show up.
-  if strings -a "$app/Addify" | grep -qF "ExportFindsHandler"; then echo "  ok   Release app contains ExportFindsHandler"
-  else echo "  FAIL Release app lacks ExportFindsHandler"; fail=1; fi
+  for h in ExportFindsHandler OpenSettingsHandler; do
+    if strings -a "$app/Addify" | grep -qF "$h"; then echo "  ok   Release app contains $h"
+    else echo "  FAIL Release app lacks $h"; fail=1; fi
+  done
   want="Addify adds an image to your Photos only when you choose Save Image on it. It never reads your library."
   got=$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryAddUsageDescription' "$app/Info.plist" 2>/dev/null || true)
   if [ "$got" = "$want" ]; then echo "  ok   NSPhotoLibraryAddUsageDescription: $got"

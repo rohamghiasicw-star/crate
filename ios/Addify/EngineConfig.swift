@@ -85,8 +85,9 @@ enum EngineConfig {
     }
 
     /* The single trust test: the page load, staysInside, the mic grant and every native bridge
-       (addify, addifyStore, addifyKit, exportFinds) ask this, never "is it the address we hold
-       right now", so a page on any compiled-in address keeps working whichever one answered first. */
+       (addify, addifyStore, addifyKit, exportFinds, openSettings) ask this, never "is it the
+       address we hold right now", so a page on any compiled-in address keeps working whichever
+       one answered first. */
     static func isTrusted(_ url: URL?) -> Bool {
         guard let o = Origin(url) else { return false }
         return trustedOrigins.contains(o)
@@ -95,6 +96,17 @@ enum EngineConfig {
     static func isTrusted(scheme: String?, host: String?, port: Int?) -> Bool {
         guard let o = Origin(scheme: scheme, host: host, port: port) else { return false }
         return trustedOrigins.contains(o)
+    }
+
+    /* The app page itself on a trusted address: the engine serves crate.html at /, /index.html,
+       /crate.html and /share (server.py). /privacy, /support and /terms are engine pages too, but
+       not the app, and they have no #app (EngineWebView checkAppPage). */
+    static let appPagePaths: Set<String> = ["", "/", "/index.html", "/crate.html", "/share"]
+
+    static func isAppPage(_ url: URL?) -> Bool {
+        guard let u = url, isTrusted(u),
+              let path = URLComponents(url: u, resolvingAgainstBaseURL: false)?.path else { return false }
+        return appPagePaths.contains(path)
     }
 
     // MARK: the address

@@ -42,6 +42,7 @@ struct EngineWebView: UIViewRepresentable {
         ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
         ucc.addScriptMessageHandler(ExportFindsHandler(bridge: bridge), contentWorld: .page, name: ExportFindsHandler.name)
+        ucc.addScriptMessageHandler(OpenSettingsHandler(), contentWorld: .page, name: OpenSettingsHandler.name)
         AddifyStore.shared.start()
         cfg.userContentController = ucc
 
@@ -86,6 +87,9 @@ struct EngineWebView: UIViewRepresentable {
         var lastEngineURL: URL?
         /* Only the newest boot loads: two quick Try again taps must not start two page loads. */
         var bootGeneration = 0
+        /* The #app check in flight (checkAppPage). A new main-frame load, a failed load or the
+           check's own answer moves it on, and an answer for an older check is dropped. */
+        var appCheck = 0
 
         init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -212,14 +216,15 @@ struct EngineWebView: UIViewRepresentable {
 
         /* SERVER ERRORS (2026-10-31). While the engine restarts, Caddy answers the page with an
            empty 502, and WebKit reports an HTTP error page as a finished load: a blank screen with
-           nothing to tap. A main-frame engine response of 500 or more, or one with an empty body,
-           is cancelled here and handled as a failed load (mainFrameFailed). */
+           nothing to tap. A 4xx is the same failure with words on it ("404 page not found" as the
+           whole screen, 2026-11-12). A main-frame engine response outside 200-299, or one with an
+           empty body, is cancelled here and handled as a failed load (mainFrameFailed). */
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                      decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
             guard navigationResponse.isForMainFrame,
                   let http = navigationResponse.response as? HTTPURLResponse,
                   let url = http.url, isEngineOrigin(url),
-                  http.statusCode >= 500 || http.expectedContentLength == 0 else {
+                  !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {
                 decisionHandler(.allow)
                 return
             }
@@ -228,18 +233,23 @@ struct EngineWebView: UIViewRepresentable {
             mainFrameFailed(retry: url)
         }
 
+        /* A new main-frame load makes any #app check still waiting about a page that is going away. */
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            appCheck += 1
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             ownCancel = false
-            let onEngine = isEngineOrigin(webView.url)
-            bridge.pageReady = onEngine
-            guard onEngine else { return }
-            quietRetries = 0
-            autoRetries = 0
-            retryGeneration += 1
-            bridge.unreachable = false
-            bridge.offline = false
-            bridge.booting = false
-            bridge.flushPending()
+            guard let url = webView.url, isEngineOrigin(url) else {
+                bridge.pageReady = false
+                return
+            }
+            /* The app page (/, /share) counts as loaded only once it holds the app: see checkAppPage. */
+            if EngineConfig.isAppPage(url) {
+                checkAppPage(webView, url: url)
+                return
+            }
+            pageLoaded()
             /* A response without a Content-Length can still be empty, and an empty engine page is
                the same outage as a 5xx. If the document that just finished has nothing in it, it
                is handled as a failed load. */
@@ -251,8 +261,47 @@ struct EngineWebView: UIViewRepresentable {
             }
         }
 
-        /* Characters inside <head> and <body>; 0 only for an empty document. */
+        /* An engine page is up: the native screens go, the automatic reloads still waiting are
+           cancelled and a share that waited for the page is handed over. */
+        private func pageLoaded() {
+            bridge.pageReady = true
+            quietRetries = 0
+            autoRetries = 0
+            retryGeneration += 1
+            bridge.unreachable = false
+            bridge.offline = false
+            bridge.booting = false
+            bridge.flushPending()
+        }
+
+        /* Characters inside <head> and <body>; 0 only for an empty document. Used on the engine's
+           other pages (/privacy, /support, /terms), which have no #app. */
         static let contentProbe = "(function(){var d=document,h=d.head,b=d.body;return ((h&&h.innerHTML.trim().length)||0)+((b&&b.innerHTML.trim().length)||0);})()"
+
+        /* 2026-11-12: a 200 can still carry something that is not the app (a document cut off
+           before the app's markup, a text page). When the app page finishes, this asks the page
+           whether #app exists, and only an explicit false is a failed load (mainFrameFailed: the
+           error screen and the same automatic reloads). An evaluation error, or no answer within
+           appCheckTimeout, counts as loaded, so a working app never lands on the error screen
+           because the check itself went wrong. Whatever native screen covers the page (loading,
+           or the error screen during automatic reloads) stays up until the check answers, so a
+           broken page is never shown and it does not reset the reload backoff. */
+        static let appProbe = "document.getElementById('app')!==null"
+        static let appCheckTimeout: TimeInterval = 3
+
+        private func checkAppPage(_ wv: WKWebView, url: URL) {
+            appCheck += 1
+            let check = appCheck
+            let settle: (Bool) -> Void = { [weak self] hasApp in
+                guard let self = self, check == self.appCheck else { return }
+                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op
+                if hasApp { self.pageLoaded() } else { self.mainFrameFailed(retry: url) }
+            }
+            wv.evaluateJavaScript(Self.appProbe) { value, error in
+                settle(!(error == nil && (value as? Bool) == false))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.appCheckTimeout) { settle(true) }
+        }
 
         /* The native error screen (UnreachableView, whose Try again runs a fresh launch check),
            then the same page reloaded on its own 2, 4, 8 and 16 s later, so an engine restart
@@ -261,6 +310,7 @@ struct EngineWebView: UIViewRepresentable {
         static let autoRetryDelays: [TimeInterval] = [2, 4, 8, 16]
 
         private func mainFrameFailed(retry url: URL) {
+            appCheck += 1
             bridge.pageReady = false
             bridge.booting = false
             bridge.offline = false
@@ -499,25 +549,58 @@ final class AddifyStore {
         return false
     }
 
-    func buy(_ id: String) async -> String? {
-        guard let p = await load().first(where: { $0.id == id }) else { return "not available" }
-        do {
-            switch try await p.purchase() {
-            case .success(let v):
-                if case .verified(let t) = v { await t.finish(); return nil }
-                return "unverified"
-            case .userCancelled: return "cancelled"
-            case .pending: return "pending"
-            @unknown default: return "unknown"
-            }
-        } catch {
-            return "failed"
-        }
+    /* The purchase running now (2026-11-12). A sheet closed and reopened mid-purchase could
+       otherwise start a second one; a buy that arrives while this runs answers 'busy' and starts
+       nothing. */
+    private var purchasing: Task<(pro: Bool, error: String), Never>?
+
+    /* What the page gets back: pro, and error '' on success, else busy, not available,
+       unverified, cancelled, pending, unknown or failed. */
+    func buy(_ id: String) async -> (pro: Bool, error: String) {
+        if purchasing != nil { return (await isPro(), "busy") }
+        let task = Task { await self.purchase(id) }
+        purchasing = task
+        let answer = await task.value
+        purchasing = nil
+        return answer
     }
 
-    func restore() async -> Bool {
-        try? await AppStore.sync()
-        return await isPro()
+    private func purchase(_ id: String) async -> (pro: Bool, error: String) {
+        guard let p = await load().first(where: { $0.id == id }) else { return (await isPro(), "not available") }
+        let failure: String
+        do {
+            switch try await p.purchase() {
+            case .success(.verified(let t)):
+                await t.finish()
+                /* A verified transaction for one of these subscriptions is the entitlement, so this
+                   purchase answers pro from it. currentEntitlements can trail a purchase that just
+                   finished, and a read straight after could still say no. */
+                if Self.productIDs.contains(t.productID) && t.revocationDate == nil { return (true, "") }
+                failure = ""
+            case .success(.unverified): failure = "unverified"
+            case .userCancelled: failure = "cancelled"
+            case .pending: failure = "pending"
+            @unknown default: failure = "unknown"
+            }
+        } catch {
+            failure = "failed"
+        }
+        return (await isPro(), failure)
+    }
+
+    /* pro, and error '' when the App Store sync ran, 'cancelled' when the Apple ID prompt was
+       dismissed, 'failed' for anything else. pro is read either way: a subscription this phone
+       already knows about still counts when the sync did not run. */
+    func restore() async -> (pro: Bool, error: String) {
+        var failure = ""
+        do {
+            try await AppStore.sync()
+        } catch StoreKitError.userCancelled {
+            failure = "cancelled"
+        } catch {
+            failure = "failed"
+        }
+        return (await isPro(), failure)
     }
 
     static func unitName(_ u: Product.SubscriptionPeriod.Unit) -> String {
@@ -574,10 +657,11 @@ final class StoreKitHandler: NSObject, WKScriptMessageHandlerWithReply {
             }
             return (list, nil)
         case "buy":
-            let err = await store.buy(body["id"] as? String ?? "")
-            return (["pro": await store.isPro(), "error": err ?? ""], nil)
+            let r = await store.buy(body["id"] as? String ?? "")
+            return (["pro": r.pro, "error": r.error], nil)
         case "restore":
-            return (["pro": await store.restore()], nil)
+            let r = await store.restore()
+            return (["pro": r.pro, "error": r.error], nil)
         default:
             return (nil, "bad op")
         }
@@ -650,6 +734,25 @@ final class ExportFindsHandler: NSObject, WKScriptMessageHandlerWithReply {
             ext = mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension } ?? "txt"
         }
         return base + "." + ext
+    }
+}
+
+/* OPEN SETTINGS (2026-11-12). Once the microphone has been turned off for Addify, iOS never asks
+   again, so listen mode needs a way to the switch. The page shows its Open Settings button only
+   when this handler exists, and calls
+       window.webkit.messageHandlers.openSettings.postMessage({})
+   which opens Addify's own page in the Settings app. The promise resolves with {ok:true} once iOS
+   has taken the request. It holds no references, so it cannot keep the web view alive. */
+final class OpenSettingsHandler: NSObject, WKScriptMessageHandlerWithReply {
+    static let name = "openSettings"
+
+    @MainActor
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        guard message.frameInfo.isTrustedEngineFrame else { return (nil, "not the engine page") }
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return (nil, "cannot open") }
+        let opened = await UIApplication.shared.open(url)
+        return opened ? (["ok": true], nil) : (nil, "cannot open")
     }
 }
 

@@ -64,14 +64,14 @@ COUNTS = {}
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>stub</title></head>
 <body style="margin:0;background:#0a7d2c;color:#fff;font:16px -apple-system,sans-serif;min-height:100vh">
-<div style="padding:60px 16px"><h2 style="margin:0 0 8px">STUB __PORT__</h2>
+<div id="app" style="padding:60px 16px"><h2 style="margin:0 0 8px">STUB __PORT__</h2>
 <pre id="o" style="white-space:pre-wrap;font-size:11px;margin:0"></pre></div>
 <script>
 (function(){
   var H = window.webkit && window.webkit.messageHandlers;
   var r = {port: __PORT__, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
     has: {addify: !!(H && H.addify), addifyStore: !!(H && H.addifyStore), addifyKit: !!(H && H.addifyKit),
-          exportFinds: !!(H && H.exportFinds)}};
+          exportFinds: !!(H && H.exportFinds), openSettings: !!(H && H.openSettings)}};
   function send(kind, obj){ try { var x = new XMLHttpRequest(); x.open('POST', '/report?kind=' + kind, true);
     x.send(JSON.stringify(obj)); } catch(e) {} }
   function show(){ document.getElementById('o').textContent = JSON.stringify(r, null, 1); }
@@ -92,6 +92,12 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   });
 })();
 </script></body></html>"""
+
+# A complete 200 that is not the app: no #app and no script, like a document cut off before the
+# app's markup. Same green as the stub page, so if the app ever showed it the screenshot says so.
+NOAPP_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#0a7d2c;color:#fff;min-height:100vh"><h2>cut off</h2></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,7 +171,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return 302
             if cfg.get("down") or k <= cfg.get("fail_first", 0):
+                if cfg.get("fail_body"):    # a 4xx with words on it, like "404 page not found"
+                    return self.reply(cfg.get("fail_code", 404), cfg["fail_body"].encode(), "text/plain; charset=utf-8")
                 return self.reply(502)      # empty body, like Caddy while the engine restarts
+            if k <= cfg.get("noapp_first", 0):
+                return self.reply(200, NOAPP_PAGE.encode())
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
             return self.reply(200, page.encode())
@@ -384,6 +394,7 @@ def common(dev, scen, res, version):
     check(dev, scen, "user agent", ua.endswith(" Mobile/15E148 Addify/" + version) and "safari" not in ua.lower(), ua)
     check(dev, scen, "native flag", (r.get("native") or {}).get("platform") == "ios", json.dumps(r.get("native")))
     check(dev, scen, "exportFinds handler", (r.get("has") or {}).get("exportFinds") is True, json.dumps(r.get("has")))
+    check(dev, scen, "openSettings handler", (r.get("has") or {}).get("openSettings") is True, json.dumps(r.get("has")))
     check(dev, scen, "addifyKit accepts page", r.get("kit") == {"err": "bad message"}, json.dumps(r.get("kit")))
     store = r.get("store") or {}
     check(dev, scen, "addifyStore accepts page", store.get("err") != "not the engine page", json.dumps(store))
@@ -444,6 +455,44 @@ def run_stub_suite(dev, app, version, ipad=False):
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
         json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
+
+        # A 4xx engine page with words on it is the same failed load as a 5xx: the error screen,
+        # never "404 page not found" as the whole screen, and the same automatic reloads.
+        c4 = {"A": {"health_ms": 20, "fail_first": 2, "fail_code": 404, "fail_body": "404 page not found"},
+              "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+        first404 = lambda e: e["role"] == "A" and e["status"] == 404
+        res = scenario(dev, app, "server4xx", c4, timeout=45, after=(("error", first404, 1.2),))
+        common(dev, "server4xx", res, version)
+        reqs = page_requests(res, "A")
+        check(dev, "server4xx", "404, 404, then the page", [s for _, s in reqs][:3] == [404, 404, 200], json.dumps(reqs))
+        if len(reqs) >= 3:
+            g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
+            check(dev, "server4xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
+                  "gaps %.1f s and %.1f s" % (g1, g2))
+        mid = pixel_class(res["shots"].get("error", ""))
+        check(dev, "server4xx", "error screen with Try again, not the 404 text", mid == "error", mid)
+        check(dev, "server4xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
+              pixel_class(res["shots"]["final"]))
+        json.dump(res, open(os.path.join(dev.out, "%s-server4xx.json" % dev.tag), "w"), indent=1)
+
+        # A 200 that finishes without #app (cut off before the app) is a failed load too, and its
+        # automatic reloads keep backing off instead of restarting at 2 s on every load.
+        na = {"A": {"health_ms": 20, "noapp_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+        firstpage = lambda e: e["role"] == "A" and e["status"] == 200 and e["path"].split("?")[0] in ("/", "/share")
+        res = scenario(dev, app, "noapp", na, timeout=45, after=(("error", firstpage, 2.0),))
+        common(dev, "noapp", res, version)
+        reqs = page_requests(res, "A")
+        check(dev, "noapp", "two pages without #app, then the page", len(reqs) == 3 and all(s == 200 for _, s in reqs),
+              json.dumps(reqs))
+        if len(reqs) >= 3:
+            g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
+            check(dev, "noapp", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
+                  "gaps %.1f s and %.1f s" % (g1, g2))
+        mid = pixel_class(res["shots"].get("error", ""))
+        check(dev, "noapp", "error screen with Try again, not the cut-off page", mid == "error", mid)
+        check(dev, "noapp", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
+              pixel_class(res["shots"]["final"]))
+        json.dump(res, open(os.path.join(dev.out, "%s-noapp.json" % dev.tag), "w"), indent=1)
 
         # The engine page redirects to a host outside the list (a parked domain): never Safari,
         # neither on the first load nor on the automatic reloads. Safari loading it would show up
