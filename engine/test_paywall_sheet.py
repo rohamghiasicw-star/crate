@@ -96,14 +96,17 @@ async def main_async(html, shots):
     origin = mock.start()
     out = R()
     async with async_playwright() as p:
-        try:
-            b = await p.chromium.launch(headless=True)
-        except Exception:
-            b = await p.chromium.launch(headless=True, channel="chrome")
+        if os.environ.get("PW_BROWSER") == "webkit":   # Safari's engine, what WKWebView runs
+            b = await p.webkit.launch(headless=True)
+        else:
+            try:
+                b = await p.chromium.launch(headless=True)
+            except Exception:
+                b = await p.chromium.launch(headless=True, channel="chrome")
 
         async def ctx_for(w, h, dsf, scheme="dark"):
             ctx = await b.new_context(viewport={"width": w, "height": h}, device_scale_factor=dsf,
-                                      is_mobile=True, has_touch=True, color_scheme=scheme)
+                                      is_mobile=(os.environ.get("PW_BROWSER") != "webkit"), has_touch=True, color_scheme=scheme)
             await ctx.add_init_script(STORE + LG.INIT)
 
             async def outside(route):
@@ -322,16 +325,16 @@ async def main_async(html, shots):
         out.check("C3", "Escape closes it", not st.get("open"), st)
         await opened(pg)
         await pg.evaluate("""()=>{var S=document.querySelector('.pws'), g=document.querySelector('.pwgrab'), r=g.getBoundingClientRect();
-          var mk=function(y){return new Touch({identifier:1,target:g,clientX:r.left+20,clientY:y});};
-          var ev=function(t,y){S.dispatchEvent(new TouchEvent(t,{bubbles:true,touches:t==='touchend'?[]:[mk(y)],changedTouches:[mk(y)]}));};
+          var mk=function(y){var o={identifier:1,target:g,clientX:r.left+20,clientY:y,pageX:r.left+20,pageY:y};try{return new Touch(o);}catch(_){return o;}};
+          var ev=function(t,y){var T=t==='touchend'?[]:[mk(y)],C=[mk(y)],e;try{e=new TouchEvent(t,{bubbles:true,cancelable:true,touches:T,changedTouches:C});if(!e.touches||e.touches.length!==T.length)throw 0;}catch(_){e=new Event(t,{bubbles:true,cancelable:true});Object.defineProperty(e,'touches',{value:T});Object.defineProperty(e,'changedTouches',{value:C});Object.defineProperty(e,'targetTouches',{value:T});}S.dispatchEvent(e);};
           ev('touchstart',r.top); ev('touchmove',r.top+60); ev('touchmove',r.top+140); ev('touchend',r.top+140);}""")
         await pg.wait_for_timeout(300)
         st = await pg.evaluate(SHEET)
         out.check("C4", "Dragging the sheet down closes it", not st.get("open"), st)
         await opened(pg)
         await pg.evaluate("""()=>{var S=document.querySelector('.pws'), g=document.querySelector('.pwgrab'), r=g.getBoundingClientRect();
-          var mk=function(y){return new Touch({identifier:1,target:g,clientX:r.left+20,clientY:y});};
-          var ev=function(t,y){S.dispatchEvent(new TouchEvent(t,{bubbles:true,touches:t==='touchend'?[]:[mk(y)],changedTouches:[mk(y)]}));};
+          var mk=function(y){var o={identifier:1,target:g,clientX:r.left+20,clientY:y,pageX:r.left+20,pageY:y};try{return new Touch(o);}catch(_){return o;}};
+          var ev=function(t,y){var T=t==='touchend'?[]:[mk(y)],C=[mk(y)],e;try{e=new TouchEvent(t,{bubbles:true,cancelable:true,touches:T,changedTouches:C});if(!e.touches||e.touches.length!==T.length)throw 0;}catch(_){e=new Event(t,{bubbles:true,cancelable:true});Object.defineProperty(e,'touches',{value:T});Object.defineProperty(e,'changedTouches',{value:C});Object.defineProperty(e,'targetTouches',{value:T});}S.dispatchEvent(e);};
           ev('touchstart',r.top); ev('touchmove',r.top+30); ev('touchend',r.top+30);}""")
         await pg.wait_for_timeout(300)
         st = await pg.evaluate(SHEET)

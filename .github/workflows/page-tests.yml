@@ -1,0 +1,32 @@
+name: page-tests
+# Headless browser suites for the page the app loads (engine/crate.html), on a clean Linux runner.
+# No network to the live server: every suite serves the page from the promise-ledger mock engine.
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-candidate, 'kfix-*']
+    paths: ['engine/crate.html', 'engine/test_*.py', '.github/workflows/page-tests.yml']
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install playwright==1.60.0 && python -m playwright install --with-deps webkit chromium
+      - name: Promise ledger
+        run: python engine/test_promise_ledger.py
+      - name: Saved-scan layout
+        run: python engine/test_thunder_layout.py
+      - name: Paywall sheet (WebKit)
+        run: PW_BROWSER=webkit python engine/test_paywall_sheet.py --shots out/paywall
+      - name: Onboarding v4 (WebKit)
+        run: ONB_SHOTS=out/onboarding python engine/test_onboarding_v4.py engine/crate.html
+      - name: Reviewer-run fixes (WebKit)
+        run: python engine/test_reviewer_fixes.py
+      - name: Reviewer-run fixes (Chromium)
+        run: PW_BROWSER=chromium python engine/test_reviewer_fixes.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: page-shots, path: out/, if-no-files-found: ignore }

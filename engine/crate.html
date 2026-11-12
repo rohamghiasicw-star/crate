@@ -2479,8 +2479,25 @@ function ttlHTML(t){
   t=String(t==null?'':t); var tail=[], m, k=0;
   while(k++<4 && (m=t.match(/^(.*\S)\s*([\(\[][^\(\)\[\]]+[\)\]])$/))){tail.unshift(m[2]); t=m[1];}
   return esc(t)+tail.map(function(g){return '<span class="tgrp">&nbsp;'+esc(g)+'</span>';}).join('');}
-function parseLink(raw){raw=(raw||'').trim(); var m=raw.match(/https?:\/\/[^\s]+/); var u=m?m[0]:raw;
-  var host=/tiktok\.com|vt\.tiktok/.test(u)?'tiktok':(/instagram\.com/.test(u)?'instagram':null); return {host:host,url:u};}
+/* REVIEWER RUNS 2026-11-12: only a CLIP link is a scan. Profiles, sound pages, tags, live pages,
+   searches and Instagram profiles or stories used to be scanned and came back with a false
+   "TikTok is busy". The shapes mirror ratelimit.py's strict check; the host match ignores case;
+   a share text with several links uses the first one that is a clip. `page` says which app's
+   non-clip page it was, so the message can say what to do instead. */
+function clipShape(u){var x; try{x=new URL(/^https?:\/\//i.test(u)?u:'https://'+u);}catch(e){return {};}
+  var h=x.hostname.toLowerCase().replace(/^(www|m)\./,''), q=x.pathname;
+  if(h==='vt.tiktok.com'||h==='vm.tiktok.com') return /^\/(?:t\/)?[A-Za-z0-9]{5,16}\/?$/.test(q)?{host:'tiktok'}:{page:'TikTok'};
+  if(h==='tiktok.com') return (/^\/@[A-Za-z0-9_.\-]{0,64}\/(?:video|photo)\/\d{6,25}\/?$/.test(q)||/^\/t\/[A-Za-z0-9]{5,16}\/?$/.test(q)
+    ||/^\/v\/\d{6,25}(?:\.html)?\/?$/.test(q))?{host:'tiktok'}:{page:'TikTok'};
+  if(h==='instagram.com') return /^\/(?:[A-Za-z0-9_.]{1,30}\/)?(?:reel|reels|p|tv)\/[A-Za-z0-9_-]{5,40}\/?$/.test(q)?{host:'instagram'}:{page:'Instagram'};
+  return {};}
+function parseLink(raw){raw=(raw||'').trim(); var all=raw.match(/https?:\/\/[^\s]+/gi)||[], page=null;
+  var cands=all.length?all:[raw];
+  for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:cands[i]}; if(r.page&&!page) page=r.page;}
+  return {host:null,url:all[0]||raw,page:page};}
+function notClipMsg(p){return p&&p.page
+  ? 'That link is '+(p.page==='Instagram'?'an ':'a ')+p.page+' page, not a clip. Open the video, tap Share, then Copy link, and paste it here.'
+  : 'That does not look like a TikTok or Instagram link.';}
 function plays(n){n=n||0; if(n>=1e6) return (n/1e6).toFixed(n>=1e7?0:1)+'M'; if(n>=1e3) return (n/1e3).toFixed(n>=1e4?0:1)+'K'; return String(n);}
 function hexToRgb(h){h=(h||'').replace('#',''); if(h.length===3)h=h.split('').map(function(c){return c+c;}).join('');
   return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
@@ -4507,7 +4524,8 @@ function renderResult(d,partial){
     var nms=document.getElementById('nm-search'); if(nms) nms.onclick=function(){goHome(); nav('search');};
     var nmh=document.getElementById('nm-home'); if(nmh) nmh.onclick=goHome;
     return;}
-  if(!d.base_song){result.innerHTML=''; return;}
+  if(!d.base_song){ if(!partial){ renderResult(Object.assign({},d,{result:'error',error:d.error||''}),false); return; }   // REVIEWER RUNS: never a blank result screen
+    result.innerHTML=''; return;}
   var ex=d.exact||null, cands=d.candidates||[];
   // Task A2: server verdicts on rows, and which row is the answer, before any figure is read.
   GATED=!!d.gates_on_rows;
@@ -5533,7 +5551,8 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden&&STO
 function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
-function useScan(u){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var c=countedURLs();
+function normClip(u){return String(u||'').split(/[?#]/)[0].replace(/\/+$/,'');}   // REVIEWER RUNS: TikTok share params made one clip two scans
+function useScan(u){if(!PAYWALL_ON||PRO) return; u=normClip(u||curURL||''); var c=countedURLs();
   if(u&&c.indexOf(u)>=0) return;                 // the same clip again is the same scan
   c.push(u); lsSet(scanKey()+'-urls',c);
   try{localStorage.setItem(scanKey(),String(scansUsed()+1));}catch(e){} paintPill();
@@ -5545,7 +5564,7 @@ function scanNote(failed){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_
   if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status'); document.body.appendChild(n);}
   n.textContent=(failed==='busy'?"That scan didn't count. ":failed?"No song found, so it didn't count. ":'')+left+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');   // FIX 4: a busy scan found nothing because it never ran
   clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}
-function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; var c=countedURLs(), i=c.indexOf(u);
+function refundScan(u){if(!PAYWALL_ON||PRO||!u) return; u=normClip(u); var c=countedURLs(), i=c.indexOf(u);
   if(i<0) return; c.splice(i,1); lsSet(scanKey()+'-urls',c);
   try{localStorage.setItem(scanKey(),String(Math.max(0,scansUsed()-1)));}catch(e){} paintPill();}
 function outOfScans(){return PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS;}
@@ -5999,7 +6018,13 @@ function sRun(q,mode){
   q=(q||'').trim(); if(!q) return;
   /* A pasted clip link is a scan, not a search. Searching the URL text returned random
      comedy compilations (found by the search tester), so offer the scan instead. */
-  if(parseLink(q).host){
+  var _sp=parseLink(q);
+  if(!_sp.host&&/^(https?:\/\/|www\.)/i.test(q)){   // REVIEWER RUNS: a non-clip link is neither a search nor a scan
+    sState={q:q,mode:'link',busy:false,res:null,err:''};
+    document.getElementById('sbody').innerHTML='<div class="smsg"><b>Search is for words</b>'+
+      '<span>'+(_sp.page?esc(notClipMsg(_sp)):'Addify scans TikTok and Instagram links. For a song on YouTube or SoundCloud, play it out loud and tap Scan on Home.')+'</span></div>';
+    return;}
+  if(_sp.host){
     sState={q:q,mode:'link',busy:false,res:null,err:''};
     document.getElementById('sbody').innerHTML='<div class="smsg"><b>That is a clip link</b>'+
       '<span>Search is for when the reel is gone. This one you can scan directly.</span>'+
@@ -6092,7 +6117,8 @@ function renderProf(){
   var so=document.getElementById('pfout');
   if(so) so.onclick=function(){SP.logout(); renderProf(); paintHome();};
   document.getElementById('pfdel').onclick=function(){
-    if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.')) return;
+    if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.'+
+      (planOn()?' Your Addify Plus subscription keeps billing through Apple. Cancel it in Manage subscription first.':''))) return;
     eraseMyFeedback().then(function(){        // server rows first, then the local copy
       try{localStorage.clear();}catch(e){} location.reload();});};
 }
@@ -6201,13 +6227,13 @@ function baseCall(u,tok){var n=0, t0=Date.now();
   return ask();}
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
-    if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){PW_AFTER=raw||''; openPaywall(); return;}} var p=parseLink(raw);
+    if(_cu.indexOf(normClip(_pp.url))<0&&_cu.indexOf(normClip(raw))<0&&_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){PW_AFTER=raw||''; openPaywall(); return;}} var p=parseLink(raw);
   onbNoteRun();                                    // ONBOARDING v4: a share-sheet arrival marks onboarding done
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
-  if(!p.host){nav('idle'); showErr('That does not look like a TikTok or Instagram link.'); stopClock(); return;}
+  if(!p.host){nav('idle'); showErr(notClipMsg(p)); stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
   curURL=p.url;
   var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
@@ -6551,7 +6577,9 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
       logUnmatched(curURL, d.handle);
     if(leftScan) return;   // the user backed out; do not drag them onto a No match card
     setState('locked'); setEndTitle(d); return;}
-  if(!d.cached) useScan(curURL);
+  var _noSong=d.result==='no_match'||d.result==='uncertain'||!!d.unverified_base||!!d.base_uncertain;   // REVIEWER RUNS: notes say a no-song scan doesn't count
+  if(_noSong){ try{ if(PAYWALL_ON&&!PRO) scanNote(true); }catch(e){} }
+  else if(!d.cached) useScan(curURL);
   if(!held){ logScan(d); postBridge(d); devPut(curURL,d); }   // SPEED FIX 1: the phone's copy
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
@@ -6899,7 +6927,7 @@ function goHome(){nav('idle'); try{if(PW_DUE&&outOfScans()){PW_DUE=false; setTim
     document.getElementById('gobtn').removeAttribute('disabled');
     if(typeof syncFormAction==='function') syncFormAction(); }
   try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
-  result.innerHTML=''; hideChip(); urlEl.value='';}
+  result.innerHTML=''; hideChip(); urlEl.value=''; if(typeof syncFormAction==='function') syncFormAction();}
 /* Open a link the way the result card's clip pill does (an anchor with target=_blank), so
    the native app hands it off to TikTok or Instagram instead of navigating the web view. */
 function openExternal(u){var a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();}
