@@ -265,6 +265,13 @@ struct EngineWebView: UIViewRepresentable {
             bridge.booting = false
             bridge.offline = false
             bridge.unreachable = true
+            scheduleAutoRetry(url)
+        }
+
+        /* REVIEWER RUNS 2026-11-12: network failures (no answer, DNS, timeouts) used to stop on
+           the error screen until a tap. Both launch rejections were a network that failed at
+           first, so they now get the same quiet reloads at 2, 4, 8 and 16 s as a failed page. */
+        private func scheduleAutoRetry(_ url: URL) {
             guard autoRetries < Self.autoRetryDelays.count else { return }
             let delay = Self.autoRetryDelays[autoRetries]
             autoRetries += 1
@@ -364,6 +371,8 @@ struct EngineWebView: UIViewRepresentable {
             bridge.booting = false
             bridge.offline = e.domain == NSURLErrorDomain && Self.offlineCodes.contains(e.code)
             bridge.unreachable = true
+            let engineFailing = failing.flatMap { isEngineOrigin($0) ? $0 : nil }
+            scheduleAutoRetry(engineFailing ?? lastEngineURL ?? EngineConfig.baseURL)
         }
 
         /* WebKit killed the content process (memory pressure while backgrounded). A blank

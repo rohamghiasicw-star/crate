@@ -154,6 +154,10 @@ final class EngineBridge: ObservableObject {
        only reloads is a retry that fails every time until the app is relaunched. Resolve
        first, then reload; reload regardless so a transient network blip still recovers. */
     func retryResolvingFirst() {
+        // REVIEWER RUNS 2026-11-12: show the loading screen at once, not after the directory lookup
+        unreachable = false
+        offline = false
+        booting = true
         Task { @MainActor in
             await EngineConfig.resolveFromDirectory()
             retry()

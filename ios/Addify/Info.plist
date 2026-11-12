@@ -51,7 +51,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Listen mode records about 12 seconds of the song playing near you and sends it to Addify to identify it. The recording is matched and then discarded, never stored.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Addify saves cover art to your Photos only when you tap Save.</string>
+	<string>Addify adds an image to your Photos only when you choose Save Image on it. It never reads your library.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

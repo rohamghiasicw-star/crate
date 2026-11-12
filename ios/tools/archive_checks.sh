@@ -85,7 +85,7 @@ if [ -f "$app/Addify" ]; then
   # Swift keeps string literals of 15 bytes or less inside the code, so only long names show up.
   if strings -a "$app/Addify" | grep -qF "ExportFindsHandler"; then echo "  ok   Release app contains ExportFindsHandler"
   else echo "  FAIL Release app lacks ExportFindsHandler"; fail=1; fi
-  want="Addify saves cover art to your Photos only when you tap Save."
+  want="Addify adds an image to your Photos only when you choose Save Image on it. It never reads your library."
   got=$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryAddUsageDescription' "$app/Info.plist" 2>/dev/null || true)
   if [ "$got" = "$want" ]; then echo "  ok   NSPhotoLibraryAddUsageDescription: $got"
   else echo "  FAIL NSPhotoLibraryAddUsageDescription is '$got'"; fail=1; fi
