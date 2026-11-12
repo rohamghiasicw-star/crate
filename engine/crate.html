@@ -6202,7 +6202,7 @@ function baseCall(u,tok){var n=0, t0=Date.now();
 function run(raw){if(busy) return;
   if(outOfScans()){var _pp=parseLink(raw||''), _cu=countedURLs();   // reopening a clip you already scanned is free
     if(_cu.indexOf(_pp.url||'')<0&&_cu.indexOf(raw||'')<0){PW_AFTER=raw||''; openPaywall(); return;}} var p=parseLink(raw);
-  onbNoteRun();                                    // ONBOARDING v3: a share-sheet arrival unlocks "You're all set"
+  onbNoteRun();                                    // ONBOARDING v4: a share-sheet arrival marks onboarding done
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
@@ -7091,17 +7091,17 @@ function splash(){
   el.hidden=false;
   setTimeout(function(){el.classList.add('bye');},900);
   setTimeout(function(){el.hidden=true;},1400);}
-/* ONBOARDING v3 2026-09-30 (addify-harness/onboarding3/KONNOR-ONBOARDING-SPEC.md). Three
-   screens on one fixed card: what it does, pin Addify to the share sheet (the one that
-   matters), and the result. The green "You're all set" only shows once Addify has really been
-   opened from the share sheet (addify-sharedin, see onbNoteRun); until then screen 3 is the
-   softer "Not set up yet?" card, which never claims they are set. Settings > How to add
-   Addify (the You tab) replays screen 2: openOnb(1,'replay').
+/* ONBOARDING v4 2026-11-12 (Konnor, War Room 2077). Two screens on one fixed card: what it
+   does, then pin Addify to the share sheet, which is the last screen. Its one button, "Let's
+   go", closes onboarding and lands on Home. Nothing in onboarding opens TikTok or Instagram,
+   and the old third screen ("You're all set" / "Not set up yet?") is gone with everything that
+   opened it. Paste a link stays on Home. Settings > How to add Addify (the You tab) replays
+   screen 2: openOnb(1,'replay').
    Storage: addify-onboarded (done, never auto-opens again) · addify-onb-at (the first-run
    screen to resume on: the share sheet round trip can reload the page) · addify-onb3 (this
    person started the v3 flow) · addify-onb3-ok (the green card has been shown) ·
    addify-sharedin (a scan has arrived from the share sheet at least once). */
-var onbStep=0, onbMode='first', onbAway=0, onbQuiet=false, onbTapAt=0, onbTapOK=0;
+var onbStep=0, onbMode='first', onbQuiet=false, onbTapAt=0, onbTapOK=0;
 /* NOT MATCHED YET: Konnor wants a real iPhone screenshot (or a short screen recording) of
    each step in the final version. Name the files here, served next to crate.html (e.g.
    'onb-step1.jpg'), and they replace the icons on the three rows of screen 2. */
@@ -7119,30 +7119,20 @@ function onbLogo(){
 function onbFlag(k){try{return localStorage.getItem(k)==='1';}catch(e){return false;}}
 function onbSet(k,v){try{if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,String(v));}catch(e){}}
 function onbSeen(){return onbFlag('addify-onboarded');}
-function onbAt(){var n=0; try{n=parseInt(localStorage.getItem('addify-onb-at'),10)||0;}catch(e){} return Math.max(0,Math.min(2,n));}
+function onbAt(){var n=0; try{n=parseInt(localStorage.getItem('addify-onb-at'),10)||0;}catch(e){} return Math.max(0,Math.min(1,n));}
 function onbOpen(){var o=document.getElementById('onb'); return !!o&&!o.hidden;}
-function onbClose(){document.getElementById('onb').hidden=true; onbMode='first'; onbAway=0;}
+function onbClose(){document.getElementById('onb').hidden=true; onbMode='first';}
 function onbDone(){onbSet('addify-onboarded','1'); onbSet('addify-onb-at',null); onbClose(); paintHome();}
 function openOnb(step,mode){
-  onbMode=mode||'first'; onbStep=Math.max(0,Math.min(2,+step||0));
+  onbMode=mode||'first'; onbStep=Math.max(0,Math.min(1,+step||0));
   if(onbMode==='first'){onbSet('addify-onb3','1'); onbSet('addify-onb-at',onbStep);}
   document.getElementById('onb').hidden=false; paintOnb();}
 function onbGo(step){onbStep=step; if(onbMode==='first') onbSet('addify-onb-at',step); paintOnb();}
-/* "Try it on a reel": TikTok, unless this person's own finds are mostly Instagram. Both are
-   https links the apps claim as universal links (tiktok.com "/" and instagram.com "/*" in
-   their apple-app-site-association files, read 2026-09-30), handed to iOS by openExternal,
-   the same target=_blank bridge the result card's clip pill uses. No app installed = the site. */
-function onbReelURL(){var s=''; try{s=localStorage.getItem('crate-saved')||'';}catch(e){}
-  var ig=(s.match(/instagram\.com/g)||[]).length, tt=(s.match(/tiktok\.com/g)||[]).length;
-  return ig>tt?'https://www.instagram.com/reels/':'https://www.tiktok.com/';}
-function onbTryReel(){onbAway=Date.now(); openExternal(onbReelURL());}
-/* The visible fallback for anyone who cannot find Addify in the share sheet: close, and put
-   them in the paste field on Home. */
-function onbPasteInstead(){onbDone(); nav('idle');
-  var u=document.getElementById('url'); if(!u) return;
-  try{u.scrollIntoView({block:'center'});}catch(e){} u.focus();}
+/* "Let's go" on the last screen: first run marks onboarding done and lands on Home; a replay
+   from the You tab just closes. */
+function onbLetsGo(){if(onbMode==='replay'){onbClose(); return;} onbDone(); nav('idle');}
 function paintOnb(){
-  document.getElementById('onbdots').innerHTML=[0,1,2].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
+  document.getElementById('onbdots').innerHTML=[0,1].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
   var b=document.getElementById('onbbody'), h='';
   if(onbStep===0){                                     /* 1 · what it does */
     h='<div class="obmark">'+onbLogo()+'</div>'+
@@ -7168,35 +7158,17 @@ function paintOnb(){
         row(2,'Find <b>Addify</b> at the end of the app row',onbLogo(),' ad')+
         row(3,'Tap <b>More</b> &rsaquo; <b>Edit</b>, drag Addify to the front',OBI.ring,'')+
       '</div>'+
-      '<button class="obcta" id="ob-try">Try it on a reel</button>'+
-      '<button class="oblater" id="ob-later">I\'ll do this later</button>';
-  } else if(onbFlag('addify-sharedin')){               /* 3 · set - only after a real share */
-    onbSet('addify-onb3-ok','1');
-    h='<div class="okring">'+OBI.check+'</div>'+
-      '<h2 class="obh">You\'re all set</h2>'+
-      '<p class="obs">Share any reel to Addify and we\'ll find the exact version.</p>'+
-      '<button class="obcta" id="ob-done">Find my first song</button>'+
-      '<div class="obfoot">Can\'t find Addify later?<br>Settings &rsaquo; How to add Addify</div>';
-  } else {                                             /* 3 · not yet - never claim they're set */
-    h='<div class="okring soft">'+OBI.fwd+'</div>'+
-      '<h2 class="obh">Not set up yet?</h2>'+
-      '<p class="obs">Share a reel to Addify once and we\'ll find the exact version.</p>'+
-      '<button class="obcta" id="ob-try">Try it on a reel</button>'+
-      '<button class="oblater" id="ob-paste">Paste a link instead</button>';
+      '<button class="obcta" id="ob-go">Let\'s go</button>';
   }
   b.className='onbbody ob'+(onbStep+1);
   b.innerHTML=h;
   b.style.animation='none'; void b.offsetWidth; b.style.animation='';   // replay the fade per screen
-  // One tap at a time: "Set it up" and the next screen's "Try it on a reel" sit in the same
-  // spot, so a quick double tap used to open TikTok. A tap within 450 ms of the last handled
-  // one is ignored.
+  // One tap at a time: "Set it up" and the next screen's "Let's go" sit in the same spot, so a
+  // quick double tap would skip screen 2. A tap within 450 ms of the last handled one is ignored.
   var on=function(id,f){var el=document.getElementById(id);
     if(el) el.onclick=function(){var n=Date.now(); if(n-onbTapOK<450) return; onbTapOK=n; f();};};
   on('ob-next',function(){onbGo(1);});
-  on('ob-try',onbTryReel);
-  on('ob-later',function(){if(onbMode==='replay'){onbClose(); return;} onbGo(2);});
-  on('ob-done',onbDone);
-  on('ob-paste',onbPasteInstead);
+  on('ob-go',onbLetsGo);
 }
 /* WHICH SCANS CAME IN THROUGH THE SHARE SHEET. A share reaches the page one of two ways
    (ios/Addify/EngineBridge.swift deliver()): /share?url=... while the page loads (sharedLink()
@@ -7212,15 +7184,8 @@ function onbNoteRun(){
   if(nat && !window.event && Date.now()-onbTapAt>1500) onbSharedIn();}
 function onbSharedIn(){
   onbSet('addify-sharedin','1');
-  if(onbOpen()){onbStep=2; paintOnb(); return;}         // mid-onboarding: the green card
-  if(!onbSeen() || (onbFlag('addify-onb3') && !onbFlag('addify-onb3-ok'))) openOnb(2);}
-/* Back from "Try it on a reel" without sharing: screen 2 moves on to the not-yet card. The
-   wait lets a share that arrives with the app switch land first and paint the green one. */
-document.addEventListener('visibilitychange',function(){
-  if(document.hidden||!onbAway) return;
-  var t0=onbAway;
-  setTimeout(function(){if(onbAway!==t0) return; onbAway=0;
-    if(onbOpen()&&onbMode==='first'&&onbStep===1) onbGo(2);},1200);});
+  if(onbOpen()&&onbMode==='first'){onbDone(); return;}   // mid-onboarding: close it, the scan shows
+  if(!onbSeen()) onbSet('addify-onboarded','1');}        // first open came from the share sheet: they know how
 
 /* ---------- shared-in link ----------
    Every share path lands here: Android's Web Share Target posts to /share, an iOS
@@ -7266,7 +7231,7 @@ if(_shared){
 } else splash();
 Promise.resolve().then(function(){
   onbSet('addify-onb-return',null);                   // ONBOARDING v3: the Spotify step is gone
-  if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: green card if onboarding is owed
+  if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: no onboarding over the scan
   if(!onbSeen()){openOnb(onbAt());}                    // resume where the share sheet round trip left them
 });
 document.getElementById('onb').addEventListener('click',function(e){
