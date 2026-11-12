@@ -303,8 +303,8 @@ async def main_async(html, shots):
                   st["links"] == [["Terms of Use", "https://support.addify.app/terms.html", "_blank"],
                                   ["Privacy Policy", "https://support.addify.app/privacy.html", "_blank"],
                                   ["Restore purchases", "#", None]], st["links"])
-        out.check("K2", "Title 'Addify+' and the used-up wording",
-                  st["title"] == "Addify+" and st["sub"] == "You used your 5 free scans. Go unlimited and keep finding versions.", st["sub"])
+        out.check("K2", "Title 'Addify Plus' and the used-up wording with what Plus gives (reviewer runs 2: IAP-5, LIT-3)",
+                  st["title"] == "Addify Plus" and st["sub"] == "You used your 5 free scans. Get unlimited scans and keep finding versions.", st["sub"])
         out.check("K3", "Old paywall markup is gone", st["oldClasses"] == 0, st["oldClasses"])
         out.check("K4", "Backdrop is 60% black; sheet is #16161A", st["dim"] == "rgba(0, 0, 0, 0.6)"
                   and st["sheetBg"] == "rgb(22, 22, 26)", (st["dim"], st["sheetBg"]))
@@ -346,7 +346,7 @@ async def main_async(html, shots):
         pg = await page_with(ctx, {"products": "normal"}, used=3)
         st = await opened(pg)
         out.check("K5", "Opened with scans left (pill / You tab): it says how many are left, never 'you used'",
-                  st["sub"] == "You have 2 free scans left. Go unlimited and keep finding versions.", st["sub"])
+                  st["sub"] == "You have 2 free scans left. Get unlimited scans and keep finding versions.", st["sub"])
         await ctx.close()
 
         ctx = await ctx_for(W, H, D, scheme="light")

@@ -9,7 +9,7 @@ on:
 jobs:
   page:
     runs-on: ubuntu-24.04   # Playwright 1.60 has no WebKit build for ubuntu 26.04 (failed run 43290437832)
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,6 +27,10 @@ jobs:
         run: python engine/test_reviewer_fixes.py
       - name: Reviewer-run fixes (Chromium)
         run: PW_BROWSER=chromium python engine/test_reviewer_fixes.py
+      - name: Reviewer-run fixes 2 (WebKit)
+        run: python -u engine/test_reviewer_fixes2.py
+      - name: Reviewer-run fixes 2 (Chromium)
+        run: PW_BROWSER=chromium python -u engine/test_reviewer_fixes2.py
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: page-shots, path: out/, if-no-files-found: ignore }

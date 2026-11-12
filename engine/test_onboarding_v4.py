@@ -41,7 +41,7 @@ async def main():
         # 1-5 fresh install
         ctx, pg = await fresh()
         s = await pg.evaluate(ONB); await pg.screenshot(path=OUT + "/1-screen1.png")
-        check("O1", "Fresh install opens onboarding on screen 1 with 2 dots and 'Set it up'", s["open"] and s["dots"] == 2 and "Find the exact song" in s["h"] and s["btns"] == ["Set it up"], s)
+        check("O1", "Fresh install opens onboarding on screen 1 with 2 dots and 'Set it up'", s["open"] and s["dots"] == 2 and "Find the version you heard" in s["h"] and s["btns"] == ["Set it up"], s)
         await pg.click("#ob-next"); await pg.wait_for_timeout(700)
         s = await pg.evaluate(ONB); await pg.screenshot(path=OUT + "/2-screen2.png")
         check("O2", "Screen 2 is 'Pin Addify to your share sheet' with one button, 'Let's go'", s["open"] and "Pin Addify" in s["h"] and s["btns"] == ["Let's go"], s)

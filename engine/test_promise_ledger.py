@@ -492,8 +492,8 @@ def static_checks(L, html):
             "rowProven(" not in s)
     L.check("S5", "ddef685", "5 free scans, lifetime counter (FREE_SCANS=5, key addify-scans-life)",
             re.search(r"var FREE_SCANS\s*=\s*5\s*;", s) is not None and "'addify-scans-life'" in s)
-    L.check("S6", "kfix-9", "Paywall Option A: 'Addify+' sheet, Yearly / Monthly rows, the trial button only when StoreKit sends a trial, old sheet gone",
-            ">Addify+</h2>" in s and "'Yearly'" in s and "'Monthly'" in s and "'Start '+n+'-'+u+' free trial'" in s
+    L.check("S6", "kfix-9,kfix-12", "Paywall Option A: 'Addify Plus' sheet (reviewer runs 2: the plan's own name), Yearly / Monthly rows, the trial button only when StoreKit sends a trial, old sheet gone",
+            ">Addify Plus</h2>" in s and "'Yearly'" in s and "'Monthly'" in s and "'Start '+n+'-'+u+' free trial'" in s
             and re.search(r"pwbuy|class=\"pwc\"|class=\"pwf\"|\.pwc\{|\.pwf\{", s) is None)
     L.check("S7", "ff5a064,b84521e", "YouTube plays inside the app: nocookie embed with playsinline=1",
             "youtube-nocookie.com/embed/" in s and "playsinline=1" in s)

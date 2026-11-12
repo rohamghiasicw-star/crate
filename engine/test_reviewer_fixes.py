@@ -46,9 +46,11 @@ async def main(html):
                     seen.append(u.split(origin, 1)[1])
                     for key, body in (overrides or {}).items():
                         if key in u and any(x in u for x in ("/base", "/find", "/edits", "/progress", "/vkey")):
+                            code = None
+                            if isinstance(body, tuple): code, body = body
                             if "/edits/stream" in u:
                                 return await route.fulfill(status=200, content_type="text/event-stream", body="event: done\ndata: " + json.dumps(body) + "\n\n")
-                            return await route.fulfill(status=200 if "result" in body else 400, content_type="application/json", body=json.dumps(body))
+                            return await route.fulfill(status=code or (200 if "result" in body else 400), content_type="application/json", body=json.dumps(body))
                     return await route.continue_()
                 if u.startswith("https://w.soundcloud.com/player/api.js"):
                     return await route.fulfill(status=200, content_type="application/javascript", body=LG.SC_API)
@@ -93,7 +95,9 @@ async def main(html):
               "Search is for words" in sb and "Try again" not in sb and not [s for s in pg.seen[n0:] if s.startswith("/search")], sb[:300])
         check("E1", "No page errors so far", not pg.errs, pg.errs); await ctx.close()
         # R3: an answer with no result field shows an error card, never a blank screen
-        ctx, pg = await page(overrides={"7000000000000000041": NORESULT})
+        # reviewer runs 2 (BN-3): a non-2xx without a result is now "Couldn't reach Addify" (test_reviewer_fixes2 R2-4b),
+        # so the no-result body comes back as a 200 here: the blank-screen guard this check protects
+        ctx, pg = await page(overrides={"7000000000000000041": (200, NORESULT)})
         await go(pg, LG.CLIP % 41); await pg.wait_for_timeout(5000)
         r = await pg.evaluate("()=>({html:document.getElementById('result').innerHTML.length, t:document.getElementById('result').innerText})")
         check("R3", "A scan answer with no result shows 'Couldn't read that link', not a blank screen", r["html"] > 0 and "read that link" in r["t"], r)

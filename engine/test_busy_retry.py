@@ -20,7 +20,8 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
       (sampled each second, never back to 0, never stuck)
   round 2 (the engine's busy answer says whether asking again is getting somewhere: quiet):
   Q10 /base busy with quiet:true four times, then found -> song, 5 asks, no busy card
-  Q11 /base busy with quiet:true every time -> the busy card after 24 asks, not before
+  Q11 /base busy with quiet:true every time -> the busy card once about 40 s of quiet asks are spent
+      (reviewer runs 2, CHAOS-1: it was 24 asks, up to 6 minutes), never before 30 s
   Q4c free scans on: busy with quiet:true x4, then found -> exactly 1 used (5 asks, one scan)
   Q12 listen mode: /listen busy twice, then found -> song, 3 /listen requests, no busy card
   Q13 listen mode: /listen busy every time -> busy card after 3 requests; Try again sends the
@@ -335,9 +336,10 @@ async def amain(a):
                   and "&qr=4" in r["base_urls"][4])
             res.append((r, ok))
         if want("Q11") and not a.expect_old:
-            r = await run_case(pw, html, "Q11 busy with headway every time: card after 24 asks",
+            r = await run_case(pw, html, "Q11 busy with headway every time: card after about 40 s of quiet asks",
                                {"/base": [busy("shazam", 2, quiet=True)]}, secs=80)
-            ok = bool(busy_cards(r["cards"])) and r["hits"].get("/base") == 24
+            g = r.get("base_gaps_s") or []
+            ok = bool(busy_cards(r["cards"])) and 8 <= r["hits"].get("/base", 0) < 24 and 30 <= sum(g) <= 46
             res.append((r, ok))
         if want("Q4C") and not a.expect_old:
             q = busy("shazam", 2, quiet=True)
