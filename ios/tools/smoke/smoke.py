@@ -51,7 +51,26 @@ def patch(ios_dir, variant):
         if n != 1:
             sys.exit("patch: %r matched %d times" % (pat, n))
     open(path, "w").write(src)
-    print("patched %s for %s" % (path, variant))
+    # Lab copies only, never the shipped source: log how long the #app check holds the page back,
+    # from didFinish to its answer, so the job log shows what it adds before the page is revealed.
+    wpath = os.path.join(ios_dir, "Addify", "EngineWebView.swift")
+    w = open(wpath).read()
+    wreps = [("            let check = appCheck\n",
+              "            let check = appCheck\n            let t0 = CFAbsoluteTimeGetCurrent()\n"),
+             ("            wv.evaluateJavaScript(Self.appProbe) { value, error in\n",
+              "            wv.evaluateJavaScript(Self.appProbe) { value, error in\n"
+              "                NSLog(\"ADDIFY-APPCHECK probe %ld ms %@\", Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), "
+              "error == nil ? String(describing: value ?? \"nil\") : \"error\")\n"),
+             ("                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op\n",
+              "                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op\n"
+              "                NSLog(\"ADDIFY-APPCHECK settled %ld ms hasApp=%d url=%@\", Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), "
+              "hasApp ? 1 : 0, url.path)\n")]
+    for old, new in wreps:
+        if w.count(old) != 1:
+            sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
+        w = w.replace(old, new)
+    open(wpath, "w").write(w)
+    print("patched %s and %s for %s" % (path, wpath, variant))
 
 
 # ---------- stub engine ----------
@@ -334,6 +353,7 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
     if fresh:
         dev.install(app)
     t0 = time.time()
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0 - 1))
     dev.launch()
     pending = [(name, t0 + at) for name, at in shots]
     waiting = list(after)
@@ -364,7 +384,32 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         entries = [dict(e) for e in LOG[mark:]]
     for e in entries:
         e["dt"] = round(e["t"] - t0, 2)
-    return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1)}
+    return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1),
+            "appcheck": appcheck_lines(dev, since, label)}
+
+
+def appcheck_lines(dev, since, label):
+    """The lab build's #app check timings for one scenario, from the simulator's unified log."""
+    try:
+        out = run("xcrun", "simctl", "spawn", dev.udid, "log", "show", "--start", since, "--style", "compact",
+                  "--predicate", 'eventMessage CONTAINS "ADDIFY-APPCHECK"', check=False, timeout=180)
+    except subprocess.TimeoutExpired:
+        out = ""
+    lines = [l.strip() for l in out.splitlines() if "ADDIFY-APPCHECK" in l]
+    for l in lines:
+        print("      [%s] %s" % (label, l[l.index("ADDIFY-APPCHECK"):]))
+    return lines
+
+
+def appcheck_ms(res):
+    """Milliseconds from didFinish to the answer, for each check the app page settled."""
+    return [int(m.group(1)) for m in (re.search(r"settled (\d+) ms hasApp=1", l) for l in res.get("appcheck", [])) if m]
+
+
+def appcheck_report(dev, scen, res):
+    ms = appcheck_ms(res)
+    check(dev, scen, "#app check before reveal <= 150 ms", bool(ms) and max(ms) <= 150,
+          "%s ms" % ms if ms else "no timing logged", info=True)
 
 
 # ---------- checks ----------
@@ -428,12 +473,14 @@ def run_stub_suite(dev, app, version, ipad=False):
           r2 is not None and r2.get("kit") == {"err": "bad message"} and (r2.get("store") or {}).get("err") != "not the engine page",
           "directory at %s s, second round %s" % (gist_at, json.dumps({k: (r2 or {}).get(k) for k in ("kit", "store")})))
     check(dev, "race", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
+    appcheck_report(dev, "race", res)
     json.dump(res, open(os.path.join(dev.out, "%s-race.json" % dev.tag), "w"), indent=1)
 
     res = scenario(dev, app, "relaunch", base, fresh=False)
     r = common(dev, "relaunch", res, version)
     check(dev, "relaunch", "loaded the directory's pick", r and r.get("port") == PORT_B, "port %s" % (r or {}).get("port"))
     check(dev, "relaunch", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
+    appcheck_report(dev, "relaunch", res)
     json.dump(res, open(os.path.join(dev.out, "%s-relaunch.json" % dev.tag), "w"), indent=1)
 
     if not ipad:
@@ -549,6 +596,7 @@ def run_testbox(dev, app):
     gist = [e for e in res["entries"] if e["role"] == "G"]
     check(dev, "testbox", "launch ran (directory asked)", bool(gist), "%d directory requests" % len(gist), info=True)
     check(dev, "testbox", "app alive after 15 s", res["alive"], "", info=True)
+    appcheck_report(dev, "testbox", res)
     json.dump(res, open(os.path.join(dev.out, "%s-testbox.json" % dev.tag), "w"), indent=1)
 
 
