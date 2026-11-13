@@ -308,12 +308,18 @@ async def main(html, only):
                     "7000000000000000052": {"result": "error", "error": "HTTPSConnectionPool(host='www.tikwm.com', port=443): Read timed out. (read timeout=15)"},
                     "7000000000000000053": {"result": "error", "error": "tiktok video is unavailable (deleted or private)"}})
                 NOTE = "()=>(document.getElementById('scannote')||{}).textContent||''"
-                for n, tag in ((50, "a"), (51, "b")):
-                    await go(pg, CLIP % n)
-                    t = await until(pg, "()=>{var t=document.getElementById('result').innerText; return t.indexOf(\"Couldn't reach Addify\")>=0&&t;}", 20)
-                    check("R2-4" + tag, "A %s with JSON and no result field is 'Couldn't reach Addify' with Try again" % ("500" if n == 50 else "400"),
-                          bool(t) and "Try again" in t and "read that link" not in (t or ""), t)
-                    await pg.evaluate("()=>goHome()"); await pg.wait_for_timeout(400)
+                await go(pg, CLIP % 50)
+                t = await until(pg, "()=>{var t=document.getElementById('result').innerText; return t.indexOf(\"Couldn't reach Addify\")>=0&&t;}", 20)
+                check("R2-4a", "A 500 with JSON and no result field is 'Couldn't reach Addify' with Try again",
+                      bool(t) and "Try again" in t and "read that link" not in (t or ""), t)
+                await pg.evaluate("()=>goHome()"); await pg.wait_for_timeout(400)
+                # polish 3 (item 1): a 4xx with JSON is the engine turning the link down, so it is a link problem with no
+                # Try again (asking again got the same 400). It was "Couldn't reach Addify" here; test_polish3 P1 has the rest.
+                await go(pg, CLIP % 51)
+                t = await until(pg, "()=>{var t=document.getElementById('result').innerText; return t.indexOf(\"That link didn't work\")>=0&&t;}", 20)
+                check("R2-4b", "A 400 with JSON and no result field is 'That link didn't work', no Try again (polish 3)",
+                      bool(t) and "Try again" not in t and NOT_REACH not in (t or ""), t)
+                await pg.evaluate("()=>goHome()"); await pg.wait_for_timeout(400)
                 await go(pg, CLIP % 52)
                 t = await until(pg, "()=>{var t=document.getElementById('result').innerText; return t.indexOf('fetch that clip')>=0&&t;}", 15)
                 note = await pg.evaluate(NOTE); body = await pg.evaluate("()=>document.body.innerText")
@@ -437,7 +443,7 @@ async def main(html, only):
             if want(11):
                 ctx, pg = await page()
                 await pg.evaluate(OPEN); await pg.wait_for_timeout(500); s = await pg.evaluate(SH)
-                check("R2-11", "The sheet is titled 'Addify Plus' and says it gives unlimited scans", s["title"] == "Addify Plus" and "unlimited scans" in (s["sub"] or ""), s)
+                check("R2-11", "The sheet is titled 'Addify+' (Option A, polish 3) and says it gives unlimited scans", s["title"] == "Addify+" and "unlimited scans" in (s["sub"] or ""), s)
                 await ctx.close()
 
         except Exception as e:

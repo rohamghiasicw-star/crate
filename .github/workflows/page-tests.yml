@@ -31,6 +31,12 @@ jobs:
         run: python -u engine/test_reviewer_fixes2.py
       - name: Reviewer-run fixes 2 (Chromium)
         run: PW_BROWSER=chromium python -u engine/test_reviewer_fixes2.py
+      - name: Polish 3 (WebKit)
+        run: python -u engine/test_polish3.py
+      - name: Polish 3 (Chromium)
+        run: PW_BROWSER=chromium python -u engine/test_polish3.py
+      - name: Preview gate, App Review 2.5.19 (WebKit)
+        run: python -u engine/test_preview_gate.py
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: page-shots, path: out/, if-no-files-found: ignore }

@@ -26,6 +26,9 @@
   --card:#17141F; --raise:#211C2E; --raise2:#2A2439;
   --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
   --text:#F4F2FA; --muted:#B4AEC6; --faint:#8C85A1;
+  /* POLISH 3 (A11Y-3): faint text on a --raise2 surface (the scan chip's "audio" badge). --faint is 4.24:1 on
+     #2A2439; this is 4.77:1. The light theme uses its --faint, which clears 4.5:1 on its --raise2. */
+  --faint-r2:#958EAA;
   --accent:#6B5FE0; --accent2:#8C82F0; --accent-press:#5A4ECB; --on-accent:#FFFFFF;
   --signal:#A855F7; --cool:#2DD4BF; --good:#5DCAA5;
   /* VERDICT v2 2026-09-29: the check / X fills. --yes is a truer green than the mint --good
@@ -65,7 +68,8 @@
   --bg:#ECEAF1; --bg2:#F5F4F8;
   --card:#FAF9FC; --raise:#FFFFFF; --raise2:#F0EEF5;
   --line:rgba(23,20,31,.09); --line2:rgba(23,20,31,.16);
-  --text:#17141F; --muted:#524B61; --faint:#756E84;
+  /* POLISH 3 (A11Y-3): --faint was #756E84, 4.44:1 on --scan (SCANNING, Tap x to cancel) and 4.23:1 on --raise2 */
+  --text:#17141F; --muted:#524B61; --faint:#6C657B; --faint-r2:#6C657B;
   --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE; --on-accent:#FFFFFF;
   --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
   --yes:#2B9A66; --bad:#D93036;
@@ -83,7 +87,7 @@
   :root:not([data-theme="dark"]){
     --bg:#ECEAF1; --bg2:#F5F4F8; --card:#FAF9FC; --raise:#FFFFFF; --raise2:#F0EEF5;
     --line:rgba(23,20,31,.09); --line2:rgba(23,20,31,.16);
-    --text:#17141F; --muted:#524B61; --faint:#756E84;
+    --text:#17141F; --muted:#524B61; --faint:#6C657B; --faint-r2:#6C657B;   /* POLISH 3: as above */
     --accent:#6B5FE0; --accent2:#5A4ECB; --accent-press:#5245BE;
     --signal:#8B3DE8; --cool:#12A594; --good:#0E9F6E; --warn:#9A6206;
   --yes:#2B9A66; --bad:#D93036;
@@ -384,7 +388,7 @@ html.native .app[data-state="trending"],html.native .app[data-state="search"]{he
 .chip .ct span{display:block;font-size:12px;color:var(--muted);margin-top:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .abadge{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
-  padding:4px 8px;border-radius:8px;background:var(--raise2);color:var(--faint);transition:.25s}
+  padding:4px 8px;border-radius:8px;background:var(--raise2);color:var(--faint-r2);transition:.25s}   /* POLISH 3 */
 .abadge.on{background:color-mix(in oklab,var(--good) 18%,transparent);color:var(--good);
   animation:pop .3s var(--ease) both}
 .abadge svg{width:11px;height:11px}
@@ -624,6 +628,16 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .trow .addp{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
   color:var(--accent2);background:var(--card);transition:background .15s,color .15s}
 .trow .addp.did{color:var(--good);background:transparent}
+/* POLISH 3: the trending row is a container with two sibling buttons (trowHTML). trow-open lays out the rank, art
+   and title as the row did and stretches its ::after over the whole row, so a tap anywhere still opens the song;
+   the plus sits above it and grows a 44 pt hit area round its 28 pt circle. */
+.trow[data-i]{position:relative}
+.trow-open{display:flex;align-items:center;gap:11px;flex:1;min-width:0;padding:0;text-align:left}
+.trow-open::after{content:"";position:absolute;inset:0;border-radius:14px}
+.trow-open:focus-visible{outline:none}
+.trow-open:focus-visible::after{outline:2px solid var(--accent2);outline-offset:-2px}
+.trow .addp{position:relative;z-index:1;padding:0}
+.trow .addp::before{content:"";position:absolute;inset:-8px}   /* square, so the corners of the 44 pt area hit too */
 /* Roham, 2026-09-24: the chart rows sat shoulder to shoulder. Air between cards, and a
    beat of space under the filter chips, only on the Trending screen. */
 #trendbody .list{gap:12px}
@@ -1277,7 +1291,7 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    single line with flex:none pushed the play count off the right edge at 375px. */
 .trk .mt{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin-top:4px;
   font-size:11.5px;color:var(--muted);min-width:0}
-.trk .mt .mono{white-space:nowrap;font-variant-numeric:tabular-nums;opacity:.75}
+.trk .mt .mono{white-space:nowrap;font-variant-numeric:tabular-nums;opacity:.85}   /* POLISH 3 (A11Y-3): .75 was 4.27:1 on white in light */
 .src{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.02em}
 /* with a real mark the pill carries the brand, so the tint drops to a neutral surface and
    the logo does the identifying - the same treatment the platform buttons above use. */
@@ -2187,8 +2201,15 @@ function netJSON(u,o){o=o||{}; var tries=0, resumes=0;
       if(o.okOnly&&!r.ok) return null;
       // REVIEWER RUNS 2 (BN-3): any other non-2xx without a result field is not a scan answer either. The
       // page used to draw it as "Couldn't read that link" with no way to retry; now it is "Couldn't reach Addify".
+      // POLISH 3: but a 4xx that answers in JSON is the engine turning THIS request down (its 400 "pass ?url=<a
+      // tiktok or instagram link>", a 403, a 404), so asking again gets the same answer. It comes back as a link
+      // problem (bad_link): "That link didn't work", no Try again, the scan not counted. A 5xx, an empty body or
+      // one that is not JSON stays "Couldn't reach Addify" with Try again. 408 and 429 mean "not now", not "not
+      // this link", so they stay there too.
       if(!r.ok) return r.text().then(function(tx){var j=null; try{j=JSON.parse(tx);}catch(e){}
         if(j&&typeof j==='object'&&j.result) return j;
+        if(j&&typeof j==='object'&&r.status>=400&&r.status<500&&r.status!==408&&r.status!==429)
+          return {result:'error', error:String(j.error||j.detail||''), bad_link:true, http:r.status};
         throw hard(new Error('http '+r.status));});
       return r.json().catch(function(e){if(e&&e.name==='SyntaxError') throw hard(e); throw e;});
     }).then(function(v){clearTimeout(tm); return v;},function(e){clearTimeout(tm); throw e;}).catch(function(e){
@@ -3338,7 +3359,7 @@ function scanAnimOff(){if(scanRaf)cancelAnimationFrame(scanRaf); scanRaf=null;}
    teaches the share sheet - onboarding paid for with time the user is already spending. */
 var TIPS=[
   'Addify names the song and finds the closest version: slowed, sped up, remix or original.',
-  'Every match is auto-saved to your Found with Addify playlist.',
+  'Every match goes to your Finds.',   // POLISH 3 (LAWYER-05): was "Every match is auto-saved to your Found with Addify playlist."
   'Pin Addify in your share sheet to make it the first icon.'];
 function tipText(i){return (i===1&&!autoOn())
   ? 'Add every match to Finds is off. Turn it on in the You tab.' : TIPS[i];}
@@ -4492,6 +4513,7 @@ function mainVersion(d){
    result without a song, so a "TikTok is busy" card (own1, a TikTok rate limit, not a miss)
    sat under a header saying the song was not found. Only a real miss says "No match". */
 function endTitle(d){var r=d&&d.result;
+  if(d&&d.bad_link) return 'Link not readable';   // POLISH 3: the engine turned the link down (a 4xx)
   if(d&&!d.base_song&&['rate_limited','engine_down','error','no_match','uncertain'].indexOf(r)<0) r='error';   // an answer with no result
   return r==='rate_limited'?'Try again soon':r==='engine_down'?(d.offline?'Offline':'Try again soon'):
          r==='error'?(errLinkKind(d.error)?'Link not readable':'Try again soon'):'No match';}
@@ -4550,6 +4572,14 @@ function renderResult(d,partial){
     if(rb) rb.onclick=function(){engineUp=null; var u=curURL; goHome(); if(u) run(u);};
     return;}
   if(d.result==='error'){ setEndTitle(d);
+    // POLISH 3: the engine turned this link down (a 4xx with JSON). Asking again gets the same answer, so the
+    // way forward is a fresh copy of the link: Home with the box focused, never a Try again loop.
+    if(d.bad_link){
+      result.innerHTML=errCard('lock',"That link didn't work",'Copy the link again from TikTok or Instagram and paste it here.',
+        '<button class="cta" id="relinkbtn" type="button">Back to home</button>');
+      var _rl=document.getElementById('relinkbtn');
+      if(_rl) _rl.onclick=function(){goHome(); try{urlEl.focus();}catch(e){}};
+      return;}
     var _lk=errLinkKind(d.error);
     if(!_lk){
       // REVIEWER RUNS 2 (BN-3): no link problem named, so the failure was on our side (an upstream fetch that
@@ -4605,7 +4635,7 @@ function renderResult(d,partial){
         sendFeedback({url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||'',verdict:v});
         if(v==='yes'){saveOne({base_song:guess,base_artist:d.base_artist_guess||d.base_artist||'',handle:d.handle}); dropUnmatched(curURL);}
         var n=document.getElementById('fbnote');
-        if(n) n.textContent=v==='yes'?'Logged, and saved to your finds':'Logged. This trains the edit database';
+        if(n) n.textContent=v==='yes'?'Logged, and added to your Finds':'Logged. This trains the edit database';
         ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});};
       var y=document.getElementById('fbyes'), no=document.getElementById('fbno');
       if(y) y.onclick=function(){done('yes');};
@@ -4618,7 +4648,10 @@ function renderResult(d,partial){
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
       '<button class="cta" id="nm-search">Describe it instead</button>'+
       _nmBack+
-      '<div class="trainnote">Saved as pending. We’ll retry as the edit database grows</div>');
+      // POLISH 3 (LAWYER-05): was "Saved as pending. We'll retry as the edit database grows". Nothing retries on its own
+      // (see the Finds note at libFilter), and only a link scan with no song is kept (finish() -> logUnmatched), so the
+      // line says where that link went and shows only when it went there.
+      ((curURL&&!d.listen&&!d.base_song)?'<div class="trainnote">It’s in your Finds under Unmatched. Tap Retry there to scan it again.</div>':''));
     var nms=document.getElementById('nm-search'); if(nms) nms.onclick=function(){goHome(); nav('search');};
     var nmh=document.getElementById('nm-home'); if(nmh) nmh.onclick=goHome;
     return;}
@@ -5704,6 +5737,7 @@ function scanNote(failed){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_
   clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}
 /* REVIEWER RUNS 2 (GP-7): why a scan with no song did not count. A link we could not read is not "no song found". */
 function scanMiss(d){var r=d&&d.result;
+  if(d&&d.bad_link) return 'unread';   // POLISH 3: a link the engine turned down
   if(r==='rate_limited') return 'busy';
   if(r==='no_match'||r==='uncertain'||(d&&d.base_uncertain)) return true;
   return errLinkKind(d&&d.error)?'unread':'busy';}
@@ -5749,13 +5783,13 @@ function openPaywall(){
   var ov=document.getElementById('paywall');
   if(!ov){ov=document.createElement('div'); ov.id='paywall'; ov.className='pw'; document.body.appendChild(ov);}
   var left=Math.max(0,FREE_SCANS-scansUsed());
-  // IAP-5, LIT-3: the plan's own name (the You card, the products and App Store Connect say Addify Plus) and
-  // what it gives, in the You card's words
+  // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title stays 'Addify+' (Option A, the
+  // co-owners' paywall spec, and the live promise ledger's S6); the plans under it carry the full name.
   var sub=(left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
     'Get unlimited scans and keep finding versions.';
   ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-labelledby="pwh" tabindex="-1">'+
     '<div class="pwgrab" aria-hidden="true"></div>'+
-    '<div class="pwtop"><h2 class="pwh" id="pwh">Addify Plus</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
+    '<div class="pwtop"><h2 class="pwh" id="pwh">Addify+</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
     '<p class="pwsub">'+esc(sub)+'</p>'+
     '<div class="pwplans" id="pwb" role="radiogroup" aria-label="Plans"></div>'+
     '<div class="pwfoot"><button class="pwgo" id="pwgo" disabled>Continue</button>'+
@@ -5912,7 +5946,7 @@ function paintHome(){
     wireTrows(tt);
   } else if(!a.length){
     tt.innerHTML='<div class="dashcard"><b>Your finds will land here</b>'+
-      '<span>Every scan also saves to your playlist automatically</span></div>';
+      '<span>'+(autoOn()?'Every match goes to your Finds.':'Add every match to Finds is off. Turn it on in the You tab.')+'</span></div>';   // POLISH 3 (LAWYER-05)
   } else tt.innerHTML='';
   /* RECENT FINDS COME OFF HOME (Konnor, 2026-09-23): "Finds has its own tab and the
      playlist card is right here - three copies of the same list was too many." */
@@ -5953,26 +5987,37 @@ function trendTag(r){
 function trowArt(r){
   var a=r.art||'';
   return a&&!/tiktokcdn/i.test(a)?a:'';}
+/* POLISH 3: the row is a plain container holding two sibling buttons, never one inside the other. The plus was a
+   span inside the row's button, so VoiceOver saw only the row and could not add the song. trow-open stretches over
+   the whole row (a tap anywhere opens the song, as before); the plus sits above it with a 44 pt hit area. It adds
+   the song to Finds (saveOne), so that is what it says. */
 function trowHTML(r,rank){
-  var tag=trendTag(r), art=trowArt(r);
-  return '<button class="trow" data-i="'+(rank-1)+'">'+
+  var tag=trendTag(r), art=trowArt(r), inF=trowInFinds(r);
+  return '<div class="trow" data-i="'+(rank-1)+'">'+
+    '<button class="trow-open" type="button">'+
     '<span class="rk'+(rank===1?' hot':'')+'">'+rank+'</span>'+
     '<span class="sq brand">'+
       (art?'<img src="'+esc(art)+'" alt="" onerror="this.remove()">':'')+'</span>'+
     '<span class="tt"><b>'+ttlHTML(r.title)+'</b>'+
     '<span>'+(tag?'<i class="up" style="font-style:normal">'+esc(tag)+'</i> · ':'')+
-      esc(r.by||'')+(r.uses?' · '+plays(r.uses)+' videos':'')+'</span></span>'+
-    '<span class="addp" title="Save to playlist">'+IC.plus+'</span></button>';}
+      esc(r.by||'')+(r.uses?' · '+plays(r.uses)+' videos':'')+'</span></span></button>'+
+    '<button class="addp'+(inF?' did':'')+'" type="button" aria-label="'+(inF?'Added to Finds':'Add to Finds')+'">'+(inF?IC.tick:IC.plus)+'</button></div>';}
+/* POLISH 3: a song already in Finds draws its plus as done. saveOne's storeCrate re-renders these rows at once, so
+   the tick the tap set used to land on a button that had just been replaced: the row showed + again. */
+function trowInFinds(r){return loadCrate().some(function(x){return x.song===r.title&&x.artist===r.by;});}
 function wireTrows(box){
   Array.prototype.forEach.call(box.querySelectorAll('.trow[data-i]'),function(row){
     var r=TREND.rows[+row.getAttribute('data-i')]; if(!r) return;
-    var add=row.querySelector('.addp');
-    row.onclick=function(){if(r.url) window.open(r.url,'_blank');};
+    var add=row.querySelector('.addp'), open=row.querySelector('.trow-open');
+    if(open) open.onclick=function(){if(r.url) window.open(r.url,'_blank');};
     if(add) add.onclick=function(ev){ev.stopPropagation();
       if(add.classList.contains('did')) return;
-      saveOne({base_song:r.title,base_artist:r.by,shazam:r.url});
+      var had=document.activeElement===add, i=row.getAttribute('data-i');
+      saveOne({base_song:r.title,base_artist:r.by,shazam:r.url});   // storeCrate re-renders the rows: this button is replaced
       if(SP.connected()) SP.add(r.title.replace(/[\(\[].*$/,'').trim(), '').catch(function(){});
-      add.classList.add('did'); add.innerHTML=IC.tick;};});}
+      var nb=box.querySelector('.trow[data-i="'+i+'"] .addp')||add;   // the plus on screen now
+      nb.classList.add('did'); nb.innerHTML=IC.tick; nb.setAttribute('aria-label','Added to Finds');
+      if(had&&nb!==add) try{nb.focus();}catch(e){}};});}   // VoiceOver stays on the button it just pressed
 var trendFilter='All';
 function renderTrend(){
   // a filter chip shows only when at least one row carries its tag: no empty tabs
@@ -6035,7 +6080,7 @@ function renderLib(){
   var all=loadCrate(), un=unmatched();
   var edits=all.filter(isEdit).length;
   document.getElementById('libsub').textContent = all.length
-    ? songs(all.length)+(edits?' · '+edits+' of them edit'+(edits===1?'':'s'):'') : 'Nothing saved yet';
+    ? songs(all.length)+(edits?' · '+edits+' of them edit'+(edits===1?'':'s'):'') : 'No finds yet';   // POLISH 3 (LAWYER-05): was 'Nothing saved yet'
   var chips=[['All',all.length],['Edits',edits],['Originals',all.length-edits]];
   var nLiked=all.filter(function(x){return isLiked(x.song,x.artist);}).length;
   if(nLiked) chips.splice(3,0,['Liked',nLiked]);
@@ -6052,7 +6097,7 @@ function renderLib(){
   order.sort().reverse();
   var mb=document.getElementById('libmonths');
   if(order.length && libFilter!=='Unmatched'){
-    mb.innerHTML='<div class="sect">Your monthly playlists</div><div class="mrow">'+order.map(function(k){
+    mb.innerHTML='<div class="sect">Your finds by month</div><div class="mrow">'+order.map(function(k){
       var y=+k.slice(0,4), m=+k.slice(5)-1, tint=MONTH_TINT[m];
       return '<button type="button" class="mtile'+(libMonth===k?' on':'')+'" data-m="'+k+'" aria-pressed="'+(libMonth===k)+'">'+
         '<span class="mcov" style="--mt:'+tint+'"><span class="mg">'+waveGlyph(22)+'</span>'+
@@ -6167,13 +6212,13 @@ function renderSearch(){
                                       :'<span class="conf possible">Possible</span>')+
               (x.src?srcChip(x.src):'')+
               (x.plays?'<span>'+plays(x.plays)+' plays</span>':'')+'</div></span>'+
-          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+(saved?'Saved to Finds':'Save to Finds')+'">'+
+          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+(saved?'Added to Finds':'Add to Finds')+'">'+
             (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>';   // APPLYALL 2026-09-29 (build 3): the "Soon" hum row is gone
     Array.prototype.forEach.call(body.querySelectorAll('.sadd'),function(b){
       b.onclick=function(){var x=sState.res[+b.getAttribute('data-i')]; if(!x||b.classList.contains('did')) return;
         saveOne({base_song:x.title,base_artist:x.artist,art:x.art||'',exact:{url:x.url},
                  speed:x.version||'',handle:'',listen:false,via:'search'});
-        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label','Saved to Finds');};});
+        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label','Added to Finds');};});   // POLISH 3 (LAWYER-05): Add, not Save
     return;}
   var rec=sRecent();
   body.innerHTML='<div class="sect">Three ways to search</div>'+
@@ -6300,7 +6345,7 @@ function renderProf(){
   var _pfexp=document.getElementById('pfexp'); if(_pfexp) _pfexp.onclick=exportFinds;
   var _pfh=document.getElementById('pfhowto'); if(_pfh) _pfh.onclick=function(){openOnb(1,'replay');};   // ONBOARDING v3
   document.getElementById('pfclear').onclick=function(){
-    if(confirm('Clear your saved library?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
+    if(confirm('Clear all your finds?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
   // Privacy and support sit next to the deletion path. Same engine-resolved URLs as the sheet.
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
