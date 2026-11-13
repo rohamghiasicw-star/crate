@@ -401,6 +401,13 @@ def common(dev, scen, res, version):
     return r
 
 
+def timeline(res):
+    """Every stub request in a scenario, one line each, so the job log alone shows what happened."""
+    for e in res["entries"]:
+        print("      %6.2f s  %s %-4s %-8s %s%s" % (e["dt"], e["role"], e["method"], e["status"],
+              e["path"].split("?")[0], (" kind=" + e["kind"]) if e.get("kind") else ""))
+
+
 def page_requests(res, role):
     return [(e["dt"], e["status"]) for e in res["entries"] if e["role"] == role and e["path"].split("?")[0] in ("/", "/share")]
 
@@ -461,7 +468,10 @@ def run_stub_suite(dev, app, version, ipad=False):
         c4 = {"A": {"health_ms": 20, "fail_first": 2, "fail_code": 404, "fail_body": "404 page not found"},
               "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         first404 = lambda e: e["role"] == "A" and e["status"] == 404
-        res = scenario(dev, app, "server4xx", c4, timeout=45, after=(("error", first404, 1.2),))
+        reported = lambda e: e.get("kind") == "bridges"
+        res = scenario(dev, app, "server4xx", c4, timeout=45,
+                       after=(("error", first404, 1.2), ("early", reported, 0.5), ("settled", reported, 2.0)))
+        timeline(res)
         common(dev, "server4xx", res, version)
         reqs = page_requests(res, "A")
         check(dev, "server4xx", "404, 404, then the page", [s for _, s in reqs][:3] == [404, 404, 200], json.dumps(reqs))
@@ -471,15 +481,21 @@ def run_stub_suite(dev, app, version, ipad=False):
                   "gaps %.1f s and %.1f s" % (g1, g2))
         mid = pixel_class(res["shots"].get("error", ""))
         check(dev, "server4xx", "error screen with Try again, not the 404 text", mid == "error", mid)
-        check(dev, "server4xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
-              pixel_class(res["shots"]["final"]))
+        # The hard check is 2 s after the page reported; the 0.5 s shot is reported, not failed, so a
+        # slow runner frame is told apart from a loading screen that never goes.
+        check(dev, "server4xx", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
+              pixel_class(res["shots"].get("early", "")), info=True)
+        check(dev, "server4xx", "page on screen after recovery", pixel_class(res["shots"].get("settled", "")) == "page",
+              pixel_class(res["shots"].get("settled", "")))
         json.dump(res, open(os.path.join(dev.out, "%s-server4xx.json" % dev.tag), "w"), indent=1)
 
         # A 200 that finishes without #app (cut off before the app) is a failed load too, and its
         # automatic reloads keep backing off instead of restarting at 2 s on every load.
         na = {"A": {"health_ms": 20, "noapp_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         firstpage = lambda e: e["role"] == "A" and e["status"] == 200 and e["path"].split("?")[0] in ("/", "/share")
-        res = scenario(dev, app, "noapp", na, timeout=45, after=(("error", firstpage, 2.0),))
+        res = scenario(dev, app, "noapp", na, timeout=45,
+                       after=(("error", firstpage, 2.0), ("early", reported, 0.5), ("settled", reported, 2.0)))
+        timeline(res)
         common(dev, "noapp", res, version)
         reqs = page_requests(res, "A")
         check(dev, "noapp", "two pages without #app, then the page", len(reqs) == 3 and all(s == 200 for _, s in reqs),
@@ -490,8 +506,10 @@ def run_stub_suite(dev, app, version, ipad=False):
                   "gaps %.1f s and %.1f s" % (g1, g2))
         mid = pixel_class(res["shots"].get("error", ""))
         check(dev, "noapp", "error screen with Try again, not the cut-off page", mid == "error", mid)
-        check(dev, "noapp", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
-              pixel_class(res["shots"]["final"]))
+        check(dev, "noapp", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
+              pixel_class(res["shots"].get("early", "")), info=True)
+        check(dev, "noapp", "page on screen after recovery", pixel_class(res["shots"].get("settled", "")) == "page",
+              pixel_class(res["shots"].get("settled", "")))
         json.dump(res, open(os.path.join(dev.out, "%s-noapp.json" % dev.tag), "w"), indent=1)
 
         # The engine page redirects to a host outside the list (a parked domain): never Safari,
