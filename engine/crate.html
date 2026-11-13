@@ -4216,23 +4216,33 @@ function vfRows(d){
     if(!c){var nm=els[i].querySelector('.nm'); c={url:u,title:nm?nm.textContent:''};}
     out.push(c);}
   return out;}
+/* ROUND 4 (item 3): the heading the card drew over a row ("The recording this clip was cut from", "The exact version
+   playing", "The closest version we found"), read off the rendered card like vfRows. The picker tags the row with
+   it, so the two never name one upload differently (on the Wildest Dreams answer the source recording was "Our
+   pick" here, and the card says "Our pick" nowhere). A row in the "Other versions we checked" fold has no heading
+   and no tag. */
+function vfHead(u){
+  var els=document.querySelectorAll('#result .card>.list:not(.mix):not(#livelist)>a.trk');
+  for(var i=0;i<els.length;i++){if(els[i].getAttribute('href')!==u) continue;
+    for(var s=els[i].parentNode.previousElementSibling;s;s=s.previousElementSibling)
+      if(s.classList.contains('sect')) return s.textContent;}
+  return '';}
 function vfAsk(row,d,url,rows,anim){
   if(document.getElementById('vfpick')) return;
-  var pk=vfPick(d);
+  var pk=vfPick(d), heads=rows.map(function(c){return vfHead(c.url);});
   row.insertAdjacentHTML('beforeend',
     '<div class="vpick'+(anim?' anim':'')+'" id="vfpick" role="group" aria-label="'+VF_ASK+'"><div class="vpl">'+
     rows.map(function(c,i){var src=(c.source||'').toLowerCase();
       return '<button type="button" class="trk vpr" data-i="'+i+'"'+(i>=VF_FIRST?' hidden':'')+'>'+
         '<span class="rkn">'+(i+1)+'</span>'+rowThumb(c)+
         '<span class="tt"><span class="nm">'+esc(c.title||'Untitled')+'</span><span class="mt">'+
-          (i===0?'<span class="lvtag">Our pick</span>':'')+confChip(c,false)+(src?srcChip(src):'')+
+          (heads[i]?'<span class="lvtag">'+esc(heads[i])+'</span>':'')+confChip(c,false)+(src?srcChip(src):'')+
         '</span></span><span class="vrd" aria-hidden="true"></span></button>';}).join('')+'</div>'+
     (rows.length>VF_FIRST?'<button type="button" class="vmore" id="vfmore">Show '+(rows.length-VF_FIRST)+' more</button>':'')+
     '<button type="button" class="vnone" id="vfnone">Not in the list</button></div>');
   row.classList.add('asking');
-  // RF2: with no crown no upload was our pick (the card named the song at its speed), so the
-  // first row loses the tag the line above gives it
-  if(!ncCrowned(d)) [].forEach.call(row.querySelectorAll('#vfpick .vpr .lvtag'),function(t){t.remove();});
+  // RF2: with no crown no upload was our pick. ROUND 4: no row is tagged "Our pick" any more; a row the card draws
+  // under "The closest version we found" with no crown carries that heading, and the rest carry none.
   var q=document.getElementById('vfq'); if(q) q.textContent=VF_ASK;
   var box=document.getElementById('vfpick'), busy=false;
   box.addEventListener('click',function(e){
@@ -4366,6 +4376,9 @@ setTimeout(function(){
 /* ROUND 3 (NETWORK-5): every row the server confirms erased leaves addify-fbids at once, so Try again only asks for
    the rest, and the answer says whether anything is gone: 'all', 'some' (at least one erase confirmed) or 'none'
    (none confirmed, the 15 s cut-off included). */
+/* ROUND 4 (item 2): the 15 s cut-off is its own answer, 'late'. An erase still out at the cut-off may finish on the
+   server after the page stops waiting, so "Nothing was deleted yet" could be false there. Its ids stay on the phone,
+   and Try again asks for them again: /feedback/erase answers {ok:true} for a row it already erased (erased: 0). */
 function eraseMyFeedback(){
   var ids=lsGet('addify-fbids','[]')||[]; if(!ids.length) return Promise.resolve('all');
   var ctl=window.AbortController?new AbortController():null, to=null, gone=[];
@@ -4376,7 +4389,7 @@ function eraseMyFeedback(){
             function(){return false;})
       .then(function(ok){if(ok){gone.push(id); lsSet('addify-fbids',(lsGet('addify-fbids','[]')||[]).filter(function(x){return x!==id;}));} return ok;});}))
     .then(function(a){return a.every(Boolean)?'all':gone.length?'some':'none';});
-  return Promise.race([all,new Promise(function(r){to=setTimeout(function(){if(ctl) ctl.abort(); r(gone.length?'some':'none');},15000);})])
+  return Promise.race([all,new Promise(function(r){to=setTimeout(function(){if(ctl) ctl.abort(); r('late');},15000);})])
     .then(function(v){clearTimeout(to); return v;});}
 /* ITEM 2, "glow at the top pulled from the artwork colours, so every result looks
    different". The cover host (mzstatic, Shazam's covers too) sends Access-Control-Allow-
@@ -5501,7 +5514,13 @@ function useScan(u,d){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var keys=sca
   scanNote();                                    // Konnor rule 1: show the count right after each result
   if(scansUsed()>=FREE_SCANS) PW_DUE=true;}      // Konnor: the paywall pops once they are back home
 var PW_DUE=false;
-function scanNote(failed){if(!PAYWALL_ON||PRO) return; var left=Math.max(0,FREE_SCANS-scansUsed());
+/* ROUND 4 (item 4): the toast belongs to the scan the user is watching. One that fires after they left it (Back while
+   the hunt still ran, a listen answer after Back) went into the hidden result header and nobody saw it. Off this
+   scan's screens it is dropped: Home's scans pill already shows the count, since useScan repaints it first. */
+function scanNote(failed){if(!PAYWALL_ON||PRO) return;
+  var _st=document.getElementById('app').getAttribute('data-state');
+  if(leftScan||(_st!=='scanning'&&_st!=='locked')) return;
+  var left=Math.max(0,FREE_SCANS-scansUsed());
   var n=document.getElementById('scannote'), hd=document.querySelector('#s-match .hd');
   if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status');}
   if(hd&&n.parentNode!==hd) hd.appendChild(n); else if(!hd&&!n.parentNode) document.body.appendChild(n);   // ROUND 3: in the header
@@ -6083,13 +6102,15 @@ function sRun(q,mode){
 
 /* ---------- profile ---------- */
 function planOn(){return PAYWALL_ON&&PRO;}
-var PF_DELETING=false, PF_DELFAIL=false;   // REVIEWER RUNS 2 (BN-1): kept across a redraw of the You tab; ROUND 3: 'none' or 'some'
+var PF_DELETING=false, PF_DELFAIL=false;   // REVIEWER RUNS 2 (BN-1): kept across a redraw of the You tab; ROUND 3: 'none' or 'some'; ROUND 4: or 'late'
+var PF_DELTXT={none:'Couldn’t reach Addify. Nothing was deleted yet. Try again.', some:'Couldn’t finish deleting. Try again.',
+               late:'Addify didn’t confirm in time. Try again to finish deleting.'};
 function pfDelPaint(){var b=document.getElementById('pfdel'), m=document.getElementById('pfdelmsg'); if(!b) return;
   b.disabled=PF_DELETING; b.setAttribute('aria-busy',PF_DELETING?'true':'false');
   b.querySelector('.st').textContent=PF_DELETING?'Deleting...':'Delete account';
   if(m) m.hidden=PF_DELETING||!PF_DELFAIL;
   var t=document.getElementById('pfdeltxt');   // ROUND 3 (NETWORK-5): never "Nothing was deleted yet" once something was
-  if(t) t.textContent=PF_DELFAIL==='some'?'Couldn’t finish deleting. Try again.':'Couldn’t reach Addify. Nothing was deleted yet. Try again.';}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
+  if(t) t.textContent=PF_DELTXT[PF_DELFAIL]||PF_DELTXT.none;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
 function renderProf(){
   var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
   var name='You';
@@ -6131,7 +6152,8 @@ function renderProf(){
     PF_DELETING=true; pfDelPaint();
     eraseMyFeedback().then(function(v){         // server rows first, then the local copy
       if(v==='all'){ try{localStorage.clear();}catch(e){} location.reload(); return; }
-      PF_DELETING=false; PF_DELFAIL=(v==='some'||PF_DELFAIL==='some')?'some':'none'; pfDelPaint();});};
+      // ROUND 4: once an attempt erased something or ran past the cut-off, a later one never says "Nothing was deleted yet"
+      PF_DELETING=false; PF_DELFAIL=v==='late'?'late':(v==='some'||PF_DELFAIL==='some'||PF_DELFAIL==='late')?'some':'none'; pfDelPaint();});};
   pfdel.onclick=function(){
     if(PF_DELETING) return;
     if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.'+
@@ -7113,21 +7135,45 @@ function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.
    answers its windows already got), and the busy card's Try again sends it once more
    (LISTEN_BLOB, the last recording; a listen scan has no link for run()). Back stops it. */
 var LISTEN_BLOB=null;
-function listenCall(blob,tok){var n=0, t0=Date.now(), last=null;
-  function ask(){var late=false, prev=last, tm=0, ac=(n>0&&window.AbortController)?new AbortController():null;
-    var p=fetch(ENGINE+'/listen'+(n?'?qr='+n:''),{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob,signal:ac?ac.signal:undefined})
-      .then(function(r){return r.json();}).catch(function(){return downResult();});   // CALL-RETRY: offline vs no answer (a POST: not retried)
-    if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0);   // ROUND 3 (NETWORK-3): a quiet ask's deadline
-      p=Promise.race([p,new Promise(function(r){tm=setTimeout(function(){late=true; if(ac) try{ac.abort();}catch(e){} r(prev);},Math.max(0,left));})]);}
-    return p.then(function(d){
-      clearTimeout(tm);
-      if(late) d=prev;          // past the deadline the answer is the last busy one, whichever promise settled first
-      if(tok!==scanTok||leftScan) return d;
-      var w=busyAgain(d,n,t0);
-      if(w<0){ if(!busyQuiet(d)) pgFreeze(false); return busyDone(d,t0); }
-      pgFreeze(true);           // REVIEWER RUNS 2 (CHAOS-1); ROUND 3: held through the next ask too
-      last=d; n++; return netSleep(w*1000).then(function(){if(!(tok===scanTok&&!leftScan)) return d; return ask();});});}
-  return ask();}
+/* ROUND 4 (item 1): LISTEN MODE HAS THE LINK SCAN'S NO-ANSWER BOUND (ROUND 3, NETWORK-1). A recording has no link, so
+   no /progress poll ran, and a /listen that never answered held the dial for good. Now, while the recording is out,
+   the page asks /progress (no clip: the engine answers any key with its {pct,label}), one ask at a time, until the
+   engine has answered once. When neither that nor /listen has answered LIVE_BOUND ms after the recording went, the
+   ask is stopped and the card is "Couldn't reach Addify" with Try again, which sends the same recording
+   (LISTEN_BLOB). One answer proves the engine is up and lets a slow /listen run on, as it does for /base. The bound
+   holds after Back too: the ask still keeps the page busy, and the card it ends on is never drawn over Home. */
+var LISTEN_PING=1500, LISTEN_PING_WAIT=4000;
+function listenCall(blob,tok){var n=0, t0=Date.now(), last=null, cut=false, stopAsk=null, pingT=0, pingAc=null;
+  return new Promise(function(fin){
+    var over=false, mine=function(){return !over&&tok===scanTok;};
+    var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT);
+      if(pingAc) try{pingAc.abort();}catch(e){} fin(d);};
+    var wd=setTimeout(function(){
+      if(!mine()||NET_HEARD>=t0) return;          // the engine answered something since the recording went
+      cut=true; if(stopAsk) stopAsk(); end(downResult());},LIVE_BOUND);
+    (function ping(){if(!mine()||NET_HEARD>=t0) return;
+      var ac=window.AbortController?new AbortController():null, tm=0; pingAc=ac;
+      if(ac) tm=setTimeout(function(){try{ac.abort();}catch(e){}},LISTEN_PING_WAIT);   // a silent network: one ask at a time
+      fetch(ENGINE+'/progress?listen=1',{cache:'no-store',signal:ac?ac.signal:undefined})
+        .then(function(r){if(r&&r.ok&&tok===scanTok) engineHeard();},function(){})
+        .then(function(){clearTimeout(tm); if(mine()&&NET_HEARD<t0) pingT=setTimeout(ping,LISTEN_PING);});})();
+    function ask(){var late=false, prev=last, tm=0, ac=window.AbortController?new AbortController():null;
+      stopAsk=function(){if(ac) try{ac.abort();}catch(e){}};   // stops THIS ask only
+      var p=fetch(ENGINE+'/listen'+(n?'?qr='+n:''),{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob,signal:ac?ac.signal:undefined})
+        .then(function(r){return r.json();}).catch(function(){return downResult();});   // CALL-RETRY: offline vs no answer (a POST: not retried)
+      if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0);   // ROUND 3 (NETWORK-3): a quiet ask's deadline
+        p=Promise.race([p,new Promise(function(r){tm=setTimeout(function(){late=true; if(ac) try{ac.abort();}catch(e){} r(prev);},Math.max(0,left));})]);}
+      return p.then(function(d){
+        clearTimeout(tm);
+        if(late) d=prev;          // past the deadline the answer is the last busy one, whichever promise settled first
+        if(cut) return d;         // ROUND 4: the bound already ended this scan
+        if(tok===scanTok&&d&&d.result&&d.result!=='engine_down') engineHeard();   // ROUND 4: the engine answered
+        if(tok!==scanTok||leftScan) return d;
+        var w=busyAgain(d,n,t0);
+        if(w<0){ if(!busyQuiet(d)) pgFreeze(false); return busyDone(d,t0); }
+        pgFreeze(true);           // REVIEWER RUNS 2 (CHAOS-1); ROUND 3: held through the next ask too
+        last=d; n++; return netSleep(w*1000).then(function(){if(!(tok===scanTok&&!leftScan)||cut) return d; return ask();});});}
+    ask().then(end,function(){end(downResult());});});}
 function sendListen(blob){
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a mic scan never shows the tracker
   SCAN_FREE=false;

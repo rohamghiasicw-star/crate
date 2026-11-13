@@ -270,8 +270,11 @@ async def main(html, only):
                     if mode in ("slow500", "hang"):
                         check("R2-3a-" + mode, "Delete account shows 'Deleting...' and takes no second tap while it runs",
                               mid["txt"] == "Deleting..." and mid["dis"] and len(pg.dialogs) == 1, {"mid": mid, "dialogs": pg.dialogs})
-                    check("R2-3b-" + mode, "A failed erase (%s) keeps everything on the phone and says 'Nothing was deleted yet'" % mode,
-                          bool(end) and "Nothing was deleted yet" in st["msg"] and st["fb"] and "fb-1" in st["fb"] and st["saved"] and st["mark"]
+                    # ROUND 4 (item 2): an erase still out at the 15 s cut-off may finish on the server later, so "hang"
+                    # says Addify didn't confirm in time instead of "Nothing was deleted yet" (test_round4 R2)
+                    said = ("Addify didn\u2019t confirm in time. Try again to finish deleting." if mode == "hang" else "Nothing was deleted yet")
+                    check("R2-3b-" + mode, "A failed erase (%s) keeps everything on the phone and says %r" % (mode, said),
+                          bool(end) and said in st["msg"] and st["fb"] and "fb-1" in st["fb"] and st["saved"] and st["mark"]
                           and st["txt"] == "Delete account" and not st["dis"], st)
                     await ctx.close()
                 ctx, pg = await page(init=SEED, routes={"/feedback/erase": erase_route("ok")}, dialogs="accept")
