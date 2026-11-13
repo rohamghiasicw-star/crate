@@ -587,8 +587,11 @@ async def main(html, only):
                       o1["app"] and not o2["app"] and o3["inApp"], {"open": o1, "closed": o2, "tab": o3})
                 await pg.evaluate("()=>playHere('%s','youtube','x')" % LG.YT_ROW); await pg.wait_for_timeout(300); p1 = await pg.evaluate(INERT)
                 await pg.evaluate("()=>closePlayer()"); await pg.wait_for_timeout(200); p2 = await pg.evaluate(INERT)
-                await pg.evaluate("()=>{document.getElementById('picker').hidden=false;}"); await pg.wait_for_timeout(200); k1 = await pg.evaluate(INERT)
-                await pg.evaluate("()=>{document.getElementById('picker').click();}"); await pg.wait_for_timeout(200); k2 = await pg.evaluate(INERT)
+                has_pk = await pg.evaluate("()=>!!document.getElementById('picker')")   # round 3 removed the Spotify picker nothing opened
+                k1, k2 = {"app": True}, {"app": False}
+                if has_pk:
+                    await pg.evaluate("()=>{document.getElementById('picker').hidden=false;}"); await pg.wait_for_timeout(200); k1 = await pg.evaluate(INERT)
+                    await pg.evaluate("()=>{document.getElementById('picker').click();}"); await pg.wait_for_timeout(200); k2 = await pg.evaluate(INERT)
                 await pg.evaluate("()=>openPaywall()"); await pg.wait_for_timeout(300)
                 await pg.evaluate("()=>{try{document.getElementById('paywall').hidden=true; throw new Error('after the hide');}catch(e){}}"); await pg.wait_for_timeout(200); e1 = await pg.evaluate(INERT)
                 check("R2-17c", "Player, picker and a paywall hidden by any path: inert while open, never left inert after",
@@ -661,13 +664,13 @@ async def main(html, only):
                     await pg.evaluate("()=>{localStorage.setItem('crate-saved',JSON.stringify([{song:'A',artist:'B',url:'https://x.test/a',ts:Date.now()}])); nav('profile');}")
                     await pg.wait_for_timeout(300)
                     pf = await pg.evaluate("()=>({exp:(document.querySelector('#pfexp svg')||{}).innerHTML||'', auto:document.getElementById('pfauto').getAttribute('aria-label'), body:document.getElementById('profbody').innerText})")
-                    sheet = await pg.evaluate("()=>document.getElementById('sheet').innerText")
+                    sheet = await pg.evaluate("()=>(document.getElementById('sheet')||{innerText:''}).innerText")   # round 3 removed the sheet nothing opened
                     trk = await pg.evaluate("()=>huntTracker()")
                     check("R2-21", "Search says 'Tap one to hear a preview. Add the right one to your Finds.'; Export has a share icon; "
                                    "'Add every match to Finds'; the tracker ends on 'Ready'",
                           "Tap one to hear a preview. Add the right one to your Finds." in sb and "save the one that fits" not in sb
                           and "M12 14.5V3.5" in pf["exp"] and "M5 20h14" not in pf["exp"] and pf["auto"] == "Add every match to Finds"
-                          and "Add every match to Finds" in pf["body"] and "Auto-save" not in pf["body"] and "Add every match to Finds" in sheet
+                          and "Add every match to Finds" in pf["body"] and "Auto-save" not in pf["body"] and (not sheet or "Add every match to Finds" in sheet)
                           and ">Ready<" in trk and "Ready to save" not in trk, {"search": sb[-160:], "prof": pf, "sheet": sheet})
                 if want(22):
                     await pg.evaluate("()=>openOnb(0,'replay')"); await pg.wait_for_timeout(400)

@@ -258,7 +258,7 @@ async def main_async(html, shots):
         out.check("B1", "Start 3-day free trial buys the yearly product",
                   len(buys) == 1 and buys[0].get("id") == YEARLY, buys)
         out.check("B2", "A pending purchase says so on the sheet",
-                  st["msg"] == "Your purchase is pending. Plus unlocks as soon as the App Store confirms it.", st["msg"])
+                  st["msg"] == "Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it.", st["msg"])   # round 3: one product name
         await pg.tap(".pwplan[data-i='1']")
         await pg.wait_for_timeout(200)
         await pg.evaluate("()=>{sessionStorage.setItem('pwmode',JSON.stringify({products:'normal',buy:'cancelled'}));}")
