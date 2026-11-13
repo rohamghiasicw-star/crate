@@ -96,24 +96,88 @@ def patch(ios_dir, variant):
         if w.count(old) != 1:
             sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
         w = w.replace(old, new)
-    # No simulator tool can tap Done, so the lab copy closes the Safari view itself after 5 s, the
-    # way Done does (dismiss), and logs both ends. Without this anchor (a build with no Safari view)
-    # nothing is patched and the privacy checks say what happened instead.
-    sold = "            if !presentOnTop(safari, over: wv) { bridge.openExternal(url) }\n"
-    snew = (sold + "            NSLog(\"ADDIFY-SAFARI presented %@\", url.path)\n"
-            "            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak safari] in\n"
-            "                NSLog(\"ADDIFY-SAFARI closing\")\n"
-            "                safari?.dismiss(animated: true) { NSLog(\"ADDIFY-SAFARI closed\") }\n"
-            "            }\n")
-    if w.count(sold) == 1:
-        w = w.replace(sold, snew)
+    # No simulator tool can tap Done, so the lab copy closes the Safari view itself, the way Done
+    # does (dismiss): 6 s after its page finished loading, or 30 s after it opened if it never
+    # does. A simulator's first Safari view took about 4 s to ask for its page, so a fixed timer
+    # closed it before anything showed. Once closed, it tells the page underneath
+    # (labSafariClosed), which reports from the same page load. Without these anchors (a build
+    # with no Safari view) nothing is patched and the privacy checks say what happened instead.
+    sanchors = [("            safari.modalPresentationStyle = .pageSheet\n",
+                 "            safari.modalPresentationStyle = .pageSheet\n            LabSafariCloser.watch(safari, page: wv)\n"),
+                ("            if !presentOnTop(safari, over: wv) { bridge.openExternal(url) }\n",
+                 "            if !presentOnTop(safari, over: wv) { bridge.openExternal(url) }\n"
+                 "            NSLog(\"ADDIFY-SAFARI presented %@\", url.path)\n")]
+    if all(w.count(old) == 1 for old, _ in sanchors):
+        for old, new in sanchors:
+            w = w.replace(old, new)
+        w += LAB_SAFARI_CLOSER
     else:
-        print("patch: no Safari view in this build (anchor matched %d times), not patched" % w.count(sold))
+        print("patch: no Safari view in this build (anchors matched %s times), not patched" % [w.count(o) for o, _ in sanchors])
+    # A WebKit view that is up but shows nothing reads as the loading screen in a screenshot. Log
+    # what the view itself says each time a page counts as loaded, so the job log can tell them apart.
+    pold = "            bridge.engineLoaded()\n"
+    if w.count(pold) != 1:
+        print("patch: page-loaded anchor matched %d times, not logged" % w.count(pold))
+    else:
+        w = w.replace(pold, pold + "            if let v = bridge.webView { NSLog(\"ADDIFY-PAGE loaded %@ window=%d hidden=%d alpha=%.2f size=%.0fx%.0f loading=%d\", "
+                      "v.url?.path ?? \"-\", v.window == nil ? 0 : 1, v.isHidden ? 1 : 0, Double(v.alpha), Double(v.bounds.width), "
+                      "Double(v.bounds.height), v.isLoading ? 1 : 0) }\n")
+    # A share that opens the app: simctl openurl stops at "Open in Addify?" on these simulators, and
+    # nothing can tap it. The lab copy takes the same addify://scan URL from its launch environment
+    # and hands it to the same handler onOpenURL calls.
+    apath = os.path.join(ios_dir, "Addify", "AddifyApp.swift")
+    a = open(apath).read()
+    aold = "                .onOpenURL { url in bridge.handleIncoming(url) }\n"
+    if a.count(aold) != 1:
+        sys.exit("patch: AddifyApp.swift anchor matched %d times" % a.count(aold))
+    a = a.replace(aold, aold +
+                  "                .onAppear {\n"
+                  "                    if let s = ProcessInfo.processInfo.environment[\"ADDIFY_LAB_OPEN\"], let u = URL(string: s) {\n"
+                  "                        NSLog(\"ADDIFY-LAB open %@\", s)\n"
+                  "                        bridge.handleIncoming(u)\n"
+                  "                    }\n"
+                  "                }\n")
+    open(apath, "w").write(a)
     open(wpath, "w").write(w)
     print("patched %s and %s for %s" % (path, wpath, variant))
 
 
 # ---------- stub engine ----------
+
+LAB_SAFARI_CLOSER = """
+
+/* Lab copy only (smoke.py): closes the Safari view the way Done does, then tells the page. */
+final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
+    static var current: LabSafariCloser?
+    weak var safari: SFSafariViewController?
+    weak var page: WKWebView?
+    var closing = false
+
+    static func watch(_ s: SFSafariViewController, page: WKWebView) {
+        let c = LabSafariCloser()
+        c.safari = s
+        c.page = page
+        s.delegate = c
+        current = c
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak c] in c?.close("never loaded") }
+    }
+
+    func safariViewController(_ controller: SFSafariViewController, didCompleteInitialLoad didLoadSuccessfully: Bool) {
+        NSLog("ADDIFY-SAFARI loaded %d", didLoadSuccessfully ? 1 : 0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.close("after load") }
+    }
+
+    func close(_ why: String) {
+        guard !closing, let s = safari else { return }
+        closing = true
+        NSLog("ADDIFY-SAFARI closing (%@)", why)
+        s.dismiss(animated: true) { [weak self] in
+            NSLog("ADDIFY-SAFARI closed")
+            self?.page?.evaluateJavaScript("window.labSafariClosed && window.labSafariClosed()", completionHandler: nil)
+        }
+    }
+}
+"""
 
 LOCK = threading.Lock()
 CFG = {}
@@ -146,13 +210,14 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     .then(function(s){ r.store = s; show(); send(kind, r); if (done) done(); }); }
   bridges('bridges', function(){
     setTimeout(function(){ bridges('bridges2'); }, 3000);   // again, after the directory has answered
-    // Opens /privacy one way or another, then says (10 s later) whether this same page is still here.
+    // Opens /privacy one way or another. When the Safari view has closed (the lab copy calls
+    // labSafariClosed), says whether this same page is still here.
     if (__PRIVACY__) setTimeout(function(){
       if (__PRIVACY__ === 'anchor') { var a = document.createElement('a'); a.href = '/privacy'; a.target = '_blank';
         a.rel = 'noopener'; document.body.appendChild(a); a.click(); }
       else if (__PRIVACY__ === 'open') window.open('/privacy', '_blank');
       else location.href = '/privacy';
-      setTimeout(function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }, 10000); }, 1000);
+      window.labSafariClosed = function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }; }, 1000);
     if (__EXPORT__) setTimeout(function(){
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
       .then(function(e){ r.export = e; show(); send('export', r);
@@ -293,8 +358,8 @@ def start_stub():
 
 # ---------- simulator ----------
 
-def run(*args, timeout=600, check=True):
-    r = subprocess.run(list(args), capture_output=True, text=True, timeout=timeout)
+def run(*args, timeout=600, check=True, env=None):
+    r = subprocess.run(list(args), capture_output=True, text=True, timeout=timeout, env=env)
     if check and r.returncode != 0:
         raise RuntimeError("%s -> %d: %s" % (" ".join(args), r.returncode, (r.stderr or r.stdout).strip()[:400]))
     return r.stdout
@@ -376,6 +441,7 @@ class Device:
     def __init__(self, entry, tag, out):
         self.version, self.name, self.udid = entry
         self.tag, self.out = tag, out
+        self.pids = []
 
     def boot(self):
         run("xcrun", "simctl", "boot", self.udid, check=False)
@@ -388,11 +454,13 @@ class Device:
         run("xcrun", "simctl", "uninstall", self.udid, BUNDLE, check=False)
         run("xcrun", "simctl", "install", self.udid, app)
 
-    def launch(self):
-        run("xcrun", "simctl", "launch", self.udid, BUNDLE)
-
-    def openurl(self, url):
-        run("xcrun", "simctl", "openurl", self.udid, url)
+    def launch(self, env=None):
+        """Starts the app, or brings it to the front when it is already running. env: variables
+        for the app's own environment (simctl passes SIMCTL_CHILD_<name> through)."""
+        extra = {"SIMCTL_CHILD_" + k: v for k, v in (env or {}).items()}
+        out = run("xcrun", "simctl", "launch", self.udid, BUNDLE, env=dict(os.environ, **extra) if extra else None)
+        m = re.search(r":\s*(\d+)\s*$", out.strip())
+        self.pids.append(int(m.group(1)) if m else None)
 
     def to_background(self):
         """Puts another app (Settings) in front, so Addify goes to the background."""
@@ -415,12 +483,12 @@ class Device:
 
 
 def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, shots=(), after=(),
-             launch_url=None, actions=()):
+             launch_env=None, actions=()):
     """shots: (name, seconds after launch). after: (name, test(entry), seconds after the first
     stub log entry that passes test), so a screenshot lands inside the moment it is meant to show
     however slowly the simulator starts the app. actions: (name, find(log) -> entry or None,
-    seconds after that entry, fn(dev)), run in order of time like the screenshots. launch_url:
-    open the app with this URL (simctl openurl) instead of a plain launch."""
+    seconds after that entry, fn(dev)), run in order of time like the screenshots. launch_env:
+    variables for the app's environment at launch (the lab copy reads ADDIFY_LAB_OPEN)."""
     with LOCK:
         CFG.clear()
         CFG.update(json.loads(json.dumps(cfg)))
@@ -431,10 +499,8 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         dev.install(app)
     t0 = time.time()
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0 - 1))
-    if launch_url:
-        dev.openurl(launch_url)
-    else:
-        dev.launch()
+    dev.pids = []
+    dev.launch(launch_env)
     pending = [(name, t0 + at, None) for name, at in shots]
     waiting = [(name, (lambda log, test=test: next((e for e in log if test(e)), None)), delay, None)
                for name, test, delay in after]
@@ -624,7 +690,9 @@ def run_stub_suite(dev, app, version, ipad=False):
 
         down = {"A": {"health_ms": 20, "fail_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         first502 = lambda e: e["role"] == "A" and e["status"] == 502
-        res = scenario(dev, app, "server5xx", down, timeout=45, after=(("error", first502, 1.2),))
+        # "late": diagnosis only, whether a page that is not on screen at the end paints later.
+        res = scenario(dev, app, "server5xx", down, timeout=45,
+                       after=(("error", first502, 1.2), ("late", lambda e: e.get("kind") == "bridges", 5.0)))
         r = common(dev, "server5xx", res, version)
         reqs = page_requests(res, "A")
         check(dev, "server5xx", "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
@@ -637,6 +705,9 @@ def run_stub_suite(dev, app, version, ipad=False):
         check(dev, "server5xx", "error screen with Try again during the outage (not blank)", mid == "error", mid)
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
+        check(dev, "server5xx", "page on screen 5 s after the page reported", pixel_class(res["shots"].get("late", "")) == "page",
+              "%s, %s" % (pixel_class(res["shots"].get("late", "")), [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-PAGE" in l]),
+              info=True)
         json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
 
         # A 4xx engine page with words on it is the same failed load as a 5xx: the error screen,
@@ -769,13 +840,21 @@ def sharefail(dev, app, version):
     share502 = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share" and e["status"] == 502
     reported = lambda e: e.get("kind") == "bridges"
     fifth = nth(share502, 5)
+    # The share arrives the way the share extension sends it (addify://scan?url=...), handed to the
+    # same handler onOpenURL calls (the lab copy's launch hook: simctl openurl stops at a prompt).
+    # Coming back is a plain launch of the running app, which brings it to the front.
     res = scenario(dev, app, "sharefail", sf, timeout=110,
-                   launch_url="addify://scan?url=" + quote(SHARE_LINK, safe=""),
+                   launch_env={"ADDIFY_LAB_OPEN": "addify://scan?url=" + quote(SHARE_LINK, safe="")},
                    after=(("settled", reported, 1.5),),
                    actions=(("error", fifth, 1.5, None),
                             ("leave", fifth, 2.0, lambda d: d.to_background()),
-                            ("return", fifth, 5.0, lambda d: d.openurl("addify://open"))))
+                            ("return", fifth, 5.0, lambda d: d.launch())))
     timeline(res)
+    pids = list(dev.pids)
+    check(dev, "sharefail", "share handed to the app at launch", lab_has(res, "ADDIFY-LAB open addify://scan"),
+          "lab log %s" % [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-LAB" in l])
+    check(dev, "sharefail", "coming back reached the same process (not a relaunch)",
+          len(pids) == 2 and pids[0] is not None and pids[0] == pids[1], "pids %s" % pids)
     reqs = [(e["dt"], e["path"], e["status"]) for e in res["entries"]
             if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
     # From the share's first page load on (a Home load that started before the share reached the
@@ -808,14 +887,14 @@ def sharefail(dev, app, version):
 def privacy(dev, app, mode):
     """Build 30. The page opens /privacy: a target=_blank link (anchor), window.open
     (open) or the page sending itself there (nav). It must open in a Safari view over the app, never
-    in the app's own web view, and closing it (the lab copy closes it after 5 s, as Done does) must
-    leave the same page on screen, not reloaded."""
+    in the app's own web view, and closing it (the lab copy closes it 6 s after its page loaded, as
+    Done does) must leave the same page on screen, not reloaded."""
     label = "privacy-" + mode
     pv = {"A": {"health_ms": 20, "privacy": mode}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     fetched = lambda e: e["path"].split("?")[0] == "/privacy"
     came_back = lambda e: e.get("kind") == "back"
-    res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=50,
-                   after=(("sheet", fetched, 2.5), ("after", came_back, 0.8)))
+    res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=75,
+                   after=(("sheet", fetched, 3.0), ("after", came_back, 0.8)))
     timeline(res)
     priv = [e for e in res["entries"] if fetched(e)]
     in_app = [e for e in priv if "Addify/" in e.get("ua", "")]
