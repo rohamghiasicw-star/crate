@@ -8,7 +8,12 @@ iPhone and an iPad simulator. Scenarios:
   untrusted  the directory names a host outside the compiled-in list (fresh, then relaunch)
   server5xx  the main page answers an empty 502 twice, then the page
   redirect   the main page redirects to a host outside the list (must never reach Safari)
-  export     the page calls the exportFinds handler
+  export     the page calls the exportFinds handler (after one untimed share sheet on that install)
+  sharefail  a share opens the app while its share page fails; a return to the app reopens it
+  privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
+             it must open in a Safari view over the app, and closing it returns to the same page
+Each simulator starts with one untimed launch (warmup), so the first boot's slow start is not
+inside a checked scenario.
 A second lab copy loads the real page from the test server (screenshots only, no scans).
 
   smoke.py patch <ios_dir> stub|testbox
@@ -25,7 +30,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 PORT_A, PORT_B, PORT_G, PORT_X = 8711, 8712, 8719, 8799
 ROLES = {PORT_A: "A", PORT_B: "B", PORT_G: "G", PORT_X: "X"}
@@ -50,6 +55,19 @@ def patch(ios_dir, variant):
         src, n = re.subn(pat, new, src)
         if n != 1:
             sys.exit("patch: %r matched %d times" % (pat, n))
+    # Lab copies only: log the directory's answer and each launch check's order and winner, so a
+    # relaunch that loads the wrong address says whether the pick was missing or passed over.
+    creps = [("              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }\n",
+              "              (resp as? HTTPURLResponse)?.statusCode == 200 else { NSLog(\"ADDIFY-DIRECTORY no answer\"); return nil }\n"),
+             ("        AppGroup.defaults.set(pick, forKey: directoryKey)\n",
+              "        AppGroup.defaults.set(pick, forKey: directoryKey)\n        NSLog(\"ADDIFY-DIRECTORY stored %@\", pick)\n"),
+             ("        let winner = await bestAnswer(list, preferWindow: preferWindow, check: probe)\n",
+              "        let winner = await bestAnswer(list, preferWindow: preferWindow, check: probe)\n"
+              "        NSLog(\"ADDIFY-LAUNCH order=%@ winner=%@\", list.map(\\.absoluteString).joined(separator: \",\"), winner?.absoluteString ?? \"none\")\n")]
+    for old, new in creps:
+        if src.count(old) != 1:
+            sys.exit("patch: EngineConfig.swift anchor matched %d times: %r" % (src.count(old), old.strip()))
+        src = src.replace(old, new)
     open(path, "w").write(src)
     # Lab copies only, never the shipped source: log how long the #app check holds the page back,
     # from didFinish to its answer, so the job log shows what it adds before the page is revealed.
@@ -65,10 +83,27 @@ def patch(ios_dir, variant):
               "                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op\n"
               "                NSLog(\"ADDIFY-APPCHECK settled %ld ms hasApp=%d url=%@\", Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), "
               "hasApp ? 1 : 0, url.path)\n")]
+    # The stub page opens /privacy from a timer, with no tap: let a script open a window, as a tap
+    # would. The delegate path it takes (createWebViewWith) is the shipped one.
+    wreps.append(("        cfg.allowsInlineMediaPlayback = true\n",
+                  "        cfg.allowsInlineMediaPlayback = true\n        cfg.preferences.javaScriptCanOpenWindowsAutomatically = true\n"))
     for old, new in wreps:
         if w.count(old) != 1:
             sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
         w = w.replace(old, new)
+    # No simulator tool can tap Done, so the lab copy closes the Safari view itself after 5 s, the
+    # way Done does (dismiss), and logs both ends. Without this anchor (a build with no Safari view)
+    # nothing is patched and the privacy checks say what happened instead.
+    sold = "            if !presentOnTop(safari, over: wv) { bridge.openExternal(url) }\n"
+    snew = (sold + "            NSLog(\"ADDIFY-SAFARI presented %@\", url.path)\n"
+            "            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak safari] in\n"
+            "                NSLog(\"ADDIFY-SAFARI closing\")\n"
+            "                safari?.dismiss(animated: true) { NSLog(\"ADDIFY-SAFARI closed\") }\n"
+            "            }\n")
+    if w.count(sold) == 1:
+        w = w.replace(sold, snew)
+    else:
+        print("patch: no Safari view in this build (anchor matched %d times), not patched" % w.count(sold))
     open(wpath, "w").write(w)
     print("patched %s and %s for %s" % (path, wpath, variant))
 
@@ -79,6 +114,7 @@ LOCK = threading.Lock()
 CFG = {}
 LOG = []
 COUNTS = {}
+SHARE_LINK = "https://vt.tiktok.com/ZSsmoke01/"
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>stub</title></head>
@@ -88,7 +124,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <script>
 (function(){
   var H = window.webkit && window.webkit.messageHandlers;
-  var r = {port: __PORT__, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
+  var lid = String(Math.random()).slice(2);   // this page load; a reload gets a new one
+  var r = {port: __PORT__, lid: lid, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
     has: {addify: !!(H && H.addify), addifyStore: !!(H && H.addifyStore), addifyKit: !!(H && H.addifyKit),
           exportFinds: !!(H && H.exportFinds), openSettings: !!(H && H.openSettings)}};
   function send(kind, obj){ try { var x = new XMLHttpRequest(); x.open('POST', '/report?kind=' + kind, true);
@@ -104,6 +141,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     .then(function(s){ r.store = s; show(); send(kind, r); if (done) done(); }); }
   bridges('bridges', function(){
     setTimeout(function(){ bridges('bridges2'); }, 3000);   // again, after the directory has answered
+    // Opens /privacy one way or another, then says (10 s later) whether this same page is still here.
+    if (__PRIVACY__) setTimeout(function(){
+      if (__PRIVACY__ === 'anchor') { var a = document.createElement('a'); a.href = '/privacy'; a.target = '_blank';
+        a.rel = 'noopener'; document.body.appendChild(a); a.click(); }
+      else if (__PRIVACY__ === 'open') window.open('/privacy', '_blank');
+      else location.href = '/privacy';
+      setTimeout(function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }, 10000); }, 1000);
     if (__EXPORT__) setTimeout(function(){
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'})
       .then(function(e){ r.export = e; show(); send('export', r);
@@ -111,6 +155,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   });
 })();
 </script></body></html>"""
+
+# The legal page the stub page opens. Blue, so a screenshot tells it from the app page and from
+# the app's own screens. No script: it reports nothing, the request log says who fetched it.
+PRIVACY_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>privacy</title></head>
+<body style="margin:0;background:#1d4ed8;color:#fff;min-height:100vh;font:16px -apple-system,sans-serif">
+<h2 style="padding:60px 16px;margin:0">PRIVACY</h2></body></html>"""
 
 # A complete 200 that is not the app: no #app and no script, like a document cut off before the
 # app's markup. Same green as the stub page, so if the app ever showed it the screenshot says so.
@@ -179,10 +230,16 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 e["report"] = {"raw": body[:200].decode(errors="replace")}
             return self.reply(204)
+        if path in ("/privacy", "/support", "/terms"):
+            return self.reply(200, PRIVACY_PAGE.encode())
         if path in ("/", "/share"):
             with LOCK:
                 COUNTS[role] = COUNTS.get(role, 0) + 1
                 k = COUNTS[role]
+                COUNTS[(role, path)] = COUNTS.get((role, path), 0) + 1
+                kp = COUNTS[(role, path)]
+            if path == "/share" and kp <= cfg.get("share_fail_first", 0):
+                return self.reply(502)
             if cfg.get("redirect"):
                 self.send_response(302)
                 self.send_header("Location", cfg["redirect"])
@@ -197,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, NOAPP_PAGE.encode())
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
+            page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
             return self.reply(200, page.encode())
         return self.reply(404)
 
@@ -259,8 +317,9 @@ def pick_device(devs, prefs, prefix):
 
 
 def pixel_class(png):
-    """'page' (the stub's green), 'error' (the app's #17141F ground with the purple Try again
-    button below the middle), 'boot' (the same ground, no button), or 'other'."""
+    """'page' (the stub's green), 'privacy' (the stub's blue legal page), 'error' (the app's #17141F
+    ground with the purple Try again button below the middle), 'boot' (the same ground, no
+    button), or 'other'."""
     if not png or not os.path.exists(png):
         return "missing"
     bmp = png[:-4] + ".bmp"
@@ -285,6 +344,8 @@ def pixel_class(png):
         r, g, b = px(0.5, fy)
         if abs(r - 10) < 30 and abs(g - 125) < 30 and abs(b - 44) < 30:
             votes.append("page")
+        elif abs(r - 29) < 30 and abs(g - 78) < 30 and abs(b - 216) < 30:
+            votes.append("privacy")
         elif abs(r - 23) < 14 and abs(g - 20) < 14 and abs(b - 31) < 14:
             votes.append("native")
         else:
@@ -324,6 +385,13 @@ class Device:
     def launch(self):
         run("xcrun", "simctl", "launch", self.udid, BUNDLE)
 
+    def openurl(self, url):
+        run("xcrun", "simctl", "openurl", self.udid, url)
+
+    def to_background(self):
+        """Puts another app (Settings) in front, so Addify goes to the background."""
+        run("xcrun", "simctl", "launch", self.udid, "com.apple.Preferences")
+
     def terminate(self):
         run("xcrun", "simctl", "terminate", self.udid, BUNDLE, check=False)
 
@@ -340,10 +408,13 @@ class Device:
         return False
 
 
-def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, shots=(), after=()):
+def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, shots=(), after=(),
+             launch_url=None, actions=()):
     """shots: (name, seconds after launch). after: (name, test(entry), seconds after the first
     stub log entry that passes test), so a screenshot lands inside the moment it is meant to show
-    however slowly the simulator starts the app."""
+    however slowly the simulator starts the app. actions: (name, find(log) -> entry or None,
+    seconds after that entry, fn(dev)), run in order of time like the screenshots. launch_url:
+    open the app with this URL (simctl openurl) instead of a plain launch."""
     with LOCK:
         CFG.clear()
         CFG.update(json.loads(json.dumps(cfg)))
@@ -354,24 +425,34 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         dev.install(app)
     t0 = time.time()
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0 - 1))
-    dev.launch()
-    pending = [(name, t0 + at) for name, at in shots]
-    waiting = list(after)
-    taken = {}
+    if launch_url:
+        dev.openurl(launch_url)
+    else:
+        dev.launch()
+    pending = [(name, t0 + at, None) for name, at in shots]
+    waiting = [(name, (lambda log, test=test: next((e for e in log if test(e)), None)), delay, None)
+               for name, test, delay in after]
+    waiting += list(actions)
+    taken, done = {}, {}
     while True:
         now = time.time()
         with LOCK:
             fresh_log = LOG[mark:]
         for item in list(waiting):
-            name, test, delay = item
-            hit = next((e for e in fresh_log if test(e)), None)
+            name, find, delay, fn = item
+            hit = find(fresh_log)
             if hit:
-                pending.append((name, hit["t"] + delay))
+                pending.append((name, hit["t"] + delay, fn))
                 waiting.remove(item)
-        for name, when in sorted(pending, key=lambda p: p[1]):
+        for item in sorted(pending, key=lambda p: p[1]):
+            name, when, fn = item
             if now >= when:
-                taken[name] = dev.shot("%s-%s" % (label, name))
-                pending.remove((name, when))
+                if fn:
+                    fn(dev)
+                    done[name] = round(time.time() - t0, 2)
+                else:
+                    taken[name] = dev.shot("%s-%s" % (label, name))
+                pending.remove(item)
         kinds = {e.get("kind") for e in fresh_log if e.get("kind")}
         if (all(k in kinds for k in want) and not pending and not waiting) or now - t0 > timeout:
             break
@@ -384,21 +465,35 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         entries = [dict(e) for e in LOG[mark:]]
     for e in entries:
         e["dt"] = round(e["t"] - t0, 2)
+    lab = lab_lines(dev, since, label)
     return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1),
-            "appcheck": appcheck_lines(dev, since, label)}
+            "done": done, "lab": lab, "appcheck": [l for l in lab if "ADDIFY-APPCHECK" in l]}
 
 
-def appcheck_lines(dev, since, label):
-    """The lab build's #app check timings for one scenario, from the simulator's unified log."""
+def lab_lines(dev, since, label):
+    """The lab build's own log lines for one scenario (#app check timings, the directory's answer,
+    each launch check, the Safari view), from the simulator's unified log."""
     try:
         out = run("xcrun", "simctl", "spawn", dev.udid, "log", "show", "--start", since, "--style", "compact",
-                  "--predicate", 'eventMessage CONTAINS "ADDIFY-APPCHECK"', check=False, timeout=180)
+                  "--predicate", 'eventMessage CONTAINS "ADDIFY-"', check=False, timeout=180)
     except subprocess.TimeoutExpired:
         out = ""
-    lines = [l.strip() for l in out.splitlines() if "ADDIFY-APPCHECK" in l]
+    lines = [l.strip() for l in out.splitlines() if "ADDIFY-" in l and "eventMessage" not in l]
     for l in lines:
-        print("      [%s] %s" % (label, l[l.index("ADDIFY-APPCHECK"):]))
+        print("      [%s] %s" % (label, l[l.index("ADDIFY-"):]))
     return lines
+
+
+def lab_has(res, text):
+    return any(text in l for l in res.get("lab", []))
+
+
+def nth(test, n):
+    """find() for scenario actions: the n-th stub log entry that passes test."""
+    def find(log):
+        hits = [e for e in log if test(e)]
+        return hits[n - 1] if len(hits) >= n else None
+    return find
 
 
 def appcheck_ms(res):
@@ -463,7 +558,9 @@ def run_stub_suite(dev, app, version, ipad=False):
     # up: before this change that rewrote the address under the page and the bridges refused it.
     base = {"A": {"health_ms": 250}, "B": {"health_ms": 20},
             "G": {"pick": "http://127.0.0.1:8712", "delay_ms": 1500}, "X": {}}
+    pick_b = "ADDIFY-DIRECTORY stored http://127.0.0.1:8712"
 
+    warmup(dev, app)
     res = scenario(dev, app, "race", base, want=("bridges", "bridges2"), shots=(("t3", 3.0),))
     r = common(dev, "race", res, version)
     check(dev, "race", "loaded the preferred address", r and r.get("port") == PORT_A, "port %s" % (r or {}).get("port"))
@@ -475,10 +572,24 @@ def run_stub_suite(dev, app, version, ipad=False):
     check(dev, "race", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
     appcheck_report(dev, "race", res)
     json.dump(res, open(os.path.join(dev.out, "%s-race.json" % dev.tag), "w"), indent=1)
+    # The relaunch asserts that a pick stored by an earlier launch goes first. It can only test that
+    # once a pick is stored: when the race launch's directory answer never arrived (b32e695, first
+    # attempt: a slow first launch held the request past the app's 8 s timeout), one more launch
+    # of the same install stores it before the relaunch.
+    stored = lab_has(res, pick_b)
+    check(dev, "race", "directory's pick stored for the next launch", stored,
+          "stored" if stored else "not stored: %s" % [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-DIRECTORY" in l],
+          info=True)
+    if not stored:
+        prime = scenario(dev, app, "prime", base, fresh=False, want=("bridges", "bridges2"))
+        stored = lab_has(prime, pick_b)
+        check(dev, "prime", "directory's pick stored before the relaunch", stored, "", info=True)
 
     res = scenario(dev, app, "relaunch", base, fresh=False)
     r = common(dev, "relaunch", res, version)
-    check(dev, "relaunch", "loaded the directory's pick", r and r.get("port") == PORT_B, "port %s" % (r or {}).get("port"))
+    order = [l[l.index("ADDIFY-LAUNCH"):] for l in res["lab"] if "ADDIFY-LAUNCH" in l]
+    check(dev, "relaunch", "loaded the directory's pick", r and r.get("port") == PORT_B,
+          "port %s, pick stored before: %s, %s" % ((r or {}).get("port"), stored, order))
     check(dev, "relaunch", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
     appcheck_report(dev, "relaunch", res)
     json.dump(res, open(os.path.join(dev.out, "%s-relaunch.json" % dev.tag), "w"), indent=1)
@@ -578,15 +689,127 @@ def run_stub_suite(dev, app, version, ipad=False):
         check(dev, "redirect", "app still running", res["alive"], "")
         json.dump(res, open(os.path.join(dev.out, "%s-redirect.json" % dev.tag), "w"), indent=1)
 
+        sharefail(dev, app, version)
+
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     exported = lambda e: e.get("kind") == "export"
-    res = scenario(dev, app, "export", exp, want=("export", "alive"), timeout=45, after=(("sheet", exported, 1.5),))
+    # The first share sheet after an install can hold the app's main thread while the system lists
+    # the share extensions: about 18 s on the iPhone in b32e695's first attempt (the page's own 8 s
+    # wait for the answer ran out, and a bridge call made meanwhile timed out too), 2 to 3 s in
+    # every other run. One untimed sheet on the same install first, waiting until the main thread
+    # answers again (bridges2), so the timed run below measures the handler and not that first list.
+    res = scenario(dev, app, "exportwarm", exp, want=("export", "alive", "bridges2"), timeout=90)
+    r = report(res, "export")
+    at = [e["dt"] for e in res["entries"] if e.get("kind") == "export"]
+    check(dev, "exportwarm", "share sheet opened once on this install (untimed)", r is not None,
+          "%s at %s s" % (json.dumps((r or {}).get("export")), at), info=True)
+    json.dump(res, open(os.path.join(dev.out, "%s-exportwarm.json" % dev.tag), "w"), indent=1)
+
+    res = scenario(dev, app, "export", exp, fresh=False, want=("export", "alive"), timeout=45,
+                   after=(("sheet", exported, 1.5),))
     r = report(res, "export")
     check(dev, "export", "exportFinds resolved", r is not None and r.get("export") == {"ok": {"ok": True}},
           json.dumps((r or {}).get("export")))
     check(dev, "export", "app alive after the share sheet", report(res, "alive") is not None and res["alive"],
           "alive report %s, process %s" % (report(res, "alive") is not None, res["alive"]))
     json.dump(res, open(os.path.join(dev.out, "%s-export.json" % dev.tag), "w"), indent=1)
+
+    for mode in (("anchor",) if ipad else ("anchor", "open", "nav")):
+        privacy(dev, app, mode)
+
+
+def warmup(dev, app):
+    """The first launch after a simulator boots is slow and uneven: 7 to 50 s before the app's first
+    request in b32e695's runs, and in the attempt that failed, requests were held long enough for the
+    app's own 6 s and 8 s timeouts to run out (two rounds of health checks, the directory's answer
+    lost). One untimed launch takes that, so the checked scenarios measure the app, not the boot."""
+    cfg = {"A": {"health_ms": 20}, "B": {"health_ms": 20}, "G": {"pick": ""}, "X": {}}
+    res = scenario(dev, app, "warmup", cfg, want=("bridges", "bridges2"), timeout=150)
+    at = [e["dt"] for e in res["entries"] if e.get("kind") == "bridges"]
+    first = min([e["dt"] for e in res["entries"]] or [-1])
+    check(dev, "warmup", "simulator warmed by one untimed launch", bool(at),
+          "first request %.1f s, page %s" % (first, ("%.1f s" % at[-1]) if at else "never"), info=True)
+    json.dump(res, open(os.path.join(dev.out, "%s-warmup.json" % dev.tag), "w"), indent=1)
+
+
+def link_in(url):
+    return (parse_qs(urlsplit(url or "").query).get("url") or [""])[0]
+
+
+def sharefail(dev, app, version):
+    """Build 30. A share opens the app, and its share page answers 502 on the first
+    load and on all 4 automatic reloads. The user leaves the app and comes back, which runs the same
+    launch check as Try again. That must reopen the share page with the same link, never Home."""
+    sf = {"A": {"health_ms": 20, "share_fail_first": 5}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    share502 = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share" and e["status"] == 502
+    reported = lambda e: e.get("kind") == "bridges"
+    fifth = nth(share502, 5)
+    res = scenario(dev, app, "sharefail", sf, timeout=110,
+                   launch_url="addify://scan?url=" + quote(SHARE_LINK, safe=""),
+                   after=(("settled", reported, 1.5),),
+                   actions=(("error", fifth, 1.5, None),
+                            ("leave", fifth, 2.0, lambda d: d.to_background()),
+                            ("return", fifth, 5.0, lambda d: d.openurl("addify://open"))))
+    timeline(res)
+    reqs = [(e["dt"], e["path"], e["status"]) for e in res["entries"]
+            if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    # From the share's first page load on (a Home load that started before the share reached the
+    # app is not the share being dropped).
+    first = next((i for i, x in enumerate(reqs) if x[1].split("?")[0] == "/share"), len(reqs))
+    reqs = reqs[first:]
+    shown = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs]
+    fails = reqs[:5]
+    check(dev, "sharefail", "first load and 4 automatic reloads all opened the share page",
+          len(fails) == 5 and all(p.split("?")[0] == "/share" and link_in(p) == SHARE_LINK and st == 502 for _, p, st in fails),
+          json.dumps(shown[:5]))
+    check(dev, "sharefail", "Home never loaded while the share waited", not [x for x in reqs if x[1].split("?")[0] == "/"],
+          json.dumps(shown))
+    nxt = reqs[5:6]
+    back_at = res["done"].get("return")
+    check(dev, "sharefail", "coming back to the app reopened the share page, not Home",
+          len(nxt) == 1 and nxt[0][1].split("?")[0] == "/share" and link_in(nxt[0][1]) == SHARE_LINK and nxt[0][2] == 200
+          and back_at is not None and nxt[0][0] >= back_at,
+          "back at %s s, next load %s" % (back_at, json.dumps(shown[5:6])))
+    r = common(dev, "sharefail", res, version)
+    check(dev, "sharefail", "the page that loaded carries the shared link", link_in((r or {}).get("href")) == SHARE_LINK,
+          (r or {}).get("href", "no page"))
+    mid = pixel_class(res["shots"].get("error", ""))
+    check(dev, "sharefail", "error screen while the share page failed", mid == "error", mid)
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, "sharefail", "page on screen after coming back", k == "page", k)
+    json.dump(res, open(os.path.join(dev.out, "%s-sharefail.json" % dev.tag), "w"), indent=1)
+
+
+def privacy(dev, app, mode):
+    """Build 30. The page opens /privacy: a target=_blank link (anchor), window.open
+    (open) or the page sending itself there (nav). It must open in a Safari view over the app, never
+    in the app's own web view, and closing it (the lab copy closes it after 5 s, as Done does) must
+    leave the same page on screen, not reloaded."""
+    label = "privacy-" + mode
+    pv = {"A": {"health_ms": 20, "privacy": mode}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    fetched = lambda e: e["path"].split("?")[0] == "/privacy"
+    came_back = lambda e: e.get("kind") == "back"
+    res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=50,
+                   after=(("sheet", fetched, 2.5), ("after", came_back, 0.8)))
+    timeline(res)
+    priv = [e for e in res["entries"] if fetched(e)]
+    in_app = [e for e in priv if "Addify/" in e.get("ua", "")]
+    outside = [e for e in priv if "Addify/" not in e.get("ua", "")]
+    presented = lab_has(res, "ADDIFY-SAFARI presented /privacy")
+    check(dev, label, "/privacy opened in a Safari view over the app", bool(outside) and presented,
+          "%d requests from Safari, Safari view logged %s" % (len(outside), presented))
+    check(dev, label, "/privacy never loaded in the app's own web view", not in_app, "%d requests" % len(in_app))
+    k = pixel_class(res["shots"].get("sheet", ""))
+    check(dev, label, "the legal page on screen", k == "privacy", k)
+    load, back = report(res, "load"), report(res, "back")
+    pages = page_requests(res, "A")
+    same = load is not None and back is not None and back.get("lid") == load.get("lid") and back.get("href") == load.get("href")
+    check(dev, label, "closing returns to the same page, not reloaded", same and len(pages) == 1 and lab_has(res, "ADDIFY-SAFARI closed"),
+          "page %s then %s, %d page loads" % ((load or {}).get("lid"), (back or {}).get("lid"), len(pages)))
+    k = pixel_class(res["shots"].get("after", ""))
+    check(dev, label, "app page on screen after closing", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
 
 def run_testbox(dev, app):
