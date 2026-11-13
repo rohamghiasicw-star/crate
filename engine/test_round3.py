@@ -184,6 +184,8 @@ async def main(html, pages_dir, yml, only):
                         if mode == "abort": return await route.abort("failed")
                         if mode == "err":
                             return await route.fulfill(status=200, content_type="application/json", body=json.dumps({"result": "error", "error": "upstream timed out", "url": FIND}))
+                        if mode == "busy":   # the reviewer's repro: the engine answers the reopen busy (no quiet), card after 3 asks
+                            return await route.fulfill(status=200, content_type="application/json", body=json.dumps({"result": "rate_limited", "busy": "shazam", "retry_after": 2, "url": FIND}))
                         await asyncio.sleep(0.4)
                         return await route.fulfill(status=200, content_type="application/json", body=json.dumps(LG.split(found)))
                     return fn
@@ -194,16 +196,19 @@ async def main(html, pages_dir, yml, only):
                     return {"/base?url=" + "https%3A%2F%2Fwww.tiktok.com%2F%40ledger.test%2Fvideo%2F7000000000000000071": base_route(st),
                             "/edits": stream}
                 out = {}
-                # (a) Finds, the "Couldn't get that clip" card, Try again
-                st = {"n": 0, "modes": ["err", "ok"]}
-                ctx, pg = await page(init=SEED, routes=r1_routes(st))
-                await pg.evaluate("()=>nav('library')"); await pg.wait_for_timeout(400)
-                await pg.evaluate("()=>{var r=document.querySelector('#libbody .frow[data-i]'); if(r) r.click();}")
-                card = await until(pg, HAS, 15, "Couldn't get that clip")
-                await pg.evaluate("()=>{var b=document.getElementById('retrybtn'); if(b) b.click();}")
-                await until(pg, FINAL, 15); await pg.wait_for_timeout(500)
-                out["finds_try_again"] = {"card": bool(card), "paywall": await pg.evaluate("()=>window.__pw||0"), "used": await pg.evaluate(USED), "asks": st["n"], "errs": pg.errs}
-                await close(ctx)
+                # (a) Finds, then the card's Try again: "Addify is busy" (the reviewer's repro) and "Couldn't get that clip"
+                for tag, modes, want_card in (("finds_busy_try_again", ["busy", "busy", "busy", "ok"], "Addify is busy"),
+                                              ("finds_error_try_again", ["err", "ok"], "Couldn't get that clip")):
+                    st = {"n": 0, "modes": modes}
+                    ctx, pg = await page(init=SEED, routes=r1_routes(st))
+                    await pg.evaluate("()=>nav('library')"); await pg.wait_for_timeout(400)
+                    await pg.evaluate("()=>{var r=document.querySelector('#libbody .frow[data-i]'); if(r) r.click();}")
+                    card = await until(pg, HAS, 20, want_card); n_card = st["n"]
+                    await pg.evaluate("()=>{var b=document.getElementById('retrybtn'); if(b) b.click();}")
+                    await until(pg, FINAL, 15); await pg.wait_for_timeout(500)
+                    out[tag] = {"card": bool(card), "paywall": await pg.evaluate("()=>window.__pw||0"), "used": await pg.evaluate(USED),
+                                "asks": st["n"] - n_card, "errs": pg.errs}
+                    await close(ctx)
                 # (b) "Couldn't reach Addify", Try again
                 st = {"n": 0, "modes": ["abort", "abort", "abort", "abort", "ok"]}
                 ctx, pg = await page(init=SEED, routes=r1_routes(st))
@@ -233,7 +238,7 @@ async def main(html, pages_dir, yml, only):
                 t0 = time.time(); await pg.evaluate("(u)=>run(u)", CLIP % 72); await pg.wait_for_timeout(1200)
                 ctl = {"paywall": await pg.evaluate(PAYW), "asks": asks(pg, "/base", t0, "72")}
                 await close(ctx)
-                for tag in ("finds_try_again", "reach_try_again", "pending_resume", "engine_moved", "share", "app_bridge"):
+                for tag in ("finds_busy_try_again", "finds_error_try_again", "reach_try_again", "pending_resume", "engine_moved", "share", "app_bridge"):
                     o = out[tag]
                     check("R1-" + tag, "At 0 scans left, the saved find runs free by this path (%s): no paywall, a /base ask, nothing spent" % tag.replace("_", " "),
                           not o["paywall"] and o["used"] == "5" and o["asks"] >= 1 and not o["errs"] and o.get("card", True) and o.get("ran", True), o)
