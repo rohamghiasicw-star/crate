@@ -5673,7 +5673,7 @@ function openPaywall(){
   // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title on screen stays 'Addify+' (Option A, the
   // co-owners' paywall spec, and the live promise ledger's S6), and the rows on screen read 'Yearly' and 'Monthly'.
   // ROUND 5B (LITERAL-R4-01, IAP-R4-2): the full name is what a screen reader hears: the sheet is the 'Addify Plus'
-  // dialog and each row's name starts 'Addify Plus Yearly' or 'Addify Plus Monthly' (a hidden prefix in the row).
+  // dialog and each row's name starts 'Addify Plus Yearly' or 'Addify Plus Monthly' (the row's aria-label).
   var sub=(left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
     'Get unlimited scans and keep finding versions.';
   ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-label="Addify Plus" tabindex="-1">'+
@@ -5715,9 +5715,15 @@ function openPaywall(){
     b.innerHTML=plans.map(function(q,i){var t=pwTrial(q), on=i===sel;
       var name=q.period==='year'?'Yearly':q.period==='month'?'Monthly':esc(q.name||'Addify Plus');
       var line=t?esc(t.words)+', then billed '+esc(pwEvery(q)):(q.period==='year'?'Billed every year':q.period==='month'?'Billed every month':'Billed '+esc(pwEvery(q)));
-      return '<button class="pwplan" role="radio" aria-checked="'+on+'" data-i="'+i+'"'+(PW_BUYING?' disabled aria-disabled="true"':'')+'>'+
+      // ROUND 5B (LITERAL-R4-01, IAP-R4-2): what a screen reader hears for the row: the full product name, then all
+      // the row shows, in its order. On screen it still reads Yearly / Monthly.
+      var lbl=[q.period==='year'?'Addify Plus Yearly':q.period==='month'?'Addify Plus Monthly':(q.name||'Addify Plus'),
+               q===y&&save>0?'SAVE '+save+'%':'',
+               t?t.words+', then billed '+pwEvery(q):(q.period==='year'?'Billed every year':q.period==='month'?'Billed every month':'Billed '+pwEvery(q)),
+               q.price+' per '+pwPer(q)].filter(Boolean).join(', ');
+      return '<button class="pwplan" role="radio" aria-checked="'+on+'" aria-label="'+esc(lbl)+'" data-i="'+i+'"'+(PW_BUYING?' disabled aria-disabled="true"':'')+'>'+
         '<span class="pwdot" aria-hidden="true">'+IC.tick+'</span>'+
-        '<span class="pwname">'+(q.period==='year'||q.period==='month'?'<span class="vh">Addify Plus </span>':'')+'<b>'+name+'</b>'+(q===y&&save>0?'<span class="pwtag">SAVE '+save+'%</span>':'')+'<small>'+line+'</small></span>'+
+        '<span class="pwname"><b>'+name+'</b>'+(q===y&&save>0?'<span class="pwtag">SAVE '+save+'%</span>':'')+'<small>'+line+'</small></span>'+
         '<span class="pwprice"><b>'+esc(q.price)+'</b><small>per '+esc(pwPer(q))+'</small></span></button>';}).join('');
     [].forEach.call(b.querySelectorAll('.pwplan'),function(r){r.onclick=function(){if(PW_BUYING) return;
       sel=+r.getAttribute('data-i'); pwMsg(''); paint();};});}
