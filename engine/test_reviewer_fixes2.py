@@ -271,8 +271,11 @@ async def main(html, only):
                         check("R2-3a-" + mode, "Delete account shows 'Deleting...' and takes no second tap while it runs",
                               mid["txt"] == "Deleting..." and mid["dis"] and len(pg.dialogs) == 1, {"mid": mid, "dialogs": pg.dialogs})
                     # ROUND 4 (item 2): an erase still out at the 15 s cut-off may finish on the server later, so "hang"
-                    # says Addify didn't confirm in time instead of "Nothing was deleted yet" (test_round4 R2)
-                    said = ("Addify didn\u2019t confirm in time. Try again to finish deleting." if mode == "hang" else "Nothing was deleted yet")
+                    # says Addify didn't confirm in time (test_round4 R2). ROUND 5 (item 4): a refusal ({ok:false}) is Addify
+                    # answering, so it says Addify is busy; a 500 or a dropped connection may have erased rows, so it says
+                    # Couldn't finish deleting. "Nothing was deleted yet" is gone (test_round5a R4).
+                    said = {"hang": "Addify didn\u2019t confirm in time. Try again to finish deleting.", "okfalse": "Addify is busy. Try again in a minute.",
+                            "slow500": "Couldn\u2019t finish deleting. Try again.", "abort": "Couldn\u2019t finish deleting. Try again."}[mode]
                     check("R2-3b-" + mode, "A failed erase (%s) keeps everything on the phone and says %r" % (mode, said),
                           bool(end) and said in st["msg"] and st["fb"] and "fb-1" in st["fb"] and st["saved"] and st["mark"]
                           and st["txt"] == "Delete account" and not st["dis"], st)

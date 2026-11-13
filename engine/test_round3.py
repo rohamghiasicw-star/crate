@@ -413,8 +413,9 @@ async def main(html, pages_dir, yml, only):
                 await pg.evaluate("()=>document.getElementById('pfdel').click()")
                 await until(pg, "()=>{var m=document.getElementById('pfdelmsg'); return !!m&&!m.hidden;}", 20)
                 s3 = await pg.evaluate("()=>({msg:document.getElementById('pfdelmsg').innerText, fb:localStorage.getItem('addify-fbids')})")
-                check("R6c", "Every erase failed: still 'Couldn't reach Addify. Nothing was deleted yet. Try again.', both ids kept",
-                      "Nothing was deleted yet" in s3["msg"] and json.loads(s3["fb"] or "[]") == ["fb-1", "fb-2"], s3)
+                # ROUND 5 (item 4): a dropped connection may have reached the server, so "Nothing was deleted yet" is gone
+                check("R6c", "Every erase failed (connection dropped): 'Couldn't finish deleting. Try again.', never 'Nothing was deleted yet', both ids kept",
+                      "Couldn’t finish deleting. Try again." in s3["msg"] and "Nothing was deleted" not in s3["msg"] and json.loads(s3["fb"] or "[]") == ["fb-1", "fb-2"], s3)
                 check("R6d", "No page errors in Delete account", not pg.errs, pg.errs)
                 await close(ctx)
         except Exception as e:

@@ -2932,21 +2932,25 @@ function wlSettle(root){
   document.getAnimations().forEach(function(a){ try{
     var t=a.effect&&a.effect.target, ct=a.effect&&a.effect.getComputedTiming?a.effect.getComputedTiming():null;
     if(t&&t.nodeType===1&&root.contains(t)&&ct&&isFinite(ct.endTime)) a.finish(); }catch(e){} }); }
-function wlMorph(){
+/* ROUND 5 (item 1): `still` says whether the user is still watching this scan (scanWatched). The finish takes the
+   screen (setState('locked')) only while it holds; once they pressed Back or Cancel, the finish is called off and they
+   stay where they went. */
+function wlMorph(still){
   wlCancel();
   var my=wlTok, M=wlM={anims:[],timers:[],scan:[],ov:null,stage:null};
   var live=function(){ return my===wlTok; };
+  var gone=function(){ if(!still||still()) return false; if(live()) wlCancel(); return true; };
   var at=function(s,fn){ M.timers.push(setTimeout(function(){ if(live()) fn(); },s*1000)); };
   var wait=function(s){ return new Promise(function(r){ M.timers.push(setTimeout(r,s*1000)); }); };
   var an=function(el,kf,o,scan){ if(!el||!el.animate) return null; try{ var a=el.animate(kf,o); M.anims.push(a); if(scan) M.scan.push(a); return a; }catch(e){ return null; } };
   var ms=function(s){ return Math.round(s*1000); };
   return wvReach(wvS).then(function(){
-    if(!live()) return false;
+    if(!live()||gone()) return false;
     var dial=document.getElementById('dial'), stage=dial&&dial.querySelector('.wv-stage'), tile=stage&&stage.querySelector('.wv-tile'),
         art=result.querySelector('.hero .art'), R0=tile&&tile.getBoundingClientRect();
     if(wvReduced()||!art||!R0||!R0.width||!document.body.animate){
       // reduced motion, or no cover slot to land in: no flight; the screen hands over after a beat
-      return wait(wvReduced()?.3:.36).then(function(){ if(!live()) return false; setState('locked'); return true; });
+      return wait(wvReduced()?.3:.36).then(function(){ if(!live()||gone()) return false; setState('locked'); return true; });
     }
     var acs=getComputedStyle(art), aw=parseFloat(acs.width)||150, arad=parseFloat(acs.borderTopLeftRadius)||20,
         u=R0.width/380, s1=aw/R0.width, r0=92*u, r1=62*u/1.08, r2=arad/s1,
@@ -2976,6 +2980,7 @@ function wlMorph(){
     an(g1,[{opacity:.5},{opacity:0}],{delay:ms(WLT.grow),duration:600,easing:'ease',fill:'both'});
     an(ov.querySelector('.wvm-hl'),[{opacity:0},{opacity:1}],{delay:900,duration:500,easing:'ease',fill:'both'});
     at(WLT.swap,function(){
+      if(gone()) return;
       setState('locked');
       var sm=document.getElementById('s-match'), a2=result.querySelector('.hero .art'), R1, dx, dy;
       result.classList.add('wl-hold');
@@ -4377,18 +4382,24 @@ setTimeout(function(){
    the rest, and the answer says whether anything is gone: 'all', 'some' (at least one erase confirmed) or 'none'
    (none confirmed, the 15 s cut-off included). */
 /* ROUND 4 (item 2): the 15 s cut-off is its own answer, 'late'. An erase still out at the cut-off may finish on the
-   server after the page stops waiting, so "Nothing was deleted yet" could be false there. Its ids stay on the phone,
+   server after the page stops waiting, so a line saying nothing was erased could be false there. Its ids stay on the phone,
    and Try again asks for them again: /feedback/erase answers {ok:true} for a row it already erased (erased: 0). */
+/* ROUND 5 (item 4): EACH ANSWER SAYS WHAT ADDIFY SAID. A refusal (200 {ok:false}, "Too many at once", or a 429) is
+   Addify answering before it touched anything: 'busy', "Addify is busy. Try again in a minute.", never "Couldn't
+   reach Addify". Any other failure, a connection that dropped mid-request above all, may have erased rows on the
+   server, so it is 'some', "Couldn't finish deleting. Try again." The page can never prove an ask did not reach the
+   server, so the line that said nothing was erased is gone. In every case the ids not confirmed erased stay on the phone. */
 function eraseMyFeedback(){
   var ids=lsGet('addify-fbids','[]')||[]; if(!ids.length) return Promise.resolve('all');
-  var ctl=window.AbortController?new AbortController():null, to=null, gone=[];
+  var ctl=window.AbortController?new AbortController():null, to=null;
   var all=Promise.all(ids.map(function(id){
     return fetch(ENGINE+'/feedback/erase',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({id:id}),signal:ctl?ctl.signal:undefined})
-      .then(function(r){if(!r.ok) return false; return r.json().then(function(j){return !!(j&&j.ok===true);},function(){return false;});},
-            function(){return false;})
-      .then(function(ok){if(ok){gone.push(id); lsSet('addify-fbids',(lsGet('addify-fbids','[]')||[]).filter(function(x){return x!==id;}));} return ok;});}))
-    .then(function(a){return a.every(Boolean)?'all':gone.length?'some':'none';});
+      .then(function(r){if(r.status===429) return 'busy'; if(!r.ok) return 'fail';
+              return r.json().then(function(j){return (j&&j.ok===true)?'ok':(j&&j.ok===false)?'busy':'fail';},function(){return 'fail';});},
+            function(){return 'fail';})
+      .then(function(v){if(v==='ok') lsSet('addify-fbids',(lsGet('addify-fbids','[]')||[]).filter(function(x){return x!==id;})); return v;});}))
+    .then(function(a){return a.every(function(v){return v==='ok';})?'all':a.indexOf('fail')>=0?'some':'busy';});
   return Promise.race([all,new Promise(function(r){to=setTimeout(function(){if(ctl) ctl.abort(); r('late');},15000);})])
     .then(function(v){clearTimeout(to); return v;});}
 /* ITEM 2, "glow at the top pulled from the artwork colours, so every result looks
@@ -6102,15 +6113,15 @@ function sRun(q,mode){
 
 /* ---------- profile ---------- */
 function planOn(){return PAYWALL_ON&&PRO;}
-var PF_DELETING=false, PF_DELFAIL=false;   // REVIEWER RUNS 2 (BN-1): kept across a redraw of the You tab; ROUND 3: 'none' or 'some'; ROUND 4: or 'late'
-var PF_DELTXT={none:'Couldn’t reach Addify. Nothing was deleted yet. Try again.', some:'Couldn’t finish deleting. Try again.',
+var PF_DELETING=false, PF_DELFAIL=false;   // REVIEWER RUNS 2 (BN-1): kept across a redraw of the You tab; ROUND 4: 'some' or 'late'; ROUND 5: or 'busy'
+var PF_DELTXT={busy:'Addify is busy. Try again in a minute.', some:'Couldn’t finish deleting. Try again.',
                late:'Addify didn’t confirm in time. Try again to finish deleting.'};
 function pfDelPaint(){var b=document.getElementById('pfdel'), m=document.getElementById('pfdelmsg'); if(!b) return;
   b.disabled=PF_DELETING; b.setAttribute('aria-busy',PF_DELETING?'true':'false');
   b.querySelector('.st').textContent=PF_DELETING?'Deleting...':'Delete account';
   if(m) m.hidden=PF_DELETING||!PF_DELFAIL;
-  var t=document.getElementById('pfdeltxt');   // ROUND 3 (NETWORK-5): never "Nothing was deleted yet" once something was
-  if(t) t.textContent=PF_DELTXT[PF_DELFAIL]||PF_DELTXT.none;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
+  var t=document.getElementById('pfdeltxt');   // ROUND 5: no line claims nothing was deleted (the page cannot know)
+  if(t) t.textContent=PF_DELTXT[PF_DELFAIL]||PF_DELTXT.some;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
 function renderProf(){
   var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
   var name='You';
@@ -6131,7 +6142,7 @@ function renderProf(){
       '<a class="setrow" id="pfpriv" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Privacy policy</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<a class="setrow" id="pfsup" target="_blank" rel="noopener"><span class="si">'+IC.open+'</span><span class="st">Support</span><span class="go2">'+IC.rchev+'</span></a>'+
       '<button class="setrow danger" id="pfdel"><span class="st">Delete account</span></button></div>'+
-    '<div class="pfdelmsg" id="pfdelmsg" role="alert" hidden><span id="pfdeltxt">Couldn’t reach Addify. Nothing was deleted yet. Try again.</span>'+
+    '<div class="pfdelmsg" id="pfdelmsg" role="alert" hidden><span id="pfdeltxt">Couldn’t finish deleting. Try again.</span>'+
       '<button type="button" id="pfdelretry">Try again</button></div>';
   var _upbtn=document.getElementById('upbtn');   // PAYWALL 2026-09-29: absent while PAYWALL_ON is false
   if(_upbtn) _upbtn.onclick=openPaywall;
@@ -6152,8 +6163,8 @@ function renderProf(){
     PF_DELETING=true; pfDelPaint();
     eraseMyFeedback().then(function(v){         // server rows first, then the local copy
       if(v==='all'){ try{localStorage.clear();}catch(e){} location.reload(); return; }
-      // ROUND 4: once an attempt erased something or ran past the cut-off, a later one never says "Nothing was deleted yet"
-      PF_DELETING=false; PF_DELFAIL=v==='late'?'late':(v==='some'||PF_DELFAIL==='some'||PF_DELFAIL==='late')?'some':'none'; pfDelPaint();});};
+      // ROUND 5 (item 4): the line is this attempt's own answer ('busy', 'some' or 'late')
+      PF_DELETING=false; PF_DELFAIL=(v==='busy'||v==='late')?v:'some'; pfDelPaint();});};
   pfdel.onclick=function(){
     if(PF_DELETING) return;
     if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.'+
@@ -6171,6 +6182,12 @@ var busy=false, urlEl=document.getElementById('url');
    they just backed out of - which is exactly why "back does nothing": it worked, then the
    finishing hunt yanked them back. run() and sendListen() clear it when a new scan begins. */
 var leftScan=false;
+/* ROUND 5 (item 1): THE SCAN TAKES THE SCREEN ONLY WHILE THE USER IS STILL ON IT. Back pressed in the second after /base
+   answered (the dial running to 100, the finish flying the tile to the card) set leftScan, but the finish had not
+   started yet: it started after Back and handed the screen to the result card anyway. Every handover now asks this
+   first, and again at the moment it switches screens: the same scan (tok), not left (Back, Cancel), and the scan
+   screen still up (not Home or another tab). The answer is kept either way (Finds, the scan log), only the screen stays. */
+function scanWatched(tok){return tok===scanTok&&!leftScan&&waveState==='scanning';}
 document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); onbQuiet=true; try{run(urlEl.value);}finally{onbQuiet=false;}});   // typed or pasted by hand: never a share
 urlEl.addEventListener('focus',function(){document.getElementById('form').classList.add('focus');});
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
@@ -6435,7 +6452,9 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
         hgHandP=_p100.then(function(){ return wlSleep(300); }).then(function(){
           if(tok!==scanTok||leftScan) return;
           hgStart(); });
-        _p100.then(wlMorph).then(function(ok){
+        _p100.then(function(){   // ROUND 5 (item 1): never after Back, Cancel or a new scan
+          var still=function(){return scanWatched(tok);};
+          return still()?wlMorph(still):false; }).then(function(ok){
           if(!ok||tok!==scanTok||leftScan) return;
           say('Locking in the exact version'); hgShow(); });
         // PROGRESS 2026-09-29: the poll keeps reading the hunt's counts after /base.
@@ -6682,7 +6701,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
     try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(scanMiss(d)); }catch(e){}   // Konnor: failed scans don't count, say so (REVIEWER RUNS 2, GP-7: with the right reason)
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
       logUnmatched(curURL, d.handle);
-    if(leftScan) return;   // the user backed out; do not drag them onto a No match card
+    if(leftScan||(waveState!=='scanning'&&waveState!=='locked')) return;   // the user backed out (ROUND 5: or is on another screen); do not drag them onto a No match card
     setState('locked'); setEndTitle(d); return;}
   var _noSong=d.result==='no_match'||d.result==='uncertain'||!!d.unverified_base||!!d.base_uncertain;   // REVIEWER RUNS: notes say a no-song scan doesn't count
   if(_noSong){ try{ if(PAYWALL_ON&&!PRO) scanNote(true); }catch(e){} }
@@ -6714,7 +6733,9 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   // failure being fixed. Landing first, then handing over, is the whole point.
   if(handed){scanAnimOff(); setState('locked'); hideChip(); return;}
   // WAVE 2026-09-30: the wave lands on 100, then the finish: the tile becomes the album art (wlMorph)
-  pgDone().then(wlMorph).then(function(ok){ if(!ok||leftScan) return; scanAnimOff(); hideChip(); });}
+  // ROUND 5 (item 1): only while the user is still on this scan, checked again when the screen would switch
+  var _ftok=scanTok, still=function(){return scanWatched(_ftok);};
+  pgDone().then(function(){ return still()?wlMorph(still):false; }).then(function(ok){ if(!ok||leftScan) return; scanAnimOff(); hideChip(); });}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
@@ -7024,7 +7045,9 @@ function goHome(){nav('idle'); try{if(PW_DUE&&outOfScans()){PW_DUE=false; setTim
   leftScan=true;                 // a still-running hunt must not finish() us back onto the result
   // APPLYALL 2026-09-29 (review finding 15): Back while the clip is still being read cancels
   // the scan. Its /base answer is ignored (the token moved on) and the next link can start.
-  if(p1Busy){ p1Busy=false; scanTok++; busy=false; progPollOff(); pgReset(); stopClock();
+  // ROUND 5 (item 2): Back during a listen scan does the same, and stops its /listen ask and /progress pings
+  if(p1Busy||LISTEN_STOP){ var _ls=LISTEN_STOP; LISTEN_STOP=null;
+    p1Busy=false; scanTok++; busy=false; if(_ls) try{_ls();}catch(e){} progPollOff(); pgReset(); stopClock();
     document.getElementById('gobtn').removeAttribute('disabled');
     if(typeof syncFormAction==='function') syncFormAction(); }
   try{ipStop();}catch(e){} try{scanReset();}catch(e){} try{stopListen();}catch(e){}
@@ -7141,13 +7164,21 @@ var LISTEN_BLOB=null;
    engine has answered once. When neither that nor /listen has answered LIVE_BOUND ms after the recording went, the
    ask is stopped and the card is "Couldn't reach Addify" with Try again, which sends the same recording
    (LISTEN_BLOB). One answer proves the engine is up and lets a slow /listen run on, as it does for /base. The bound
-   holds after Back too: the ask still keeps the page busy, and the card it ends on is never drawn over Home. */
+   holds after Back too: the ask still keeps the page busy, and the card it ends on is never drawn over Home.
+   (ROUND 5: Back now stops the ask at once and frees the page, see LISTEN_STOP below.) */
 var LISTEN_PING=1500, LISTEN_PING_WAIT=4000;
+/* ROUND 5 (item 2): BACK ENDS A LISTEN SCAN AT ONCE. The recording's /listen ask used to run on after Back: a slow
+   engine kept the page busy (a pasted link did nothing) until it answered, and that late answer still counted a free
+   scan. LISTEN_STOP, while a recording is out, stops the /listen ask (its AbortController) and the /progress pings;
+   goHome() calls it, and sendListen() drops whatever this scan's call hands back once the user has left it. */
+var LISTEN_STOP=null;
 function listenCall(blob,tok){var n=0, t0=Date.now(), last=null, cut=false, stopAsk=null, pingT=0, pingAc=null;
   return new Promise(function(fin){
     var over=false, mine=function(){return !over&&tok===scanTok;};
+    var stop=function(){cut=true; if(stopAsk) stopAsk(); end({result:'aborted'});};
     var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT);
-      if(pingAc) try{pingAc.abort();}catch(e){} fin(d);};
+      if(pingAc) try{pingAc.abort();}catch(e){} if(LISTEN_STOP===stop) LISTEN_STOP=null; fin(d);};
+    LISTEN_STOP=stop;
     var wd=setTimeout(function(){
       if(!mine()||NET_HEARD>=t0) return;          // the engine answered something since the recording went
       cut=true; if(stopAsk) stopAsk(); end(downResult());},LIVE_BOUND);
@@ -7181,6 +7212,7 @@ function sendListen(blob){
   // APPLYALL 2026-09-29 (review finding 15): listen mode ends any running link scan first, so
   // the old /base answer or hunt budget cannot draw over the listen result
   endHunt(); huntEnd(); scanTok++; p1Busy=false;   // PROGRESS 2026-09-29: the hunt poll too
+  if(LISTEN_STOP){ var _ls=LISTEN_STOP; LISTEN_STOP=null; try{_ls();}catch(e){} }   // ROUND 5: an older recording's ask stops too
   var tok=scanTok; LISTEN_BLOB=blob;
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
@@ -7189,6 +7221,7 @@ function sendListen(blob){
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
   listenCall(blob,tok)
     .then(function(d){
+      if(tok!==scanTok||leftScan) return;   // ROUND 5 (item 2): Back, Cancel or a new scan ended it: no card, no count
       if(d&&d.wave) setWaveData(d.wave); else if(d&&d.peaks) setWaveData({amp:d.peaks,lo:[],hi:[]});
       setWindow(null, d&&d.clip_secs);
       renderResult(d,false); finish(d||{result:'error'});});}

@@ -29,7 +29,6 @@ FOUND_L = {"result": "found", "base_song": "Listen Song", "base_artist": "Listen
            "speed": "as posted", "candidates": [], "exact": None, "edits_pending": False, "clip_secs": 12.0}
 DEL_LATE = "Addify didn't confirm in time. Try again to finish deleting."
 DEL_SOME = "Couldn't finish deleting. Try again."
-DEL_NONE = "Couldn't reach Addify. Nothing was deleted yet. Try again."
 # R4: every time the count toast turns on, an episode; it is "seen" once it is on screen (a box of its own, so no
 # hidden screen around it) at any moment before it turns off. An episode never seen is a toast nobody saw.
 TOASTWATCH = r"""(function(){window.__toast=[]; var cur=null;
@@ -272,8 +271,9 @@ async def main(html, pages_dir, yml, server_py, only):
                 await pg.evaluate("()=>document.getElementById('pfdel').click()")
                 await until(pg, MSG, 10)
                 s5 = await pg.evaluate(STATE)
-                check("R2f", "Control: every erase refused at once still says 'Couldn't reach Addify. Nothing was deleted yet. Try again.', both ids kept",
-                      plain(s5["msg"]) == DEL_NONE and json.loads(s5["fb"] or "[]") == ["fb-1", "fb-2"], s5)
+                # ROUND 5 (item 4): a dropped connection may have reached the server, so "Nothing was deleted yet" is gone
+                check("R2f", "Control: every erase failing at once (connection dropped) says 'Couldn't finish deleting. Try again.', both ids kept",
+                      plain(s5["msg"]) == DEL_SOME and json.loads(s5["fb"] or "[]") == ["fb-1", "fb-2"], s5)
                 await close(ctx)
                 sv = server_erase_check(server_py)
                 check("R2g", "server.py's /feedback/erase answers {ok:true} for a row it already erased and for one it never had (so Try again finishes the job)",
