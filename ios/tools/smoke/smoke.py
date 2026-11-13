@@ -97,7 +97,7 @@ def patch(ios_dir, variant):
             sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
         w = w.replace(old, new)
     # No simulator tool can tap Done, so the lab copy closes the Safari view itself, the way Done
-    # does (dismiss): 6 s after its page finished loading, or 30 s after it opened if it never
+    # does (dismiss): 8 s after its page finished loading, or 30 s after it opened if it never
     # does. A simulator's first Safari view took about 4 s to ask for its page, so a fixed timer
     # closed it before anything showed. Once closed, it tells the page underneath
     # (labSafariClosed), which reports from the same page load. Without these anchors (a build
@@ -164,7 +164,7 @@ final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
 
     func safariViewController(_ controller: SFSafariViewController, didCompleteInitialLoad didLoadSuccessfully: Bool) {
         NSLog("ADDIFY-SAFARI loaded %d", didLoadSuccessfully ? 1 : 0)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.close("after load") }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.close("after load") }
     }
 
     func close(_ why: String) {
@@ -505,7 +505,7 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
     waiting = [(name, (lambda log, test=test: next((e for e in log if test(e)), None)), delay, None)
                for name, test, delay in after]
     waiting += list(actions)
-    taken, done = {}, {}
+    taken, done, shot_t = {}, {}, {}
     while True:
         now = time.time()
         with LOCK:
@@ -523,7 +523,11 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
                     fn(dev)
                     done[name] = round(time.time() - t0, 2)
                 else:
+                    start = time.time()
                     taken[name] = dev.shot("%s-%s" % (label, name))
+                    # when it was due, and when the capture started and ended (s after launch): a
+                    # capture that ended late may show a later moment than it was meant to
+                    shot_t[name] = [round(when - t0, 2), round(start - t0, 2), round(time.time() - t0, 2)]
                 pending.remove(item)
         kinds = {e.get("kind") for e in fresh_log if e.get("kind")}
         if (all(k in kinds for k in want) and not pending and not waiting) or now - t0 > timeout:
@@ -538,8 +542,29 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
     for e in entries:
         e["dt"] = round(e["t"] - t0, 2)
     lab = lab_lines(dev, since, label)
-    return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1),
+    return {"entries": entries, "shots": taken, "shot_t": shot_t, "alive": live, "elapsed": round(time.time() - t0, 1),
             "done": done, "lab": lab, "appcheck": [l for l in lab if "ADDIFY-APPCHECK" in l]}
+
+
+def outage_screen(res, names, good_at):
+    """The screenshots taken while the engine was failing, in order. Each one whose capture ended
+    before the working page was asked for (good_at, s after launch) must show the error screen,
+    or the loading screen before the first error screen, and at least one must show the error
+    screen. One that ended after that may show the recovered page: it is listed as late and not
+    judged. So a slow capture can't fail the check, and a cut-off page, a blank or a 404 shown at
+    any moment of the outage still does."""
+    on_time, late = [], []
+    for n in names:
+        t = res.get("shot_t", {}).get(n)
+        k = pixel_class(res["shots"].get(n, ""))
+        if t is not None and good_at is not None and t[2] >= good_at:
+            late.append((n, k, t[2]))
+        else:
+            on_time.append((n, k, t[2] if t else None))
+    kinds = [k for _, k, _ in on_time]
+    first = kinds.index("error") if "error" in kinds else None
+    ok = first is not None and all(k == "boot" for k in kinds[:first]) and all(k == "error" for k in kinds[first:])
+    return ok, "on time %s, late %s" % (on_time, late)
 
 
 def lab_lines(dev, since, label):
@@ -692,7 +717,8 @@ def run_stub_suite(dev, app, version, ipad=False):
         first502 = lambda e: e["role"] == "A" and e["status"] == 502
         # "late": diagnosis only, whether a page that is not on screen at the end paints later.
         res = scenario(dev, app, "server5xx", down, timeout=45,
-                       after=(("error", first502, 1.2), ("late", lambda e: e.get("kind") == "bridges", 5.0)))
+                       after=(("error0", first502, 0.6), ("error", first502, 1.2), ("error2", first502, 2.4),
+                              ("late", lambda e: e.get("kind") == "bridges", 5.0)))
         r = common(dev, "server5xx", res, version)
         reqs = page_requests(res, "A")
         check(dev, "server5xx", "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
@@ -701,8 +727,8 @@ def run_stub_suite(dev, app, version, ipad=False):
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
             check(dev, "server5xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
-        mid = pixel_class(res["shots"].get("error", ""))
-        check(dev, "server5xx", "error screen with Try again during the outage (not blank)", mid == "error", mid)
+        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
+        check(dev, "server5xx", "error screen with Try again during the outage (not blank)", ok, detail)
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
         check(dev, "server5xx", "page on screen 5 s after the page reported", pixel_class(res["shots"].get("late", "")) == "page",
@@ -717,7 +743,8 @@ def run_stub_suite(dev, app, version, ipad=False):
         first404 = lambda e: e["role"] == "A" and e["status"] == 404
         reported = lambda e: e.get("kind") == "bridges"
         res = scenario(dev, app, "server4xx", c4, timeout=45,
-                       after=(("error", first404, 1.2), ("early", reported, 0.5), ("settled", reported, 2.0)))
+                       after=(("error0", first404, 0.6), ("error", first404, 1.2), ("error2", first404, 2.4),
+                              ("early", reported, 0.5), ("settled", reported, 2.0)))
         timeline(res)
         common(dev, "server4xx", res, version)
         reqs = page_requests(res, "A")
@@ -726,8 +753,8 @@ def run_stub_suite(dev, app, version, ipad=False):
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
             check(dev, "server4xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
-        mid = pixel_class(res["shots"].get("error", ""))
-        check(dev, "server4xx", "error screen with Try again, not the 404 text", mid == "error", mid)
+        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
+        check(dev, "server4xx", "error screen with Try again, not the 404 text", ok, detail)
         # The hard check is 2 s after the page reported; the 0.5 s shot is reported, not failed, so a
         # slow runner frame is told apart from a loading screen that never goes.
         check(dev, "server4xx", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
@@ -741,7 +768,8 @@ def run_stub_suite(dev, app, version, ipad=False):
         na = {"A": {"health_ms": 20, "noapp_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         firstpage = lambda e: e["role"] == "A" and e["status"] == 200 and e["path"].split("?")[0] in ("/", "/share")
         res = scenario(dev, app, "noapp", na, timeout=45,
-                       after=(("error", firstpage, 2.0), ("early", reported, 0.5), ("settled", reported, 2.0)))
+                       after=(("error0", firstpage, 1.0), ("error", firstpage, 2.0), ("error2", firstpage, 3.0),
+                              ("early", reported, 0.5), ("settled", reported, 2.0)))
         timeline(res)
         common(dev, "noapp", res, version)
         reqs = page_requests(res, "A")
@@ -751,8 +779,8 @@ def run_stub_suite(dev, app, version, ipad=False):
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
             check(dev, "noapp", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
-        mid = pixel_class(res["shots"].get("error", ""))
-        check(dev, "noapp", "error screen with Try again, not the cut-off page", mid == "error", mid)
+        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
+        check(dev, "noapp", "error screen with Try again, not the cut-off page", ok, detail)
         check(dev, "noapp", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
               pixel_class(res["shots"].get("early", "")), info=True)
         check(dev, "noapp", "page on screen after recovery", pixel_class(res["shots"].get("settled", "")) == "page",
@@ -887,14 +915,18 @@ def sharefail(dev, app, version):
 def privacy(dev, app, mode):
     """Build 30. The page opens /privacy: a target=_blank link (anchor), window.open
     (open) or the page sending itself there (nav). It must open in a Safari view over the app, never
-    in the app's own web view, and closing it (the lab copy closes it 6 s after its page loaded, as
+    in the app's own web view, and closing it (the lab copy closes it 8 s after its page loaded, as
     Done does) must leave the same page on screen, not reloaded."""
     label = "privacy-" + mode
     pv = {"A": {"health_ms": 20, "privacy": mode}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     fetched = lambda e: e["path"].split("?")[0] == "/privacy"
     came_back = lambda e: e.get("kind") == "back"
+    # A simulator's first Safari view can take a few seconds more to come up after it asked for its
+    # page (iPad, 7a43465: not up 3 s after the request). It stays up until 8 s after its page loaded,
+    # and is looked at 2, 4 and 6 s after the request.
+    sheets = ("sheet", "sheet2", "sheet3")
     res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=75,
-                   after=(("sheet", fetched, 3.0), ("after", came_back, 0.8)))
+                   after=tuple((n, fetched, d) for n, d in zip(sheets, (2.0, 4.0, 6.0))) + (("after", came_back, 0.8),))
     timeline(res)
     priv = [e for e in res["entries"] if fetched(e)]
     in_app = [e for e in priv if "Addify/" in e.get("ua", "")]
@@ -903,8 +935,8 @@ def privacy(dev, app, mode):
     check(dev, label, "/privacy opened in a Safari view over the app", bool(outside) and presented,
           "%d requests from Safari, Safari view logged %s" % (len(outside), presented))
     check(dev, label, "/privacy never loaded in the app's own web view", not in_app, "%d requests" % len(in_app))
-    k = pixel_class(res["shots"].get("sheet", ""))
-    check(dev, label, "the legal page on screen", k == "privacy", k)
+    ks = [(n, pixel_class(res["shots"].get(n, "")), (res["shot_t"].get(n) or [None] * 3)[2]) for n in sheets]
+    check(dev, label, "the legal page on screen", any(k == "privacy" for _, k, _ in ks), "%s" % ks)
     load, back = report(res, "load"), report(res, "back")
     pages = page_requests(res, "A")
     same = load is not None and back is not None and back.get("lid") == load.get("lid") and back.get("href") == load.get("href")
