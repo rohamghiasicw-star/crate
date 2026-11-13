@@ -39,7 +39,7 @@ SNAPFILE = os.path.join(FIXDIR, "snapshots.json")
 CLOSEST_HEADS = ("The exact version playing", "The closest version we found",
                  "The recording this clip was cut from")
 # headings that are not part of the version shelf (the Open in row, the mashup parts, the playlist sheet)
-OTHER_HEADS = ("Open in", "Songs in this mix", "Add to another playlist")
+OTHER_HEADS = ("Open in", "Songs in this mix", "Find it in another app")   # round 3 renamed "Add to another playlist"
 OLD_LINES = ("No upload of this exact version found yet", "No upload at this exact speed yet",
              "No upload at your exact speed yet", "No close version found", "nothing worth listing",
              "We did not crown one", "under our bar", "Our pick")
