@@ -51,6 +51,10 @@ jobs:
         run: python -u engine/test_round5a.py
       - name: Round 5a (Chromium)
         run: PW_BROWSER=chromium python -u engine/test_round5a.py
+      - name: Round 5b (WebKit)
+        run: python -u engine/test_round5b.py
+      - name: Round 5b (Chromium)
+        run: PW_BROWSER=chromium python -u engine/test_round5b.py
       - name: Busy retry (Chromium)
         run: python -u engine/test_busy_retry.py --page engine/crate.html
       - name: Call retry (Chromium)

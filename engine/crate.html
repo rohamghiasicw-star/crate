@@ -6679,8 +6679,13 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
    per scan with the final answer (finish() for a scan with no hunt, finalize() in run()
    for one with a hunt). */
 function postBridge(d){
+  // ROUND 5B (GUIDELINE-LAWYER-R4-02, FIRST-LAUNCH-R4-02, NATIVE-R4-5): the native "Match found" banner and its
+  // success haptic only follow a card that names a found song. No match, a guess, an unverified or uncertain base,
+  // an error, busy or offline card posts nothing.
+  if(!d||d.result==='no_match'||d.result==='uncertain'||d.result==='error'||d.result==='engine_down'||
+     d.result==='rate_limited'||d.result==='aborted'||d.result==='moved'||d.unverified_base||d.base_uncertain) return;
   try{d=pageCrown(d); var _wk=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.addify;
-    var _mvb=mainVersion(d);
+    var _mvb=mainVersion(d); if(!(_mvb&&_mvb.title)&&!d.base_song) return;
     // REVIEWER RUNS 2 (LAWYER-02): `exact` only when the card itself crowns that upload. A source recording
     // (crown_is_source) or a crown the engine does not call the closest version is never sent as the exact one.
     var _cr=!!(_mvb&&d.exact&&!(d.closest&&d.closest.kind&&d.closest.kind!=='crown'));
