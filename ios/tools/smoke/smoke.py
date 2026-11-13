@@ -8,7 +8,8 @@ iPhone and an iPad simulator. Scenarios:
   untrusted  the directory names a host outside the compiled-in list (fresh, then relaunch)
   server5xx  the main page answers an empty 502 twice, then the page
   redirect   the main page redirects to a host outside the list (must never reach Safari)
-  export     the page calls the exportFinds handler (after one untimed share sheet on that install)
+  exportfirst the page calls the exportFinds handler on a fresh install (the first share sheet, 40 s wait)
+  export     the same on that install again, with the page's usual 8 s wait
   sharefail  a share opens the app while its share page fails; a return to the app reopens it
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
              it must open in a Safari view over the app, and closing it returns to the same page
@@ -57,8 +58,12 @@ def patch(ios_dir, variant):
             sys.exit("patch: %r matched %d times" % (pat, n))
     # Lab copies only: log the directory's answer and each launch check's order and winner, so a
     # relaunch that loads the wrong address says whether the pick was missing or passed over.
-    creps = [("              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }\n",
+    creps = [("        guard let (data, resp) = try? await URLSession.shared.data(for: req),\n",
+              "        NSLog(\"ADDIFY-DIRECTORY asking\")\n        guard let (data, resp) = try? await URLSession.shared.data(for: req),\n"),
+             ("              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }\n",
               "              (resp as? HTTPURLResponse)?.statusCode == 200 else { NSLog(\"ADDIFY-DIRECTORY no answer\"); return nil }\n"),
+             ("            AppGroup.defaults.removeObject(forKey: directoryKey)\n",
+              "            AppGroup.defaults.removeObject(forKey: directoryKey)\n            NSLog(\"ADDIFY-DIRECTORY no pick\")\n"),
              ("        AppGroup.defaults.set(pick, forKey: directoryKey)\n",
               "        AppGroup.defaults.set(pick, forKey: directoryKey)\n        NSLog(\"ADDIFY-DIRECTORY stored %@\", pick)\n"),
              ("        let winner = await bestAnswer(list, preferWindow: preferWindow, check: probe)\n",
@@ -131,10 +136,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   function send(kind, obj){ try { var x = new XMLHttpRequest(); x.open('POST', '/report?kind=' + kind, true);
     x.send(JSON.stringify(obj)); } catch(e) {} }
   function show(){ document.getElementById('o').textContent = JSON.stringify(r, null, 1); }
-  function call(name, msg){ return new Promise(function(ok){
+  function call(name, msg, wait){ return new Promise(function(ok){
     try { H[name].postMessage(msg).then(function(v){ ok({ok: v}); }, function(e){ ok({err: String(e && e.message || e)}); }); }
     catch(e) { ok({err: 'throw: ' + String(e && e.message || e)}); }
-    setTimeout(function(){ ok({err: 'timeout'}); }, 8000); }); }
+    setTimeout(function(){ ok({err: 'timeout'}); }, wait || 8000); }); }
   send('load', r); show();
   function bridges(kind, done){
     call('addifyKit', {type: 'ping'}).then(function(k){ r.kit = k; return call('addifyStore', {op: 'status'}); })
@@ -149,7 +154,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       else location.href = '/privacy';
       setTimeout(function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }, 10000); }, 1000);
     if (__EXPORT__) setTimeout(function(){
-      call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'})
+      call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
       .then(function(e){ r.export = e; show(); send('export', r);
         setTimeout(function(){ send('alive', {port: __PORT__}); }, 4000); }); }, 1000);
   });
@@ -254,6 +259,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, NOAPP_PAGE.encode())
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
+            page = page.replace("__EXPORT_WAIT__", str(int(cfg.get("export_wait_ms", 8000))))
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
             return self.reply(200, page.encode())
         return self.reply(404)
@@ -572,18 +578,30 @@ def run_stub_suite(dev, app, version, ipad=False):
     check(dev, "race", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
     appcheck_report(dev, "race", res)
     json.dump(res, open(os.path.join(dev.out, "%s-race.json" % dev.tag), "w"), indent=1)
-    # The relaunch asserts that a pick stored by an earlier launch goes first. It can only test that
-    # once a pick is stored: when the race launch's directory answer never arrived (b32e695, first
-    # attempt: a slow first launch held the request past the app's 8 s timeout), one more launch
-    # of the same install stores it before the relaunch.
+    # The relaunch asserts that a pick stored by an earlier launch goes first. The race launch must
+    # store it. The one exception is the app's own directory request getting no answer in time
+    # (b32e695, first attempt: a slow first launch after boot held it past the app's 8 s timeout),
+    # or still waiting when the scenario ended, which says nothing about the app. Only then does
+    # one more launch of the same install store it, and that launch must. A directory answer the
+    # app turned down, or a launch that never asked, fails here. No lab log at all (the simulator
+    # log read failed) can't tell these apart, so it gets the extra launch too and the relaunch
+    # check still decides.
     stored = lab_has(res, pick_b)
+    asked = lab_has(res, "ADDIFY-DIRECTORY asking")
+    no_answer = lab_has(res, "ADDIFY-DIRECTORY no answer")
+    no_pick = lab_has(res, "ADDIFY-DIRECTORY no pick")
+    dir_lines = [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-DIRECTORY" in l]
+    why = ("no lab log" if not res["lab"] else "the directory's pick was turned down" if no_pick
+           else "no answer to the app's request" if no_answer else "still waiting at the end" if asked
+           else "the launch never asked")
+    excused = not stored and not no_pick and (asked or not res["lab"])
     check(dev, "race", "directory's pick stored for the next launch", stored,
-          "stored" if stored else "not stored: %s" % [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-DIRECTORY" in l],
-          info=True)
-    if not stored:
+          "stored" if stored else "not stored, %s: %s" % (why, dir_lines), info=excused)
+    if excused:
         prime = scenario(dev, app, "prime", base, fresh=False, want=("bridges", "bridges2"))
         stored = lab_has(prime, pick_b)
-        check(dev, "prime", "directory's pick stored before the relaunch", stored, "", info=True)
+        check(dev, "prime", "directory's pick stored before the relaunch", stored or not prime["lab"],
+              "stored" if stored else "not stored: %s" % [l[l.index("ADDIFY-"):] for l in prime["lab"] if "ADDIFY-DIRECTORY" in l])
 
     res = scenario(dev, app, "relaunch", base, fresh=False)
     r = common(dev, "relaunch", res, version)
@@ -696,14 +714,21 @@ def run_stub_suite(dev, app, version, ipad=False):
     # The first share sheet after an install can hold the app's main thread while the system lists
     # the share extensions: about 18 s on the iPhone in b32e695's first attempt (the page's own 8 s
     # wait for the answer ran out, and a bridge call made meanwhile timed out too), 2 to 3 s in
-    # every other run. One untimed sheet on the same install first, waiting until the main thread
-    # answers again (bridges2), so the timed run below measures the handler and not that first list.
-    res = scenario(dev, app, "exportwarm", exp, want=("export", "alive", "bridges2"), timeout=90)
+    # every other run. So the first sheet on a fresh install gets its own run with a 40 s wait,
+    # and must still answer ok and leave the app running. The run after it, on the same install,
+    # keeps the original 8 s wait and checks.
+    expw = json.loads(json.dumps(exp))
+    for role in ("A", "B"):
+        expw[role]["export_wait_ms"] = 40000
+    res = scenario(dev, app, "exportfirst", expw, want=("export", "alive", "bridges2"), timeout=90)
     r = report(res, "export")
     at = [e["dt"] for e in res["entries"] if e.get("kind") == "export"]
-    check(dev, "exportwarm", "share sheet opened once on this install (untimed)", r is not None,
-          "%s at %s s" % (json.dumps((r or {}).get("export")), at), info=True)
-    json.dump(res, open(os.path.join(dev.out, "%s-exportwarm.json" % dev.tag), "w"), indent=1)
+    check(dev, "exportfirst", "first share sheet on a fresh install answered within 40 s",
+          r is not None and r.get("export") == {"ok": {"ok": True}},
+          "%s at %s s" % (json.dumps((r or {}).get("export")), at))
+    check(dev, "exportfirst", "app alive after the first share sheet", report(res, "alive") is not None and res["alive"],
+          "alive report %s, process %s" % (report(res, "alive") is not None, res["alive"]))
+    json.dump(res, open(os.path.join(dev.out, "%s-exportfirst.json" % dev.tag), "w"), indent=1)
 
     res = scenario(dev, app, "export", exp, fresh=False, want=("export", "alive"), timeout=45,
                    after=(("sheet", exported, 1.5),))

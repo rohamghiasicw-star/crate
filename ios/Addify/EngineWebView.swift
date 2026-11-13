@@ -134,8 +134,10 @@ struct EngineWebView: UIViewRepresentable {
             }
         }
 
-        /* newLaunch: this load ends a launch check (boot), as opposed to a move to another address
-           or a reload after WebKit killed the page. */
+        /* newLaunch: this load counts against a held share's launch limit (PendingShare.maxLaunches):
+           the end of a launch check (boot), or a reload after WebKit killed the page, so a share
+           page that kills WebKit every time cannot reload forever. A move to another address does
+           not count (hostSwitches caps those). */
         func load(_ wv: WKWebView, newLaunch: Bool = false) {
             /* A share that arrived during the launch check opens on the address it chose, through
                the page's own share landing, as a share always did when the page was not up. BUILD 30:
@@ -459,9 +461,10 @@ struct EngineWebView: UIViewRepresentable {
         }
 
         /* WebKit killed the content process (memory pressure while backgrounded). A blank
-           white view is what the user sees otherwise. */
+           white view is what the user sees otherwise. A held share reopens, and the reload counts
+           against its limit like a launch check. */
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            load(webView)
+            load(webView, newLaunch: true)
         }
 
         // MARK: ui delegate

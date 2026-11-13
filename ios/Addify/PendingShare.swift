@@ -18,8 +18,9 @@ import Foundation
    - when the running page takes it directly (run(link) answered true: taken),
    - when a newer share replaces it,
    - after maxAge, the share inbox's own staleness rule,
-   - after maxLaunches launch checks (launch, Try again, return to the app) that never loaded a
-     page. Automatic reloads inside one launch check are already capped (EngineWebView).
+   - after maxLaunches launch checks (launch, Try again, return to the app, or a reload after
+     WebKit killed the page) that never loaded a page. Automatic reloads inside one launch check
+     are already capped (EngineWebView).
    Foundation only: the host tests run it on a Mac. */
 struct PendingShare {
     static let maxAge: TimeInterval = SharedInbox.maxAge
@@ -45,8 +46,8 @@ struct PendingShare {
         return link
     }
 
-    /* A launch check is about to load a page. Past maxLaunches the link is dropped and the
-       launch opens Home. */
+    /* A launch check (or a reload after WebKit killed the page) is about to load a page. Past
+       maxLaunches the link is dropped and the launch opens Home. */
     mutating func newLaunch(now: Date = Date()) {
         guard current(now: now) != nil else { return }
         launches += 1
