@@ -65,7 +65,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
 
         // the allowlist: compiled-in origins only (scheme, host and port)
         eq(EngineConfig.isTrusted(A), true, "trusted: addify.app")
-        eq(EngineConfig.isTrusted(S), true, "trusted: sslip.io address")
+        eq(EngineConfig.isTrusted(S), false, "build 29: the old sslip.io name is no longer trusted")
         eq(EngineConfig.isTrusted(URL(string: "https://ADDIFY.app:443/share?url=x")), true, "trusted: case, default port, path")
         eq(EngineConfig.isTrusted(scheme: "https", host: "addify.app", port: 0), true, "trusted: security origin with port 0")
         eq(EngineConfig.isTrusted(URL(string: "http://addify.app")), false, "untrusted: http scheme")
@@ -95,7 +95,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/")), true, "app page: /")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/?code=abc&state=xyz")), true, "app page: Spotify return")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/share?url=https%3A%2F%2Fvt.tiktok.com%2FZS4a5JyXE%2F")), true, "app page: share landing")
-        eq(EngineConfig.isAppPage(URL(string: "https://161-35-185-80.sslip.io/index.html")), true, "app page: index.html, other address")
+        eq(EngineConfig.isAppPage(URL(string: "https://161-35-185-80.sslip.io/index.html")), false, "build 29: a page on the old sslip.io name is not the app page")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/crate.html")), true, "app page: crate.html")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/privacy")), false, "not app page: /privacy")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/support.html")), false, "not app page: /support.html")
@@ -106,7 +106,8 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isTrusted(nil), false, "untrusted: nil")
 
         // the directory can only pick a compiled-in address
-        eq(EngineConfig.directoryChoice(gist("https://161-35-185-80.sslip.io")), "https://161-35-185-80.sslip.io", "gist: known host picked")
+        eq(EngineConfig.directoryChoice(gist("https://161-35-185-80.sslip.io")), nil, "build 29: a directory naming the old sslip.io name is ignored")
+        eq(EngineConfig.directoryChoice(gist("https://addify.app")), "https://addify.app", "gist: addify.app picked")
         eq(EngineConfig.directoryChoice(gist("addify.app/")), "https://addify.app", "gist: bare known host normalised")
         eq(EngineConfig.directoryChoice(gist("https://addify.app/some/path")), "https://addify.app", "gist: compiled spelling returned")
         eq(EngineConfig.directoryChoice(gist("https://evil.example")), nil, "gist: unknown host ignored")
@@ -118,13 +119,13 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         AppGroup.defaults.set("https://old-name.trycloudflare.com", forKey: EngineConfig.resolvedKey)
         eq(EngineConfig.baseURLString, EngineConfig.defaultBaseURL, "stale resolved tunnel ignored")
         AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.resolvedKey)
-        eq(EngineConfig.baseURLString, "https://161-35-185-80.sslip.io", "resolved known address used")
+        eq(EngineConfig.baseURLString, "https://addify.app", "build 29: a stored sslip.io address is ignored, addify.app used")
         resetEngineKeys()
 
         // launch-check order: the directory's pick first (only if compiled in), then the list
         eq(EngineConfig.candidateURLs().map(\.absoluteString), EngineConfig.knownBaseURLs, "order: compiled list")
         AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.directoryKey)
-        eq(EngineConfig.candidateURLs().map(\.absoluteString), ["https://161-35-185-80.sslip.io", "https://addify.app"], "order: directory pick first")
+        eq(EngineConfig.candidateURLs().map(\.absoluteString), ["https://addify.app"], "build 29: addify.app is the only candidate, whatever the directory stored")
         AppGroup.defaults.set("https://evil.example", forKey: EngineConfig.directoryKey)
         eq(EngineConfig.candidateURLs().map(\.absoluteString), EngineConfig.knownBaseURLs, "order: stored unknown pick ignored")
         resetEngineKeys()
@@ -170,7 +171,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), "https://addify.app", "pick: winner stored")
         AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.directoryKey)
         w = await EngineConfig.pickReachable(check: stub(["addify.app": (20, true), "161-35-185-80.sslip.io": (200, true)]))
-        eq(w, S, "pick: the directory's pick wins when both answer")
+        eq(w, A, "build 29: a stored sslip.io directory pick never wins; addify.app does")
         w = await EngineConfig.pickReachable(excluding: "161-35-185-80.sslip.io", check: stub(["addify.app": (20, true), "161-35-185-80.sslip.io": (10, true)]))
         eq(w, A, "pick: excluded host skipped")
         resetEngineKeys()

@@ -52,7 +52,10 @@ enum EngineConfig {
     /* Every address that reaches the same engine, best first. pickReachable tries them all at
        once; the order only matters when more than one answers. This list is also the whole
        allowlist: the app loads nothing else as its page and trusts nothing else on its bridges. */
-    static let knownBaseURLs = ["https://addify.app", "https://161-35-185-80.sslip.io"]
+    /* Build 29 (hostile round 4, NATIVE-R4-1): addify.app only. A second name for the same server
+       bought no redundancy, and a switch to it moved the page to another web origin, splitting the
+       user's finds, free scans and onboarding between two storages. */
+    static let knownBaseURLs = ["https://addify.app"]
 
     // MARK: trust
 
