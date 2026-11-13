@@ -51,7 +51,26 @@ def patch(ios_dir, variant):
         if n != 1:
             sys.exit("patch: %r matched %d times" % (pat, n))
     open(path, "w").write(src)
-    print("patched %s for %s" % (path, variant))
+    # Lab copies only, never the shipped source: log how long the #app check holds the page back,
+    # from didFinish to its answer, so the job log shows what it adds before the page is revealed.
+    wpath = os.path.join(ios_dir, "Addify", "EngineWebView.swift")
+    w = open(wpath).read()
+    wreps = [("            let check = appCheck\n",
+              "            let check = appCheck\n            let t0 = CFAbsoluteTimeGetCurrent()\n"),
+             ("            wv.evaluateJavaScript(Self.appProbe) { value, error in\n",
+              "            wv.evaluateJavaScript(Self.appProbe) { value, error in\n"
+              "                NSLog(\"ADDIFY-APPCHECK probe %ld ms %@\", Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), "
+              "error == nil ? String(describing: value ?? \"nil\") : \"error\")\n"),
+             ("                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op\n",
+              "                self.appCheck += 1      // answered: the probe or the timer, whichever comes second, is a no-op\n"
+              "                NSLog(\"ADDIFY-APPCHECK settled %ld ms hasApp=%d url=%@\", Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), "
+              "hasApp ? 1 : 0, url.path)\n")]
+    for old, new in wreps:
+        if w.count(old) != 1:
+            sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
+        w = w.replace(old, new)
+    open(wpath, "w").write(w)
+    print("patched %s and %s for %s" % (path, wpath, variant))
 
 
 # ---------- stub engine ----------
@@ -64,14 +83,14 @@ COUNTS = {}
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>stub</title></head>
 <body style="margin:0;background:#0a7d2c;color:#fff;font:16px -apple-system,sans-serif;min-height:100vh">
-<div style="padding:60px 16px"><h2 style="margin:0 0 8px">STUB __PORT__</h2>
+<div id="app" style="padding:60px 16px"><h2 style="margin:0 0 8px">STUB __PORT__</h2>
 <pre id="o" style="white-space:pre-wrap;font-size:11px;margin:0"></pre></div>
 <script>
 (function(){
   var H = window.webkit && window.webkit.messageHandlers;
   var r = {port: __PORT__, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
     has: {addify: !!(H && H.addify), addifyStore: !!(H && H.addifyStore), addifyKit: !!(H && H.addifyKit),
-          exportFinds: !!(H && H.exportFinds)}};
+          exportFinds: !!(H && H.exportFinds), openSettings: !!(H && H.openSettings)}};
   function send(kind, obj){ try { var x = new XMLHttpRequest(); x.open('POST', '/report?kind=' + kind, true);
     x.send(JSON.stringify(obj)); } catch(e) {} }
   function show(){ document.getElementById('o').textContent = JSON.stringify(r, null, 1); }
@@ -92,6 +111,12 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   });
 })();
 </script></body></html>"""
+
+# A complete 200 that is not the app: no #app and no script, like a document cut off before the
+# app's markup. Same green as the stub page, so if the app ever showed it the screenshot says so.
+NOAPP_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#0a7d2c;color:#fff;min-height:100vh"><h2>cut off</h2></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,7 +190,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return 302
             if cfg.get("down") or k <= cfg.get("fail_first", 0):
+                if cfg.get("fail_body"):    # a 4xx with words on it, like "404 page not found"
+                    return self.reply(cfg.get("fail_code", 404), cfg["fail_body"].encode(), "text/plain; charset=utf-8")
                 return self.reply(502)      # empty body, like Caddy while the engine restarts
+            if k <= cfg.get("noapp_first", 0):
+                return self.reply(200, NOAPP_PAGE.encode())
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
             return self.reply(200, page.encode())
@@ -324,6 +353,7 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
     if fresh:
         dev.install(app)
     t0 = time.time()
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0 - 1))
     dev.launch()
     pending = [(name, t0 + at) for name, at in shots]
     waiting = list(after)
@@ -354,7 +384,32 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         entries = [dict(e) for e in LOG[mark:]]
     for e in entries:
         e["dt"] = round(e["t"] - t0, 2)
-    return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1)}
+    return {"entries": entries, "shots": taken, "alive": live, "elapsed": round(time.time() - t0, 1),
+            "appcheck": appcheck_lines(dev, since, label)}
+
+
+def appcheck_lines(dev, since, label):
+    """The lab build's #app check timings for one scenario, from the simulator's unified log."""
+    try:
+        out = run("xcrun", "simctl", "spawn", dev.udid, "log", "show", "--start", since, "--style", "compact",
+                  "--predicate", 'eventMessage CONTAINS "ADDIFY-APPCHECK"', check=False, timeout=180)
+    except subprocess.TimeoutExpired:
+        out = ""
+    lines = [l.strip() for l in out.splitlines() if "ADDIFY-APPCHECK" in l]
+    for l in lines:
+        print("      [%s] %s" % (label, l[l.index("ADDIFY-APPCHECK"):]))
+    return lines
+
+
+def appcheck_ms(res):
+    """Milliseconds from didFinish to the answer, for each check the app page settled."""
+    return [int(m.group(1)) for m in (re.search(r"settled (\d+) ms hasApp=1", l) for l in res.get("appcheck", [])) if m]
+
+
+def appcheck_report(dev, scen, res):
+    ms = appcheck_ms(res)
+    check(dev, scen, "#app check before reveal <= 150 ms", bool(ms) and max(ms) <= 150,
+          "%s ms" % ms if ms else "no timing logged", info=True)
 
 
 # ---------- checks ----------
@@ -384,10 +439,18 @@ def common(dev, scen, res, version):
     check(dev, scen, "user agent", ua.endswith(" Mobile/15E148 Addify/" + version) and "safari" not in ua.lower(), ua)
     check(dev, scen, "native flag", (r.get("native") or {}).get("platform") == "ios", json.dumps(r.get("native")))
     check(dev, scen, "exportFinds handler", (r.get("has") or {}).get("exportFinds") is True, json.dumps(r.get("has")))
+    check(dev, scen, "openSettings handler", (r.get("has") or {}).get("openSettings") is True, json.dumps(r.get("has")))
     check(dev, scen, "addifyKit accepts page", r.get("kit") == {"err": "bad message"}, json.dumps(r.get("kit")))
     store = r.get("store") or {}
     check(dev, scen, "addifyStore accepts page", store.get("err") != "not the engine page", json.dumps(store))
     return r
+
+
+def timeline(res):
+    """Every stub request in a scenario, one line each, so the job log alone shows what happened."""
+    for e in res["entries"]:
+        print("      %6.2f s  %s %-4s %-8s %s%s" % (e["dt"], e["role"], e["method"], e["status"],
+              e["path"].split("?")[0], (" kind=" + e["kind"]) if e.get("kind") else ""))
 
 
 def page_requests(res, role):
@@ -410,12 +473,14 @@ def run_stub_suite(dev, app, version, ipad=False):
           r2 is not None and r2.get("kit") == {"err": "bad message"} and (r2.get("store") or {}).get("err") != "not the engine page",
           "directory at %s s, second round %s" % (gist_at, json.dumps({k: (r2 or {}).get(k) for k in ("kit", "store")})))
     check(dev, "race", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
+    appcheck_report(dev, "race", res)
     json.dump(res, open(os.path.join(dev.out, "%s-race.json" % dev.tag), "w"), indent=1)
 
     res = scenario(dev, app, "relaunch", base, fresh=False)
     r = common(dev, "relaunch", res, version)
     check(dev, "relaunch", "loaded the directory's pick", r and r.get("port") == PORT_B, "port %s" % (r or {}).get("port"))
     check(dev, "relaunch", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
+    appcheck_report(dev, "relaunch", res)
     json.dump(res, open(os.path.join(dev.out, "%s-relaunch.json" % dev.tag), "w"), indent=1)
 
     if not ipad:
@@ -444,6 +509,55 @@ def run_stub_suite(dev, app, version, ipad=False):
         check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
               pixel_class(res["shots"]["final"]))
         json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
+
+        # A 4xx engine page with words on it is the same failed load as a 5xx: the error screen,
+        # never "404 page not found" as the whole screen, and the same automatic reloads.
+        c4 = {"A": {"health_ms": 20, "fail_first": 2, "fail_code": 404, "fail_body": "404 page not found"},
+              "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+        first404 = lambda e: e["role"] == "A" and e["status"] == 404
+        reported = lambda e: e.get("kind") == "bridges"
+        res = scenario(dev, app, "server4xx", c4, timeout=45,
+                       after=(("error", first404, 1.2), ("early", reported, 0.5), ("settled", reported, 2.0)))
+        timeline(res)
+        common(dev, "server4xx", res, version)
+        reqs = page_requests(res, "A")
+        check(dev, "server4xx", "404, 404, then the page", [s for _, s in reqs][:3] == [404, 404, 200], json.dumps(reqs))
+        if len(reqs) >= 3:
+            g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
+            check(dev, "server4xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
+                  "gaps %.1f s and %.1f s" % (g1, g2))
+        mid = pixel_class(res["shots"].get("error", ""))
+        check(dev, "server4xx", "error screen with Try again, not the 404 text", mid == "error", mid)
+        # The hard check is 2 s after the page reported; the 0.5 s shot is reported, not failed, so a
+        # slow runner frame is told apart from a loading screen that never goes.
+        check(dev, "server4xx", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
+              pixel_class(res["shots"].get("early", "")), info=True)
+        check(dev, "server4xx", "page on screen after recovery", pixel_class(res["shots"].get("settled", "")) == "page",
+              pixel_class(res["shots"].get("settled", "")))
+        json.dump(res, open(os.path.join(dev.out, "%s-server4xx.json" % dev.tag), "w"), indent=1)
+
+        # A 200 that finishes without #app (cut off before the app) is a failed load too, and its
+        # automatic reloads keep backing off instead of restarting at 2 s on every load.
+        na = {"A": {"health_ms": 20, "noapp_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+        firstpage = lambda e: e["role"] == "A" and e["status"] == 200 and e["path"].split("?")[0] in ("/", "/share")
+        res = scenario(dev, app, "noapp", na, timeout=45,
+                       after=(("error", firstpage, 2.0), ("early", reported, 0.5), ("settled", reported, 2.0)))
+        timeline(res)
+        common(dev, "noapp", res, version)
+        reqs = page_requests(res, "A")
+        check(dev, "noapp", "two pages without #app, then the page", len(reqs) == 3 and all(s == 200 for _, s in reqs),
+              json.dumps(reqs))
+        if len(reqs) >= 3:
+            g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
+            check(dev, "noapp", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
+                  "gaps %.1f s and %.1f s" % (g1, g2))
+        mid = pixel_class(res["shots"].get("error", ""))
+        check(dev, "noapp", "error screen with Try again, not the cut-off page", mid == "error", mid)
+        check(dev, "noapp", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
+              pixel_class(res["shots"].get("early", "")), info=True)
+        check(dev, "noapp", "page on screen after recovery", pixel_class(res["shots"].get("settled", "")) == "page",
+              pixel_class(res["shots"].get("settled", "")))
+        json.dump(res, open(os.path.join(dev.out, "%s-noapp.json" % dev.tag), "w"), indent=1)
 
         # The engine page redirects to a host outside the list (a parked domain): never Safari,
         # neither on the first load nor on the automatic reloads. Safari loading it would show up
@@ -482,6 +596,7 @@ def run_testbox(dev, app):
     gist = [e for e in res["entries"] if e["role"] == "G"]
     check(dev, "testbox", "launch ran (directory asked)", bool(gist), "%d directory requests" % len(gist), info=True)
     check(dev, "testbox", "app alive after 15 s", res["alive"], "", info=True)
+    appcheck_report(dev, "testbox", res)
     json.dump(res, open(os.path.join(dev.out, "%s-testbox.json" % dev.tag), "w"), indent=1)
 
 

@@ -22,11 +22,15 @@ struct ResultToast: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(2)
                         .foregroundStyle(.primary)
+                    /* The card's own words for this row (ResultLabel: "Exact version", "Closest
+                       version", "Source recording"). One line, cut at the end, so a long uploader
+                       name is what gets shortened, never the label. */
                     if let who = payload.uploader, !who.isEmpty {
-                        Text("Crowned: \(who)")
+                        Text(verbatim: "\(payload.label): \(who)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 0)

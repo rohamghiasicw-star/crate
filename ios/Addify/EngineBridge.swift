@@ -154,6 +154,10 @@ final class EngineBridge: ObservableObject {
        only reloads is a retry that fails every time until the app is relaunched. Resolve
        first, then reload; reload regardless so a transient network blip still recovers. */
     func retryResolvingFirst() {
+        // REVIEWER RUNS 2026-11-12: show the loading screen at once, not after the directory lookup
+        unreachable = false
+        offline = false
+        booting = true
         Task { @MainActor in
             await EngineConfig.resolveFromDirectory()
             retry()
@@ -202,7 +206,8 @@ final class EngineBridge: ObservableObject {
     }
 }
 
-/* Shape of the message finish() posts: {type:'result', song, artist, speed, exact:{url,uploader}|null}. */
+/* Shape of the message finish() posts: {type:'result', song, artist, speed, exact:{url,uploader,label}|null}.
+   label is the page's short name for the card's heading on that row (ResultLabel). */
 struct ResultPayload: Identifiable, Equatable {
     let id = UUID()
     let song: String
@@ -210,6 +215,8 @@ struct ResultPayload: Identifiable, Equatable {
     let speed: String
     let exactURL: URL?
     let uploader: String?
+    /* What the toast puts in front of the uploader: the page's exact.label, or "Closest version". */
+    let label: String
 
     init?(message: Any) {
         guard let d = message as? [String: Any], (d["type"] as? String) == "result",
@@ -220,9 +227,11 @@ struct ResultPayload: Identifiable, Equatable {
         if let ex = d["exact"] as? [String: Any] {
             self.exactURL = (ex["url"] as? String).flatMap(URL.init(string:))
             self.uploader = ex["uploader"] as? String
+            self.label = ResultLabel.toast(ex["label"])
         } else {
             self.exactURL = nil
             self.uploader = nil
+            self.label = ResultLabel.fallback
         }
     }
 
