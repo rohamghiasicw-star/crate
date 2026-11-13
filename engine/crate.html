@@ -6265,13 +6265,16 @@ function baseCall(u,tok){var n=0, t0=Date.now(), tap=SCAN_TAP||t0, last=null, cu
     var wd=setTimeout(function(){
       if(over||tok!==scanTok||NET_HEARD>=tap) return;   // the engine answered something during this scan
       cut=true; if(stopAsk) stopAsk(); end(downResult());},Math.max(0,tap+LIVE_BOUND-Date.now()));
-    function ask(){var stopped=false, ac=window.AbortController?new AbortController():null;
-      stopAsk=function(){stopped=true; if(ac) try{ac.abort();}catch(e){}};
+    function ask(){var stopped=false, late=false, prev=last, tm=0, ac=window.AbortController?new AbortController():null;
+      var stop=function(){stopped=true; if(ac) try{ac.abort();}catch(e){}};   // stops THIS ask only
+      stopAsk=stop;
       var p=call('/base',u,{kit:true,guard:true,qr:n,signal:ac?ac.signal:undefined,
                             alive:function(){return tok===scanTok&&!cut&&!stopped;}});
-      if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0), prev=last;   // a quiet ask: its deadline
-        p=Promise.race([p,netSleep(Math.max(0,left)).then(function(){stopAsk(); return prev;})]);}
+      if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0);   // a quiet ask: its deadline
+        p=Promise.race([p,new Promise(function(r){tm=setTimeout(function(){late=true; stop(); r(prev);},Math.max(0,left));})]);}
       return p.then(function(d){
+        clearTimeout(tm);         // an ask that answered in time leaves no deadline behind to stop the next one
+        if(late) d=prev;          // past the deadline the answer is the last busy one, whichever promise settled first
         if(tok!==scanTok||KIT_MOVED||cut) return d;
         if(d&&d.result&&d.result!=='engine_down'&&d.result!=='moved') engineHeard();
         var w=busyAgain(d,n,t0);
@@ -7111,12 +7114,14 @@ function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.
    (LISTEN_BLOB, the last recording; a listen scan has no link for run()). Back stops it. */
 var LISTEN_BLOB=null;
 function listenCall(blob,tok){var n=0, t0=Date.now(), last=null;
-  function ask(){var ac=(n>0&&window.AbortController)?new AbortController():null;
+  function ask(){var late=false, prev=last, tm=0, ac=(n>0&&window.AbortController)?new AbortController():null;
     var p=fetch(ENGINE+'/listen'+(n?'?qr='+n:''),{method:'POST',headers:{'Content-Type':blob.type||'audio/webm'},body:blob,signal:ac?ac.signal:undefined})
       .then(function(r){return r.json();}).catch(function(){return downResult();});   // CALL-RETRY: offline vs no answer (a POST: not retried)
-    if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0), prev=last;   // ROUND 3 (NETWORK-3): a quiet ask's deadline
-      p=Promise.race([p,netSleep(Math.max(0,left)).then(function(){if(ac) try{ac.abort();}catch(e){} return prev;})]);}
+    if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0);   // ROUND 3 (NETWORK-3): a quiet ask's deadline
+      p=Promise.race([p,new Promise(function(r){tm=setTimeout(function(){late=true; if(ac) try{ac.abort();}catch(e){} r(prev);},Math.max(0,left));})]);}
     return p.then(function(d){
+      clearTimeout(tm);
+      if(late) d=prev;          // past the deadline the answer is the last busy one, whichever promise settled first
       if(tok!==scanTok||leftScan) return d;
       var w=busyAgain(d,n,t0);
       if(w<0){ if(!busyQuiet(d)) pgFreeze(false); return busyDone(d,t0); }

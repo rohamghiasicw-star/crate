@@ -329,7 +329,8 @@ async def main(html, pages_dir, yml, only):
                     samples, card_at = [], None
                     while time.time() - t0 < 62:
                         s = await pg.evaluate("()=>({f:pgFrozen, card:document.getElementById('result').innerText.indexOf('Addify is busy')>=0,"
-                                              "st:(document.querySelector('#dial .wv-st .on')||{}).textContent||''})")
+                                              "st:(document.querySelector('#dial .wv-st .on')||{}).textContent||'', app:document.getElementById('app').getAttribute('data-state'),"
+                                              "txt:document.getElementById('result').innerText.slice(0,50)})")
                         s["t"] = round(time.time() - t0, 1); samples.append(s)
                         if s["card"]: card_at = s["t"]; break
                         await pg.wait_for_timeout(500)
@@ -337,7 +338,8 @@ async def main(html, pages_dir, yml, only):
                     asked = len(asks(pg, "/base" if mode == "link" else "/listen", t0))
                     check("R4-" + mode, "%s: /base answers busy only after 17 s each time; the busy card is up by about 40 s and the dial holds from the first busy answer" % mode.capitalize(),
                           card_at is not None and card_at <= 46 and held and all(x["f"] for x in held),
-                          {"card_at": card_at, "asks": asked, "not_frozen_at": [x["t"] for x in held if not x["f"]][:12], "samples": len(samples)})
+                          {"card_at": card_at, "asks": [round(x[0] - t0, 1) for x in pg.seen if x[2].startswith("/base" if mode == "link" else "/listen") and x[0] >= t0],
+                           "not_frozen_at": [x["t"] for x in held if not x["f"]][:12], "samples": len(samples), "last": samples[-1] if samples else None, "errs": pg.errs})
                     await close(ctx)
         except Exception as e:
             check("H", "section finished: R4", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
