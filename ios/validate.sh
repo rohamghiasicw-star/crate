@@ -49,7 +49,7 @@ tmpdir=$(mktemp -d)
 for variant in release debug; do
   flags=""; [ "$variant" = debug ] && flags="-D DEBUG"
   # shellcheck disable=SC2086
-  if swiftc -swift-version 5 $flags -o "$tmpdir/hosttests-$variant" Addify/SharedInbox.swift Addify/EngineConfig.swift tools/hosttests.swift 2>&1; then
+  if swiftc -swift-version 5 $flags -o "$tmpdir/hosttests-$variant" Addify/SharedInbox.swift Addify/EngineConfig.swift Addify/ResultLabel.swift tools/hosttests.swift 2>&1; then
     "$tmpdir/hosttests-$variant" | tee "$tmpdir/hosttests-$variant.out"
     grep -q '^FAIL' "$tmpdir/hosttests-$variant.out" && fail=1
     grep -q '^ALL PASS' "$tmpdir/hosttests-$variant.out" || fail=1

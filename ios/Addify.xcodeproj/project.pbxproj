@@ -13,6 +13,7 @@
 		AD00B004000000000000B004 /* EngineConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F004000000000000F004 /* EngineConfig.swift */; };
 		AD00B005000000000000B005 /* SharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F005000000000000F005 /* SharedInbox.swift */; };
 		AD00B006000000000000B006 /* ResultToast.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F006000000000000F006 /* ResultToast.swift */; };
+		AD00B010000000000000B010 /* ResultLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F012000000000000F012 /* ResultLabel.swift */; };
 		AD00B007000000000000B007 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F007000000000000F007 /* SettingsView.swift */; };
 		AD00B008000000000000B008 /* EngineBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F008000000000000F008 /* EngineBridge.swift */; };
 		AD00B00D000000000000B00D /* ShazamProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD00F00F000000000000F00F /* ShazamProbe.swift */; };
@@ -57,6 +58,7 @@
 		AD00F004000000000000F004 /* EngineConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineConfig.swift; sourceTree = "<group>"; };
 		AD00F005000000000000F005 /* SharedInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedInbox.swift; sourceTree = "<group>"; };
 		AD00F006000000000000F006 /* ResultToast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultToast.swift; sourceTree = "<group>"; };
+		AD00F012000000000000F012 /* ResultLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultLabel.swift; sourceTree = "<group>"; };
 		AD00F007000000000000F007 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		AD00F008000000000000F008 /* EngineBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineBridge.swift; sourceTree = "<group>"; };
 		AD00F00F000000000000F00F /* ShazamProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamProbe.swift; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 				AD00F004000000000000F004 /* EngineConfig.swift */,
 				AD00F005000000000000F005 /* SharedInbox.swift */,
 				AD00F006000000000000F006 /* ResultToast.swift */,
+				AD00F012000000000000F012 /* ResultLabel.swift */,
 				AD00F007000000000000F007 /* SettingsView.swift */,
 				AD00F00A000000000000F00A /* Assets.xcassets */,
 				AD00F010000000000000F010 /* PrivacyInfo.xcprivacy */,
@@ -246,6 +249,7 @@
 				AD00B004000000000000B004 /* EngineConfig.swift in Sources */,
 				AD00B005000000000000B005 /* SharedInbox.swift in Sources */,
 				AD00B006000000000000B006 /* ResultToast.swift in Sources */,
+				AD00B010000000000000B010 /* ResultLabel.swift in Sources */,
 				AD00B007000000000000B007 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

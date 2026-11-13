@@ -1,8 +1,9 @@
-// Host-side checks for the two Foundation-only files (the app-group contract and the engine
-// address). These run on a plain Mac with no Xcode: validate.sh compiles them with the macOS
-// toolchain twice, once as a Release build and once with -D DEBUG. They prove the link regex,
-// host filter, inbox once-only/staleness, URL normalisation, the compiled-in allowlist, the
-// directory filter, the launch-check order and its selection rule (with stubbed timings).
+// Host-side checks for the Foundation-only files (the app-group contract, the engine address
+// and the result toast's label). These run on a plain Mac with no Xcode: validate.sh compiles
+// them with the macOS toolchain twice, once as a Release build and once with -D DEBUG. They
+// prove the link regex, host filter, inbox once-only/staleness, URL normalisation, the
+// compiled-in allowlist, the app-page paths, the directory filter, the launch-check order and its
+// selection rule (with stubbed timings), and the toast label's fallback.
 import Foundation
 
 var failures = 0
@@ -73,6 +74,21 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isTrusted(URL(string: "https://www.addify.app")), false, "untrusted: subdomain")
         eq(EngineConfig.isTrusted(URL(string: "https://165-22-231-221.sslip.io")), false, "untrusted: host not compiled in")
         eq(EngineConfig.isTrusted(URL(string: "about:blank")), false, "untrusted: about:blank")
+
+        // the toast label: the page's exact.label when usable, else "Closest version"
+        eq(ResultLabel.toast("Exact version"), "Exact version", "label: Exact version")
+        eq(ResultLabel.toast("Source recording"), "Source recording", "label: Source recording")
+        eq(ResultLabel.toast("Closest version"), "Closest version", "label: Closest version")
+        eq(ResultLabel.toast("  Exact version \n"), "Exact version", "label: outer spaces trimmed")
+        eq(ResultLabel.toast("Closest version we found"), "Closest version we found", "label: 24 characters kept")
+        eq(ResultLabel.toast("The exact version playing"), "Closest version", "label: 25 characters falls back")
+        eq(ResultLabel.toast("The recording this clip was cut from"), "Closest version", "label: card heading falls back")
+        eq(ResultLabel.toast(nil), "Closest version", "label: missing falls back")
+        eq(ResultLabel.toast(""), "Closest version", "label: empty falls back")
+        eq(ResultLabel.toast("   "), "Closest version", "label: blank falls back")
+        eq(ResultLabel.toast(NSNumber(value: 1)), "Closest version", "label: not a string falls back")
+        eq(ResultLabel.toast(NSNull()), "Closest version", "label: null falls back")
+        eq(ResultLabel.toast("Exact\nversion"), "Closest version", "label: line break falls back")
 
         // the app page: crate.html's own paths on a compiled-in address, never the legal pages
         eq(EngineConfig.isAppPage(A), true, "app page: bare address")
