@@ -246,20 +246,16 @@ final class ShareViewController: UIViewController {
         return true
     }
 
-    /* The responder chain first. If this controller is not in a window yet the chain stops
-       short of the application, so fall back to asking the class for its shared instance
-       through the runtime, the route reported working on iOS 18 in Apple Developer Forums
-       thread 779644 (April 2025). Same object either way. */
+    /* The responder chain only. Build 29 (hostile round 4, NATIVE-R4-2): no runtime selector
+       lookup of sharedApplication. When the chain does not reach the application, nothing is
+       attempted and the share stays in the inbox with the "Open Addify" card, so it is never lost. */
     private func hostApplication() -> UIApplication? {
         var responder: UIResponder? = self
         while let r = responder {
             if let application = r as? UIApplication { return application }
             responder = r.next
         }
-        let shared = NSSelectorFromString("sharedApplication")
-        guard UIApplication.responds(to: shared),
-              let obj = UIApplication.perform(shared)?.takeUnretainedValue() as? UIApplication else { return nil }
-        return obj
+        return nil
     }
 
     private func finish(error: Bool) {

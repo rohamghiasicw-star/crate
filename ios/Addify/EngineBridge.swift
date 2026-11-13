@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 import UIKit
 import WebKit
-import UserNotifications
 
 /* ---------- the native side of the page ----------
    One object owns everything that crosses between SwiftUI and the WKWebView: the shared
@@ -172,36 +171,16 @@ final class EngineBridge: ObservableObject {
     }
 
     /* Result landed (posted by finish() in crate.html through the 'addify' handler).
-       Haptic + toast when the app is in front; a local notification when it is not, so a
-       share started from TikTok surfaces the answer without switching apps. */
+       Haptic + toast. Build 29 (hostile round 4, NATIVE-R4-6): no local notification and no
+       notification permission prompt; a share brings the app forward anyway. A11Y-R4-12: VoiceOver
+       hears the toast's line, and the toast stays up longer while VoiceOver runs. */
     func showResult(_ payload: ResultPayload) {
         haptic.notificationOccurred(.success)
         withAnimation { toast = payload }
-        if !isActive { postNotification(payload) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        let voiceOver = UIAccessibility.isVoiceOverRunning
+        if voiceOver { UIAccessibility.post(notification: .announcement, argument: payload.line) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (voiceOver ? 6 : 3)) { [weak self] in
             if self?.toast?.id == payload.id { withAnimation { self?.toast = nil } }
-        }
-    }
-
-    private func postNotification(_ p: ResultPayload) {
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            let go: () -> Void = {
-                let c = UNMutableNotificationContent()
-                c.title = "Match found"
-                c.body = p.line
-                c.sound = .default
-                let req = UNNotificationRequest(identifier: "addify-result-\(p.id)", content: c, trigger: nil)
-                center.add(req, withCompletionHandler: nil)
-            }
-            switch settings.authorizationStatus {
-            case .authorized, .provisional, .ephemeral: go()
-            case .notDetermined:
-                /* Asked only at the moment it is useful (a result while backgrounded),
-                   never at launch: 4.5.4 / 5.1.2 want notifications to be optional. */
-                center.requestAuthorization(options: [.alert, .sound]) { ok, _ in if ok { go() } }
-            default: break
-            }
         }
     }
 }
