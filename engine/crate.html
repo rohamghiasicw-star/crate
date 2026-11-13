@@ -147,7 +147,7 @@ img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit
 .mtile.on .mcov{box-shadow:0 0 0 2.5px var(--card),0 0 0 4.5px var(--text)}
 .mtile:active .mcov{transform:scale(.97)}
 .mg{display:grid}
-.ml{font-size:10px;font-weight:800;letter-spacing:.14em;opacity:.92}
+.ml{font-size:10px;font-weight:800;letter-spacing:.14em}   /* ROUND 5B (A11Y-R4-02): no .92 opacity on white text */
 .mtile b{font-size:13px;font-weight:650}
 .mtile>span:last-child{font-size:11.5px;color:var(--faint)}
 .flist{display:flex;flex-direction:column;gap:8px}
@@ -1765,6 +1765,34 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
    titles stay <b> with role="heading", so they look and read as before) */
 .vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .vh:focus,#app:focus{outline:none}
+/* ROUND 5B (A11Y-R4-01): a Finds row is a plain container holding two sibling buttons, never one inside the other,
+   as the trending rows do. fopen lays out the art and the title as the row did and stretches its ::after over the
+   whole row, so a tap anywhere still reopens the find; Play sits above it as its own button. */
+.frow[data-i]{position:relative}
+.fopen{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:0;text-align:left}
+.fopen::after{content:"";position:absolute;inset:0;border-radius:16px}
+.fopen:focus-visible{outline:none}
+.fopen:focus-visible::after{outline:2px solid var(--accent2);outline-offset:-2px}
+.frow .fplay{z-index:1;padding:0}
+/* ROUND 5B (A11Y-R4-03): the player sheet's "Open in app" (and the card's "Open in Apple Music", same class) in
+   --accent2, which clears 4.5:1 on the card in both themes (--accent was 3.75:1 on the dark card), with a 44 pt
+   tall hit area that leaves the link where it was */
+.playerout{position:relative;color:var(--accent2)}
+.playerout::before{content:"";position:absolute;inset:-14px -8px}
+/* ROUND 5B (A11Y-R4-06): three controls the 44 pt sweep missed. The inline player's Close on a SoundCloud or preview
+   band (only the YouTube band had its extender); "Add to Finds", whose -4px sat inside its 1.5px border (41 pt);
+   and Switch theme, whose top 4px the You screen clips, so it grows down like the scans pill. Square, so the
+   corners of the 44 pt area hit too. */
+.iplx::before{content:"";position:absolute;inset:-9px}
+.sadd::before{inset:-6px;border-radius:0}
+#theme::before{inset:0 -4px -8px;border-radius:0}
+/* ROUND 5B (A11Y-R4-07): the global reduced-motion rule is `*`, which never matches a pseudo-element, so the card's
+   bloom kept scaling from .55 to 1. Under reduced motion it sits still at its end state. */
+@media (prefers-reduced-motion:reduce){.hero::before,.hero.wl-bl::before{animation:none!important;opacity:.22;transform:translateX(-50%)}}
+/* ROUND 5B (A11Y-R4-08): headings that take the focus when the screen changes show no ring (they are not controls),
+   and the scan and listen titles are real headings that keep their look */
+[data-fk]:focus,.obh:focus{outline:none}
+.hd h1.ttl{margin:0}
 /* IAP-1: plan rows locked while a purchase runs */
 .pwplan:disabled{opacity:.6}
 /* BN-1: Delete account could not reach the server */
@@ -1892,7 +1920,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
   <section class="screen" id="s-listen">
     <div class="hd">
       <button class="ib plain" id="lcancel" title="Cancel" aria-label="Cancel"></button>
-      <div class="ttl">Listening</div>
+      <h1 class="ttl" id="listenttl" tabindex="-1" data-fk>Listening</h1>
     </div>
     <div class="mid">
       <div class="orbwrap">
@@ -1911,7 +1939,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
   <section class="screen" id="s-scan">
     <div class="hd">
       <button class="ib plain" id="cancel" title="Cancel" aria-label="Cancel"></button>
-      <div class="ttl">Scanning</div>
+      <h1 class="ttl" id="scanttl" tabindex="-1" data-fk>Scanning</h1>
     </div>
     <div id="scanbox"></div>
     <div class="mid">
@@ -2587,6 +2615,43 @@ function draw(ts){var G=geom(),g=G.g,w=G.w,h=G.h,t=(ts||0)/1000; g.clearRect(0,0
 function setState(s){waveState=s;
   document.getElementById('app').setAttribute('data-state',s);
   if(raf)cancelAnimationFrame(raf); raf=null;}
+/* ROUND 5B (A11Y-R4-08): FOCUS NEVER FALLS TO THE BODY WHEN THE SCREEN CHANGES. Screens switch by CSS (data-state),
+   so the control that had focus (the link box, Find it, a Finds row, Back, Cancel) was hidden under the user and focus
+   fell to <body>: VoiceOver lost its place and the next Tab started from the top. Now, when focus is lost, or still
+   where this put it, it goes to what names the screen on show: Home's heading (never the link box, which would raise
+   the keyboard), "Scanning" or "Listening", the result card's heading once it is on screen (until then the header's
+   title, else Back), a tab page's heading. A control the card redrew under the user is found again by its id first.
+   Nothing here runs while a sheet is open: sheets own the focus (CHAOS-3). */
+var fkAuto=null, fkLast=null, fkQ=false;
+function fkShown(el){if(!el||el===document.body||!document.contains(el)||el.closest('[hidden]')) return false;
+  var r=el.getBoundingClientRect(); if(!(r.width>0&&r.height>0)) return false;
+  return getComputedStyle(el).visibility!=='hidden';}
+function fkTarget(){var st=document.getElementById('app').getAttribute('data-state'), c=[], sc;
+  if(st==='locked') c=[document.querySelector('#result h1,#result h2,#result [role="heading"]'),document.getElementById('matchttl'),document.getElementById('back')];
+  else if(st==='scanning') c=[document.getElementById('scanttl'),document.getElementById('cancel')];
+  else if(st==='listening') c=[document.getElementById('listenttl'),document.getElementById('lcancel')];
+  else if((sc=document.getElementById({idle:'s-home',trending:'s-trend',search:'s-search',library:'s-lib',profile:'s-prof'}[st]||'')))
+    c=[].slice.call(sc.querySelectorAll('h1,h2,[role="heading"],.hd .ttl'));
+  for(var i=0;i<c.length;i++) if(fkShown(c[i])) return c[i];
+  return null;}
+function fkCheck(){fkQ=false;
+  if(typeof SHEETS!=='undefined'&&SHEETS.some(function(id){var x=document.getElementById(id); return !!x&&!x.hidden;})) return;
+  var app=document.getElementById('app'), ae=document.activeElement, t=null, mine=true;
+  var lost=!ae||ae===document.body||ae===document.documentElement||ae===app||!fkShown(ae);
+  if(!lost&&ae!==fkAuto) return;   // the user has moved on: leave it there
+  if(lost&&fkLast&&fkLast.id&&!document.contains(fkLast)){var same=document.getElementById(fkLast.id);
+    if(same&&app.contains(same)&&fkShown(same)&&!/^(INPUT|TEXTAREA|SELECT)$/.test(same.tagName)){t=same; mine=false;}}
+  if(!t) t=fkTarget();
+  if(!t||t===ae) return;
+  if(t.tabIndex<0&&!t.hasAttribute('tabindex')){t.setAttribute('tabindex','-1'); t.setAttribute('data-fk','');}
+  try{t.focus({preventScroll:true});}catch(e){}
+  fkAuto=(mine&&document.activeElement===t)?t:null;}
+function fkSoon(){if(fkQ) return; fkQ=true; Promise.resolve().then(fkCheck);}
+document.addEventListener('focusin',function(e){var a=document.getElementById('app'); if(a&&e.target!==a&&a.contains(e.target)) fkLast=e.target;},true);
+try{(function(){var mo=new MutationObserver(fkSoon), hd=document.querySelector('#s-match .hd');
+  mo.observe(document.getElementById('app'),{attributes:true,attributeFilter:['data-state']});
+  mo.observe(document.getElementById('result'),{childList:true,attributes:true,attributeFilter:['class']});
+  if(hd) mo.observe(hd,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});})();}catch(e){}
 function startClock(){t0=performance.now();}
 function stopClock(){}
 
@@ -5202,6 +5267,10 @@ function renderResult(d,partial){
   // Preview has left this row for the cover's own corner control (layout spec item 7), so
   // what is left is the two the spec keeps: other apps (ROUND 3: renamed for what it does, since the rows
   // only open a search for the song in each app), and Like.
+  // ROUND 5B (LAWYER-R4-01): these rows search what the card shows on top, the same words as the Open in
+  // tiles (LAWYER-06): the crowned version's title and artist line, else the song. They searched the song Shazam
+  // named, a name the card never showed.
+  var _oq=_mv?{t:_mv.title,a:String(_mv.artist||'').replace(/\s+·\s+/g,' ')}:{t:d.base_song,a:d.base_artist};
   var plat=
     '<div class="secrow">'+
       '<button class="secbtn wide" id="otherbtn" type="button" aria-expanded="false" aria-controls="otherwrap">'+IC.ext+'<span>Find it in another app</span></button>'+
@@ -5209,10 +5278,10 @@ function renderResult(d,partial){
         return '<button class="secbtn sq'+(on?' on':'')+'" id="likebtn" aria-label="'+(on?'Liked':'Like')+'" aria-pressed="'+on+'">'+(on?IC.heartfill:IC.heart)+'</button>';})()+
     '</div>'+
     '<div class="otherwrap" id="otherwrap" hidden><div class="sect">Find it in another app</div><div class="plat">'+
-      prow('Spotify',d.base_song,d.base_artist,'spotify')+
-      prow('Apple Music',d.base_song,d.base_artist,'apple')+
-      prow('SoundCloud',d.base_song,d.base_artist,'soundcloud')+
-      prow('YouTube',d.base_song,d.base_artist,'youtube')+
+      prow('Spotify',_oq.t,_oq.a,'spotify')+
+      prow('Apple Music',_oq.t,_oq.a,'apple')+
+      prow('SoundCloud',_oq.t,_oq.a,'soundcloud')+
+      prow('YouTube',_oq.t,_oq.a,'youtube')+
     '</div></div>';   // Konnor item 8: the auto-save note lives in You > Scanning now
   /* A one-word comment is not evidence. Konnor's own screenshot had "opinions" sitting
      under "circles by post malone" with equal weight, and another scan surfaced "fearles".
@@ -5536,7 +5605,13 @@ function scanNote(failed){if(!PAYWALL_ON||PRO) return;
   if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status');}
   if(hd&&n.parentNode!==hd) hd.appendChild(n); else if(!hd&&!n.parentNode) document.body.appendChild(n);   // ROUND 3: in the header
   n.textContent=(failed==='busy'?"That scan didn't count. ":failed==='unread'?"Couldn't read that link, so it didn't count. ":failed?"No song found, so it didn't count. ":'')+left+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');   // FIX 4: a busy scan found nothing because it never ran
-  clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){n.classList.remove('on');},3500);}   // ROUND 3: the title steps aside while .on (CSS :has)
+  clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){scanNoteOff();},3500);}   // ROUND 3: the title steps aside while .on (CSS :has)
+/* ROUND 5B (A11Y-R4-04): the toast is a role=status that opacity alone hid, so VoiceOver kept reading its last line
+   ("No song found, so it didn't count") on every card after it, a network error card included. It now empties once
+   it has faded, and at once when a new scan starts or the user goes Home (scanReset). */
+function scanNoteOff(now){var n=document.getElementById('scannote'); clearTimeout(scanNote.t); clearTimeout(scanNoteOff.t); if(!n) return;
+  n.classList.remove('on');
+  if(now) n.textContent=''; else scanNoteOff.t=setTimeout(function(){if(!n.classList.contains('on')) n.textContent='';},300);}
 /* REVIEWER RUNS 2 (GP-7): why a scan with no song did not count. A link we could not read is not "no song found". */
 function scanMiss(d){var r=d&&d.result;
   if(d&&d.bad_link) return 'unread';   // POLISH 3: a link the engine turned down
@@ -5595,11 +5670,13 @@ function openPaywall(){
   var ov=document.getElementById('paywall');
   if(!ov){ov=document.createElement('div'); ov.id='paywall'; ov.className='pw'; document.body.appendChild(ov);}
   var left=Math.max(0,FREE_SCANS-scansUsed());
-  // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title stays 'Addify+' (Option A, the
-  // co-owners' paywall spec, and the live promise ledger's S6); the plans under it carry the full name.
+  // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title on screen stays 'Addify+' (Option A, the
+  // co-owners' paywall spec, and the live promise ledger's S6), and the rows on screen read 'Yearly' and 'Monthly'.
+  // ROUND 5B (LITERAL-R4-01, IAP-R4-2): the full name is what a screen reader hears: the sheet is the 'Addify Plus'
+  // dialog and each row's name starts 'Addify Plus Yearly' or 'Addify Plus Monthly' (a hidden prefix in the row).
   var sub=(left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
     'Get unlimited scans and keep finding versions.';
-  ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-labelledby="pwh" tabindex="-1">'+
+  ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-label="Addify Plus" tabindex="-1">'+
     '<div class="pwgrab" aria-hidden="true"></div>'+
     '<div class="pwtop"><h2 class="pwh" id="pwh">Addify+</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
     '<p class="pwsub">'+esc(sub)+'</p>'+
@@ -5640,7 +5717,7 @@ function openPaywall(){
       var line=t?esc(t.words)+', then billed '+esc(pwEvery(q)):(q.period==='year'?'Billed every year':q.period==='month'?'Billed every month':'Billed '+esc(pwEvery(q)));
       return '<button class="pwplan" role="radio" aria-checked="'+on+'" data-i="'+i+'"'+(PW_BUYING?' disabled aria-disabled="true"':'')+'>'+
         '<span class="pwdot" aria-hidden="true">'+IC.tick+'</span>'+
-        '<span class="pwname"><b>'+name+'</b>'+(q===y&&save>0?'<span class="pwtag">SAVE '+save+'%</span>':'')+'<small>'+line+'</small></span>'+
+        '<span class="pwname">'+(q.period==='year'||q.period==='month'?'<span class="vh">Addify Plus </span>':'')+'<b>'+name+'</b>'+(q===y&&save>0?'<span class="pwtag">SAVE '+save+'%</span>':'')+'<small>'+line+'</small></span>'+
         '<span class="pwprice"><b>'+esc(q.price)+'</b><small>per '+esc(pwPer(q))+'</small></span></button>';}).join('');
     [].forEach.call(b.querySelectorAll('.pwplan'),function(r){r.onclick=function(){if(PW_BUYING) return;
       sel=+r.getAttribute('data-i'); pwMsg(''); paint();};});}
@@ -5874,8 +5951,11 @@ function renderTrend(){
    Shazam quota behind the user's back (a batch of retries is exactly what trips the throttle
    that ruins live scans). So the copy says what is true and the Retry button stays. */
 var libFilter='All', libQ='', libMonth='', libOldest=false;
-var MONTH_TINT=['#3B6FD8','#B04A7A','#2A8C7C','#8A6BD8','#C2703A','#2E8FB0',
-                '#1F7A5C','#A83A62','#6B5FE0','#B7792A','#5B6B8C','#8C3A3A'];
+/* ROUND 5B (A11Y-R4-02): each tint keeps its hue and is a shade deeper (lower OKLab lightness) where the white
+   "NOV 2026" label read under 4.5:1 on it (10 of 12 did, Oct at 3.1). Was '#3B6FD8','#B04A7A','#2A8C7C','#8A6BD8',
+   '#C2703A','#2E8FB0','#1F7A5C','#A83A62','#6B5FE0','#B7792A','#5B6B8C','#8C3A3A'. */
+var MONTH_TINT=['#2759C0','#9F3B6B','#006D5E','#6B4AB4','#984A09','#006888',
+                '#076D50','#A53760','#5A4BCA','#8C5100','#4F5F7F','#8C3A3A'];
 var MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 function monthKey(ts){var d=new Date(ts||0); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2);}
 function isEdit(x){return !!(x.speed&&x.speed!=='as posted')||!!x.edit;}   // REVIEWER RUNS 2 (LAWYER-06): the crowned row counts too
@@ -5941,12 +6021,15 @@ function renderLib(){
     gorder.forEach(function(g){
       html+='<div class="daylbl">'+esc(g)+'</div><div class="flist">'+groups[g].map(function(x){
         var i=all.indexOf(x), sl=srcLine(x);
-        return '<div class="frow" role="button" tabindex="0" data-i="'+i+'">'+
+        // ROUND 5B (A11Y-R4-01): two sibling buttons. The row's own button names the find; Play is beside it with its
+        // own name, so the row's name never swallows "Play ..." and Space works on both (they are real buttons).
+        return '<div class="frow" data-i="'+i+'">'+
+          '<button type="button" class="fopen">'+
           '<span class="fart">'+(x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.note+'</span>'+
           '<span class="tt"><b>'+ttlHTML(x.title||x.song)+(isLiked(x.song,x.artist)?'<i class="fheart" aria-label="Liked">'+IC.heartfill+'</i>':'')+'</b>'+
-            '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span>'+
-          (x.url?'<span class="fplay" role="button" tabindex="0" aria-label="Play '+esc(x.title||x.song)+'"'+
-            ' data-play="'+esc(findURL(x))+'" data-src="" data-title="'+esc(x.title||x.song)+'">'+IC.play+'</span>':'')+
+            '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span></button>'+
+          (x.url?'<button type="button" class="fplay" aria-label="Play '+esc(x.title||x.song)+'"'+
+            ' data-play="'+esc(findURL(x))+'" data-src="" data-title="'+esc(x.title||x.song)+'">'+IC.play+'</button>':'')+
           '</div>';}).join('')+'</div>';});
     if(libFilter==='All'&&un.length&&!q&&!libMonth)
       html+='<div class="daylbl">Not matched yet</div><div class="flist">'+un.map(unRow).join('')+'</div>';
@@ -5958,8 +6041,9 @@ function renderLib(){
     var x=loadCrate()[+row.getAttribute('data-i')]; if(!x) return;
     // Konnor 2026-10-01: a find reopens its scan (closest versions, the pick), not Apple Music.
     // Through run(), so the flow is the same every time; a finished scan answers from cache.
-    row.onclick=function(){if(x.clip&&!x.listen){urlEl.value=x.clip; run(x.clip,{reopen:true});} else if(x.url) window.open(findURL(x),'_blank','noopener');};   // REVIEWER RUNS 2 (LA-1): reopening a find is free
-    row.onkeydown=function(e){if(e.key==='Enter'&&e.target===row) row.onclick();};});
+    // ROUND 5B (A11Y-R4-01): the click bubbles up from the row's own button (Enter and Space click it natively), and
+    // Play's never arrives: the delegated [data-play] handler stops it
+    row.onclick=function(){if(x.clip&&!x.listen){urlEl.value=x.clip; run(x.clip,{reopen:true});} else if(x.url) window.open(findURL(x),'_blank','noopener');};});   // REVIEWER RUNS 2 (LA-1): reopening a find is free
   Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
     row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); dropUnmatched(u); run(u);};});}
@@ -6248,6 +6332,7 @@ urlEl.addEventListener('change', syncFormAction);
 syncFormAction();
 var phaseT=null, finishT=null;
 function scanReset(){clearTimeout(phaseT); clearTimeout(finishT); tipsOff(); scanAnimOff(); wlCancel();   // WAVE 2026-09-30
+  scanNoteOff(true);   // ROUND 5B (A11Y-R4-04): the last scan's count line goes with it
   WIN=null; clipSecs=0;
   document.getElementById('dial').classList.remove('done','land');   // APPLYALL 2026-09-29
   live.classList.remove('ok');
@@ -7289,11 +7374,16 @@ function openOnb(step,mode){
   onbMode=mode||'first'; onbStep=Math.max(0,Math.min(1,+step||0));
   if(onbMode==='first'){onbSet('addify-onb3','1'); onbSet('addify-onb-at',onbStep);}
   document.getElementById('onb').hidden=false; paintOnb();}
-function onbGo(step){onbStep=step; if(onbMode==='first') onbSet('addify-onb-at',step); paintOnb();}
+function onbGo(step){onbStep=step; if(onbMode==='first') onbSet('addify-onb-at',step); paintOnb();
+  // ROUND 5B (A11Y-R4-08): the screen was redrawn under "Set it up", so focus fell to <body>. The new screen's heading
+  // takes it: VoiceOver reads "Pin Addify to your share sheet" and Tab goes on to Let's go.
+  var h=document.querySelector('#onbbody .obh'); if(h){h.setAttribute('tabindex','-1'); try{h.focus({preventScroll:true});}catch(e){}}}
 /* "Let's go" on the last screen: first run marks onboarding done and lands on Home; a replay
    from the You tab just closes. */
 function onbLetsGo(){if(onbMode==='replay'){onbClose(); return;} onbDone(); nav('idle');}
 function paintOnb(){
+  // ROUND 5B (A11Y-R4-08): the replay from You is "How to add Addify" (the row that opens it), not a welcome
+  var _oc=document.querySelector('#onb .onbcard'); if(_oc) _oc.setAttribute('aria-label',onbMode==='replay'?'How to add Addify':'Welcome to Addify');
   document.getElementById('onbdots').innerHTML=[0,1].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
   var b=document.getElementById('onbbody'), h='';
   if(onbStep===0){                                     /* 1 · what it does */
@@ -7436,6 +7526,11 @@ Promise.resolve().then(function(){
   if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: no onboarding over the scan
   if(!onbSeen()){openOnb(onbAt());}                    // resume where the share sheet round trip left them
 });
+// ROUND 5B (A11Y-R4-08): Escape closes the How to add replay, as its backdrop does (the first run has no way out but
+// Let's go). It runs first and stops there, so the inline player under the sheet is left as it was.
+window.addEventListener('keydown',function(e){if(e.key!=='Escape'||!onbOpen()||onbMode!=='replay') return;
+  var pwo=document.getElementById('paywall'); if(pwo&&!pwo.hidden) return;
+  e.stopImmediatePropagation(); onbClose();},true);
 document.getElementById('onb').addEventListener('click',function(e){
   if(e.target.id!=='onb') return;
   if(onbStep===2) onbDone(); else if(onbMode==='replay') onbClose();});
