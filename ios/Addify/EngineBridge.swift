@@ -35,7 +35,12 @@ final class EngineBridge: ObservableObject {
        to an address nobody checked yet and then replaced by the launch's own page load. */
     var holdShares = false
 
-    private var pendingLink: String? = nil
+    /* The shared link waiting for the page. Held until an engine page has loaded with it, so a
+       failed load, Try again or a return to the app reopens the share (PendingShare). */
+    private var share = PendingShare()
+    /* Set by the web view's coordinator: opens an engine page in the main frame the way every
+       launch load does (EngineWebView open). */
+    var openPage: ((URL) -> Void)?
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
@@ -87,49 +92,57 @@ final class EngineBridge: ObservableObject {
         if link == lastDelivered, now.timeIntervalSince(lastDeliveredAt) < 5 { return }
         lastDelivered = link
         lastDeliveredAt = now
-        pendingLink = link
+        share.hold(link)
         flushPending()
     }
 
+    /* Hands the held share to the page, or opens its share page. Waits while a launch check is
+       choosing the address (load() opens it then). On the error screen it starts a fresh launch
+       check, which opens the share under the loading screen. */
     func flushPending() {
-        guard let link = pendingLink, let wv = webView, !holdShares else { return }
+        guard let link = share.current(), let wv = webView, !holdShares else { return }
+        if unreachable {
+            retry()
+            return
+        }
         if pageReady {
             let json = jsString(link)
             let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));return true;}catch(e){return false;}})()"
             wv.evaluateJavaScript(js) { [weak self] value, _ in
+                guard let self = self else { return }
                 if (value as? Bool) == true {
-                    self?.pendingLink = nil
-                } else {
-                    self?.loadShare(link)
+                    self.share.taken(link)
+                } else if self.share.current() == link {
+                    self.loadShare()
                 }
             }
         } else {
-            loadShare(link)
+            loadShare()
         }
     }
 
-    private func loadShare(_ link: String) {
-        guard let wv = webView else { return }
-        if let u = shareURL(link) {
-            pendingLink = nil
-            pageReady = false
-            unreachable = false
-            wv.load(URLRequest(url: u))
-        }
+    private func loadShare() {
+        guard let open = openPage, share.current() != nil else { return }
+        open(share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL))
     }
 
-    /* <engine>/share?url=<link> on the address in use. */
-    func shareURL(_ link: String) -> URL? {
-        guard var comps = URLComponents(url: EngineConfig.baseURL, resolvingAgainstBaseURL: false) else { return nil }
-        comps.path = "/share"
-        comps.queryItems = [URLQueryItem(name: "url", value: link)]
-        return comps.url
+    /* The page a launch check opens: the held share's page, else the engine's home. A new launch
+       counts against the share's launch limit (PendingShare.maxLaunches). */
+    func launchURL(newLaunch: Bool) -> URL {
+        if newLaunch { share.newLaunch() }
+        return share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL)
     }
 
-    /* For the launch's own page load: the share that waited while the address was chosen. */
-    func takePendingLink() -> String? {
-        defer { pendingLink = nil }
-        return pendingLink
+    /* The page an automatic reload opens: the held share's page, else the page that failed. */
+    func retryURL(_ failed: URL) -> URL {
+        share.target(base: EngineConfig.baseURL, fallback: failed)
+    }
+
+    /* An engine page finished loading (EngineWebView pageLoaded). If its share page was opened,
+       that page has the link now. A link that arrived while another page loaded is handed over. */
+    func engineLoaded() {
+        if share.pageLoaded() { return }
+        flushPending()
     }
 
     /* JSON-encode a string for embedding in a JS expression. Never string-concatenate a
@@ -145,6 +158,7 @@ final class EngineBridge: ObservableObject {
         offline = false
         pageReady = false
         booting = true
+        holdShares = true       // the launch check this starts opens any share that arrives meanwhile
         reloadToken += 1
     }
 
@@ -157,6 +171,8 @@ final class EngineBridge: ObservableObject {
         unreachable = false
         offline = false
         booting = true
+        /* A share that arrives during the lookup waits for the launch check, which opens it. */
+        holdShares = true
         Task { @MainActor in
             await EngineConfig.resolveFromDirectory()
             retry()

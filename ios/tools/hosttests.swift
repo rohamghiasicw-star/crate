@@ -1,9 +1,11 @@
-// Host-side checks for the Foundation-only files (the app-group contract, the engine address
-// and the result toast's label). These run on a plain Mac with no Xcode: validate.sh compiles
-// them with the macOS toolchain twice, once as a Release build and once with -D DEBUG. They
-// prove the link regex, host filter, inbox once-only/staleness, URL normalisation, the
-// compiled-in allowlist, the app-page paths, the directory filter, the launch-check order and its
-// selection rule (with stubbed timings), and the toast label's fallback.
+// Host-side checks for the Foundation-only files (the app-group contract, the engine address,
+// the share waiting for the page and the result toast's label). These run on a plain Mac with no
+// Xcode: validate.sh compiles them with the macOS toolchain twice, once as a Release build and once
+// with -D DEBUG. They prove the link regex, host filter, inbox once-only/staleness, URL
+// normalisation, the compiled-in allowlist, the app-page paths, the directory filter, the
+// launch-check order and its selection rule (with stubbed timings), the toast label's fallback,
+// the share page address, how long a share is held (PendingShare) and which pages open in a
+// Safari view.
 import Foundation
 
 var failures = 0
@@ -179,6 +181,95 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(w, nil, "pick: nothing answered")
         eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), nil, "pick: nothing stored when nothing answered")
         resetEngineKeys()
+
+        // the share page: <engine>/share?url=<link>, read back exactly the way the page reads it
+        /* URLSearchParams: '+' is a space, then percent-decoding. */
+        func pageReads(_ u: URL?) -> String? {
+            guard let q = u.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedQuery }) else { return nil }
+            for pair in q.split(separator: "&") where pair.hasPrefix("url=") {
+                return String(pair.dropFirst(4)).replacingOccurrences(of: "+", with: " ").removingPercentEncoding
+            }
+            return nil
+        }
+        let L1 = "https://vt.tiktok.com/ZS4a5JyXE/"
+        let L2 = "https://www.instagram.com/reel/abc/?igsh=1&x=2+3#frag"
+        eq(EngineConfig.shareURL(for: L1, base: A)?.absoluteString, "https://addify.app/share?url=https://vt.tiktok.com/ZS4a5JyXE/", "share page: address")
+        eq(pageReads(EngineConfig.shareURL(for: L1, base: A)), L1, "share page: the page reads the TikTok link back")
+        eq(pageReads(EngineConfig.shareURL(for: L2, base: A)), L2, "share page: '&', '=', '+' and '#' survive the page's reading")
+        eq(EngineConfig.shareURL(for: L2, base: A)?.query?.contains("+"), false, "share page: no bare '+' in the query")
+        eq(EngineConfig.isAppPage(EngineConfig.shareURL(for: L1, base: A)), true, "share page: is the app page")
+
+        // how long a share is held: until a page loads with it, never forever
+        let t0 = Date()
+        let share1 = EngineConfig.shareURL(for: L1, base: A)!
+        let share2 = EngineConfig.shareURL(for: L2, base: A)!
+        let F = URL(string: "https://addify.app/?code=x")!
+        var ps = PendingShare()
+        eq(ps.target(base: A, fallback: A, now: t0), A, "held: nothing held opens Home")
+        eq(ps.pageLoaded(), false, "held: a page load with nothing held takes nothing")
+        ps.hold(L1, now: t0)
+        eq(ps.pageLoaded(), false, "held: a page that loaded before the share page opened does not take it")
+        eq(ps.current(now: t0), L1, "held: still held, so it is handed to that page")
+        ps.newLaunch(now: t0)
+        eq(ps.target(base: A, fallback: A, now: t0), share1, "held: the launch opens the share page")
+        eq(ps.opened, true, "held: marked opened")
+        eq(ps.current(now: t0 + 1), L1, "held: a failed load keeps it (nothing released it)")
+        eq(ps.target(base: A, fallback: F, now: t0 + 2), share1, "held: an automatic reload opens the share page, not the page that failed")
+        ps.newLaunch(now: t0 + 30)
+        eq(ps.target(base: A, fallback: A, now: t0 + 30), share1, "held: Try again or a return to the app opens the share page, not Home")
+        eq(ps.pageLoaded(), true, "held: the page that loads after the share page opened has it")
+        eq(ps.current(now: t0 + 31), nil, "held: released once a page loaded")
+        eq(ps.target(base: A, fallback: A, now: t0 + 31), A, "held: the next launch opens Home")
+        eq(ps.pageLoaded(), false, "held: a later page load takes nothing")
+        ps.hold(L1, now: t0)
+        ps.taken("https://vt.tiktok.com/other/")
+        eq(ps.current(now: t0), L1, "held: the page taking another link leaves it")
+        ps.taken(L1)
+        eq(ps.current(now: t0), nil, "held: the page taking it releases it")
+        ps.hold(L1, now: t0)
+        _ = ps.target(base: A, fallback: A, now: t0)
+        ps.hold(L2, now: t0 + 1)
+        eq(ps.opened, false, "held: a newer share starts unopened")
+        eq(ps.target(base: A, fallback: A, now: t0 + 1), share2, "held: a newer share replaces the older one")
+        ps.hold(L1, now: t0)
+        eq(ps.current(now: t0 + PendingShare.maxAge - 1), L1, "held: kept inside the inbox's age limit")
+        eq(ps.current(now: t0 + PendingShare.maxAge + 1), nil, "held: dropped past the inbox's age limit")
+        eq(ps.target(base: A, fallback: A, now: t0 + PendingShare.maxAge + 1), A, "held: a stale share opens Home")
+        ps.hold(L1, now: t0)
+        for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
+        eq(ps.current(now: t0 + 10), L1, "held: kept through \(PendingShare.maxLaunches) launch checks")
+        ps.newLaunch(now: t0 + 11)
+        eq(ps.current(now: t0 + 11), nil, "held: dropped at the next launch check, so it never keeps the app off Home")
+        eq(ps.target(base: A, fallback: A, now: t0 + 11), A, "held: that launch opens Home")
+        ps.hold(L1, now: t0)
+        for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
+        ps.hold(L2, now: t0 + 20)
+        ps.newLaunch(now: t0 + 21)
+        eq(ps.current(now: t0 + 21), L2, "held: a new share starts its own launch count")
+        eq(PendingShare.maxAge, SharedInbox.maxAge, "held: same age limit as the share inbox")
+
+        // pages that open in a Safari view over the app, and pages that do not
+        for path in ["/privacy", "/support", "/terms", "/privacy.html", "/support.html", "/terms.html"] {
+            eq(EngineConfig.opensInSafariView(URL(string: "https://addify.app" + path)), true, "safari view: addify.app" + path)
+        }
+        eq(EngineConfig.opensInSafariView(URL(string: "https://ADDIFY.app:443/privacy?from=you")), true, "safari view: case, default port, query")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://support.addify.app/terms.html")), true, "safari view: paywall Terms of Use")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://support.addify.app/privacy.html")), true, "safari view: paywall Privacy Policy")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://support.addify.app/")), true, "safari view: any support.addify.app page")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://addify.app/")), false, "not safari view: the app page")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://addify.app/?code=x&state=y")), false, "not safari view: Spotify return")
+        eq(EngineConfig.opensInSafariView(share1), false, "not safari view: the share page")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://addify.app/review")), false, "not safari view: other engine path")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://addify.app/privacy/x")), false, "not safari view: deeper path")
+        eq(EngineConfig.opensInSafariView(URL(string: "http://addify.app/privacy")), false, "not safari view: engine path on http")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://www.addify.app/privacy")), false, "not safari view: untrusted host")
+        eq(EngineConfig.opensInSafariView(URL(string: "http://support.addify.app/terms.html")), false, "not safari view: support site on http")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://support.addify.app:8443/terms.html")), false, "not safari view: support site on another port")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://support.addify.app.evil.example/terms.html")), false, "not safari view: suffix trick")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://evil.example/privacy")), false, "not safari view: privacy path elsewhere")
+        eq(EngineConfig.opensInSafariView(URL(string: "https://open.spotify.com/track/x")), false, "not safari view: music links keep their handoff")
+        eq(EngineConfig.opensInSafariView(URL(string: "spotify:track:x")), false, "not safari view: app scheme")
+        eq(EngineConfig.opensInSafariView(nil), false, "not safari view: nil")
 
         print(failures == 0 ? "ALL PASS" : "FAILURES: \(failures)")
     }

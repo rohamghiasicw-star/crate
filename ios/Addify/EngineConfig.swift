@@ -103,13 +103,46 @@ enum EngineConfig {
 
     /* The app page itself on a trusted address: the engine serves crate.html at /, /index.html,
        /crate.html and /share (server.py). /privacy, /support and /terms are engine pages too, but
-       not the app, and they have no #app (EngineWebView checkAppPage). */
+       not the app: they open in a Safari view (opensInSafariView), and if one ever reaches the web
+       view it has no #app (EngineWebView checkAppPage). */
     static let appPagePaths: Set<String> = ["", "/", "/index.html", "/crate.html", "/share"]
 
     static func isAppPage(_ url: URL?) -> Bool {
         guard let u = url, isTrusted(u),
               let path = URLComponents(url: u, resolvingAgainstBaseURL: false)?.path else { return false }
         return appPagePaths.contains(path)
+    }
+
+    /* <engine>/share?url=<link>, the page's own share landing (server.py serves the app there and
+       the page reads ?url=). A '+' is written %2B: URLComponents leaves it bare, and the page's
+       URLSearchParams would read it as a space and cut the link there. */
+    static func shareURL(for link: String, base: URL = baseURL) -> URL? {
+        guard var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        comps.path = "/share"
+        comps.queryItems = [URLQueryItem(name: "url", value: link)]
+        comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return comps.url
+    }
+
+    // MARK: pages that open in a Safari view
+
+    /* BUILD 30. The legal and support pages open in a Safari view presented over the app
+       (SFSafariViewController), never in the app's own web view, so closing it returns to exactly
+       where the user was. Before, the You tab's Privacy policy and Support links replaced the app
+       page, and that page's Back bar reloaded the app on Home. The paywall's Terms of Use and
+       Privacy Policy links (support.addify.app) left the app for Safari. Every other link keeps its
+       own route (EngineWebView). */
+    static let legalPaths: Set<String> = ["/privacy", "/privacy.html", "/support", "/support.html",
+                                          "/terms", "/terms.html"]
+    static let supportSite = Origin(scheme: "https", host: "support.addify.app", port: nil)
+
+    /* Any page on support.addify.app (https only), or a legal page on a compiled-in engine address. */
+    static func opensInSafariView(_ url: URL?) -> Bool {
+        guard let u = url, let o = Origin(u) else { return false }
+        if o == supportSite { return true }
+        guard trustedOrigins.contains(o),
+              let path = URLComponents(url: u, resolvingAgainstBaseURL: false)?.path else { return false }
+        return legalPaths.contains(path)
     }
 
     // MARK: the address
