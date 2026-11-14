@@ -268,7 +268,13 @@ async def main(html, pages_dir, yml, only):
                 async def stream74(route):
                     try: await route.fulfill(status=200, content_type="text/event-stream", body="event: done\ndata: " + json.dumps(LG.nocrown(74)) + "\n\n")
                     except Exception: pass
-                ctx, pg = await page(routes={"/health": hang, "/base?url=": slow_base, "/edits": stream74})
+                pst = {"t0": None}
+                async def moving(route):   # ROUND 5B: liveness is progress, so a live engine's /progress moves
+                    if pst["t0"] is None: pst["t0"] = time.time()
+                    try: await route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                        {"pct": round(min(97.0, 6 + 0.6 * (time.time() - pst["t0"])), 1), "label": "Building the fingerprint"}))
+                    except Exception: pass
+                ctx, pg = await page(routes={"/health": hang, "/base?url=": slow_base, "/edits": stream74, "/progress": moving})
                 t0 = time.time(); await go(pg, CLIP % 74)
                 cut = None; okd = None
                 while time.time() - t0 < 50:
@@ -276,7 +282,7 @@ async def main(html, pages_dir, yml, only):
                     if NOT_REACH in tx: cut = round(time.time() - t0, 1); break
                     if await pg.evaluate(FINAL): okd = round(time.time() - t0, 1); break
                     await pg.wait_for_timeout(300)
-                check("R2c", "/health silent but /progress answering and /base taking 32 s: the scan runs to the song, never cut",
+                check("R2c", "/health silent but /progress answering and moving and /base taking 32 s: the scan runs to the song, never cut",
                       okd is not None and cut is None and okd >= 30, {"song_at": okd, "cut_at": cut})
                 check("R2d", "No page errors on the slow scan", not pg.errs, pg.errs)
                 await close(ctx)

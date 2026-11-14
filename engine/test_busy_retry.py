@@ -29,7 +29,7 @@ Scenarios (fresh browser context each; the scan starts the way a share starts on
   round 3 (the engine waits for Shazam's room inside one ask and says so on /progress "sw"):
   Q14 /base answers after 40 s while /progress reports a Shazam wait from 2 s -> song, no busy
       card; the dial never goes back, stays under 95 and is still moving in the last 20 s
-  Q15 the same 40 s /base with no wait reported -> the dial passes 96 (the plain timeline: Q14's
+  Q15 the same 40 s /base, /progress moving with no wait reported -> the dial passes 96 (the plain timeline: Q14's
       slower dial comes from the wait signal)
 
 usage:  /usr/bin/python3 test_busy_retry.py [--page crate.html] [--only Q1,Q2] [--expect-old]
@@ -132,7 +132,11 @@ class Engine:
         if path == "/progress":
             pr = {}
             sw_from = self.plan.get("sw_from")           # round 3: the engine waits on Shazam from here
-            if sw_from is not None:
+            if self.plan.get("moving"):                   # round 5b: a scan moving with no wait (liveness is progress)
+                t_b = self.base_times()
+                if t_b:
+                    pr = {"pct": round(min(97.0, 24 + 0.5 * (time.time() - t_b[0])), 1), "label": "Building the fingerprint"}
+            elif sw_from is not None:
                 t_b = self.base_times()
                 if t_b:
                     el = time.time() - t_b[0]
@@ -388,6 +392,8 @@ async def amain(a):
             plan = {"/base": [dict(FOUND, _delay=40)]}
             if sw_from is not None:
                 plan["sw_from"] = sw_from
+            else:
+                plan["moving"] = True
             r = await run_case(pw, html, qn + (" a 40 s ask waiting on Shazam: the dial slows" if sw_from is not None
                                                else " a 40 s ask, no wait reported (control)"),
                                plan, steps=steps14, secs=70)

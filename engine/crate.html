@@ -804,6 +804,9 @@ canvas#tlwave{width:100%;height:36px;display:block}
 @keyframes vfpop{from{transform:scale(.84)}to{transform:scale(1)}}
 .vfeed.done .vbx button:not(.on){opacity:.32}
 .vfeed.done .vq{color:var(--text)}
+/* ROUND 5B (BAD-NETWORK-R4-4): Try again after a rating that did not reach Addify */
+.vfretry{min-height:44px;padding:0 18px;border-radius:999px;background:var(--raise2);color:var(--text);font-size:13.5px;font-weight:700}
+.trainnote .vfretry{margin-left:6px;vertical-align:middle}
 .vfeed.is-right{border-color:color-mix(in oklab,var(--yes) 34%,var(--line))}
 .vfeed.is-wrong{border-color:color-mix(in oklab,var(--bad) 34%,var(--line))}
 /* "Which one was it?" A full-width line of the same row, edge to edge under a hairline.
@@ -1149,6 +1152,14 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
    real video frame from the very first paint instead of the black loading rectangle. */
 .ipposter{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2}
 .ipvid.playing .ipposter{opacity:0;pointer-events:none;transition:opacity .3s}
+/* ROUND 5B (BAD-NETWORK-R4-5): the player that would not load. White on the slot's own black in both themes. */
+.ipfbox{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:8px;
+  padding:10px 38px 10px 12px;color:#fff;font-size:13.5px;line-height:1.3}
+.ipfbox b{font-weight:700}
+.ipfrow{display:flex;flex-wrap:wrap;gap:8px}
+.ipfbtn{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.16);
+  color:#fff;font-size:13px;font-weight:700;text-decoration:none}
+.ipfbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
 .iplx{position:absolute;top:9px;right:9px;width:26px;height:26px;border-radius:50%;
   background:rgba(8,6,14,.55);color:#fff;display:grid;place-items:center;z-index:4;cursor:pointer}
 .iplx svg{width:12px;height:12px}
@@ -1681,6 +1692,9 @@ a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:fil
 .htrack .hbar{flex:1;height:2px;margin:13px 6px 0;border-radius:2px;background:var(--line2);min-width:12px}
 .htrack .hbar.done{background:var(--good)}
 @media (prefers-reduced-motion:reduce){.htrack .hs.act .hc::after{animation:none;opacity:.5;transform:scale(1.12)}}
+/* ROUND 5B (BAD-NETWORK-R4-3): the version check could not run; the line and its Try again */
+.vcheck{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;margin:16px 2px 6px;color:var(--muted);font-size:13.5px;font-weight:600}
+.vcheck button{min-height:44px;padding:0 18px;border-radius:999px;background:var(--raise2);color:var(--text);font-size:13.5px;font-weight:700}
 .latehunt{display:flex;align-items:center;gap:10px;margin:16px 2px 6px;color:rgba(255,255,255,.62);font-size:13.5px;font-weight:600;letter-spacing:.1px}
 .latehunt i{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid rgba(107,95,224,.3);border-top-color:#6B5FE0;animation:lhspin .8s linear infinite}
 @keyframes lhspin{to{transform:rotate(360deg)}}
@@ -2228,6 +2242,7 @@ function call(path,url,opt){
   // engine is joined, not started again, and its phone probes keep their session
   return netJSON(ENGINE+path+'?url='+encodeURIComponent(url)+(kit?'&kit='+kit:'')+sq,{alive:opt&&opt.alive,signal:opt&&opt.signal})
     .catch(function(){engineUp=null;return downResult();})
+    .then(function(d){try{if(opt&&opt.answered) opt.answered(d);}catch(e){} return d;})   // ROUND 5B: the scan's liveness
     // BELIEVABLE REPLAY: a replayed /base lands at a human pace (REPLAY_NAME_MS)
     .then(function(d){return (path==='/base'&&d&&d.replay)?replayHold(t0,replayMs(REPLAY_NAME_MS)).then(function(){return d;}):d;})
     .then(function(d){if(kit) kitStop(); return d;});});});}
@@ -2526,7 +2541,9 @@ function clipShape(u){var x; try{x=new URL(/^https?:\/\//i.test(u)?u:'https://'+
   return {};}
 function parseLink(raw){raw=(raw||'').trim(); var all=raw.match(/https?:\/\/[^\s]+/gi)||[], page=null;
   var cands=all.length?all:[raw];
-  for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:cands[i]}; if(r.page&&!page) page=r.page;}
+  // ROUND 5B: a clip pasted without its scheme ("vt.tiktok.com/...") gets https://, as the engine reads it, so /base and
+  // the /progress poll name the same clip (the scan's liveness reads that poll, see SCAN_STILL)
+  for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:/^https?:\/\//i.test(cands[i])?cands[i]:'https://'+cands[i]}; if(r.page&&!page) page=r.page;}
   return {host:null,url:all[0]||raw,page:page};}
 function notClipMsg(p){return p&&p.page
   ? 'That link is '+(p.page==='Instagram'?'an ':'a ')+p.page+' page, not a clip. Open the video, tap Share, then Copy link, and paste it here.'
@@ -2731,11 +2748,22 @@ function pgFreeze(on){on=!!on; if(pgFrozen===on) return; pgFrozen=on;
   if(pgS) pgS.t=pgClock();
   try{var dl=document.getElementById('dial'), bx=dl&&dl.querySelector('.wv-st');
     if(bx){bx._wvi=null; wvStatus(dl,wvAt(wvS,pgClock()));}}catch(e){}}
+/* ROUND 5B (BAD-NETWORK-R4-6): the dial holds while nothing answers or nothing moves (pgWaitWhy), and after PG_SAY ms
+   on hold the status line says so ("Waiting for Addify…", or "Waiting for a connection…" when the phone is offline) */
+var pgWaitK='', pgWaitAt=0, pgWaitShown='';
+function pgWaitSay(){
+  var s=(pgWaitK&&Date.now()-pgWaitAt>=PG_SAY)?pgWaitK:'';
+  if(s===pgWaitShown) return; pgWaitShown=s;
+  try{var dl=document.getElementById('dial'); if(dl&&dl.querySelector('.wv-st')) wvStatus(dl,wvAt(wvS,pgClock()));}catch(e){}}
 function pgTick(){
-  var now=pgClock(), v;
-  if(pgS&&!pgLock){ if(pgFrozen) pgS.t=now; else { v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } } }
-  else if(!pgS&&!pgLock&&!pgFrozen&&pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
-  if(hgS&&!hgS.fin){ v=dvStep(hgS,now); if(v>hgNow){ hgNow=v; hgPaint(); } }
+  var now=pgClock(), v, why=pgWaitWhy();
+  if(why!==pgWaitK){ pgWaitK=why; pgWaitAt=Date.now(); }
+  pgWaitSay();
+  if(pgS&&!pgLock){ if(pgFrozen||why) pgS.t=now; else { v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } } }
+  else if(!pgS&&!pgLock&&!pgFrozen&&!why&&pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
+  // ROUND 5B (BAD-NETWORK-R4-6): the tracker's dial holds too while its /progress poll gets no answer at all
+  if(hgS&&!hgS.fin){ if(progT!==null&&huntPollU&&Date.now()-NET_HEARD>PG_QUIET) hgS.t=now;
+    else { v=dvStep(hgS,now); if(v>hgNow){ hgNow=v; hgPaint(); } } }
 }
 // 100 ms ticks; the dial's CSS eases each step over 300 ms linear, so the sweep is continuous
 function pgTickOn(){ if(pgTimer) return; pgTimer=setInterval(pgTick,100); }
@@ -2746,6 +2774,19 @@ function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); if(hgW) dvW
    that used to remove it, so it stayed for good. `.htrack` is the three-step tracker the
    verdict build puts in the same place (TRACKER 2026-09-29), so the merged page drops it too. */
 function huntLineOff(){Array.prototype.forEach.call(document.querySelectorAll('#result .latehunt, #result .htrack'),function(e){e.remove();});}
+/* ROUND 5B (BAD-NETWORK-R4-3): the hunt failed before its budget, so no version was checked. Where the tracker was, the
+   card says so, with Try again: the same link scanned again (it was counted with the song, so it is free). */
+function huntFailNote(u){
+  var r=document.getElementById('result'); if(!r) return;
+  var at=r.querySelector('.htrack, .latehunt'), n=document.createElement('div');
+  n.className='vcheck'; n.setAttribute('role','status');
+  n.innerHTML='<span>Couldn’t check versions.</span><button type="button" id="vcretry">Try again</button>';
+  if(at&&at.parentNode) at.parentNode.insertBefore(n,at);
+  else {var h=r.querySelector('.hero'); if(h&&h.parentNode) h.parentNode.insertBefore(n,h.nextSibling); else r.appendChild(n);}
+  huntLineOff();
+  // the scan was counted, so it may be the one that makes the paywall due back on Home: it stays due for then,
+  // and never opens over the scan Try again starts
+  n.querySelector('button').onclick=function(){var due=PW_DUE; PW_DUE=false; goHome(); PW_DUE=due; if(u) run(u);};}
 /* scan screen wording from the engine's own labels (server.py _prog_set), not a timer */
 function pgScanLabel(l){
   if(l==='Got the audio') say('Got the audio');
@@ -2822,8 +2863,9 @@ function wvSVG(kind,v){
     '<circle class="wv-td" r="'+(g.sw/2)+'" cx="'+cx+'" cy="'+cy+'" fill="'+paint+'"/></svg>'; }
 /* the scan screen's one status line: "Listening..." from 0, "Matching the fingerprint..." from 34,
    "Finding the exact version..." from 70 (Konnor's table), crossfading */
-var WV_ST=['Listening…','Matching the fingerprint…','Finding the closest version…','Addify is busy, keeping your place'];
-function wvStage(v){ return pgFrozen?3:v>=70?2:v>=34?1:0; }
+var WV_ST=['Listening…','Matching the fingerprint…','Finding the closest version…','Addify is busy, keeping your place',
+           'Waiting for Addify…','Waiting for a connection…'];   // ROUND 5B: 4 and 5, the dial on hold (pgWaitSay)
+function wvStage(v){ return pgFrozen?3:pgWaitShown==='net'?5:pgWaitShown?4:v>=70?2:v>=34?1:0; }
 function wvHTML(v){
   var t=rlText(v), f=Math.max(0,Math.min(1,v/100));
   return '<div class="wv-stage" aria-hidden="true"><i class="wv-g wv-g0" style="opacity:'+(.18*(1-f)).toFixed(3)+'"></i>'+
@@ -3022,6 +3064,7 @@ function setProg(pct, cap, label){
 }
 function pgReset(){pgFrozen=false; clearInterval(pgTimer); pgTimer=null; if(pgFin) clearInterval(pgFin); if(hgFin) clearInterval(hgFin);
   pgS=null; pgStg=''; pgLabel='';
+  SCAN_NET=false; SCAN_ADV=0; SCAN_SIG=''; LISTEN_T0=0; pgWaitK=''; pgWaitAt=0; pgWaitShown='';   // ROUND 5B
   // Retire the finishing runs BY TOKEN, not just by clearing their timers: a pending backstop
   // must never touch a dial it no longer owns (measured live 2026-09-26: an old deadline slammed
   // the next phase's bar to 100 while the hunt was still going).
@@ -3099,6 +3142,11 @@ function progPollOn(u){
       .then(function(r){if(r&&r.ok) engineHeard(); return r.json();})   // ROUND 3 (NETWORK-1): proof the engine is up
       .then(function(p){
         if(!alive()||curURL!==u||!p||!p.pct) return;   // APPLYALL: a late reply for an old scan must not drive the new one
+        // ROUND 5B: the scan moved when its stage, percentage, early name, Shazam wait, hunt counts or verified rows
+        // changed (see SCAN_STILL)
+        var _h=p.hunt||{}, _sig=[p.pct,p.label||'',(p.named&&p.named.title)||'',p.sw?Math.floor(p.sw):0,
+          [_h.q,_h.d,_h.c,_h.b,_h.k].join(','),(p.cands&&p.cands.length)||0].join('|');
+        if(_sig!==SCAN_SIG){SCAN_SIG=_sig; scanAdv();}
         // THE SONG, THE MOMENT THE ENGINE DECIDES IT (engine CRATE_EARLY_NAME). The first
         // Shazam window and its three speed checks agreed, and nothing later in the scan
         // can change that title, so it goes on screen now instead of when the whole
@@ -3973,11 +4021,41 @@ function errCard(icon,head,sub,extra){
     (icon==='lock'?IC.lock:icon==='sat'?IC.sat:'?')+'</div><b role="heading" aria-level="2">'+esc(head)+'</b><span>'+sub+'</span>'+(extra||'')+'</div></div>';}
 /* Keep the row ids we created so "Delete account" can actually erase them server-side.
    Feedback you cannot point at is feedback you cannot withdraw. */
-function sendFeedback(obj){
-  return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(obj)}).then(function(r){return r.json();})
-    .then(function(j){if(j&&j.id){var a=lsGet('addify-fbids','[]'); a.push(j.id); lsSet('addify-fbids',a);}})
-    .catch(function(){});}
+/* ROUND 5B (BAD-NETWORK-R4-4): FEEDBACK IS NEVER LOST IN SILENCE. It used to end in .catch(function(){}) while the card
+   said "We're on it". Now each send is retried quietly (FB_BACKOFF, each try stopped after FB_WAIT ms) and resolves
+   true only once the engine stored it (its answer carries the row id), false when every try failed. The card says
+   thanks only after true; after false it says "Couldn't send that." with Try again, and keeps the user's pick. */
+var FB_BACKOFF=[800,2500], FB_WAIT=6000, FB_FAIL='Couldn’t send that.';
+function sendFeedback(obj){var n=0;
+  function once(){var ac=window.AbortController?new AbortController():null, tm=ac?setTimeout(function(){try{ac.abort();}catch(e){}},FB_WAIT):0;
+    return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(obj),signal:ac?ac.signal:undefined})
+      .then(function(r){return r.json().then(function(j){return r.ok&&j&&j.ok!==false&&(j.id||j.ok===true)?j:null;});})
+      .catch(function(){return null;})
+      .then(function(j){clearTimeout(tm);
+        if(j){if(j.id){var a=lsGet('addify-fbids','[]'); a.push(j.id); lsSet('addify-fbids',a);} return true;}
+        if(n<FB_BACKOFF.length) return netSleep(FB_BACKOFF[n++]).then(once);
+        return false;});}
+  return once();}
+/* the rate row's sends: row._fbOut sends still out, row._fbBad the bodies that failed (Try again sends them again).
+   `ok` runs once a body is stored. vfLine puts the line in step with them. */
+function vfSend(row,o,ok){row._fbOut=(row._fbOut||0)+1; vfLine(row);
+  return sendFeedback(o).then(function(sent){row._fbOut--;
+    if(sent){if(ok) try{ok();}catch(e){}} else (row._fbBad=row._fbBad||[]).push({o:o,ok:ok});
+    vfLine(row); return sent;});}
+function vfLine(row){
+  var q=document.getElementById('vfq'); if(!q||!row.contains(q)) return;
+  var rb=document.getElementById('vfretry'), asking=!!document.getElementById('vfpick');
+  if(row._fbBad&&row._fbBad.length){
+    q.textContent=FB_FAIL;
+    if(!rb){rb=document.createElement('button'); rb.type='button'; rb.id='vfretry'; rb.className='vfretry'; rb.textContent='Try again';
+      rb.onclick=function(){var bad=row._fbBad||[]; row._fbBad=[]; rb.remove(); bad.forEach(function(x){vfSend(row,x.o,x.ok);});};
+      row.insertBefore(rb,document.getElementById('vfpick'));}
+    return;}
+  if(rb) rb.remove();
+  if(asking){q.textContent=VF_ASK; return;}
+  if(row._fbOut>0){q.textContent='Sending…'; return;}
+  if(row.classList.contains('done')) q.textContent=row.classList.contains('is-right')?VF_THX_OK:VF_THX_NO;}
 /* TRACKER 2026-09-29: true from the song being named until the exact edit lands, so a card
    drawn mid-hunt (the 4 s budget renders it without `partial`) still shows the tracker and
    never the verdict row. */
@@ -4262,8 +4340,7 @@ function vfAsk(row,d,url,rows,anim){
     var o={kind:'correction',url:url,verdict:c?'pick':'none',guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
     if(c){o.pick_title=c.title||''; o.pick_url=c.url||'';}
-    sendFeedback(o);
-    vfPendAdd(url,d.base_song||'');
+    vfSend(row,o,function(){vfPendAdd(url,d.base_song||'');});   // ROUND 5B: parked once the engine has it
     b.classList.add('sel');
     [].forEach.call(box.querySelectorAll('button'),function(x){x.disabled=true;});
     setTimeout(function(){vfThanks(row);},320);   // long enough to see the ring fill
@@ -4271,7 +4348,7 @@ function vfAsk(row,d,url,rows,anim){
 function vfThanks(row){
   var box=document.getElementById('vfpick'); if(box&&row.contains(box)) box.remove();
   row.classList.remove('asking');
-  var q=document.getElementById('vfq'); if(q&&row.contains(q)) q.textContent=VF_THX_NO;
+  vfLine(row);                                   // ROUND 5B: thanks only once the engine has it, else Try again
   // the list closed under the question; if the user had scrolled into it, bring the row back
   if(row.isConnected&&row.getBoundingClientRect().top<0&&row.scrollIntoView){
     var calm=false; try{calm=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(x){}
@@ -4286,18 +4363,17 @@ function vfWire(d){
     return;}
   var vote=function(v){
     var m=lsGet('addify-verdicts','{}')||{}; m[url]=v; lsSet('addify-verdicts',m);
-    sendFeedback({kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
-      guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''});
-    if(v==='wrong') vfPendAdd(url,d.base_song||'');
+    var o={kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
+      guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
     if(v==='wrong') devDrop(url);                // SPEED FIX 1: a wrong answer is never replayed here
     if(v==='wrong') refundScan(url,d);           // Roham 2026-09-30: an X gives the scan back
     row.classList.add('done','is-'+v);
     var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on','pop');
     ['vfy','vfn'].forEach(function(id){var x=document.getElementById(id); if(x) x.disabled=true;});
     var rs=v==='wrong'?vfRows(d):[];
-    var q=document.getElementById('vfq');
-    if(q) q.textContent=v==='right'?VF_THX_OK:(rs.length?VF_ASK:VF_THX_NO);
-    if(rs.length) vfAsk(row,d,url,rs,true);};
+    if(rs.length) vfAsk(row,d,url,rs,true);
+    // ROUND 5B (BAD-NETWORK-R4-4): the line thanks only once the engine has the vote (vfLine); an X parks the clip then
+    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'');}:null);};
   var y=document.getElementById('vfy'), n=document.getElementById('vfn');
   if(y) y.onclick=function(){vote('right');};
   if(n) n.onclick=function(){vote('wrong');};}
@@ -4537,7 +4613,8 @@ function renderResult(d,partial){
     // says you're not on Wi-Fi, but we are"). Button and queue are unchanged.
     // ROUND 3 (NETWORK-2): "We kept your scan" holds in listen mode too: the recording is kept (LISTEN_BLOB, set
     // before a listen scan asks anything) and Try again, or the network coming back, sends it again.
-    result.innerHTML=errCard('sat',d.offline?"You're offline":"Couldn't reach Addify",
+    // ROUND 5B: a scan the engine answered but never finished (d.stalled, see SCAN_STILL) did reach Addify
+    result.innerHTML=errCard('sat',d.offline?"You're offline":d.stalled?'This scan took too long':"Couldn't reach Addify",
       d.offline?'No stress. We kept your scan.<br>Tap Try again when you’re back online.'
                :'Addify didn’t answer just now. We kept your scan.<br>Tap Try again.',
       ((curURL||LISTEN_BLOB)?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
@@ -4605,11 +4682,19 @@ function renderResult(d,partial){
         '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes, that’s it</button>'+
           '<button class="vbtn no" id="fbno">Not it</button></div>'+
         '<div class="trainnote" id="fbnote">Confirming helps Addify learn this edit for everyone</div>');
+      var gb={url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||''};
+      // ROUND 5B (BAD-NETWORK-R4-4): "Logged" only once the engine has it; else "Couldn't send that." with Try again
+      var gsend=function(v){var n=document.getElementById('fbnote'), n0=n;
+        if(n) n.textContent='Sending…';
+        sendFeedback(Object.assign({},gb,{verdict:v})).then(function(ok){
+          var n=document.getElementById('fbnote'); if(!n||n!==n0) return;
+          if(ok){n.textContent=v==='yes'?'Logged, and added to your Finds':'Logged. This trains the edit database'; return;}
+          n.textContent=FB_FAIL+' ';
+          var rb=document.createElement('button'); rb.type='button'; rb.className='vfretry'; rb.textContent='Try again';
+          rb.onclick=function(){gsend(v);}; n.appendChild(rb);});};
       var done=function(v){
-        sendFeedback({url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||'',verdict:v});
         if(v==='yes'){saveOne({base_song:guess,base_artist:d.base_artist_guess||d.base_artist||'',handle:d.handle}); dropUnmatched(curURL);}
-        var n=document.getElementById('fbnote');
-        if(n) n.textContent=v==='yes'?'Logged, and added to your Finds':'Logged. This trains the edit database';
+        gsend(v);
         ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});};
       var y=document.getElementById('fbyes'), no=document.getElementById('fbno');
       if(y) y.onclick=function(){done('yes');};
@@ -5558,7 +5643,9 @@ function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.
     pill.parentNode.replaceChild(n,pill); pill=n;}
   pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
   pill.textContent = PRO ? 'Unlimited' : left+' scan'+(left===1?'':'s')+' left';   // Konnor: the counter reads "0 scans left"
-  if(!PRO) pill.onclick=openPaywall;}
+  if(!PRO) pill.onclick=openPaywall;
+  // ROUND 5B (FIRST-LAUNCH-R4-04): an open paywall never keeps an old free-scan count under the new one
+  var ps=document.querySelector('#paywall:not([hidden]) .pwsub'); if(ps&&!PRO) ps.textContent=pwSub(left);}
 /* PAYWALL, Option A (Konnor, Telegram 2061-2063, 2026-11-10). Same triggers as before: the pill,
    the You tab's Get Addify Plus, a new clip once the 5 free scans are used, and back home after
    the 5th scan. Only the look and the words changed. Every price, billing period and trial comes
@@ -5569,6 +5656,8 @@ function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.
 var PW_TERMS='https://support.addify.app/terms.html', PW_PRIVACY='https://support.addify.app/privacy.html';
 function pwMsg(t){var m=document.getElementById('pwm'); if(m){m.textContent=t; m.hidden=!t;}}
 function closePaywall(){var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; PW_AFTER='';}
+function pwSub(left){return (left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
+    'Get unlimited scans and keep finding versions.';}
 function pwAmount(q){if(q&&typeof q.amount==='number'&&q.amount>0) return q.amount;
   // builds before kfix-9 send only the display string: read it only when it is one plain number
   var m=String((q&&q.price)||'').match(/^[^\d]*(\d+)[.,](\d{2})[^\d]*$/); return m?+(m[1]+'.'+m[2]):0;}
@@ -5597,8 +5686,7 @@ function openPaywall(){
   var left=Math.max(0,FREE_SCANS-scansUsed());
   // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title stays 'Addify+' (Option A, the
   // co-owners' paywall spec, and the live promise ledger's S6); the plans under it carry the full name.
-  var sub=(left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
-    'Get unlimited scans and keep finding versions.';
+  var sub=pwSub(left);
   ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-labelledby="pwh" tabindex="-1">'+
     '<div class="pwgrab" aria-hidden="true"></div>'+
     '<div class="pwtop"><h2 class="pwh" id="pwh">Addify+</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
@@ -6295,20 +6383,52 @@ function busyDone(d,t0){return busyQuiet(d)?Object.assign({},d,{waited:(Date.now
    NET_HEARD is when the engine last answered anything. */
 var NET_HEARD=0, LIVE_BOUND=20000, SCAN_TAP=0;
 function engineHeard(){NET_HEARD=Date.now();}
+/* ROUND 5B (CHAOS-MONKEY-R4-02, BAD-NETWORK-R4-1, BAD-NETWORK-R4-6): A SCAN ALWAYS ENDS, AND THE DIAL ONLY MOVES ON REAL
+   PROGRESS. One answer from the engine used to switch every limit off, so a /base that never came back sat at 97-99%
+   for minutes while /progress kept answering the same thing. Now liveness is progress: SCAN_ADV is when this scan last
+   moved (a /progress answer whose stage, percentage, early name or Shazam wait changed, or any /base answer, busy
+   included). With no move for SCAN_STILL ms, or SCAN_MAX ms after the tap in all, the scan stops its /base ask and ends
+   on "Addify didn't answer just now." with Try again. A slow scan that keeps moving runs to SCAN_MAX. The naming dial
+   holds while nothing answers (PG_QUIET ms with no answer at all, or nothing yet in this scan) and while the engine
+   answers without moving (PG_STILL ms); after PG_SAY ms on hold the status line says what it waits for. A listen scan
+   has no stage to read, so its dial holds until the engine first answers, and SCAN_MAX ends it too. A quiet busy wait
+   keeps its own deadline (BUSY_QUIET_SECS) and its own words. SCAN_NET: a link scan's /base is out. */
+var SCAN_STILL=30000, SCAN_MAX=120000, PG_QUIET=3000, PG_STILL=8000, PG_SAY=1500;
+var SCAN_NET=false, SCAN_ADV=0, SCAN_SIG='', LISTEN_T0=0;
+function scanAdv(){SCAN_ADV=Date.now();}
+function stallResult(){var off=netOffline(); return {result:'engine_down', offline:off, stalled:!off};}
+/* why the naming dial holds right now: '' (it may move), 'net' (the phone says it has no network) or 'eng' */
+function pgWaitWhy(){var now=Date.now();
+  if(!busy||pgLock||pgFrozen) return '';
+  if(pgS&&SCAN_NET){
+    if(NET_HEARD<SCAN_TAP||now-NET_HEARD>PG_QUIET||!SCAN_ADV||now-SCAN_ADV>PG_STILL) return netOffline()?'net':'eng';
+    return '';}
+  if(!pgS&&LISTEN_T0&&NET_HEARD<LISTEN_T0) return netOffline()?'net':'eng';
+  return '';}
 /* ROUND 3 (NETWORK-3): once the first busy answer is in, the dial holds ("Addify is busy, keeping your place") through
    the quiet asks themselves, not only between them, until an answer that is not busy. And BUSY_QUIET_SECS is a
    deadline on the asks: a quiet ask still out when it passes is stopped, and the busy card shows. */
 function baseCall(u,tok){var n=0, t0=Date.now(), tap=SCAN_TAP||t0, last=null, cut=false, ctl=null, stopAsk=null;
   return new Promise(function(fin){
-    var over=false, end=function(d){if(over) return; over=true; clearTimeout(wd); fin(d);};
+    var over=false, lv=0, end=function(d){if(over) return; over=true; clearTimeout(wd); clearInterval(lv);
+      if(tok===scanTok) SCAN_NET=false; fin(d);};
     var wd=setTimeout(function(){
       if(over||tok!==scanTok||NET_HEARD>=tap) return;   // the engine answered something during this scan
       cut=true; if(stopAsk) stopAsk(); end(downResult());},Math.max(0,tap+LIVE_BOUND-Date.now()));
+    // ROUND 5B: the liveness bound (see SCAN_STILL). A network silent from the tap is the 20 s bound's above.
+    lv=setInterval(function(){
+      if(over||tok!==scanTok){clearInterval(lv); return;}
+      if(pgFrozen){scanAdv(); return;}                 // a quiet busy wait: its own deadline ends it
+      var now=Date.now();
+      if(NET_HEARD<tap&&now-tap<SCAN_MAX) return;
+      if(now-tap>=SCAN_MAX||now-Math.max(SCAN_ADV,tap)>=SCAN_STILL){cut=true; if(stopAsk) stopAsk(); end(stallResult());}},500);
     function ask(){var stopped=false, late=false, prev=last, tm=0, ac=window.AbortController?new AbortController():null;
       var stop=function(){stopped=true; if(ac) try{ac.abort();}catch(e){}};   // stops THIS ask only
       stopAsk=stop;
       var p=call('/base',u,{kit:true,guard:true,qr:n,signal:ac?ac.signal:undefined,
-                            alive:function(){return tok===scanTok&&!cut&&!stopped;}});
+                            alive:function(){return tok===scanTok&&!cut&&!stopped;},
+                            // ROUND 5B: an answer moves the scan the moment it arrives (before a replay's pacing hold)
+                            answered:function(d){if(tok===scanTok&&!cut&&!stopped&&d&&d.result&&d.result!=='engine_down'&&d.result!=='moved'){engineHeard(); scanAdv();}}});
       if(n>0){var left=BUSY_QUIET_SECS*1000-(Date.now()-t0);   // a quiet ask: its deadline
         p=Promise.race([p,new Promise(function(r){tm=setTimeout(function(){late=true; stop(); r(prev);},Math.max(0,left));})]);}
       return p.then(function(d){
@@ -6340,11 +6460,12 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
     if(!_vk&&devIsShort(p.url)){ RUN_GATE=true;
       vkeyOf(p.url).then(function(k){RUN_GATE=false;
         if(k&&(scanCounted(p.url)||devHas(k))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
-        else {PW_AFTER=raw||''; openPaywall();}});
+        else {sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
       return;}
-    if(!devHas(_vk)){PW_AFTER=raw||''; openPaywall(); return;}}
+    if(!devHas(_vk)){sheetsOff(true); PW_AFTER=raw||''; openPaywall(); return;}}   // ROUND 5B: the paywall alone, in front
   SCAN_FREE=reopen;
   onbNoteRun();                                    // ONBOARDING v4: a share-sheet arrival marks onboarding done
+  sheetsOff();                                     // ROUND 5B: the scan (or its message) is never behind a sheet
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
@@ -6362,7 +6483,7 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
   headline('Finding song'); say('Reading the clip');
   // APPLYALL 2026-09-29 (DIAL): start at 0 on the real map (was setProg(6,30), a ceiling
   // above the engine's first three milestones, so the first ~10 s ran on a timer)
-  pgReset(); pgMark('tap');
+  pgReset(); pgMark('tap'); SCAN_NET=true;        // ROUND 5B: the dial waits for the engine (pgWaitWhy)
   tipsOn(); scanAnimOn();
   // APPLYALL 2026-09-29 (DIAL): the wording follows the engine's own labels in the /progress
   // poll (pgScanLabel). The old 2.4 s timer that guessed "Listening" is retired.
@@ -6372,7 +6493,7 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
   DEV_REPLAY=null;
   devLookup(p.url).then(function(de){
   if(tok!==scanTok) return;
-  if(de&&de.res){ DEV_REPLAY={url:p.url,full:devFull(de.res)};
+  if(de&&de.res){ DEV_REPLAY={url:p.url,full:devFull(de.res)}; SCAN_NET=false;   // this phone's own answer: nothing to wait for
     return replayHold(t0,replayMs(REPLAY_NAME_MS)).then(function(){ if(tok!==scanTok) return; return onBase(devBase(de.res)); }); }
   progPollOn(p.url);
   // The poll deliberately keeps running past /base. The edit hunt is the LONGER half and
@@ -6644,8 +6765,14 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
             // held: the log entry and the bridge post wait for the final answer (finalize)
             // APPLYALL (finding 14): a song-less failure finishes as the named song, not as an
             // error (engine_down keeps its retry queue, as before)
-            finish((lands(full)||(full&&full.result==='engine_down'))?full:d, true);
-            if(full&&!lands(full)) huntLineOff();   // APPLYALL (finding 16): a failure before the budget too
+            // ROUND 5B (BAD-NETWORK-R4-3): a version check that could not reach Addify (engine_down) or failed on its
+            // side (a song-less error) finishes as the named song too. It used to set the "Try again soon" title over the
+            // song card with nothing to tap (and the app's banner said "Match found"); the card now keeps its own title
+            // and says "Couldn't check versions." with Try again where the tracker was.
+            var _vfail=!!(full&&!lands(full)&&(full.result==='engine_down'||full.result==='error'));
+            finish(lands(full)?full:d, true);
+            if(_vfail&&onScan()) huntFailNote(scanURL);
+            else if(full&&!lands(full)) huntLineOff();   // APPLYALL (finding 16): a failure before the budget too
             if(full) finalize(lands(full)?full:null);});};
         // APPLYALL 2026-09-29: no "Still finding the exact version" line: the scan screen it
         // was written to is already gone
@@ -6802,6 +6929,7 @@ function withYT(cb){
   window.onYouTubeIframeAPIReady=function(){if(prev){try{prev();}catch(e){}}
     _ytApiCbs.splice(0).forEach(function(f){try{f();}catch(e){}});};
   var s=document.createElement('script'); s.src='https://www.youtube.com/iframe_api';
+  s.onerror=function(){window.__ytLoading=false; _ytApiCbs.length=0;};   // ROUND 5B: Try again loads it again (withSC)
   (document.head||document.body).appendChild(s);
 }
 /* SoundCloud's Widget API, loaded once on first use, same pattern as withYT. It drives the
@@ -6828,7 +6956,30 @@ function ipRing(frac){
   var fg=document.querySelector('#ipl .iprgfg'); if(!fg) return;
   fg.style.strokeDashoffset=String(IP_C*(1-frac));
 }
+/* ROUND 5B (BAD-NETWORK-R4-5): A PLAYER THAT NEVER STARTS SAYS SO. The band opens showing Pause, and on a dead network
+   the YouTube or SoundCloud embed (or the preview) never loads: Pause stayed up over an empty box and did nothing.
+   IP_START ms after Play, a band that still shows Pause with nothing started (the slot never got `playing`: no
+   YouTube PLAYING, no SoundCloud READY or PLAY, no audio `playing`) stops its player, shows Play, and says
+   "Couldn't load the player." with Open in app (the same upload or song in its own app) and Try again (opens it
+   again). The round button and the cover button try again too, so nothing on the band is a dead control. */
+var IP_START=12000, _ipStartT=0, _ipShowing=false, _ipRetry=null;
+function ipWatch(retry,openURL){
+  var gen=_ipGen; clearTimeout(_ipStartT); _ipRetry=retry;
+  _ipStartT=setTimeout(function(){
+    if(gen!==_ipGen) return;
+    var slot=document.getElementById('ipvid'), ipl=document.getElementById('ipl');
+    if(!slot||!ipl||ipl.hidden||slot.classList.contains('playing')||!_ipShowing) return;
+    ipFail(openURL);},IP_START);}
+function ipFail(openURL){
+  var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid'); if(!ipl||!slot) return;
+  ipStop(); ipGlyph(false); ipRing(0);
+  ipl.classList.add('ipfail');
+  slot.innerHTML='<div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
+    (openURL?'<a class="ipfbtn" href="'+esc(openURL)+'" target="_blank" rel="noopener">Open in app</a>':'')+
+    '<button type="button" class="ipfbtn" id="ipfretry">Try again</button></span></div>';
+  var rb=document.getElementById('ipfretry'); if(rb) rb.onclick=function(){if(_ipRetry) _ipRetry();};}
 function ipGlyph(playing){
+  _ipShowing=!!playing;                          // ROUND 5B: what the band claims, for ipWatch
   var g=document.querySelector('#ipl .ipgl'); if(g) g.innerHTML=playing?IC.pause:IC.play;
   var b=document.getElementById('iplbtn'); if(b) b.setAttribute('aria-label',playing?'Pause':'Play');
   // COVER PLAY: while the band is open the cover button shows the same state (the band always
@@ -6847,6 +6998,8 @@ function coverRest(){
 }
 function ipStop(){
   _ipGen++;                                      // a late API callback for the old frame is ignored
+  clearTimeout(_ipStartT);                       // ROUND 5B: and the start watch with it
+  var _ib=document.getElementById('ipl'); if(_ib) _ib.classList.remove('ipfail');
   if(_ipTimer){clearInterval(_ipTimer); _ipTimer=null;}
   try{if(_ipPlayer&&_ipPlayer.destroy) _ipPlayer.destroy();}catch(e){}
   _ipPlayer=null;
@@ -6882,6 +7035,8 @@ function ipOpen(vid,url){
   Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=true;});
   ipl.classList.toggle('yt',isYT);               // REVIEWER RUNS 2 (LAWYER-04): the YouTube layout (CSS)
   ipl.hidden=false; ipGlyph(true); ipRing(0); slot.classList.remove('playing');
+  ipWatch(function(){ipOpen(vid,url);}, isYT?(/^https:\/\//i.test(String(url||''))?url:'https://www.youtube.com/watch?v='+vid):
+                                        isSC?url:ipAudOpenURL(ipl));   // ROUND 5B (BAD-NETWORK-R4-5)
   if(isSC){ ipOpenSC(url, ipl, slot); return; }
   if(isAud){ ipOpenAud(url, ipl, slot); return; }
   var origin=encodeURIComponent(location.origin);
@@ -6976,7 +7131,20 @@ function ipOpenAud(url, ipl, slot){
   slot.appendChild(a); _ipAud=a;
   try{var p=a.play(); if(p&&p.catch) p.catch(function(){if(live()) ipGlyph(false);});}catch(_){ipGlyph(false);}
 }
+/* ROUND 5B: Open in app for a preview that would not load, in the app the preview came from: the song's own page
+   there when the card has it (the Open in row's link), else a search for the title and artist the band shows */
+function ipAudOpenURL(ipl){
+  var dz=ipl.getAttribute('data-afrom')==='Deezer', d=lastResult||{}, u='';
+  try{if(!dz) u=appleMusicURL(d);}catch(e){}
+  if(!u) (d.links||[]).some(function(l){
+    if(l&&l.exact&&l.kind===(dz?'deezer':'apple')&&/^https:\/\//i.test(String(l.url||''))){u=l.url; return true;} return false;});
+  if(u) return u;
+  var q=encodeURIComponent(((ipl.getAttribute('data-atitle')||'')+' '+(ipl.getAttribute('data-awho')||'')).trim());
+  if(!q) return '';
+  return dz?'https://www.deezer.com/search/'+q:'https://music.apple.com/search?term='+q;}
 function ipToggle(){
+  var _ib=document.getElementById('ipl');
+  if(_ib&&_ib.classList.contains('ipfail')){ if(_ipRetry) _ipRetry(); return; }   // ROUND 5B: Play on a failed band tries again
   if(_ipAud){
     var au=_ipAud;
     try{if(au.paused){var pr=au.play(); ipGlyph(true); if(pr&&pr.catch) pr.catch(function(){ipGlyph(false);});}
@@ -7116,6 +7284,7 @@ function startListen(){
       : 'No microphone here. Paste the clip link instead.');
     return;}
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    errHide();                                      // ROUND 5B: a mic message from the last try goes
     lStream=stream; nav0('listening');
     document.getElementById('lstate').textContent='Play the sound out loud';
     /* real levels - the bars move because the mic hears, not because a loop runs */
@@ -7151,7 +7320,10 @@ function startListen(){
       showErr('Microphone is off for Addify. Turn it on in Settings, or paste the link.',
         {sticky:true, btn:os?['Open Settings',function(){try{var r=os.postMessage({}); if(r&&r.catch) r.catch(function(){});}catch(_){}}]:null});
       return;}
-    showErr('Microphone was blocked. Allow the mic, or paste the link.');});}
+    // ROUND 5B (FIRST-LAUNCH-R4-05): any other failure (NotReadableError, AbortError, no capture device) is not a
+    // permission problem: the mic is allowed but busy or not there, so the message says that and offers Try again
+    showErr('The microphone is busy or not available. Close other apps using it and try again, or paste the link.',
+      {sticky:true, btn:['Try again',function(){errHide(); startListen();}]});});}
 function cleanupListen(){
   if(lRaf) cancelAnimationFrame(lRaf); lRaf=null;
   clearTimeout(lTimer); lTimer=null;
@@ -7181,12 +7353,14 @@ function listenCall(blob,tok){var n=0, t0=Date.now(), last=null, cut=false, stop
   return new Promise(function(fin){
     var over=false, mine=function(){return !over&&tok===scanTok;};
     var stop=function(){cut=true; if(stopAsk) stopAsk(); end({result:'aborted'});};
-    var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT);
+    var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT); clearTimeout(cap);
       if(pingAc) try{pingAc.abort();}catch(e){} if(LISTEN_STOP===stop) LISTEN_STOP=null; fin(d);};
     LISTEN_STOP=stop;
     var wd=setTimeout(function(){
       if(!mine()||NET_HEARD>=t0) return;          // the engine answered something since the recording went
       cut=true; if(stopAsk) stopAsk(); end(downResult());},LIVE_BOUND);
+    // ROUND 5B (CHAOS-MONKEY-R4-02): a listen scan always ends too, SCAN_MAX after the recording went
+    var cap=setTimeout(function(){if(!mine()) return; cut=true; if(stopAsk) stopAsk(); end(stallResult());},SCAN_MAX);
     (function ping(){if(!mine()||NET_HEARD>=t0) return;
       var ac=window.AbortController?new AbortController():null, tm=0; pingAc=ac;
       if(ac) tm=setTimeout(function(){try{ac.abort();}catch(e){}},LISTEN_PING_WAIT);   // a silent network: one ask at a time
@@ -7224,6 +7398,7 @@ function sendListen(blob){
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
   headline('Finding song'); say('Building the audio fingerprint');
   pgReset(); setProg(10,58,'Matching the recording'); tipsOn(); scanAnimOn();
+  LISTEN_T0=Date.now();                            // ROUND 5B: the dial waits for the engine's first answer (pgWaitWhy)
   listenCall(blob,tok)
     .then(function(d){
       if(tok!==scanTok||leftScan) return;   // ROUND 5 (item 2): Back, Cancel or a new scan ended it: no card, no count
@@ -7292,7 +7467,8 @@ function openOnb(step,mode){
 function onbGo(step){onbStep=step; if(onbMode==='first') onbSet('addify-onb-at',step); paintOnb();}
 /* "Let's go" on the last screen: first run marks onboarding done and lands on Home; a replay
    from the You tab just closes. */
-function onbLetsGo(){if(onbMode==='replay'){onbClose(); return;} onbDone(); nav('idle');}
+function onbLetsGo(){if(onbMode==='replay'){onbClose(); return;} onbDone(); nav('idle');
+  if(ONB_NOTE){var m=ONB_NOTE; ONB_NOTE=''; showErr(m,{sticky:true});}}   // ROUND 5B (GP-1): the shared page's message
 function paintOnb(){
   document.getElementById('onbdots').innerHTML=[0,1].map(function(i){return '<i class="'+(i===onbStep?'on':'')+'"></i>';}).join('');
   var b=document.getElementById('onbbody'), h='';
@@ -7345,7 +7521,7 @@ function onbNoteRun(){
   var nat=!!(window.ADDIFY_NATIVE||/Addify(-iOS)?\//.test(navigator.userAgent));
   if(nat && !window.event && Date.now()-onbTapAt>1500) onbSharedIn();}
 function onbSharedIn(){
-  onbSet('addify-sharedin','1');
+  onbSet('addify-sharedin','1'); ONB_NOTE='';          // ROUND 5B: a newer share replaces an older page's message
   if(onbOpen()&&onbMode==='first'){onbDone(); return;}   // mid-onboarding: close it, the scan shows
   if(!onbSeen()) onbSet('addify-onboarded','1');}        // first open came from the share sheet: they know how
 
@@ -7362,6 +7538,17 @@ function sharedLink(){
   var cand=m?m[0]:raw;
   return (cand && parseLink(cand).host) ? cand : null;
 }
+/* ROUND 5B (GP-1): A COLD SHARE OF A PAGE THAT IS NOT A CLIP. The share extension takes any TikTok or Instagram link
+   (a profile, a sound, a tag, a live page, an Instagram profile or story) and opens the app on /share?url=, where
+   sharedLink() turns it down, so the app used to open on Home or onboarding with no word about it. It now gets the
+   message the Home box gives for the same link ("That link is a TikTok page, not a clip..."), with the link kept in
+   the box: on Home at once, or when onboarding ends if onboarding is showing (ONB_NOTE). */
+var ONB_NOTE='';
+function sharedPage(){
+  var q; try{q=new URLSearchParams(location.search);}catch(e){return null;}
+  var raw=String(q.get('url')||q.get('text')||q.get('title')||'').trim(); if(!raw) return null;
+  var p=parseLink(raw); if(p.host) return null;
+  return {link:p.url, msg:notClipMsg(p)};}
 
 /* SHARE FIRST PAINT (Konnor 2026-10-03, scanner prompts 2). Exactly the screen run() opens
    on, painted at boot so a shared reel never shows Home first. Skipped whenever run() would not
@@ -7414,10 +7601,21 @@ function sheetSync(){
   if(sheetStack.length){var dg=sheetDialog(sheetStack[sheetStack.length-1].id); if(dg){try{dg.focus({preventScroll:true});}catch(e){}}}
   else sheetBack(back);}
 try{new MutationObserver(sheetSync).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden']});}catch(e){}
+/* ROUND 5B (FIRST-LAUNCH-R4-04, CHAOS-MONKEY-R4-01): A SHARE NEVER SCANS BEHIND A SHEET. The app hands a share to the
+   page that is already up (run(link)) whatever is open on it, so a scan used to run and land under the paywall (still
+   saying the old free-scan count), the player or How to add Addify, and the native banner fired over the sheet.
+   run() closes every sheet once its free-scan gate has passed, right before the scan screen (or the "not a clip"
+   message) shows, so the scan is in front. sheetSync above sees each one go and lifts inert and focus from the screen.
+   A scan the gate stops never gets here: the paywall stays (openPaywall), so a share never gets past it, and the
+   gate closes every other sheet first (sheetsOff(true)) so the paywall is the one in front. */
+function sheetsOff(keepPaywall){
+  var pw=document.getElementById('paywall'); if(pw&&!pw.hidden&&!keepPaywall) closePaywall();
+  try{closePlayer();}catch(e){}
+  if(onbOpen()){ if(onbMode==='replay') onbClose(); else onbDone(); }}
 /* ---------- boot ---------- */
 paintHome(); renderLib(); nav('idle');
 fetchTrending();
-var _shared=sharedLink();
+var _shared=sharedLink(), _sharedPage=_shared?null:sharedPage();
 var _viaSheet=!!_shared&&!/[?&]moved=1/.test(location.search);   // ONBOARDING v3: opened from the share sheet (NAMING: not a page that moved engines)
 if(_viaSheet) onbSet('addify-sharedin','1');
 // a link parked by the stale-shell reload above resumes here, so the reload is invisible
@@ -7431,10 +7629,14 @@ if(_shared){
   shareFirstPaint(_shared);
   setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
 } else splash();
+if(_sharedPage){   // ROUND 5B (GP-1): the link stays in the box, the address loses the share
+  history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
+  urlEl.value=_sharedPage.link; if(typeof syncFormAction==='function') syncFormAction();}
 Promise.resolve().then(function(){
   onbSet('addify-onb-return',null);                   // ONBOARDING v3: the Spotify step is gone
   if(_viaSheet){onbSharedIn(); return;}                // a share opened the app: no onboarding over the scan
-  if(!onbSeen()){openOnb(onbAt());}                    // resume where the share sheet round trip left them
+  if(!onbSeen()){openOnb(onbAt()); if(_sharedPage) ONB_NOTE=_sharedPage.msg; return;}   // resume where the share sheet round trip left them
+  if(_sharedPage) showErr(_sharedPage.msg,{sticky:true});   // ROUND 5B (GP-1): stays until the next tap
 });
 document.getElementById('onb').addEventListener('click',function(e){
   if(e.target.id!=='onb') return;

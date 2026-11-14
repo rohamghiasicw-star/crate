@@ -55,6 +55,23 @@ window.__calls=[]; window.__mode=window.__mode||{};
 })();
 """ % {"M": MONTHLY, "Y": YEARLY}
 
+# The sheet slides up (pwUp, 0.28 s) and the backdrop fades in. On a loaded machine the fixed wait above could end
+# mid-slide, so Y5 measured a button still below the screen. This waits for every animation on the sheet and the
+# backdrop to finish, then for the sheet's box to hold still for 3 frames (at most 6 s). The checks are unchanged.
+SLID = r"""async () => {
+  var ov=document.getElementById('paywall'), S=ov&&ov.querySelector('.pws'); if(!S||ov.hidden) return 'closed';
+  var an=[].concat(S.getAnimations?S.getAnimations():[], ov.getAnimations?ov.getAnimations():[]).filter(function(a){
+    try{return a.effect.getTiming().iterations!==Infinity;}catch(e){return true;}});
+  var t0=performance.now(), cap=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
+  await Promise.race([Promise.all(an.map(function(a){return a.finished.catch(function(){});})), cap(6000)]);
+  var last='', same=0;
+  while(same<3&&performance.now()-t0<6000){
+    await new Promise(function(r){requestAnimationFrame(function(){r();});});
+    var b=S.getBoundingClientRect(), k=[b.top,b.left,b.width,b.height].map(function(x){return Math.round(x*4);}).join(',');
+    if(k===last) same++; else {same=0; last=k;}}
+  return same>=3?'still':'timeout';
+}"""
+
 SHEET = r"""() => {
   var ov=document.getElementById('paywall'), S=ov&&ov.querySelector('.pws');
   var vis=function(e){if(!e) return false; var r=e.getBoundingClientRect(), c=getComputedStyle(e);
@@ -152,6 +169,7 @@ async def main_async(html, shots):
         async def opened(pg, settle=700):
             await pg.evaluate("()=>openPaywall()")
             await pg.wait_for_timeout(settle)
+            await pg.evaluate(SLID)
             return await pg.evaluate(SHEET)
 
         # ---------- 1. both states over the real Match found screen, every size -------------
@@ -165,6 +183,7 @@ async def main_async(html, shots):
                 if zoom != 1.0:
                     await pg.evaluate("(z)=>{document.querySelector('.pws').style.zoom=z;}", zoom)
                     await pg.wait_for_timeout(200)
+                    await pg.evaluate(SLID)
                     st = await pg.evaluate(SHEET)
                 lab = "%s %dx%d text %d%%" % (tag, w, h, round(zoom * 100))
                 sz = "%s-%d" % (tag, round(zoom * 100))
