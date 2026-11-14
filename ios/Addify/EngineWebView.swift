@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import StoreKit
+import SafariServices
 import UniformTypeIdentifiers
 
 /* ---------- the web view ----------
@@ -43,6 +44,7 @@ struct EngineWebView: UIViewRepresentable {
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
         ucc.addScriptMessageHandler(ExportFindsHandler(bridge: bridge), contentWorld: .page, name: ExportFindsHandler.name)
         ucc.addScriptMessageHandler(OpenSettingsHandler(), contentWorld: .page, name: OpenSettingsHandler.name)
+        AddifyStore.shared.bridge = bridge
         AddifyStore.shared.start()
         cfg.userContentController = ucc
 
@@ -54,6 +56,14 @@ struct EngineWebView: UIViewRepresentable {
         wv.isOpaque = false
         wv.backgroundColor = UIColor(red: 0.090, green: 0.078, blue: 0.122, alpha: 1)   // #17141F, the page ground, so launch never flashes a second black
         bridge.webView = wv
+        bridge.openPage = { [weak coordinator = context.coordinator, weak wv] url in
+            guard let c = coordinator, let wv = wv else { return }
+            c.open(url, in: wv)
+        }
+        bridge.cancelReloads = { [weak coordinator = context.coordinator, weak wv] in
+            guard let c = coordinator, let wv = wv else { return }
+            c.cancelReloads(wv)
+        }
         context.coordinator.boot(wv)
         return wv
     }
@@ -106,39 +116,63 @@ struct EngineWebView: UIViewRepresentable {
             return "\(mobile) Addify/\(appVersion)"
         }
 
-        /* BUILD 20: every launch and every Try again starts here. Ask all known engine
-           addresses at once (6 s, then once more with 8 s) and load the first that answers.
-           If none answers, load the current address anyway: the page load is the final word and
-           failed() decides what the user sees. The native loading screen covers all of it. */
-        func boot(_ wv: WKWebView) {
+        /* Every launch, every Try again and every reload after WebKit killed the page starts here,
+           under the native loading screen. NATIVE-B-R5-01 (build 30): with one compiled-in address
+           (this build) the page load starts at once; a health check first could not change which
+           page loads, and a /health that stalled held it back 14 s. With more than one (lab copies),
+           BUILD 20's check runs first: all known addresses at once (6 s, then once more with 8 s),
+           and the first that answers loads (EngineConfig beginLaunch). Either way the page load is
+           the final word and failed() decides what the user sees. afterCrash: WebKit killed the
+           page (load). */
+        func boot(_ wv: WKWebView, afterCrash: Bool = false) {
             bridge.booting = true
             bridge.holdShares = true
             hostSwitches = 0
             autoRetries = 0
-            retryGeneration += 1
+            cancelReloads(wv)
             bootGeneration += 1
             let generation = bootGeneration
-            Task { [weak self, weak wv] in
-                if await EngineConfig.pickReachable(timeout: 6) == nil {
-                    await EngineConfig.pickReachable(timeout: 8)
-                }
-                await MainActor.run {
-                    guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
-                    self.load(wv)
-                }
+            EngineConfig.beginLaunch { [weak self, weak wv] in
+                guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
+                self.load(wv, afterCrash: afterCrash)
             }
         }
 
-        func load(_ wv: WKWebView) {
+        /* BUILD 30: a launch check, Try again and a return to the app start over. The automatic and
+           quiet reloads still waiting are cancelled, an #app check still waiting is dropped, and a
+           main-frame load that is running is stopped (its -999 is not a failure: see failed()), so
+           none of them can finish later, take a held share's link and leave this launch check to
+           open Home over it. */
+        func cancelReloads(_ wv: WKWebView) {
+            retryGeneration += 1
+            appCheck += 1
+            if wv.isLoading { wv.stopLoading() }
+        }
+
+        /* afterCrash: a reload after WebKit killed the page, which counts against a held share's
+           limit (PendingShare.maxCrashReloads), so a share page that kills WebKit every time cannot
+           reload forever. Launch checks and moves to another address do not count. */
+        func load(_ wv: WKWebView, afterCrash: Bool = false) {
+            /* A share that arrived during the launch check opens on the address it chose, through
+               the page's own share landing, as a share always did when the page was not up. BUILD 30:
+               the share stays held until its scan is over, so every later launch check (Try again,
+               a return to the app, a reload after WebKit killed the page) opens it again instead of
+               Home (PendingShare). */
+            bridge.holdShares = false
+            self.open(bridge.launchURL(afterCrash: afterCrash), in: wv)
+        }
+
+        /* Every main-frame engine load this code starts (a launch, a share, a move to another
+           address), but not the automatic and quiet reloads of a failed load, which keep their
+           counters. A reload still waiting from an earlier failure is cancelled, so loads never
+           stack. */
+        func open(_ url: URL, in wv: WKWebView) {
             bridge.pageReady = false
             quietRetries = 0
             ownCancel = false
-            loadedHost = EngineConfig.baseURL.host?.lowercased()
-            /* A share that arrived during the launch check opens on the address it chose, through
-               the page's own share landing, as a share always did when the page was not up. */
-            bridge.holdShares = false
-            let target = bridge.takePendingLink().flatMap { bridge.shareURL($0) } ?? EngineConfig.baseURL
-            var req = URLRequest(url: target)
+            retryGeneration += 1
+            loadedHost = url.host?.lowercased()
+            var req = URLRequest(url: url)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
             /* BUILD 20: 20 s, not WebKit's 60 s. A stalled address now hands over to the next one
                in seconds instead of leaving a reviewer on a blank screen for three minutes. */
@@ -147,9 +181,12 @@ struct EngineWebView: UIViewRepresentable {
         }
 
         /* Hosts allowed to render INSIDE the web view as the main page. Everything else opens
-           in the OS. Embedded players (sub-frames) are decided separately in decidePolicyFor. */
+           in the OS, except the legal and support pages, which open in a Safari view over the app
+           (BUILD 30, EngineConfig.opensInSafariView). Embedded players (sub-frames) are decided
+           separately in decidePolicyFor. */
         private func staysInside(_ url: URL) -> Bool {
             guard let host = url.host?.lowercased() else { return true }   // about:blank etc.
+            if EngineConfig.opensInSafariView(url) { return false }
             if EngineConfig.isTrusted(url) { return true }
             return host == "accounts.spotify.com" || host == "api.spotify.com"
         }
@@ -202,6 +239,16 @@ struct EngineWebView: UIViewRepresentable {
                     ownCancel = true
                     decisionHandler(.cancel)
                     mainFrameFailed(retry: lastEngineURL ?? EngineConfig.baseURL)
+                    return
+                }
+                /* A tap on Privacy policy, Support, Terms of Use or Privacy Policy (in place or
+                   target=_blank, which arrives here first with no target frame), or a script
+                   sending the page there. */
+                if EngineConfig.opensInSafariView(url) {
+                    /* The page stays as it is: a WebKit error for this cancel is not a failed load. */
+                    if action.targetFrame != nil { ownCancel = true }
+                    decisionHandler(.cancel)
+                    presentSafariView(url, over: webView)
                     return
                 }
                 bridge.openExternal(url)
@@ -271,7 +318,7 @@ struct EngineWebView: UIViewRepresentable {
             bridge.unreachable = false
             bridge.offline = false
             bridge.booting = false
-            bridge.flushPending()
+            bridge.engineLoaded()
         }
 
         /* Characters inside <head> and <body>; 0 only for an empty document. Used on the engine's
@@ -330,7 +377,8 @@ struct EngineWebView: UIViewRepresentable {
                 guard let self = self, generation == self.retryGeneration, self.bridge.unreachable,
                       let wv = self.bridge.webView else { return }
                 self.ownCancel = false
-                var req = URLRequest(url: url)
+                /* A share still held is what the user is waiting for: its page, whatever failed. */
+                var req = URLRequest(url: self.bridge.retryURL(url))
                 req.cachePolicy = .reloadIgnoringLocalCacheData
                 req.timeoutInterval = 20
                 wv.load(req)
@@ -391,10 +439,12 @@ struct EngineWebView: UIViewRepresentable {
             if let fh = fh, fh == loadedHost, e.domain == NSURLErrorDomain,
                Self.transientCodes.contains(e.code), hostSwitches < 3 {
                 hostSwitches += 1
+                /* A load or launch check started meanwhile (Try again, a share) wins. */
+                let generation = retryGeneration
                 Task { [weak self, weak webView] in
                     let alt = await EngineConfig.pickReachable(excluding: fh, timeout: 6)
                     await MainActor.run {
-                        guard let self = self, let wv = webView else { return }
+                        guard let self = self, let wv = webView, generation == self.retryGeneration else { return }
                         if alt != nil { self.load(wv) } else { self.retryOrGiveUp(e, failing: failing, in: wv) }
                     }
                 }
@@ -408,9 +458,11 @@ struct EngineWebView: UIViewRepresentable {
                let failing = failing, isEngineOrigin(failing) {
                 quietRetries += 1
                 let delay = quietRetries == 1 ? 0.5 : 1.5
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak webView] in
-                    guard let wv = webView else { return }
-                    var req = URLRequest(url: failing)
+                let generation = retryGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
+                    /* A load started meanwhile (a share, a launch check) wins: no second load on top. */
+                    guard let self = self, let wv = webView, generation == self.retryGeneration else { return }
+                    var req = URLRequest(url: self.bridge.retryURL(failing))
                     req.cachePolicy = .reloadIgnoringLocalCacheData
                     req.timeoutInterval = 20
                     wv.load(req)
@@ -426,21 +478,44 @@ struct EngineWebView: UIViewRepresentable {
         }
 
         /* WebKit killed the content process (memory pressure while backgrounded). A blank
-           white view is what the user sees otherwise. */
+           white view is what the user sees otherwise. NATIVE-B-R5-04 (build 30): the reload is a
+           launch (boot), so the loading screen covers it. A shared link whose scan is not over yet
+           reopens its share page, so a scan cut off mid-way starts again instead of the user landing
+           on Home with nothing; once the scan is over it opens Home (PendingShare). The reload
+           counts against the link's limit (afterCrash). */
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            load(webView)
+            bridge.pageReady = false
+            boot(webView, afterCrash: true)
         }
 
         // MARK: ui delegate
 
         /* Fires for every target=_blank anchor and window.open() on the page. Returning
-           nil after handing the URL to the OS is the whole native music-app handoff. */
+           nil after handing the URL to the OS is the whole native music-app handoff. The legal
+           and support pages open in a Safari view over the app instead (BUILD 30). */
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = action.request.url {
-                if staysInside(url) { webView.load(action.request) } else { bridge.openExternal(url) }
+                if EngineConfig.opensInSafariView(url) {
+                    if !(bridge.booting || bridge.unreachable) { presentSafariView(url, over: webView) }
+                } else if staysInside(url) {
+                    webView.load(action.request)
+                } else {
+                    bridge.openExternal(url)
+                }
             }
             return nil
+        }
+
+        /* BUILD 30: a legal or support page in a Safari view presented over the app. Done
+           (or a swipe down) closes it, and the page underneath is exactly as it was: no load, no
+           splash, same tab, same paywall. One at a time: a second tap while one is up does nothing.
+           If nothing can present it, the page opens in Safari as before. */
+        private func presentSafariView(_ url: URL, over wv: WKWebView) {
+            if topController(over: wv) is SFSafariViewController { return }
+            let safari = SFSafariViewController(url: url)
+            safari.modalPresentationStyle = .pageSheet
+            if !presentOnTop(safari, over: wv) { bridge.openExternal(url) }
         }
 
         /* Listen mode: grant the page's getUserMedia once the OS mic prompt has passed,
@@ -488,6 +563,10 @@ struct EngineWebView: UIViewRepresentable {
                 presentShare(url: (d["url"] as? String) ?? "", text: (d["text"] as? String) ?? "")
                 return
             }
+            /* NATIVE-B-R5-04 (build 30): one result per scan. Its shared link is done (PendingShare). */
+            if let d = message.body as? [String: Any], (d["type"] as? String) == "result" {
+                bridge.resultPosted()
+            }
             if let payload = ResultPayload(message: message.body) {
                 bridge.showResult(payload)
             }
@@ -521,6 +600,8 @@ final class AddifyStore {
     static let productIDs = ["com.addify.app.unlimited.monthly", "com.addify.app.unlimited.yearly"]
     private var products: [Product] = []
     private var updates: Task<Void, Never>?
+    /* The page to tell when a transaction arrives on its own (transactionArrived). */
+    weak var bridge: EngineBridge?
 
     /* Renewals, refunds and purchases made on another device arrive here; finishing them keeps
        the queue clean. Entitlement is always read fresh from currentEntitlements. */
@@ -528,9 +609,20 @@ final class AddifyStore {
         guard updates == nil else { return }
         updates = Task.detached {
             for await result in Transaction.updates {
-                if case .verified(let t) = result { await t.finish() }
+                if case .verified(let t) = result {
+                    await t.finish()
+                    await AddifyStore.shared.transactionArrived()
+                }
             }
         }
+    }
+
+    /* CHAOS-2-R5-03 (build 30): a verified transaction the page did not wait on (an Ask to Buy
+       approval, a renewal, a purchase made on another device) is finished, then the page is told
+       with the event addify:entitlements, so it reads its entitlement again at once instead of on
+       the next return to the app (EngineBridge entitlementsChanged). */
+    func transactionArrived() {
+        bridge?.entitlementsChanged()
     }
 
     func load() async -> [Product] {
@@ -765,18 +857,24 @@ extension WKFrameInfo {
     }
 }
 
-/* Presents from the view controller that owns `view`, or from whatever it is already presenting,
-   so a second sheet never silently fails to appear. */
-@discardableResult
-func presentOnTop(_ controller: UIViewController, over view: UIView) -> Bool {
+/* The view controller that owns `view`, or whatever it is already presenting (and not closing). */
+func topController(over view: UIView) -> UIViewController? {
     var responder: UIResponder? = view
     while let r = responder {
         if var vc = r as? UIViewController {
             while let p = vc.presentedViewController, !p.isBeingDismissed { vc = p }
-            vc.present(controller, animated: true)
-            return true
+            return vc
         }
         responder = r.next
     }
-    return false
+    return nil
+}
+
+/* Presents from the view controller that owns `view`, or from whatever it is already presenting,
+   so a second sheet never silently fails to appear. */
+@discardableResult
+func presentOnTop(_ controller: UIViewController, over view: UIView) -> Bool {
+    guard let vc = topController(over: view) else { return false }
+    vc.present(controller, animated: true)
+    return true
 }

@@ -58,10 +58,13 @@ If Xcode refuses to open the hand-written project:
 
 The app loads its page only from the addresses compiled into `EngineConfig.knownBaseURLs`,
 and its native bridges (`addify`, `addifyStore`, `addifyKit`, `exportFinds`) answer only a
-page on one of them. At launch it health-checks them all and loads the best-ranked one
-that answers; that check is the only code that writes the address in use. The directory
-gist can only move one of the compiled-in addresses to the front of the next launch check;
-any other host it names is ignored. A new address needs a new build.
+page on one of them. With one compiled-in address (the shipped list: `addify.app`) a launch
+and Try again load the page at once and ask nothing first, since no check could change
+which page loads. With more than one (the smoke test's lab copies) the launch health-checks
+them all and loads the best-ranked one that answers; that check is the only code that writes
+the address in use. The directory gist can only move one of the compiled-in addresses to the
+front of the next launch check; any other host it names is ignored. A new address needs a new
+build.
 
 Debug builds only: Settings can pin a different address (Release builds compile no
 Settings screen and clear any old manual address at launch). Long-press the status-bar
@@ -119,11 +122,13 @@ has to carry real product behaviour. What is native today:
    scan starting on that tap. This is the product's core interaction and cannot exist on
    the web (iOS Safari has no Web Share Target).
 2. **App-group + URL-scheme handoff** with a durable inbox, so a share never gets lost
-   even when the app was not running.
-3. **Native results toast + haptic + local notification.** `finish()` posts the landed
-   result to the app; a share started from TikTok gets its answer as a notification
-   without switching apps. Notifications are asked for only at the moment they are useful
-   and never required (4.5.4, 5.1.2).
+   even when the app was not running. The app then holds the link until the page posts that
+   scan's result (`PendingShare.swift`), so a share that opened the app with no network still
+   scans after Try again or a return to the app, and a scan cut off by WebKit killing the page
+   starts again after the reload.
+3. **Native results toast + haptic.** `finish()` posts the landed result to the app, which
+   shows it as a banner (and reads it out with VoiceOver). No local notifications since
+   build 29.
 4. **Native music-app handoff.** Every Preview / Spotify / Apple Music / SoundCloud / edit
    link is routed through `UIApplication.open`, which resolves universal links into the
    installed Spotify, Music or SoundCloud app.
@@ -132,6 +137,8 @@ has to carry real product behaviour. What is native today:
    prompted on every scan.
 7. Spotify's PKCE login kept in-app (only `accounts.spotify.com` may navigate the web
    view), so sign-in completes instead of dead-ending in Safari.
+8. **Privacy policy, Support and Terms in a Safari view** (`SFSafariViewController`) over
+   the app, from the You tab and the paywall alike. Done returns to the same screen.
 
 What else would help, roughly in order of review value:
 

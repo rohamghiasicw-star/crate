@@ -28,14 +28,26 @@ final class EngineBridge: ObservableObject {
     /* Bumped to make the web view reload from the (possibly new) engine base. */
     @Published var reloadToken = 0
 
-    var isActive = true
+    var isActive = true {
+        /* NATIVE-B-R5-04 (build 30): leaving the foreground is when iOS may end the page. */
+        didSet { if oldValue && !isActive { checkScanOnLeave() } }
+    }
     weak var webView: WKWebView?
     /* True while the launch check (EngineWebView boot) is still choosing an address. A share
        that arrives then waits and load() opens it on the chosen address, instead of being sent
        to an address nobody checked yet and then replaced by the launch's own page load. */
     var holdShares = false
 
-    private var pendingLink: String? = nil
+    /* The shared link waiting for the page. Held until its scan is over (the page posted the
+       result, or left the scan), however long that takes, so a failed load, Try again, a return to
+       the app or a reload after WebKit killed the page reopens the share (PendingShare). */
+    private var share = PendingShare()
+    /* Set by the web view's coordinator: opens an engine page in the main frame the way every
+       launch load does (EngineWebView open). */
+    var openPage: ((URL) -> Void)?
+    /* Set by the web view's coordinator: stops a main-frame load that is running and cancels the
+       automatic reloads still waiting (EngineWebView cancelReloads). */
+    var cancelReloads: (() -> Void)?
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
@@ -57,7 +69,7 @@ final class EngineBridge: ObservableObject {
            query, and discarding the inbox in that case strips the guaranteed path of its
            only copy, so the share would never scan. */
         let fromInbox = SharedInbox.drain()
-        let fromURL = SharedInbox.firstURL(in: raw).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+        let fromURL = SharedInbox.shareLink(in: raw)
         if let link = fromURL ?? fromInbox, SharedInbox.isScannable(link) {
             deliver(link)
         }
@@ -87,54 +99,64 @@ final class EngineBridge: ObservableObject {
         if link == lastDelivered, now.timeIntervalSince(lastDeliveredAt) < 5 { return }
         lastDelivered = link
         lastDeliveredAt = now
-        pendingLink = link
+        share.hold(link)
         flushPending()
     }
 
+    /* Hands the held share to the page, or opens its share page. Waits while a launch check is
+       choosing the address (load() opens it then). On the error screen it starts a fresh launch
+       check, which opens the share under the loading screen. */
     func flushPending() {
-        guard let link = pendingLink, let wv = webView, !holdShares else { return }
+        /* Only a link no page has yet: one the page already has is scanning (or scanned) there. */
+        guard let link = share.waiting, let wv = webView, !holdShares else { return }
+        if unreachable {
+            retry()
+            return
+        }
         if pageReady {
-            let json = jsString(link)
+            let json = Self.jsString(link)
             let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));return true;}catch(e){return false;}})()"
             wv.evaluateJavaScript(js) { [weak self] value, _ in
+                guard let self = self else { return }
                 if (value as? Bool) == true {
-                    self?.pendingLink = nil
-                } else {
-                    self?.loadShare(link)
+                    self.share.taken(link)
+                } else if self.share.waiting == link {
+                    self.loadShare()
                 }
             }
         } else {
-            loadShare(link)
+            loadShare()
         }
     }
 
-    private func loadShare(_ link: String) {
-        guard let wv = webView else { return }
-        if let u = shareURL(link) {
-            pendingLink = nil
-            pageReady = false
-            unreachable = false
-            wv.load(URLRequest(url: u))
-        }
+    private func loadShare() {
+        guard let open = openPage, share.current != nil else { return }
+        open(share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL))
     }
 
-    /* <engine>/share?url=<link> on the address in use. */
-    func shareURL(_ link: String) -> URL? {
-        guard var comps = URLComponents(url: EngineConfig.baseURL, resolvingAgainstBaseURL: false) else { return nil }
-        comps.path = "/share"
-        comps.queryItems = [URLQueryItem(name: "url", value: link)]
-        return comps.url
+    /* The page a launch check opens: the held share's page, else the engine's home. A reload after
+       WebKit killed the page counts against the share's limit (PendingShare.maxCrashReloads). */
+    func launchURL(afterCrash: Bool) -> URL {
+        if afterCrash { share.crashReload() }
+        return share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL)
     }
 
-    /* For the launch's own page load: the share that waited while the address was chosen. */
-    func takePendingLink() -> String? {
-        defer { pendingLink = nil }
-        return pendingLink
+    /* The page an automatic reload opens: the held share's page while no page has it, else the
+       page that failed (PendingShare retryTarget). */
+    func retryURL(_ failed: URL) -> URL {
+        share.retryTarget(base: EngineConfig.baseURL, fallback: failed)
+    }
+
+    /* An engine page finished loading (EngineWebView pageLoaded). If its share page was opened,
+       that page has the link now. A link that arrived while another page loaded is handed over. */
+    func engineLoaded() {
+        if share.pageLoaded() { return }
+        flushPending()
     }
 
     /* JSON-encode a string for embedding in a JS expression. Never string-concatenate a
        user-supplied link into JavaScript; a quote in the URL would otherwise break out. */
-    private func jsString(_ s: String) -> String {
+    private static func jsString(_ s: String) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
         let arr = String(decoding: data, as: UTF8.self)
         return String(arr.dropFirst().dropLast())
@@ -145,21 +167,38 @@ final class EngineBridge: ObservableObject {
         offline = false
         pageReady = false
         booting = true
+        holdShares = true       // the launch check this starts opens any share that arrives meanwhile
         reloadToken += 1
     }
 
-    /* "Try again" on the unreachable screen has to be able to find a NEW hostname, not
-       just re-request the dead one. The tunnel rotates roughly hourly, so a retry that
-       only reloads is a retry that fails every time until the app is relaunched. Resolve
-       first, then reload; reload regardless so a transient network blip still recovers. */
+    /* "Try again" on the unreachable screen, and a return to it. With more than one compiled-in
+       address it has to be able to find a NEW one, not just re-request the dead one, so it asks
+       the directory first, then reloads regardless so a transient network blip still recovers.
+       NATIVE-B-R5-03 (build 30): with one compiled-in address (this build) the directory can only
+       name that address, so the reload starts at once and GitHub is not asked (EngineConfig
+       beginRetry). */
     func retryResolvingFirst() {
         // REVIEWER RUNS 2026-11-12: show the loading screen at once, not after the directory lookup
         unreachable = false
         offline = false
         booting = true
-        Task { @MainActor in
-            await EngineConfig.resolveFromDirectory()
-            retry()
+        /* A share that arrives during the lookup waits for the launch check, which opens it. */
+        holdShares = true
+        /* BUILD 30: Try again and a return to the app start over here. An automatic reload still
+           loading, or one whose timer fires during the lookup, would otherwise load the share page
+           now and leave the launch check below to open Home over the scan it had just started. */
+        cancelReloads?()
+        EngineConfig.beginRetry { [weak self] in
+            guard let self = self else { return }
+            /* Nothing loads during a lookup any more. Should a page be up anyway, it stays, and a
+               share that waited is handed to it. */
+            if self.pageReady {
+                self.booting = false
+                self.holdShares = false
+                self.flushPending()
+                return
+            }
+            self.retry()
         }
     }
 
@@ -168,6 +207,44 @@ final class EngineBridge: ObservableObject {
        native handoff: the installed app takes the link, otherwise Safari does. */
     func openExternal(_ url: URL) {
         UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    /* CHAOS-2-R5-03 (build 30): StoreKit delivered a transaction on its own (AddifyStore). Only an
+       engine page that has loaded is told; one that does not listen for the event ignores it, and a
+       page still loading reads its entitlement as it starts anyway. */
+    static let entitlementsEvent = "window.dispatchEvent(new CustomEvent('addify:entitlements'))"
+
+    func entitlementsChanged() {
+        guard pageReady, let wv = webView, EngineConfig.isTrusted(wv.url) else { return }
+        wv.evaluateJavaScript(Self.entitlementsEvent, completionHandler: nil)
+    }
+
+    /* NATIVE-B-R5-04 (build 30): the page posted a scan's result. A shared link the page had is
+       done, so a reload after WebKit kills the page opens Home and never scans it again. */
+    func resultPosted() {
+        share.resultPosted()
+    }
+
+    /* NATIVE-B-R5-04 (build 30). A shared link the page had is kept, so a reload after WebKit kills
+       the page restarts its scan, only while the page still shows that scan. The page posts a
+       result only for a found song, and after a version hunt only when the hunt ends, well after
+       its card is up. A scan that ended any other way (no match, Back, the paywall) or whose card
+       is on screen must not start again. So when the app leaves the foreground the page is asked
+       what it shows: #app's data-state, and whether its current scan is this link. Any screen but
+       the scan, or a scan of another link, releases it. No answer keeps it. */
+    static func scanScreenProbe(_ link: String) -> String {
+        "(function(l){var a=document.getElementById('app'),s=a?a.getAttribute('data-state'):null;"
+            + "if(s!=='scanning')return s;"
+            + "try{if(typeof curURL==='string'&&curURL&&typeof parseLink==='function'&&parseLink(l).url!==curURL)return 'other';}catch(e){}"
+            + "return s;})(\(jsString(link)))"
+    }
+
+    private func checkScanOnLeave() {
+        guard pageReady, let link = share.handedLink, let wv = webView else { return }
+        wv.evaluateJavaScript(Self.scanScreenProbe(link)) { [weak self] value, error in
+            guard error == nil, let screen = value as? String, screen != "scanning" else { return }
+            self?.share.scanEnded(link)
+        }
     }
 
     /* Result landed (posted by finish() in crate.html through the 'addify' handler).
