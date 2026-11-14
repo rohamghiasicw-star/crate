@@ -77,6 +77,12 @@ jobs:
           - id: round5b-cr
             name: 'Round 5b (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round5b.py
+          - id: round5e-wk
+            name: 'Round 5e bad network (WebKit)'
+            run: python -u engine/test_round5e.py
+          - id: round5e-cr
+            name: 'Round 5e bad network (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5e.py
           - id: r5b-a11y-wk
             name: 'Round 5b accessibility and naming (WebKit)'
             run: python -u engine/test_round5b_a11y.py
