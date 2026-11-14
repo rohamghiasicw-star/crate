@@ -119,7 +119,7 @@ def patch(ios_dir, variant):
     if w.count(pold) != 1:
         print("patch: page-loaded anchor matched %d times, not logged" % w.count(pold))
     else:
-        w = w.replace(pold, pold + "            if let v = bridge.webView { NSLog(\"ADDIFY-PAGE loaded %@ window=%d hidden=%d alpha=%.2f size=%.0fx%.0f loading=%d\", "
+        w = w.replace(pold, pold + "            if let v = bridge.webView { NSLog(\"ADDIFY-PAGE loaded %@ window=%ld hidden=%ld alpha=%.2f size=%.0fx%.0f loading=%ld\", "
                       "v.url?.path ?? \"-\", v.window == nil ? 0 : 1, v.isHidden ? 1 : 0, Double(v.alpha), Double(v.bounds.width), "
                       "Double(v.bounds.height), v.isLoading ? 1 : 0) }\n")
     # A share that opens the app: simctl openurl stops at "Open in Addify?" on these simulators, and
@@ -146,7 +146,8 @@ def patch(ios_dir, variant):
 
 LAB_SAFARI_CLOSER = """
 
-/* Lab copy only (smoke.py): closes the Safari view the way Done does, then tells the page. */
+/* Lab copy only (smoke.py): closes the Safari view the way Done does, then tells the page. Logs
+   what UIKit says is on screen just before the close and just after it. */
 final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
     static var current: LabSafariCloser?
     weak var safari: SFSafariViewController?
@@ -163,17 +164,21 @@ final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
     }
 
     func safariViewController(_ controller: SFSafariViewController, didCompleteInitialLoad didLoadSuccessfully: Bool) {
-        NSLog("ADDIFY-SAFARI loaded %d", didLoadSuccessfully ? 1 : 0)
+        NSLog("ADDIFY-SAFARI loaded %ld", didLoadSuccessfully ? 1 : 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.close("after load") }
     }
 
     func close(_ why: String) {
         guard !closing, let s = safari else { return }
         closing = true
-        NSLog("ADDIFY-SAFARI closing (%@)", why)
+        let top = page.flatMap { topController(over: $0) }
+        NSLog("ADDIFY-SAFARI closing (%@) shown=%ld top=%ld", why, (s.viewIfLoaded?.window != nil && !s.isBeingPresented) ? 1 : 0,
+              top === s ? 1 : 0)
         s.dismiss(animated: true) { [weak self] in
-            NSLog("ADDIFY-SAFARI closed")
-            self?.page?.evaluateJavaScript("window.labSafariClosed && window.labSafariClosed()", completionHandler: nil)
+            let p = self?.page
+            let t = p.flatMap { topController(over: $0) }
+            NSLog("ADDIFY-SAFARI closed covered=%ld page=%ld", (t?.presentingViewController != nil) ? 1 : 0, p?.window != nil ? 1 : 0)
+            p?.evaluateJavaScript("window.labSafariClosed && window.labSafariClosed()", completionHandler: nil)
         }
     }
 }
@@ -921,12 +926,15 @@ def privacy(dev, app, mode):
     pv = {"A": {"health_ms": 20, "privacy": mode}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     fetched = lambda e: e["path"].split("?")[0] == "/privacy"
     came_back = lambda e: e.get("kind") == "back"
-    # A simulator's first Safari view can take a few seconds more to come up after it asked for its
-    # page (iPad, 7a43465: not up 3 s after the request). It stays up until 8 s after its page loaded,
-    # and is looked at 2, 4 and 6 s after the request.
+    # What is on screen comes from UIKit, logged by the lab copy: just before the close, the Safari
+    # view is in the window, fully presented and the top screen; just after it, nothing covers the
+    # app and the page is in the window. Screenshots can't say it here: while a Safari view is up,
+    # simctl io screenshot stalls for up to 20 s and returns a frame from around its close (b4c4d1b:
+    # iPad capture started 19.2 s, ended 38.9 s; iPhone 11.4 s to 21.5 s, then the app page). They
+    # are still taken (2, 4 and 6 s after the request, and 2 s after the close) and reported.
     sheets = ("sheet", "sheet2", "sheet3")
     res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=75,
-                   after=tuple((n, fetched, d) for n, d in zip(sheets, (2.0, 4.0, 6.0))) + (("after", came_back, 0.8),))
+                   after=tuple((n, fetched, d) for n, d in zip(sheets, (2.0, 4.0, 6.0))) + (("after", came_back, 2.0),))
     timeline(res)
     priv = [e for e in res["entries"] if fetched(e)]
     in_app = [e for e in priv if "Addify/" in e.get("ua", "")]
@@ -935,15 +943,21 @@ def privacy(dev, app, mode):
     check(dev, label, "/privacy opened in a Safari view over the app", bool(outside) and presented,
           "%d requests from Safari, Safari view logged %s" % (len(outside), presented))
     check(dev, label, "/privacy never loaded in the app's own web view", not in_app, "%d requests" % len(in_app))
-    ks = [(n, pixel_class(res["shots"].get(n, "")), (res["shot_t"].get(n) or [None] * 3)[2]) for n in sheets]
-    check(dev, label, "the legal page on screen", any(k == "privacy" for _, k, _ in ks), "%s" % ks)
+    sv = [l[l.index("ADDIFY-SAFARI"):] for l in res["lab"] if "ADDIFY-SAFARI" in l]
+    loaded = lab_has(res, "ADDIFY-SAFARI loaded 1")
+    shown = any("ADDIFY-SAFARI closing (after load) shown=1 top=1" in l for l in res["lab"])
+    check(dev, label, "the legal page on screen", presented and loaded and shown, "%s" % sv)
+    ks = [(n, pixel_class(res["shots"].get(n, "")), res["shot_t"].get(n)) for n in sheets]
+    check(dev, label, "screenshot shows the legal page", any(k == "privacy" for _, k, _ in ks), "%s" % ks, info=True)
     load, back = report(res, "load"), report(res, "back")
     pages = page_requests(res, "A")
     same = load is not None and back is not None and back.get("lid") == load.get("lid") and back.get("href") == load.get("href")
     check(dev, label, "closing returns to the same page, not reloaded", same and len(pages) == 1 and lab_has(res, "ADDIFY-SAFARI closed"),
           "page %s then %s, %d page loads" % ((load or {}).get("lid"), (back or {}).get("lid"), len(pages)))
+    uncovered = lab_has(res, "ADDIFY-SAFARI closed covered=0 page=1")
+    check(dev, label, "app page on screen after closing", uncovered and same, "%s" % [l for l in sv if "closed" in l])
     k = pixel_class(res["shots"].get("after", ""))
-    check(dev, label, "app page on screen after closing", k == "page", k)
+    check(dev, label, "screenshot shows the app page after closing", k == "page", "%s %s" % (k, res["shot_t"].get("after")), info=True)
     check(dev, label, "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
