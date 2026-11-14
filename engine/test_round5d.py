@@ -219,6 +219,7 @@ async def main(html, yml, only):
                 # a stored preview that will not load: the sheet says so, Try again is there, nothing opened
                 await tap_play(pg, "Dead Preview")
                 s_dead = await until(pg, "()=>{var m=document.getElementById('fpvmsg'); return m&&m.textContent.indexOf('load the preview')>=0&&("+SHEET+")();}", 10)
+                await pg.wait_for_timeout(800)   # the sheet slides in: measure the hit area once it has settled
                 rb = await pg.evaluate(HIT, "#fpvretry") if s_dead else None
                 await pg.evaluate("()=>closePlayer()"); await pg.wait_for_timeout(300)
                 d_ok = bool(s_dead) and s_dead["open"] and s_dead["retry"] and s_dead["audHidden"] and not s_dead["opened"] and hit_ok(rb, 43.5, 43.5)

@@ -6221,7 +6221,7 @@ function fpOpen(i){
   var _ib=document.getElementById('ipl'); if(_ib&&!_ib.hidden) ipClose();   // one player at a time (COVER PLAY)
   var dz=!!p.pv&&!/itunes\.apple\.com/i.test(p.pv), q=encodeURIComponent((t+' '+who).trim());
   document.getElementById('playerttl').textContent=t||'Preview';
-  document.getElementById('playersrc').innerHTML=srcChip(dz?'deezer':'apple');
+  document.getElementById('playersrc').innerHTML=dz?'<span class="src deezer"><span>Deezer</span></span>':srcChip('apple');   // no Deezer glyph
   // the song's own page in the app the preview comes from: the find's link when it is that app's, else a search there
   document.getElementById('playerout').href=dz?(/deezer\.com\//i.test(p.url)?p.url:'https://www.deezer.com/search/'+q)
                                               :(amOK(p.url)||'https://music.apple.com/search?term='+q);
@@ -6559,15 +6559,15 @@ function scanWatched(tok){return tok===scanTok&&!leftScan&&waveState==='scanning
 document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); onbQuiet=true; try{run(urlEl.value);}finally{onbQuiet=false;}});   // typed or pasted by hand: never a share
 urlEl.addEventListener('focus',function(){document.getElementById('form').classList.add('focus');});
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
-/* ROUND 5D (A11Y-A-R5-02): the "not a clip" message for the link in the box stays until the box is edited (it is a
-   20-word instruction, and it used to go after 4.5 s), and the box points at it while it shows: aria-invalid, and
-   aria-describedby="err", so VoiceOver reads it with the box. Decided here from the message and the box, so every path
-   that shows it (typed, or a shared page left in the box) behaves the same. */
+/* ROUND 5D (A11Y-A-R5-02): the typed "not a clip" message for the link in the box stays until the box is edited (it
+   is a 20-word instruction, and it used to go after 4.5 s), and the box points at it while it shows: aria-invalid, and
+   aria-describedby="err", so VoiceOver reads it with the box. Read here from the message and the box, so run() is
+   untouched. A shared page's message (GP-1, sticky by its caller) keeps its own rule: until the next tap. */
 function errField(on){var u=document.getElementById('url'); if(!u) return;
   if(on){u.setAttribute('aria-invalid','true'); u.setAttribute('aria-describedby','err');}
   else {u.removeAttribute('aria-invalid'); u.removeAttribute('aria-describedby');}}
 function showErr(m,opt){var e=document.getElementById('err'); opt=opt||{}; e.hidden=false; e.textContent=m;
-  var bx=String((document.getElementById('url')||{}).value||'').trim(), fld=!opt.btn&&!!bx&&m===notClipMsg(parseLink(bx));
+  var bx=String((document.getElementById('url')||{}).value||'').trim(), fld=!opt.sticky&&!opt.btn&&!!bx&&m===notClipMsg(parseLink(bx));
   clearTimeout(showErr._t); showErr.sticky=!!opt.sticky||fld; showErr.field=fld; errField(fld);
   if(opt.btn){var b=document.createElement('button'); b.type='button'; b.className='errbtn'; b.textContent=opt.btn[0]; b.onclick=opt.btn[1]; e.appendChild(b);}
   if(!showErr.sticky) showErr._t=setTimeout(function(){e.hidden=true; errField(false);},4500);}
