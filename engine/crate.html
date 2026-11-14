@@ -1160,6 +1160,9 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
 .ipfbtn{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.16);
   color:#fff;font-size:13px;font-weight:700;text-decoration:none}
 .ipfbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* ROUND 5E (BAD-NETWORK-B-R5-04): the sheet player that would not load, in the band's black box at the player's size */
+.plfail{position:relative;aspect-ratio:16/9;min-height:200px;border-radius:10px;overflow:hidden;background:#000}
+.plfail .ipfbox{padding:12px 14px}
 .iplx{position:absolute;top:9px;right:9px;width:26px;height:26px;border-radius:50%;
   background:rgba(8,6,14,.55);color:#fff;display:grid;place-items:center;z-index:4;cursor:pointer}
 .iplx svg{width:12px;height:12px}
@@ -2504,8 +2507,9 @@ function devBase(r){var b=JSON.parse(JSON.stringify(r)); DEV_HUNT_ONLY.forEach(f
   b.exact=null; b.candidates=[]; b.decisive=false; b.edits_pending=!!r.hunted; b.dev_hit=true; b.replay=true; return b;}
 function devFull(r){var f=JSON.parse(JSON.stringify(r)); f.dev_hit=true; f.replay=true; f.edits_pending=false; return f;}
 function huntEdits(url,onCand){
+  HG_ADV=0; HG_SIG=''; HG_GOT=false;   // ROUND 5E: this hunt has not moved yet (the tracker's hold, hgStill)
   // SPEED FIX 1: a scan replayed from this phone's copy hands the hunt its finished answer
-  if(DEV_REPLAY&&DEV_REPLAY.url===url){var _df=DEV_REPLAY.full; DEV_REPLAY=null; return replayHold(performance.now(),replayMs(REPLAY_HUNT_MS)).then(function(){return _df;});}
+  if(DEV_REPLAY&&DEV_REPLAY.url===url){var _df=DEV_REPLAY.full; DEV_REPLAY=null; HG_GOT=true; return replayHold(performance.now(),replayMs(REPLAY_HUNT_MS)).then(function(){return _df;});}
   var _hs=performance.now();   // BELIEVABLE REPLAY: when this hunt started
   // NAMING 2026-09-30: the hunt carries this scan's random id, so the /edits fallback below
   // gets the answer this hunt already finished (the stream only dropped before its done
@@ -2529,12 +2533,12 @@ function huntEdits(url,onCand){
     watchdog=setTimeout(giveUp,180000);
     es.addEventListener('cand',function(m){
       var d=null; try{d=JSON.parse(m.data);}catch(e){return;}
-      if(d&&d.cand&&onCand) onCand(d.cand,d.n||0);});
+      if(d&&d.cand){ if(!settled) HG_ADV=Date.now(); if(onCand) onCand(d.cand,d.n||0); }});   // ROUND 5E: the hunt moved
     es.addEventListener('done',function(m){
       if(settled) return;
       var d=null; try{d=JSON.parse(m.data);}catch(e){}
       if(!d) return giveUp();
-      settled=true; stop();
+      settled=true; stop(); HG_GOT=true;   // ROUND 5E: the answer is in hand (a replay's hold waits on nothing)
       if(d.replay){ replayHold(_hs,replayMs(REPLAY_HUNT_MS)).then(function(){resolve(d);}); return; }   // BELIEVABLE REPLAY
       resolve(d);});
     es.addEventListener('fail',giveUp);
@@ -2833,11 +2837,23 @@ function pgTick(){
   if(pgS&&!pgLock){ if(pgFrozen||why) pgS.t=now; else { v=dvStep(pgS,now); if(v>pgNow){ pgNow=v; pgPaint(); } } }
   else if(!pgS&&!pgLock&&!pgFrozen&&!why&&pgNow<pgCap-0.4){ pgNow+=Math.max(0.25,(pgCap-pgNow)*0.09); pgPaint(); }  // listen mode: setProg's cap creep
   // ROUND 5B (BAD-NETWORK-R4-6): the tracker's dial holds too while its /progress poll gets no answer at all
-  if(hgS&&!hgS.fin){ if(progT!==null&&huntPollU&&Date.now()-NET_HEARD>PG_QUIET) hgS.t=now;
+  // ROUND 5E (BAD-NETWORK-A-R5-01): and while the hunt itself is not moving (hgStill)
+  if(hgS&&!hgS.fin){ if((progT!==null&&huntPollU&&Date.now()-NET_HEARD>PG_QUIET)||hgStill()) hgS.t=now;
     else { v=dvStep(hgS,now); if(v>hgNow){ hgNow=v; hgPaint(); } } }
 }
 // 100 ms ticks; the dial's CSS eases each step over 300 ms linear, so the sweep is continuous
 function pgTickOn(){ if(pgTimer) return; pgTimer=setInterval(pgTick,100); }
+/* ROUND 5E (BAD-NETWORK-A-R5-01): THE TRACKER MOVES WHILE THE HUNT DOES. Any /progress answer used to count, so a
+   version check that never reached Addify (the stream never answered, /progress kept saying "Done") still climbed to
+   98%. HG_ADV is when the hunt last moved: its /progress counts (q d c b k, the stage, the start hold, the wrap-up) or
+   rows changed (hgSeen), or the stream sent a version. PG_STILL ms with neither holds the dial, as SCAN_ADV holds the
+   naming dial. A hunt whose answer is already in hand (a replay, HG_GOT) waits on nothing, so it is never held. */
+var HG_ADV=0, HG_SIG='', HG_GOT=false;
+function hgSeen(p){
+  var h=p.hunt; if(!h&&!p.cands) return;
+  var s=(h?[h.q,h.d,h.c,h.b,h.k,h.st||'',h.hw||0,h.wr||0].join(','):'')+'|'+((p.cands&&p.cands.length)||0);
+  if(s!==HG_SIG){ HG_SIG=s; HG_ADV=Date.now(); }}
+function hgStill(){ return !!huntPollU&&!HG_GOT&&Date.now()-HG_ADV>PG_STILL; }
 /* the tracker's dial starts when the card with the tracker takes the screen */
 function hgStart(){ hgS=dvNew(DVP.hunt,pgClock()); dvAhead(hgS,hgE); if(hgW) dvWrap(hgS); hgNow=0; wvJump(wvH,0); pgTickOn(); }
 /* APPLYALL 2026-09-29 (review finding 16): a hunt that ends without an answer takes its
@@ -2849,6 +2865,7 @@ function huntLineOff(){Array.prototype.forEach.call(document.querySelectorAll('#
    card says so, with Try again: the same link scanned again (it was counted with the song, so it is free). */
 function huntFailNote(u){
   var r=document.getElementById('result'); if(!r) return;
+  if(r.querySelector('.vcheck')){ huntLineOff(); return; }   // ROUND 5E: one note, however many ways the check failed
   var at=r.querySelector('.htrack, .latehunt'), n=document.createElement('div');
   n.className='vcheck'; n.setAttribute('role','status');
   n.innerHTML='<span>Couldn’t check versions.</span><button type="button" id="vcretry">Try again</button>';
@@ -3245,6 +3262,7 @@ function progPollOn(u){
           // without them still marks the hunt as started
           if(p.hunt){ pgMark('hunt'); pgHunt(p.hunt); }
           else if(p.pct>=60) pgMark('hunt');
+          hgSeen(p);                    // ROUND 5E: did the hunt move (the tracker's hold)
         }
         // server-kit: a quick tunnel holds the event stream back until the hunt ends, so the
         // server also lists the verified rows here. Only the server sends p.cands; liveAdd
@@ -4097,23 +4115,55 @@ function errCard(icon,head,sub,extra){
    true only once the engine stored it (its answer carries the row id), false when every try failed. The card says
    thanks only after true; after false it says "Couldn't send that." with Try again, and keeps the user's pick. */
 var FB_BACKOFF=[800,2500], FB_WAIT=6000, FB_FAIL='Couldn’t send that.';
+/* ROUND 5E (BAD-NETWORK-B-R5-02): THE ROW ID IS MADE HERE. An answer that came back after FB_WAIT (a slow network)
+   left a stored row the phone had no id for, so Delete account could not erase it, and each retry stored it again.
+   Now every body gets its id on the phone (32 hex, the engine's own shape), the id goes into addify-fbids before the
+   first try, and every try sends the same id: the engine stores it under that id once (server.py record_feedback).
+   An older engine that makes its own id answers with it, and that id replaces ours. */
+function fbKeep(id,was){var a=lsGet('addify-fbids','[]'); if(!Array.isArray(a)) a=[];
+  if(was) a=a.filter(function(x){return x!==was;});
+  if(a.indexOf(id)<0) a.push(id); lsSet('addify-fbids',a);}
 function sendFeedback(obj){var n=0;
+  if(!obj.id) obj.id=rid('');
+  fbKeep(obj.id);
   function once(){var ac=window.AbortController?new AbortController():null, tm=ac?setTimeout(function(){try{ac.abort();}catch(e){}},FB_WAIT):0;
     return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(obj),signal:ac?ac.signal:undefined})
       .then(function(r){return r.json().then(function(j){return r.ok&&j&&j.ok!==false&&(j.id||j.ok===true)?j:null;});})
       .catch(function(){return null;})
       .then(function(j){clearTimeout(tm);
-        if(j){if(j.id){var a=lsGet('addify-fbids','[]'); a.push(j.id); lsSet('addify-fbids',a);} return true;}
+        if(j){if(j.id&&j.id!==obj.id) fbKeep(String(j.id),obj.id); return true;}
         if(n<FB_BACKOFF.length) return netSleep(FB_BACKOFF[n++]).then(once);
         return false;});}
   return once();}
+/* ROUND 5E (FIX BROKEN BAD-NETWORK-R4-4): THE RATE ROW'S OUTBOX. An X or a pick that failed used to live only on the
+   card's element, while the vote, the pick and the fix-list entry were stored at the tap, so after Back or a relaunch
+   the card said "We're on it" for feedback the engine never got, and nothing sent it again. Now each body waits in
+   addify-fbout (localStorage) until the engine has it; only then is the vote (addify-verdicts), the pick
+   (addify-vfpicks) or the fix-list entry (addify-pending-fixes) written (fbApply). A card drawn while a body still
+   waits says "Couldn't send that." with Try again (or "Sending…" while a try is out, FB_FLY). */
+var FB_OUT='addify-fbout', FB_FLY={};
+function fbOut(){var a=lsGet(FB_OUT,'[]'); return Array.isArray(a)?a.filter(function(b){return b&&b.id&&b.url;}):[];}
+function fbOutSet(a){lsSet(FB_OUT,a.slice(-40));}
+function fbOutFor(url){return fbOut().filter(function(b){return b.url===url;});}
+function fbApply(b){
+  if(b.kind==='result'){var m=lsGet('addify-verdicts','{}')||{}; m[b.url]=b.verdict; lsSet('addify-verdicts',m);
+    if(b.verdict==='wrong') vfPendAdd(b.url,b.guess_song||'');}
+  else if(b.kind==='correction'){var p=lsGet('addify-vfpicks','{}')||{}; p[b.url]=b.verdict; lsSet('addify-vfpicks',p);
+    vfPendAdd(b.url,b.guess_song||'');}
+  fbOutSet(fbOut().filter(function(x){return x.id!==b.id;}));}
+function fbPost(b){
+  if(!b.id) b.id=rid('');
+  if(FB_FLY[b.id]) return FB_FLY[b.id];
+  fbOutSet(fbOut().filter(function(x){return x.id!==b.id;}).concat([b]));
+  var p=FB_FLY[b.id]=sendFeedback(b).then(function(ok){delete FB_FLY[b.id]; if(ok) fbApply(b); return ok;});
+  return p;}
 /* the rate row's sends: row._fbOut sends still out, row._fbBad the bodies that failed (Try again sends them again).
-   `ok` runs once a body is stored. vfLine puts the line in step with them. */
-function vfSend(row,o,ok){row._fbOut=(row._fbOut||0)+1; vfLine(row);
-  return sendFeedback(o).then(function(sent){row._fbOut--;
-    if(sent){if(ok) try{ok();}catch(e){}} else (row._fbBad=row._fbBad||[]).push({o:o,ok:ok});
-    vfLine(row); return sent;});}
+   vfLine puts the line in step with them. vfTrack follows a body this card did not send: one still out (FB_FLY) or one
+   left in the outbox by an earlier card. */
+function vfTrack(row,b,p){row._fbOut=(row._fbOut||0)+1; vfLine(row);
+  return p.then(function(sent){row._fbOut--; if(!sent) (row._fbBad=row._fbBad||[]).push(b); vfLine(row); return sent;});}
+function vfSend(row,b){return vfTrack(row,b,fbPost(b));}
 function vfLine(row){
   var q=document.getElementById('vfq'); if(!q||!row.contains(q)) return;
   var rb=document.getElementById('vfretry'), asking=!!document.getElementById('vfpick');
@@ -4121,7 +4171,7 @@ function vfLine(row){
     q.textContent=FB_FAIL;
     if(!rb){rb=document.createElement('button'); rb.type='button'; rb.id='vfretry'; rb.className='vfretry'; rb.textContent='Try again';
       rb.onclick=function(){var had=document.activeElement===rb, bad=row._fbBad||[]; row._fbBad=[]; rb.remove();
-        bad.forEach(function(x){vfSend(row,x.o,x.ok);}); fkHand(had,document.getElementById('vfq'));};
+        bad.forEach(function(b){vfSend(row,b);}); fkHand(had,document.getElementById('vfq'));};
       row.insertBefore(rb,document.getElementById('vfpick'));}
     return;}
   if(rb) rb.remove();
@@ -4336,8 +4386,12 @@ function vfPick(d){
   var e=d&&d.exact; if(e&&(e.title||e.url)) return e;
   var c=(d&&d.candidates)||[]; if(!c.length) return null;
   try{ return byMatch(c)[0]||null; }catch(x){ return c[0]||null; }}
+/* ROUND 5E: v and p are the vote and the pick, sent or still in the outbox (out); sent is the vote the engine has */
 function vfState(url){
-  return {v:(lsGet('addify-verdicts','{}')||{})[url]||'', p:(lsGet('addify-vfpicks','{}')||{})[url]||''};}
+  var s={v:(lsGet('addify-verdicts','{}')||{})[url]||'', p:(lsGet('addify-vfpicks','{}')||{})[url]||'', out:fbOutFor(url)};
+  s.sent=s.v;
+  s.out.forEach(function(b){if(b.kind==='result'&&!s.v) s.v=b.verdict; if(b.kind==='correction'&&!s.p) s.p=b.verdict;});
+  return s;}
 function vfPending(){var a=lsGet(VF_PEND,'[]'); return Array.isArray(a)?a:[];}
 function vfPendAdd(url,song){
   if(!url) return;
@@ -4348,10 +4402,12 @@ function vfPendAdd(url,song){
   a.unshift({url:url,song:song||'',asked_at:Date.now()}); lsSet(VF_PEND,a.slice(0,50));}
 function verdictRow(d){
   if(!d||d.result!=='found'||!curURL) return '';
-  var pk=vfPick(d), v=vfState(curURL).v;
+  var pk=vfPick(d), st=vfState(curURL), v=st.v;
   // RF2: with no crown pk is the song at its speed (ncSaid), so the question keys off what was
   // on screen, as before: a crown or version rows ask about the version, a bare song the song
-  var q=v==='right'?VF_THX_OK:v==='wrong'?VF_THX_NO:((ncCrowned(d)||((d.candidates||[]).length&&pk))?'Did we get the right version?':'Did we get the right song?');
+  // ROUND 5E: thanks only for what the engine has; a body still in the outbox reads as sending or not sent
+  var q=(v&&st.out.length)?(st.out.some(function(b){return !!FB_FLY[b.id];})?'Sending…':FB_FAIL):
+    v==='right'?VF_THX_OK:v==='wrong'?VF_THX_NO:((ncCrowned(d)||((d.candidates||[]).length&&pk))?'Did we get the right version?':'Did we get the right song?');
   return '<div class="vfeed'+(v?' done is-'+v:'')+'" id="vfeed" role="group" aria-label="Rate this result">'+
     '<span class="vq" id="vfq" aria-live="polite">'+q+'</span><span class="vbx">'+
     '<button type="button" class="vy'+(v==='right'?' on':'')+'" id="vfy" aria-label="Right version"'+(v?' disabled':'')+'>'+VF_OK+'</button>'+
@@ -4408,11 +4464,10 @@ function vfAsk(row,d,url,rows,anim){
     var c=b.classList.contains('vpr')?rows[+b.getAttribute('data-i')]:null;
     if(!c&&b.id!=='vfnone') return;
     busy=true;
-    var m=lsGet('addify-vfpicks','{}')||{}; m[url]=c?'pick':'none'; lsSet('addify-vfpicks',m);
     var o={kind:'correction',url:url,verdict:c?'pick':'none',guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
     if(c){o.pick_title=c.title||''; o.pick_url=c.url||'';}
-    vfSend(row,o,function(){vfPendAdd(url,d.base_song||'');});   // ROUND 5B: parked once the engine has it
+    vfSend(row,o);   // ROUND 5E: the pick is stored and the clip parked once the engine has it (fbApply)
     b.classList.add('sel');
     var had=box.contains(document.activeElement);
     [].forEach.call(box.querySelectorAll('button'),function(x){x.disabled=true;});
@@ -4430,13 +4485,16 @@ function vfThanks(row){
 function vfWire(d){
   var row=document.getElementById('vfeed'); if(!row) return;
   var url=curURL, pk=vfPick(d), st=vfState(url);
-  if(st.v){                                      // already voted on this clip
+  if(st.v){                                      // already voted on this clip (sent, or still in the outbox)
+    // ROUND 5E (FIX BROKEN BAD-NETWORK-R4-4): a body the engine does not have yet is followed while a try is out, or
+    // offered again ("Couldn't send that." with Try again); the clip is re-parked only for a vote the engine has
+    st.out.forEach(function(b){if(FB_FLY[b.id]) vfTrack(row,b,FB_FLY[b.id]); else (row._fbBad=row._fbBad||[]).push(b);});
     if(st.v==='wrong'){
-      vfPendAdd(url,d.base_song||'');
+      if(st.sent==='wrong') vfPendAdd(url,d.base_song||'');
       if(!st.p){var rs0=vfRows(d); if(rs0.length) vfAsk(row,d,url,rs0,false);}}
+    vfLine(row);
     return;}
   var vote=function(v){
-    var m=lsGet('addify-verdicts','{}')||{}; m[url]=v; lsSet('addify-verdicts',m);
     var o={kind:'result',url:url,verdict:v,guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
     if(v==='wrong') devDrop(url);                // SPEED FIX 1: a wrong answer is never replayed here
@@ -4448,7 +4506,8 @@ function vfWire(d){
     var rs=v==='wrong'?vfRows(d):[];
     if(rs.length) vfAsk(row,d,url,rs,true);
     // ROUND 5B (BAD-NETWORK-R4-4): the line thanks only once the engine has the vote (vfLine); an X parks the clip then
-    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'');}:null);
+    // ROUND 5E: and the vote itself is stored then (fbApply), so a card drawn before that never thanks for it
+    vfSend(row,o);
     fkHand(had,document.getElementById('vfq'));};
   var y=document.getElementById('vfy'), n=document.getElementById('vfn');
   if(y) y.onclick=function(){vote('right');};
@@ -4760,9 +4819,11 @@ function renderResult(d,partial){
         '<div class="trainnote" id="fbnote" aria-live="polite">Confirming helps Addify learn this edit for everyone</div>');
       var gb={url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||''};
       // ROUND 5B (BAD-NETWORK-R4-4): "Logged" only once the engine has it; else "Couldn't send that." with Try again
-      var gsend=function(v){var n=document.getElementById('fbnote'), n0=n;
+      // ROUND 5E (BAD-NETWORK-B-R5-02): Try again sends the same body, so it keeps its row id (stored once)
+      var gbody=null, gsend=function(v){var n=document.getElementById('fbnote'), n0=n;
         if(n) n.textContent='Sending…';
-        sendFeedback(Object.assign({},gb,{verdict:v})).then(function(ok){
+        if(!gbody||gbody.verdict!==v) gbody=Object.assign({},gb,{verdict:v});
+        sendFeedback(gbody).then(function(ok){
           var n=document.getElementById('fbnote'); if(!n||n!==n0) return;
           if(ok){n.textContent=v==='yes'?'Logged, and added to your Finds':'Logged. This trains the edit database'; return;}
           n.textContent=FB_FAIL+' ';
@@ -6353,6 +6414,7 @@ function renderProf(){
   // cleared only after every server row is gone; otherwise nothing is cleared and the user can try again.
   var pfdel=document.getElementById('pfdel'), erase=function(){
     PF_DELETING=true; pfDelPaint();
+    lsSet(FB_OUT,[]);                           // ROUND 5E: feedback not sent yet is never sent now (its row ids are erased below)
     eraseMyFeedback().then(function(v){         // server rows first, then the local copy
       if(v==='all'){ try{localStorage.clear();}catch(e){} location.reload(); return; }
       // ROUND 5 (item 4): the line is this attempt's own answer ('busy', 'some' or 'late')
@@ -6781,8 +6843,15 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
               if(!baseShown){ lateFull=full; return; }
               lateUpgrade(full);
             } else if(budgetHit && full){
+              // ROUND 5E (FIX BROKEN BAD-NETWORK-R4-3): a check that could not reach Addify (engine_down) or failed on
+              // its side (error) after the budget ends the way one before the budget does (below): the card as it is,
+              // with "Couldn't check versions." and Try again where the tracker was. It used to redraw the card as
+              // final, "The closest version we found ... The original release", for a check that never ran.
+              if(!baseShown){ lateFull=full; return; }   // the budget branch below draws it, as it does a crown
+              if(full.result==='engine_down'||full.result==='error'){ finalize(null); if(onScan()) huntFailNote(scanURL); return; }
               // the hunt failed: the named song is final (APPLYALL finding 16: the line goes too)
               huntLineOff(); finalize(null);
+              if(document.querySelector('#result .vcheck')) return;   // ROUND 5E: the 90 s cap already said so
               // TRACKER 2026-09-29: and the card says so. Without this the tracker kept
               // pulsing "Matching the edit" forever (finalize clears the 90 s cap that would
               // have settled it). Same card the cap draws, with whatever verified so far.
@@ -6862,10 +6931,13 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
                     // TRACKER: HUNT_ON is still true, so the card draws the tracker itself (no latehunt line)
                     try{renderResult(dd,false);}catch(e){}
                   }).catch(function(){}); }, 2500); }
+              // ROUND 5E (FIX BROKEN BAD-NETWORK-R4-3): the 90 s cap is a check that never answered. The named song is
+              // final, and the card says the versions went unchecked ("Couldn't check versions." with Try again) instead
+              // of being redrawn as "The closest version we found ... The original release". A crown that lands later
+              // still upgrades the card (lateUpgrade).
               lateCap=setTimeout(function(){
-                HUNT_ON=false;                   // TRACKER 2026-09-29
-                if(onScan()){ try{renderResult(dd,false);}catch(e){} }
-                finalize(null);                  // the 90 s cap: the named song is final
+                finalize(null);                  // the 90 s cap: the named song is final (HUNT_ON off)
+                if(tok===scanTok&&onScan()) huntFailNote(scanURL);
               }, 90000);}}
             // held: the log entry and the bridge post wait for the final answer (finalize)
             // APPLYALL (finding 14): a song-less failure finishes as the named song, not as an
@@ -7016,10 +7088,52 @@ function playHere(url, src, title){
   // playsinline + allowfullscreen match the hero embed job 293 proved plays inside the app;
   // without them iOS WKWebView can throw a YouTube clip into the native/YouTube-app player,
   // which reads to the user as "it took me to YouTube".
+  var isYT=/^https:\/\/www\.youtube-nocookie\.com\/embed\//.test(frame);
+  if(isYT) frame+='&enablejsapi=1&origin='+encodeURIComponent(location.origin);   // ROUND 5E: its API says when it starts
   document.getElementById('playerbody').innerHTML=
-    '<iframe title="Player" allow="autoplay; encrypted-media" allowfullscreen playsinline loading="lazy" src="'+esc(frame)+'"></iframe>';
+    '<iframe id="plframe" title="Player" allow="autoplay; encrypted-media" allowfullscreen playsinline loading="lazy" src="'+esc(frame)+'"></iframe>';
   box.hidden=false;
+  plWatch(url,src,title,isYT);
 }
+/* ROUND 5E (BAD-NETWORK-B-R5-04): THE SHEET PLAYER (Search results, Finds rows) SAYS SO TOO. It had no start watch, so
+   on a dead network it stayed a blank white box for good. It now runs the band's IP_START watch and reads a start the
+   band's way, through the platform's own API: YouTube PLAYING or its playhead past 0.1 s, SoundCloud PLAY or a
+   PLAY_PROGRESS past 0. A sheet with no start by then says "Couldn't load the player." with Open in app (the same
+   upload) and Try again (opens it again). Closing the sheet, or another player opening, ends the watch (plOff). */
+var _plGen=0, _plT=0, _plTick=null, _plYT=null, _plSC=null;
+function plOff(){
+  _plGen++; clearTimeout(_plT); if(_plTick){clearInterval(_plTick); _plTick=null;}
+  try{if(_plSC&&window.SC&&SC.Widget){var E=SC.Widget.Events; [E.PLAY,E.PLAY_PROGRESS].forEach(function(ev){_plSC.unbind(ev);});}}catch(e){}
+  _plSC=null; _plYT=null;}
+function plWatch(url,src,title,isYT){
+  plOff();
+  var gen=_plGen, go=function(){if(gen!==_plGen) return; clearTimeout(_plT); if(_plTick){clearInterval(_plTick); _plTick=null;}};
+  _plT=setTimeout(function(){var box=document.getElementById('player');
+    if(gen===_plGen&&box&&!box.hidden) plFail(url,src,title);},IP_START);
+  if(isYT) withYT(function(){
+    if(gen!==_plGen||!document.getElementById('plframe')) return;
+    try{
+      _plYT=new YT.Player('plframe',{events:{
+        onReady:function(e){try{e.target.playVideo();}catch(_){}},
+        onStateChange:function(e){if(window.YT&&YT.PlayerState&&e.data===YT.PlayerState.PLAYING) go();}}});
+      _plTick=setInterval(function(){try{if(_plYT&&_plYT.getCurrentTime&&_plYT.getCurrentTime()>0.1) go();}catch(_){}},250);
+    }catch(_){} });
+  else withSC(function(){
+    var f=document.getElementById('plframe'); if(gen!==_plGen||!f) return;
+    try{
+      var w=SC.Widget(f), E=SC.Widget.Events; _plSC=w;
+      w.bind(E.PLAY,go);
+      w.bind(E.PLAY_PROGRESS,function(e){if(e&&e.currentPosition>0) go();});
+    }catch(_){} });}
+function plFail(url,src,title){
+  var pb=document.getElementById('playerbody'), ae=document.activeElement, had=!!(pb&&ae&&pb.contains(ae));
+  plOff(); if(!pb) return;
+  pb.innerHTML='<div class="plfail"><div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
+    '<a class="ipfbtn" href="'+esc(url)+'" target="_blank" rel="noopener">Open in app</a>'+
+    '<button type="button" class="ipfbtn" id="plretry">Try again</button></span></div></div>';
+  var rb=document.getElementById('plretry');
+  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); fkHand(h,document.getElementById('plframe'));};
+  fkHand(had,rb);}
 /* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
    purple progress ring and the YouTube video plays beside it, in the card, not a sheet.
    The video is a plain autoplay iframe first (job 280's proven in-app embed, so it plays
@@ -7067,14 +7181,26 @@ function ipRing(frac){
    YouTube PLAYING, no SoundCloud READY or PLAY, no audio `playing`) stops its player, shows Play, and says
    "Couldn't load the player." with Open in app (the same upload or song in its own app) and Try again (opens it
    again). The round button and the cover button try again too, so nothing on the band is a dead control. */
-var IP_START=12000, _ipStartT=0, _ipShowing=false, _ipRetry=null;
-function ipWatch(retry,openURL){
-  var gen=_ipGen; clearTimeout(_ipStartT); _ipRetry=retry;
+/* ROUND 5E (BAD-NETWORK-B-R5-03): ONLY PLAYBACK IS A START. SoundCloud's READY counted as one, and every YouTube state
+   but PLAYING (UNSTARTED, BUFFERING) switched the watch off, so a stream that loaded and then stalled kept Pause up,
+   or showed a Play that did nothing, with no message. A start is now YouTube PLAYING or its playhead 0.1 s past where
+   Play was pressed, SoundCloud PLAY or a PLAY_PROGRESS past that point, the preview's `playing` (ipGo). The watch
+   stays armed through buffering; every Play arms a new one from the playhead it was pressed at (ipArm); a Pause, the
+   user's or the player's own, disarms it. */
+var IP_START=12000, _ipStartT=0, _ipRetry=null, _ipOpenURL='', _ipGo=false, _ipFrom=0, _ipSCAt=0;
+function ipHead(){
+  try{ if(_ipAud) return +_ipAud.currentTime||0;
+    if(_ipPlayer&&_ipPlayer.getCurrentTime) return +_ipPlayer.getCurrentTime()||0; }catch(e){}
+  return _ipSC?_ipSCAt:0; }
+function ipGo(){ _ipGo=true; clearTimeout(_ipStartT); }
+function ipDisarm(){ clearTimeout(_ipStartT); }
+function ipArm(){
+  var gen=_ipGen; clearTimeout(_ipStartT); _ipGo=false; _ipFrom=ipHead();
   _ipStartT=setTimeout(function(){
-    if(gen!==_ipGen) return;
-    var slot=document.getElementById('ipvid'), ipl=document.getElementById('ipl');
-    if(!slot||!ipl||ipl.hidden||slot.classList.contains('playing')||!_ipShowing) return;
-    ipFail(openURL);},IP_START);}
+    if(gen!==_ipGen||_ipGo) return;
+    var ipl=document.getElementById('ipl'); if(!ipl||ipl.hidden) return;
+    ipFail(_ipOpenURL);},IP_START);}
+function ipWatch(retry,openURL){ _ipRetry=retry; _ipOpenURL=openURL; ipArm(); }
 function ipFail(openURL){
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid'); if(!ipl||!slot) return;
   ipStop(); ipGlyph(false); ipRing(0);
@@ -7085,7 +7211,6 @@ function ipFail(openURL){
   var rb=document.getElementById('ipfretry'); if(rb) rb.onclick=function(){var had=document.activeElement===rb;
     if(_ipRetry) _ipRetry(); fkHand(had,document.getElementById('iplbtn'));};}
 function ipGlyph(playing){
-  _ipShowing=!!playing;                          // ROUND 5B: what the band claims, for ipWatch
   var g=document.querySelector('#ipl .ipgl'); if(g) g.innerHTML=playing?IC.pause:IC.play;
   var b=document.getElementById('iplbtn'); if(b) b.setAttribute('aria-label',playing?'Pause':'Play');
   // COVER PLAY: while the band is open the cover button shows the same state (the band always
@@ -7111,7 +7236,7 @@ function ipStop(){
   _ipPlayer=null;
   try{if(_ipSC&&window.SC&&SC.Widget){var E=SC.Widget.Events;
     [E.READY,E.PLAY,E.PAUSE,E.FINISH,E.PLAY_PROGRESS].forEach(function(ev){_ipSC.unbind(ev);});}}catch(e){}
-  _ipSC=null;
+  _ipSC=null; _ipSCAt=0;
   // A detached <audio> is paused by the browser, but say so outright and drop the stream.
   try{if(_ipAud){_ipAud.pause(); _ipAud.removeAttribute('src'); _ipAud.load();}}catch(e){}
   _ipAud=null;
@@ -7164,14 +7289,17 @@ function ipOpen(vid,url){
         onReady:function(e){try{e.target.playVideo();}catch(_){}},
         onStateChange:function(e){
           if(!window.YT||!YT.PlayerState) return;
-          if(e.data===YT.PlayerState.PLAYING){ipGlyph(true); _reveal();}
-          else ipGlyph(e.data===YT.PlayerState.PLAYING);
+          if(e.data===YT.PlayerState.PLAYING){ipGlyph(true); _reveal(); ipGo();}
+          else{ ipGlyph(false);
+            // ROUND 5E: a pause or the end disarms the start watch; UNSTARTED, BUFFERING and CUED leave it armed
+            if(e.data===YT.PlayerState.PAUSED||e.data===YT.PlayerState.ENDED) ipDisarm(); }
           if(e.data===YT.PlayerState.ENDED) ipRing(1);
         }}});
       _ipTimer=setInterval(function(){
         try{var d=_ipPlayer.getDuration&&_ipPlayer.getDuration();
           var t=_ipPlayer.getCurrentTime&&_ipPlayer.getCurrentTime();
           if(t>0.1) _reveal();                 // real frames are up
+          if(t>_ipFrom+0.1) ipGo();            // ROUND 5E: and moving past where Play was pressed
           if(d>0) ipRing(t/d);}catch(_){}
       },250);
     }catch(_){}
@@ -7195,20 +7323,24 @@ function ipOpenSC(url, ipl, slot){
     var f=document.getElementById('ipframe'); if(!f) return;
     try{
       var w=SC.Widget(f), E=SC.Widget.Events; _ipSC=w;
-      w.bind(E.READY,function(){_reveal(); try{w.play();}catch(_){}});
-      w.bind(E.PLAY,function(){ipGlyph(true); _reveal();});
-      w.bind(E.PAUSE,function(){ipGlyph(false);});
+      w.bind(E.READY,function(){_reveal(); try{w.play();}catch(_){}});   // the widget is up: not a start (ROUND 5E)
+      w.bind(E.PLAY,function(){ipGlyph(true); _reveal(); ipGo();});
+      w.bind(E.PAUSE,function(){ipGlyph(false); ipDisarm();});
       w.bind(E.FINISH,function(){ipGlyph(false); ipRing(1);});
       w.bind(E.PLAY_PROGRESS,function(e){
-        if(e&&typeof e.relativePosition==='number') ipRing(e.relativePosition);});
+        if(e&&typeof e.relativePosition==='number') ipRing(e.relativePosition);
+        if(e&&typeof e.currentPosition==='number'){   // ROUND 5E: the real playhead (ms) past where Play was pressed
+          var at=e.currentPosition/1000; if(at>_ipFrom) ipGo(); _ipSCAt=at; }});
     }catch(_){}
   });
 }
 /* The audio half (NO-CROWN PLAY, Roham 2026-09-30 18:34). The song card has no upload to embed,
    so the band plays the song's 30 s official preview in a plain <audio>, straight from Apple's
    (or Deezer's) CDN to the phone: nothing passes through or is kept by the engine. The ring is
-   the element's real playhead. play() runs inside the tap, so iOS lets it start. If the preview
-   will not load, the band closes and the button goes, rather than leave a dead control. */
+   the element's real playhead. play() runs inside the tap, so iOS lets it start.
+   ROUND 5E (BAD-NETWORK-B-R5-05): if the preview will not load (a dead network above all), the band says "Couldn't load
+   the player." with Open in app and Try again, as a player that never starts does. It used to close and take both
+   play buttons away with no word, and nothing brought them back once the network did. */
 function ipOpenAud(url, ipl, slot){
   var art=ipl.getAttribute('data-art')||'', ttl=ipl.getAttribute('data-atitle')||'',
       who=ipl.getAttribute('data-awho')||'',
@@ -7222,20 +7354,15 @@ function ipOpenAud(url, ipl, slot){
   var a=document.createElement('audio'), gen=_ipGen;
   a.preload='auto'; a.setAttribute('playsinline',''); a.src=url;
   var live=function(){return gen===_ipGen && _ipAud===a;};
-  a.addEventListener('playing',function(){if(live()){ipGlyph(true); slot.classList.add('playing');}});
+  a.addEventListener('playing',function(){if(live()){ipGlyph(true); slot.classList.add('playing'); ipGo();}});
   a.addEventListener('pause',function(){if(live()) ipGlyph(false);});
   a.addEventListener('ended',function(){if(live()){ipGlyph(false); ipRing(1);}});
   a.addEventListener('timeupdate',function(){if(live()&&a.duration>0) ipRing(a.currentTime/a.duration);});
-  a.addEventListener('error',function(){
-    if(!live()) return;
-    ipClose();
-    Array.prototype.forEach.call(document.querySelectorAll('.nca [data-ipopen]'),function(x){
-      x.removeAttribute('data-ipopen'); x.hidden=true;});
-    // the cover button that plays this preview goes too: never a dead control (COVER PLAY)
-    var cv=document.getElementById('artplay');
-    if(cv && cv.getAttribute('data-url')===url && cv.parentNode) cv.parentNode.removeChild(cv);});
+  a.addEventListener('error',function(){if(live()) ipFail(ipAudOpenURL(ipl));});
   slot.appendChild(a); _ipAud=a;
-  try{var p=a.play(); if(p&&p.catch) p.catch(function(){if(live()) ipGlyph(false);});}catch(_){ipGlyph(false);}
+  // a play() the browser refused outright (no tap behind it) waits for the user's Play, which arms the watch again
+  try{var p=a.play(); if(p&&p.catch) p.catch(function(e){if(live()){ipGlyph(false); if(e&&e.name==='NotAllowedError') ipDisarm();}});}
+  catch(_){ipGlyph(false);}
 }
 /* ROUND 5B: Open in app for a preview that would not load, in the app the preview came from: the song's own page
    there when the card has it (the Open in row's link), else a search for the title and artist the band shows */
@@ -7251,25 +7378,28 @@ function ipAudOpenURL(ipl){
 function ipToggle(){
   var _ib=document.getElementById('ipl');
   if(_ib&&_ib.classList.contains('ipfail')){ if(_ipRetry) _ipRetry(); return; }   // ROUND 5B: Play on a failed band tries again
+  // ROUND 5E (BAD-NETWORK-B-R5-03): every Play arms the start watch again (before the player is asked, since a player can
+  // answer at once), every Pause disarms it
   if(_ipAud){
     var au=_ipAud;
-    try{if(au.paused){var pr=au.play(); ipGlyph(true); if(pr&&pr.catch) pr.catch(function(){ipGlyph(false);});}
-        else{au.pause(); ipGlyph(false);}}catch(_){}
+    try{if(au.paused){ipArm(); var pr=au.play(); ipGlyph(true); if(pr&&pr.catch) pr.catch(function(){ipGlyph(false);});}
+        else{au.pause(); ipGlyph(false); ipDisarm();}}catch(_){}
     return;
   }
   if(_ipSC){
     var w=_ipSC;
-    try{w.isPaused(function(p){try{if(p){w.play(); ipGlyph(true);}else{w.pause(); ipGlyph(false);}}catch(_){}});}catch(_){}
+    try{w.isPaused(function(p){try{if(p){ipArm(); w.play(); ipGlyph(true);}else{w.pause(); ipGlyph(false); ipDisarm();}}catch(_){}});}catch(_){}
     return;
   }
   if(!_ipPlayer||!_ipPlayer.getPlayerState||!window.YT||!YT.PlayerState) return;
   try{
-    if(_ipPlayer.getPlayerState()===YT.PlayerState.PLAYING){_ipPlayer.pauseVideo(); ipGlyph(false);}
-    else{_ipPlayer.playVideo(); ipGlyph(true);}
+    if(_ipPlayer.getPlayerState()===YT.PlayerState.PLAYING){_ipPlayer.pauseVideo(); ipGlyph(false); ipDisarm();}
+    else{ipArm(); _ipPlayer.playVideo(); ipGlyph(true);}
   }catch(_){}
 }
 function closePlayer(){
   var box=document.getElementById('player'); if(!box||box.hidden) return;
+  plOff();                                       // ROUND 5E: and its start watch
   // Blow the iframe away rather than hiding it, or the track keeps playing behind the app.
   document.getElementById('playerbody').innerHTML='';
   box.hidden=true;

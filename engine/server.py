@@ -7733,6 +7733,32 @@ def record_review_note(obj):
     return {"ok": True, "note": note}
 
 
+# ROUND 5E (BAD-NETWORK-B-R5-02): THE PHONE MAKES THE ROW ID. A /feedback answer that reached the phone after its
+# own cut-off left a stored row the phone had no id for, so Delete account could not erase it, and every retry stored
+# the body again (one vote, three rows, three fix-queue rows, three DMs). The page now sends its own id (32 hex, the
+# shape uuid4().hex has) with every try of one body: the row is stored under it once, and a retry of a stored row
+# adds nothing. An id erased by /feedback/erase is remembered for this process, so a retry that arrives after
+# Delete account is not stored again. A body with no id, or any other id (an older page), gets a server id as before.
+_FB_ID = re.compile(r"[0-9a-f]{32}")
+_FB_LOCK = threading.Lock()
+_FB_GONE, _FB_GONE_MAX = {}, 5000
+
+
+def _fb_stored(row_id):
+    """True when the feedback log already holds a row with this id."""
+    if not os.path.exists(FEEDBACK):
+        return False
+    with open(FEEDBACK) as f:
+        for line in f:
+            if row_id in line:
+                try:
+                    if json.loads(line).get("id") == row_id:
+                        return True
+                except Exception:
+                    pass
+    return False
+
+
 def record_feedback(obj):
     """/feedback - the no-match screen's "Yes - it's an edit" / "Not it" taps. This is
     training data for the edit database: every confirm links a clip to its base song.
@@ -7744,10 +7770,15 @@ def record_feedback(obj):
     row = {k: obj.get(k) for k in FEEDBACK_FIELDS if obj.get(k) is not None}
     if not row.get("verdict"):
         return {"ok": False, "error": "verdict required"}
-    row["id"] = uuid.uuid4().hex
+    cid = obj.get("id")
+    cid = cid if isinstance(cid, str) and _FB_ID.fullmatch(cid) else None
+    row["id"] = cid or uuid.uuid4().hex
     row["ts"] = int(time.time())
-    with open(FEEDBACK, "a") as f:
-        f.write(json.dumps(row) + "\n")
+    with _FB_LOCK:
+        if cid and (cid in _FB_GONE or _fb_stored(cid)):
+            return {"ok": True, "id": cid}      # a retry of a row already stored (or erased): nothing new
+        with open(FEEDBACK, "a") as f:
+            f.write(json.dumps(row) + "\n")
     # X-TO-FIX 2026-09-29: an X on a result (or the "Which one was it?" pick after it) also
     # lands in fixqueue.jsonl, same id so erasure reaches it, and DMs Roham from a daemon
     # thread (XALERT never blocks or fails this request).
@@ -7763,21 +7794,26 @@ def record_feedback(obj):
 
 def erase_feedback(row_id):
     """Erasure by row id - rewrite the log without that row."""
-    if not row_id or not os.path.exists(FEEDBACK):
-        return {"ok": True, "erased": 0}
     kept, gone = [], 0
-    with open(FEEDBACK) as f:
-        for line in f:
-            try:
-                if json.loads(line).get("id") == row_id:
-                    gone += 1
-                    continue
-            except Exception:
-                pass
-            kept.append(line)
-    if gone:
-        with open(FEEDBACK, "w") as f:
-            f.writelines(kept)
+    with _FB_LOCK:                       # ROUND 5E: never mid-append, and the id is remembered (_FB_GONE)
+        if isinstance(row_id, str) and _FB_ID.fullmatch(row_id):
+            _FB_GONE[row_id] = 1
+            while len(_FB_GONE) > _FB_GONE_MAX:
+                del _FB_GONE[next(iter(_FB_GONE))]
+        if not row_id or not os.path.exists(FEEDBACK):
+            return {"ok": True, "erased": 0}
+        with open(FEEDBACK) as f:
+            for line in f:
+                try:
+                    if json.loads(line).get("id") == row_id:
+                        gone += 1
+                        continue
+                except Exception:
+                    pass
+                kept.append(line)
+        if gone:
+            with open(FEEDBACK, "w") as f:
+                f.writelines(kept)
     try:
         CX.fixq_erase(row_id)            # X-TO-FIX: the fix-queue copy of the same row
     except Exception:
