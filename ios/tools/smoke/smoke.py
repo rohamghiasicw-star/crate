@@ -121,7 +121,32 @@ def patch(ios_dir, variant):
     else:
         w = w.replace(pold, pold + "            if let v = bridge.webView { NSLog(\"ADDIFY-PAGE loaded %@ window=%ld hidden=%ld alpha=%.2f size=%.0fx%.0f loading=%ld\", "
                       "v.url?.path ?? \"-\", v.window == nil ? 0 : 1, v.isHidden ? 1 : 0, Double(v.alpha), Double(v.bounds.width), "
-                      "Double(v.bounds.height), v.isLoading ? 1 : 0) }\n")
+                      "Double(v.bounds.height), v.isLoading ? 1 : 0); LabPaint.loaded(v) }\n")
+    # Lab copies only: main-thread stalls, what the share sheet's handler spends, and what the web
+    # view holds after a page counts as loaded (see LAB_DIAG).
+    dreps = [("        context.coordinator.boot(wv)\n        return wv\n",
+              "        context.coordinator.boot(wv)\n        LabStall.start()\n        return wv\n"),
+             ("            let ac = UIActivityViewController(activityItems: [file], applicationActivities: nil)\n",
+              "            NSLog(\"ADDIFY-EXPORT sheet start\")\n"
+              "            let ac = UIActivityViewController(activityItems: [file], applicationActivities: nil)\n"),
+             ("            return ([\"ok\": true], nil)\n",
+              "            NSLog(\"ADDIFY-EXPORT sheet presented\")\n            return ([\"ok\": true], nil)\n")]
+    for old, new in dreps:
+        if w.count(old) != 1:
+            sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
+        w = w.replace(old, new)
+    w += LAB_DIAG
+    # Lab copies only: when the app's own screens come and go, so a check can say when the error
+    # screen was up even when a screenshot came back too late to show it.
+    cpath = os.path.join(ios_dir, "Addify", "ContentView.swift")
+    c = open(cpath).read()
+    for view, name in (("BootView", "boot"), ("UnreachableView", "error")):
+        old = "                %s()\n                    .transition(.opacity)\n" % view
+        if c.count(old) != 1:
+            sys.exit("patch: ContentView.swift anchor matched %d times: %r" % (c.count(old), old.strip()))
+        c = c.replace(old, old + "                    .onAppear { NSLog(\"ADDIFY-SCREEN %s shown\") }\n"
+                                 "                    .onDisappear { NSLog(\"ADDIFY-SCREEN %s gone\") }\n" % (name, name))
+    open(cpath, "w").write(c)
     # A share that opens the app: simctl openurl stops at "Open in Addify?" on these simulators, and
     # nothing can tap it. The lab copy takes the same addify://scan URL from its launch environment
     # and hands it to the same handler onOpenURL calls.
@@ -137,6 +162,17 @@ def patch(ios_dir, variant):
                   "                        bridge.handleIncoming(u)\n"
                   "                    }\n"
                   "                }\n")
+    # A share that reaches the app while it is already running (the page is up): the harness writes
+    # the addify://scan URL into the app's temporary folder, and coming back to the app hands it to
+    # the same handler onOpenURL calls, before the inbox drain, as the share extension's open does.
+    aold2 = "                    if phase == .active {\n                        bridge.drainInbox()\n"
+    if a.count(aold2) != 1:
+        sys.exit("patch: AddifyApp.swift scene anchor matched %d times" % a.count(aold2))
+    a = a.replace(aold2, "                    if phase == .active, let u = LabOpen.take() { bridge.handleIncoming(u) }\n" + aold2)
+    aold3 = "    init() {\n"
+    if a.count(aold3) != 1:
+        sys.exit("patch: AddifyApp.swift init anchor matched %d times" % a.count(aold3))
+    a = a.replace(aold3, aold3 + "        NSLog(\"ADDIFY-LAB start\")\n")
     open(apath, "w").write(a)
     open(wpath, "w").write(w)
     print("patched %s and %s for %s" % (path, wpath, variant))
@@ -184,6 +220,141 @@ final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
 }
 """
 
+LAB_DIAG = """
+
+/* Lab copy only (smoke.py).
+   LabStall logs each time the main thread was held for more than 0.8 s.
+   LabPaint, when the launch environment has ADDIFY_LAB_PAINT, logs what the web view holds 0.6 s
+   and 3 s after a page counts as loaded: scroll state, layers, the colour UIKit and WebKit would
+   draw at the screen's lower middle, and whether the page gets two animation frames. With
+   ADDIFY_LAB_NUDGE it then tries, once, three ways of making a page that shows nothing paint.
+   LabOpen hands a share written to the app's temporary folder to the onOpenURL handler. */
+enum LabStall {
+    static var started = false
+    static var last = CFAbsoluteTimeGetCurrent()
+
+    static func start() {
+        guard !started else { return }
+        started = true
+        last = CFAbsoluteTimeGetCurrent()
+        let t = Timer(timeInterval: 0.1, repeats: true) { _ in
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - last > 0.8 { NSLog("ADDIFY-STALL main thread held %ld ms", Int((now - last) * 1000)) }
+            last = now
+        }
+        RunLoop.main.add(t, forMode: .common)
+    }
+}
+
+enum LabPaint {
+    static var on: Bool { ProcessInfo.processInfo.environment["ADDIFY_LAB_PAINT"] != nil }
+    static var nudge: Bool { ProcessInfo.processInfo.environment["ADDIFY_LAB_NUDGE"] != nil }
+    static var seq = 0
+    static var nudged = false
+
+    static func pixel(_ img: UIImage?) -> String {
+        guard let cg = img?.cgImage, cg.width > 0, cg.height > 0 else { return "none" }
+        var px = [UInt8](repeating: 0, count: 4)
+        return px.withUnsafeMutableBytes { buf -> String in
+            guard let ctx = CGContext(data: buf.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return "ctx" }
+            let w = CGFloat(cg.width), h = CGFloat(cg.height)
+            ctx.draw(cg, in: CGRect(x: -floor(w * 0.5), y: -(h - 1 - floor(h * 0.76)), width: w, height: h))
+            return "\\(buf[0]),\\(buf[1]),\\(buf[2])"
+        }
+    }
+
+    static func layers(_ l: CALayer) -> (Int, Int) {
+        var n = 1, c = l.contents != nil ? 1 : 0
+        for s in l.sublayers ?? [] {
+            let (a, b) = layers(s)
+            n += a
+            c += b
+        }
+        return (n, c)
+    }
+
+    static func probe(_ wv: WKWebView, _ tag: String) {
+        let sv = wv.scrollView
+        let (n, c) = layers(wv.layer)
+        NSLog("ADDIFY-PAINT %@ offset=%.0f,%.0f size=%.0fx%.0f zoom=%.2f layers=%ld contents=%ld window=%ld hidden=%ld loading=%ld",
+              tag, Double(sv.contentOffset.x), Double(sv.contentOffset.y), Double(sv.contentSize.width),
+              Double(sv.contentSize.height), Double(sv.zoomScale), n, c, wv.window == nil ? 0 : 1, wv.isHidden ? 1 : 0,
+              wv.isLoading ? 1 : 0)
+        let img = UIGraphicsImageRenderer(bounds: wv.bounds).image { _ in _ = wv.drawHierarchy(in: wv.bounds, afterScreenUpdates: false) }
+        NSLog("ADDIFY-PAINT %@ hierarchy=%@", tag, pixel(img))
+        let t0 = CFAbsoluteTimeGetCurrent()
+        var answered = false
+        wv.takeSnapshot(with: nil) { snap, err in
+            answered = true
+            NSLog("ADDIFY-PAINT %@ snapshot %ld ms %@%@", tag, Int((CFAbsoluteTimeGetCurrent() - t0) * 1000), pixel(snap),
+                  err == nil ? "" : " error")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if !answered { NSLog("ADDIFY-PAINT %@ snapshot no answer in 3 s", tag) }
+        }
+        let js = "var t=performance.now();return await new Promise(function(ok){requestAnimationFrame(function(){requestAnimationFrame(function(){"
+            + "ok([Math.round(performance.now()-t),document.visibilityState,innerWidth,innerHeight,scrollY].join(' '))})});"
+            + "setTimeout(function(){ok(['none',document.visibilityState,innerWidth,innerHeight,scrollY].join(' '))},2500)})"
+        wv.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+            switch result {
+            case .success(let v): NSLog("ADDIFY-PAINT %@ frames %@", tag, String(describing: v))
+            case .failure: NSLog("ADDIFY-PAINT %@ frames error", tag)
+            }
+        }
+    }
+
+    static func loaded(_ wv: WKWebView) {
+        guard on else { return }
+        seq += 1
+        let s = seq
+        for (at, tag) in [(0.6, "p\\(s)a"), (3.0, "p\\(s)b")] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak wv] in if let wv = wv { probe(wv, tag) } }
+        }
+        guard nudge, !nudged else { return }
+        nudged = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7) { [weak wv] in
+            guard let wv = wv else { return }
+            NSLog("ADDIFY-NUDGE frame")
+            let f = wv.frame
+            wv.frame = f.insetBy(dx: 0, dy: 1)
+            wv.layoutIfNeeded()
+            wv.frame = f
+            wv.setNeedsLayout()
+            wv.layoutIfNeeded()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { probe(wv, "n\\(s)frame") }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak wv] in
+            guard let wv = wv else { return }
+            NSLog("ADDIFY-NUDGE hidden")
+            wv.isHidden = true
+            DispatchQueue.main.async {
+                wv.isHidden = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { probe(wv, "n\\(s)hidden") }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 13) { [weak wv] in
+            guard let wv = wv else { return }
+            NSLog("ADDIFY-NUDGE reload")
+            wv.reload()
+        }
+    }
+}
+
+enum LabOpen {
+    static var file: URL { URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("addify-lab-open.txt") }
+
+    static func take() -> URL? {
+        guard let s = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        try? FileManager.default.removeItem(at: file)
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        NSLog("ADDIFY-LAB open later %@", t)
+        return URL(string: t)
+    }
+}
+"""
+
 LOCK = threading.Lock()
 CFG = {}
 LOG = []
@@ -199,7 +370,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 (function(){
   var H = window.webkit && window.webkit.messageHandlers;
   var lid = String(Math.random()).slice(2);   // this page load; a reload gets a new one
-  var r = {port: __PORT__, lid: lid, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
+  var r = {port: __PORT__, n: __N__, lid: lid, ua: navigator.userAgent, href: location.href, native: window.ADDIFY_NATIVE || null,
     has: {addify: !!(H && H.addify), addifyStore: !!(H && H.addifyStore), addifyKit: !!(H && H.addifyKit),
           exportFinds: !!(H && H.exportFinds), openSettings: !!(H && H.openSettings)}};
   function send(kind, obj){ try { var x = new XMLHttpRequest(); x.open('POST', '/report?kind=' + kind, true);
@@ -210,6 +381,9 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     catch(e) { ok({err: 'throw: ' + String(e && e.message || e)}); }
     setTimeout(function(){ ok({err: 'timeout'}); }, wait || 8000); }); }
   send('load', r); show();
+  // The page's own entry point for a share that arrives while it is up (crate.html run()).
+  window.busy = false;
+  window.run = function(link){ send('run', {link: link, lid: lid, href: location.href, port: __PORT__}); };
   function bridges(kind, done){
     call('addifyKit', {type: 'ping'}).then(function(k){ r.kit = k; return call('addifyStore', {op: 'status'}); })
     .then(function(s){ r.store = s; show(); send(kind, r); if (done) done(); }); }
@@ -224,8 +398,9 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       else location.href = '/privacy';
       window.labSafariClosed = function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }; }, 1000);
     if (__EXPORT__) setTimeout(function(){
+      var t0 = performance.now();
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
-      .then(function(e){ r.export = e; show(); send('export', r);
+      .then(function(e){ r.export = e; r.export_ms = Math.round(performance.now() - t0); show(); send('export', r);
         setTimeout(function(){ send('alive', {port: __PORT__}); }, 4000); }); }, 1000);
   });
 })();
@@ -315,6 +490,10 @@ class Handler(BaseHTTPRequestHandler):
                 kp = COUNTS[(role, path)]
             if path == "/share" and kp <= cfg.get("share_fail_first", 0):
                 return self.reply(502)
+            # Holds one /share request (by number) before answering, like a slow network.
+            hold = (cfg.get("share_delay") or {}).get(str(kp)) if path == "/share" else None
+            if hold:
+                time.sleep(hold)
             if cfg.get("redirect"):
                 self.send_response(302)
                 self.send_header("Location", cfg["redirect"])
@@ -327,7 +506,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(502)      # empty body, like Caddy while the engine restarts
             if k <= cfg.get("noapp_first", 0):
                 return self.reply(200, NOAPP_PAGE.encode())
-            page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
+            page = PAGE.replace("__PORT__", str(self.server.server_address[1])).replace("__N__", str(kp))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
             page = page.replace("__EXPORT_WAIT__", str(int(cfg.get("export_wait_ms", 8000))))
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
@@ -474,6 +653,13 @@ class Device:
     def terminate(self):
         run("xcrun", "simctl", "terminate", self.udid, BUNDLE, check=False)
 
+    def write_lab_open(self, url):
+        """A share for the running app: the lab copy hands it to its onOpenURL handler on the next
+        return to the app (LabOpen)."""
+        data = run("xcrun", "simctl", "get_app_container", self.udid, BUNDLE, "data").strip()
+        os.makedirs(os.path.join(data, "tmp"), exist_ok=True)
+        open(os.path.join(data, "tmp", "addify-lab-open.txt"), "w").write(url + "\n")
+
     def shot(self, label):
         p = os.path.join(self.out, "%s-%s.png" % (self.tag, label))
         run("xcrun", "simctl", "io", self.udid, "screenshot", p, check=False)
@@ -548,31 +734,78 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
         e["dt"] = round(e["t"] - t0, 2)
     lab = lab_lines(dev, since, label)
     return {"entries": entries, "shots": taken, "shot_t": shot_t, "alive": live, "elapsed": round(time.time() - t0, 1),
-            "done": done, "lab": lab, "appcheck": [l for l in lab if "ADDIFY-APPCHECK" in l]}
+            "done": done, "lab": lab, "appcheck": [l for l in lab if "ADDIFY-APPCHECK" in l], "t0": t0}
 
 
-def outage_screen(res, names, good_at):
-    """The screenshots taken while the engine was failing, in order. A capture can take seconds
-    (a0b7e0b: one ran from 25.5 s to 36.3 s and showed the error screen), so each one is placed by
-    when its capture started and ended against good_at, when the working page was asked for (s
-    after launch). Every shot that ended before good_at was taken during the outage and must show
-    the error screen, or the loading screen before the first error screen. At least one shot that
-    started before good_at must show the error screen. A shot that ended after good_at may have
-    caught the recovered page, so it is listed as late and must show the error screen or the
-    page. So a slow capture can't fail the check, while a cut-off page, a blank or a 404 caught
-    during the outage still does, and a blank or a 404 caught later too."""
+def lab_time(line, t0):
+    """Seconds after launch for one lab log line ('YYYY-MM-DD HH:MM:SS.mmm ...', this machine's clock,
+    the same clock the stub stamps its requests with), or None."""
+    m = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.(\d+)", line)
+    if not m:
+        return None
+    return round(time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")) + float("0." + m.group(2)) - t0, 2)
+
+
+def screen_times(res, name):
+    """[(seconds after launch, 'shown' or 'gone')] for one of the app's own screens ('error' or
+    'boot'), from the lab copy's log."""
+    out = []
+    for l in res.get("lab", []):
+        m = re.search(r"ADDIFY-SCREEN (\w+) (shown|gone)", l)
+        if m and m.group(1) == name:
+            t = lab_time(l, res.get("t0", 0))
+            if t is not None:
+                out.append((t, m.group(2)))
+    return sorted(out)
+
+
+def outage_screen(res, names, good_at, promise="error"):
+    """The error screen during an outage. names: the screenshots taken during it, in the order
+    they were due; `promise` is the one that has always had to show the error screen (b32e695: 1.2 s
+    after the first failed response, 2 s for noapp). good_at: when the working page was asked for
+    (s after launch).
+
+    A capture can take seconds (a0b7e0b: one ran from 25.5 s to 36.3 s), so each shot is placed by
+    when its capture ended. Every shot that ended before good_at shows the error screen; only a
+    shot due before the promise may still show the loading screen. The promise shot shows the error
+    screen. When its capture ended after good_at, its pixels can't say what was up at its due time,
+    so the lab copy's own log has to: the error screen shown by the time that capture started.
+    Either way, when the log is there, it must also show the error screen staying up from then
+    until good_at. A shot that ended after good_at may show the error screen or the page (and the
+    loading screen only if it was due before the promise), never a blank, a 404 or a cut-off page."""
     rows = []
     for n in names:
-        t = res.get("shot_t", {}).get(n)
-        rows.append((n, pixel_class(res["shots"].get(n, "")), t[1] if t else None, t[2] if t else None))
-    during = [r for r in rows if r[3] is None or good_at is None or r[3] < good_at]
-    seen = any(k == "error" and (good_at is None or (st is not None and st < good_at)) for _, k, st, _ in rows)
-    kinds = [k for _, k, _, _ in during]
-    first = kinds.index("error") if "error" in kinds else len(kinds)
-    ok = seen and all(k == "boot" for k in kinds[:first]) and all(k == "error" for k in kinds[first:])
-    late = [(n, k, en) for n, k, _, en in rows if not (en is None or good_at is None or en < good_at)]
-    ok = ok and all(k in ("error", "page") for _, k, _ in late)
-    return ok, "during %s, late %s, working page asked at %s s" % ([(n, k, en) for n, k, _, en in during], late, good_at)
+        t = res.get("shot_t", {}).get(n) or [None, None, None]
+        rows.append((n, pixel_class(res["shots"].get(n, "")), t[0], t[1], t[2]))
+    pr = next(r for r in rows if r[0] == promise)
+    problems = []
+    for n, k, due, st, en in rows:
+        early = pr[2] is not None and due is not None and due < pr[2]
+        on_time = en is not None and good_at is not None and en < good_at
+        allowed = ("boot", "error") if early else ("error",)
+        if not on_time:
+            allowed += ("page",)
+        if k not in allowed:
+            problems.append("%s showed %s" % (n, k))
+    err = screen_times(res, "error")
+    shown = [t for t, s in err if s == "shown"]
+    pr_on_time = pr[4] is not None and good_at is not None and pr[4] < good_at
+    lab_ok = None
+    if shown and good_at is not None:
+        # On time, the promise shot's pixels already prove it, and the log must agree by the end of
+        # that capture. Late, the log alone must put the error screen up by the time it was due (or
+        # when its capture started, if that was later).
+        by = pr[4] if pr_on_time else max([x for x in (pr[2], pr[3]) if x is not None] or [None])
+        first = shown[0]
+        gone_early = [t for t, s in err if s == "gone" and first <= t < good_at]
+        lab_ok = by is not None and first <= by and not gone_early
+        if not lab_ok:
+            problems.append("lab: error screen shown at %s s (due by %s s), gone at %s" % (first, by, gone_early))
+    if not pr_on_time and lab_ok is not True:
+        problems.append("%s captured too late to show the outage and no lab log says the error screen was up" % promise)
+    detail = "shots %s, error screen %s, working page asked at %s s" % (
+        [(n, k, due, en) for n, k, due, st, en in rows], err, good_at)
+    return not problems, ("%s; %s" % ("; ".join(problems), detail)) if problems else detail
 
 
 def lab_lines(dev, since, label):
@@ -677,30 +910,13 @@ def run_stub_suite(dev, app, version, ipad=False):
     check(dev, "race", "page on screen", pixel_class(res["shots"]["final"]) == "page", pixel_class(res["shots"]["final"]))
     appcheck_report(dev, "race", res)
     json.dump(res, open(os.path.join(dev.out, "%s-race.json" % dev.tag), "w"), indent=1)
-    # The relaunch asserts that a pick stored by an earlier launch goes first. The race launch must
-    # store it. The one exception is the app's own directory request getting no answer in time
-    # (b32e695, first attempt: a slow first launch after boot held it past the app's 8 s timeout),
-    # or still waiting when the scenario ended, which says nothing about the app. Only then does
-    # one more launch of the same install store it, and that launch must. A directory answer the
-    # app turned down, or a launch that never asked, fails here. No lab log at all (the simulator
-    # log read failed) can't tell these apart, so it gets the extra launch too and the relaunch
-    # check still decides.
+    # The relaunch asserts that a pick stored by an earlier launch goes first, so the race launch
+    # must store it. The warm-up launch takes the slow first launch after boot (b32e695, first
+    # attempt: the directory's answer was lost there), so no launch is excused.
     stored = lab_has(res, pick_b)
-    asked = lab_has(res, "ADDIFY-DIRECTORY asking")
-    no_answer = lab_has(res, "ADDIFY-DIRECTORY no answer")
-    no_pick = lab_has(res, "ADDIFY-DIRECTORY no pick")
     dir_lines = [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-DIRECTORY" in l]
-    why = ("no lab log" if not res["lab"] else "the directory's pick was turned down" if no_pick
-           else "no answer to the app's request" if no_answer else "still waiting at the end" if asked
-           else "the launch never asked")
-    excused = not stored and not no_pick and (asked or not res["lab"])
     check(dev, "race", "directory's pick stored for the next launch", stored,
-          "stored" if stored else "not stored, %s: %s" % (why, dir_lines), info=excused)
-    if excused:
-        prime = scenario(dev, app, "prime", base, fresh=False, want=("bridges", "bridges2"))
-        stored = lab_has(prime, pick_b)
-        check(dev, "prime", "directory's pick stored before the relaunch", stored or not prime["lab"],
-              "stored" if stored else "not stored: %s" % [l[l.index("ADDIFY-"):] for l in prime["lab"] if "ADDIFY-DIRECTORY" in l])
+          "stored" if stored else "not stored: %s" % (dir_lines or "no lab log"))
 
     res = scenario(dev, app, "relaunch", base, fresh=False)
     r = common(dev, "relaunch", res, version)
@@ -721,30 +937,11 @@ def run_stub_suite(dev, app, version, ipad=False):
             check(dev, label, "loaded a compiled-in address", r and r.get("port") == PORT_A, "port %s" % (r or {}).get("port"))
             json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
-        down = {"A": {"health_ms": 20, "fail_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
-        first502 = lambda e: e["role"] == "A" and e["status"] == 502
         reported = lambda e: e.get("kind") == "bridges"
-        # "recovered" is where the end-of-scenario shot used to land (0.5 s after the page reported).
-        # "late": diagnosis only, whether a page that is not on screen then paints later.
-        res = scenario(dev, app, "server5xx", down, timeout=45,
-                       after=(("error0", first502, 0.6), ("error", first502, 1.2), ("error2", first502, 2.4),
-                              ("recovered", reported, 0.5), ("late", reported, 5.0)))
-        r = common(dev, "server5xx", res, version)
-        reqs = page_requests(res, "A")
-        check(dev, "server5xx", "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
-        if len(reqs) >= 3:
-            # 2 s and 4 s timers; a simulator adds its own navigation start-up time on top
-            g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
-            check(dev, "server5xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
-                  "gaps %.1f s and %.1f s" % (g1, g2))
-        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
-        check(dev, "server5xx", "error screen with Try again during the outage (not blank)", ok, detail)
-        check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"].get("recovered", "")) == "page",
-              "%s, shot %s" % (pixel_class(res["shots"].get("recovered", "")), res["shot_t"].get("recovered")))
-        check(dev, "server5xx", "page on screen 5 s after the page reported", pixel_class(res["shots"].get("late", "")) == "page",
-              "%s, %s" % (pixel_class(res["shots"].get("late", "")), [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-PAGE" in l]),
-              info=True)
-        json.dump(res, open(os.path.join(dev.out, "%s-server5xx.json" % dev.tag), "w"), indent=1)
+        server5xx(dev, app, version)
+        # DIAGNOSIS (temporary): the same scenario twice more with the web view probed and nudged.
+        server5xx(dev, app, version, "server5xx-d1", diag=True)
+        server5xx(dev, app, version, "server5xx-d2", diag=True)
 
         # A 4xx engine page with words on it is the same failed load as a 5xx: the error screen,
         # never "404 page not found" as the whole screen, and the same automatic reloads.
@@ -762,7 +959,7 @@ def run_stub_suite(dev, app, version, ipad=False):
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
             check(dev, "server4xx", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
-        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
+        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None, promise="error")
         check(dev, "server4xx", "error screen with Try again, not the 404 text", ok, detail)
         # The hard check is 2 s after the page reported; the 0.5 s shot is reported, not failed, so a
         # slow runner frame is told apart from a loading screen that never goes.
@@ -788,7 +985,7 @@ def run_stub_suite(dev, app, version, ipad=False):
             g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
             check(dev, "noapp", "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
                   "gaps %.1f s and %.1f s" % (g1, g2))
-        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
+        ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None, promise="error")
         check(dev, "noapp", "error screen with Try again, not the cut-off page", ok, detail)
         check(dev, "noapp", "page on screen 0.5 s after the page reported", pixel_class(res["shots"].get("early", "")) == "page",
               pixel_class(res["shots"].get("early", "")), info=True)
@@ -816,24 +1013,27 @@ def run_stub_suite(dev, app, version, ipad=False):
         json.dump(res, open(os.path.join(dev.out, "%s-redirect.json" % dev.tag), "w"), indent=1)
 
         sharefail(dev, app, version)
+        sharereload(dev, app, version)
+        shareretry(dev, app, version)
+        sharewarm(dev, app, version)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     exported = lambda e: e.get("kind") == "export"
-    # The first share sheet after an install can hold the app's main thread while the system lists
-    # the share extensions: about 18 s on the iPhone in b32e695's first attempt (the page's own 8 s
-    # wait for the answer ran out, and a bridge call made meanwhile timed out too), 2 to 3 s in
-    # every other run. So the first sheet on a fresh install gets its own run with a 40 s wait,
-    # and must still answer ok and leave the app running. The run after it, on the same install,
-    # keeps the original 8 s wait and checks.
+    # The first share sheet after an install keeps the page's original promise: the answer within
+    # 8 s of the call, measured by the page. The page waits up to 40 s, so a slow answer is measured
+    # and reported (b32e695's first attempt only said "timeout") instead of cut off; the lab copy logs
+    # the main thread's stalls and when the sheet was made and presented, so a failure says where
+    # the time went. The run after it, on the same install, is the original check unchanged.
     expw = json.loads(json.dumps(exp))
     for role in ("A", "B"):
         expw[role]["export_wait_ms"] = 40000
     res = scenario(dev, app, "exportfirst", expw, want=("export", "alive", "bridges2"), timeout=90)
     r = report(res, "export")
-    at = [e["dt"] for e in res["entries"] if e.get("kind") == "export"]
-    check(dev, "exportfirst", "first share sheet on a fresh install answered within 40 s",
-          r is not None and r.get("export") == {"ok": {"ok": True}},
-          "%s at %s s" % (json.dumps((r or {}).get("export")), at))
+    ms = (r or {}).get("export_ms")
+    why = [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-EXPORT" in l or "ADDIFY-STALL" in l]
+    check(dev, "exportfirst", "first share sheet on a fresh install answered within 8 s",
+          r is not None and r.get("export") == {"ok": {"ok": True}} and ms is not None and ms <= 8000,
+          "%s in %s ms, %s" % (json.dumps((r or {}).get("export")), ms, why))
     check(dev, "exportfirst", "app alive after the first share sheet", report(res, "alive") is not None and res["alive"],
           "alive report %s, process %s" % (report(res, "alive") is not None, res["alive"]))
     json.dump(res, open(os.path.join(dev.out, "%s-exportfirst.json" % dev.tag), "w"), indent=1)
@@ -847,7 +1047,10 @@ def run_stub_suite(dev, app, version, ipad=False):
           "alive report %s, process %s" % (report(res, "alive") is not None, res["alive"]))
     json.dump(res, open(os.path.join(dev.out, "%s-export.json" % dev.tag), "w"), indent=1)
 
-    for mode in (("anchor",) if ipad else ("anchor", "open", "nav")):
+    if ipad:
+        # The share and Safari view scenarios run on the iPad too (popover presentation, other size).
+        sharefail(dev, app, version)
+    for mode in ("anchor", "open", "nav"):
         privacy(dev, app, mode)
 
 
@@ -862,7 +1065,65 @@ def warmup(dev, app):
     first = min([e["dt"] for e in res["entries"]] or [-1])
     check(dev, "warmup", "simulator warmed by one untimed launch", bool(at),
           "first request %.1f s, page %s" % (first, ("%.1f s" % at[-1]) if at else "never"), info=True)
+    # The simulator's own start-up (before the app's first request) is not timed, but the app still
+    # has to load its page on that first launch, and within the 35 s the first launch always had
+    # (b32e695's race), counted from the app's first request.
+    check(dev, "warmup", "page loaded on the first launch after boot", bool(at) and first >= 0 and at[0] - first <= 35,
+          "first request %.1f s, page %s" % (first, ("%.1f s" % at[0]) if at else "never"))
     json.dump(res, open(os.path.join(dev.out, "%s-warmup.json" % dev.tag), "w"), indent=1)
+
+
+def webkit_log(dev, res, label):
+    """WebKit's own log and the app's for one scenario, saved next to its screenshots (not printed)."""
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(res.get("t0", time.time()) - 1))
+    try:
+        out = run("xcrun", "simctl", "spawn", dev.udid, "log", "show", "--start", since, "--style", "compact",
+                  "--predicate", 'process == "Addify" OR process BEGINSWITH "com.apple.WebKit"', check=False, timeout=240)
+    except subprocess.TimeoutExpired:
+        out = "log show timed out\n"
+    path = os.path.join(dev.out, "%s-%s-webkit.log" % (dev.tag, label))
+    open(path, "w").write(out)
+    return path
+
+
+def server5xx(dev, app, version, label="server5xx", diag=False):
+    """The main page answers an empty 502 twice, then the page: the error screen during the outage,
+    then the page on screen, never a blank. diag: the lab copy also probes what the web view holds
+    once the page is up and tries three ways of making it paint (diagnosis runs only)."""
+    down = {"A": {"health_ms": 20, "fail_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    first502 = lambda e: e["role"] == "A" and e["status"] == 502
+    reported = lambda e: e.get("kind") == "bridges"
+    after = [("error0", first502, 0.6), ("error", first502, 1.2), ("error2", first502, 2.4),
+             ("recovered", reported, 0.5), ("late", reported, 5.0)]
+    env = None
+    if diag:
+        env = {"ADDIFY_LAB_PAINT": "1", "ADDIFY_LAB_NUDGE": "1"}
+        after += [("n1", reported, 8.5), ("n2", reported, 11.5), ("n3", reported, 15.5)]
+    # "recovered" is where the end-of-scenario shot used to land (0.5 s after the page reported).
+    # "late": diagnosis only, whether a page that is not on screen then paints later.
+    res = scenario(dev, app, label, down, timeout=60 if diag else 45, after=tuple(after), launch_env=env)
+    r = common(dev, label, res, version)
+    reqs = page_requests(res, "A")
+    check(dev, label, "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
+    if len(reqs) >= 3:
+        # 2 s and 4 s timers; a simulator adds its own navigation start-up time on top
+        g1, g2 = reqs[1][0] - reqs[0][0], reqs[2][0] - reqs[1][0]
+        check(dev, label, "automatic reloads back off", 1.5 <= g1 <= 6.0 and 3.5 <= g2 <= 8.0,
+              "gaps %.1f s and %.1f s" % (g1, g2))
+    ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None, promise="error")
+    check(dev, label, "error screen with Try again during the outage (not blank)", ok, detail)
+    paint = [l[l.index("ADDIFY-"):] for l in res["lab"] if any(k in l for k in ("ADDIFY-PAINT", "ADDIFY-PAGE", "ADDIFY-STALL",
+                                                                                     "ADDIFY-NUDGE", "ADDIFY-SCREEN"))]
+    check(dev, label, "page on screen after recovery", pixel_class(res["shots"].get("recovered", "")) == "page",
+          "%s, shot %s, %s" % (pixel_class(res["shots"].get("recovered", "")), res["shot_t"].get("recovered"), paint))
+    check(dev, label, "page on screen 5 s after the page reported", pixel_class(res["shots"].get("late", "")) == "page",
+          "%s, %s" % (pixel_class(res["shots"].get("late", "")), [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-PAGE" in l]),
+          info=True)
+    if diag:
+        print("      [%s] after the nudges: %s" % (label, [(n, pixel_class(res["shots"].get(n, "")), res["shot_t"].get(n))
+                                                       for n in ("n1", "n2", "n3")]))
+    print("      [%s] WebKit log: %s" % (label, webkit_log(dev, res, label)))
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
 
 def link_in(url):
@@ -919,6 +1180,101 @@ def sharefail(dev, app, version):
     k = pixel_class(res["shots"].get("settled", ""))
     check(dev, "sharefail", "page on screen after coming back", k == "page", k)
     json.dump(res, open(os.path.join(dev.out, "%s-sharefail.json" % dev.tag), "w"), indent=1)
+
+
+def sharereload(dev, app, version):
+    """Build 30. A share opens the app and its share page answers 502 once: the error screen, then
+    the first automatic reload opens the same share page again, with the link, and it loads."""
+    sr = {"A": {"health_ms": 20, "share_fail_first": 1}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    reported = lambda e: e.get("kind") == "bridges"
+    res = scenario(dev, app, "sharereload", sr, timeout=50,
+                   launch_env={"ADDIFY_LAB_OPEN": "addify://scan?url=" + quote(SHARE_LINK, safe="")},
+                   after=(("settled", reported, 1.5),))
+    timeline(res)
+    reqs = [(e["dt"], e["path"], e["status"]) for e in res["entries"]
+            if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    first = next((i for i, x in enumerate(reqs) if x[1].split("?")[0] == "/share"), len(reqs))
+    reqs = reqs[first:]
+    shown = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs]
+    check(dev, "sharereload", "the automatic reload reopened the share page with the link and it loaded",
+          len(reqs) >= 2 and all(p.split("?")[0] == "/share" and link_in(p) == SHARE_LINK for _, p, _ in reqs[:2])
+          and [st for _, _, st in reqs[:2]] == [502, 200], json.dumps(shown))
+    check(dev, "sharereload", "Home never loaded", not [x for x in reqs if x[1].split("?")[0] == "/"], json.dumps(shown))
+    r = common(dev, "sharereload", res, version)
+    check(dev, "sharereload", "the page that loaded carries the shared link", link_in((r or {}).get("href")) == SHARE_LINK,
+          (r or {}).get("href", "no page"))
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, "sharereload", "page on screen", k == "page", k)
+    json.dump(res, open(os.path.join(dev.out, "%s-sharereload.json" % dev.tag), "w"), indent=1)
+
+
+def shareretry(dev, app, version):
+    """Build 30 (FIRST-LAUNCH-R4-01, reload already running). A share's page answers 502, and the
+    automatic reload that follows is still waiting for its answer (the stub holds it 8 s) when the
+    user leaves the app and comes back, which runs the same launch check as Try again (the directory
+    takes 7.5 s to answer it, inside the app's 8 s limit). That launch check must start over on the
+    share page. Before this fix the reload's page loaded during the lookup and took the link, and
+    the launch check then opened Home over it: the shared clip never scanned. The screenshot is
+    taken 19 s after the reload was asked for, by when either has had time to happen."""
+    sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 8.0}},
+          "B": {"health": False, "down": True}, "G": {"pick": "", "delay_ms": 7500}, "X": {}}
+    share = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share"
+    second = nth(share, 2)
+    res = scenario(dev, app, "shareretry", sr, timeout=90, want=("bridges",),
+                   launch_env={"ADDIFY_LAB_OPEN": "addify://scan?url=" + quote(SHARE_LINK, safe="")},
+                   actions=(("leave", second, 0.3, lambda d: d.to_background()),
+                            ("return", second, 1.3, lambda d: d.launch()),
+                            ("settled", second, 19.0, lambda d: d.shot("shareretry-settled"))))
+    timeline(res)
+    pids = list(dev.pids)
+    check(dev, "shareretry", "coming back reached the same process (not a relaunch)",
+          len(pids) == 2 and pids[0] is not None and pids[0] == pids[1], "pids %s" % pids)
+    reqs = [(e["dt"], e["path"], e["status"]) for e in res["entries"]
+            if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    first = next((i for i, x in enumerate(reqs) if x[1].split("?")[0] == "/share"), len(reqs))
+    reqs = reqs[first:]
+    shown = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs]
+    back_at = res["done"].get("return")
+    check(dev, "shareretry", "the return came while the automatic reload was still waiting",
+          back_at is not None and len(reqs) >= 2 and reqs[1][0] <= back_at <= reqs[1][0] + 7.0,
+          "reload asked at %s s, back at %s s" % (reqs[1][0] if len(reqs) >= 2 else None, back_at))
+    check(dev, "shareretry", "Home never loaded while the share waited", not [x for x in reqs if x[1].split("?")[0] == "/"],
+          json.dumps(shown))
+    loads = [e["report"] for e in res["entries"] if e.get("kind") == "bridges"]
+    last = loads[-1] if loads else {}
+    check(dev, "shareretry", "the page on screen at the end is the share page with the link, from the new launch check",
+          link_in(last.get("href")) == SHARE_LINK and (last.get("n") or 0) >= 3,
+          "pages reported %s" % [(link_in(x.get("href")) == SHARE_LINK, x.get("n")) for x in loads])
+    check(dev, "shareretry", "one page reported (no second load over the share page)", len(loads) == 1,
+          "%d pages reported" % len(loads))
+    k = pixel_class(os.path.join(dev.out, "%s-shareretry-settled.png" % dev.tag))
+    check(dev, "shareretry", "page on screen", k == "page", k)
+    common(dev, "shareretry", res, version)
+    json.dump(res, open(os.path.join(dev.out, "%s-shareretry.json" % dev.tag), "w"), indent=1)
+
+
+def sharewarm(dev, app, version):
+    """A share that reaches the app while its page is up goes straight to the page's run(link):
+    no reload, the same page load, and the page does not need to be opened again."""
+    sw = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    loaded = lambda e: e.get("kind") == "bridges"
+    link = SHARE_LINK + "warm"
+    res = scenario(dev, app, "sharewarm", sw, fresh=False, want=("bridges", "run"), timeout=50,
+                   after=(("settled", lambda e: e.get("kind") == "run", 1.0),),
+                   actions=(("write", loaded, 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                            ("leave", loaded, 1.0, lambda d: d.to_background()),
+                            ("return", loaded, 2.5, lambda d: d.launch())))
+    timeline(res)
+    load, ran = report(res, "load"), report(res, "run")
+    pages = page_requests(res, "A")
+    check(dev, "sharewarm", "the running page got the link through run()", (ran or {}).get("link") == link,
+          json.dumps(ran))
+    check(dev, "sharewarm", "same page load, no reload, no share page", load is not None and ran is not None
+          and ran.get("lid") == load.get("lid") and len(pages) == 1,
+          "page %s then run on %s, %d page loads %s" % ((load or {}).get("lid"), (ran or {}).get("lid"), len(pages), pages))
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, "sharewarm", "page on screen", k == "page", k)
+    json.dump(res, open(os.path.join(dev.out, "%s-sharewarm.json" % dev.tag), "w"), indent=1)
 
 
 def privacy(dev, app, mode):
