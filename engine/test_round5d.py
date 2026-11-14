@@ -236,7 +236,7 @@ async def main(html, yml, only):
                 check("D9", "Finds Play: a song-card find plays its preview in the sheet (no window.open); with nothing to play the control is a link "
                             "'Find <song> on Spotify' (an old Shazam-link find too) and does not reopen the scan; a dead preview says so with Try again",
                       a_ok and b_ok and c_ok and d_ok and not pg.errs,
-                      {"pv_row": r_pv, "pv_sheet": s_pv, "old_row": r_old, "nocrown_row": r_nc, "after": after, "dead": s_dead, "retry_hit": rb, "errs": pg.errs})
+                      {"ok": [bool(a_ok), bool(b_ok), bool(c_ok), bool(d_ok)], "after": after, "dead": s_dead, "retry_hit": rb, "pv_row": r_pv, "pv_sheet": s_pv, "old_row": r_old, "nocrown_row": r_nc, "errs": pg.errs})
                 await close(ctx)
         except Exception as e:
             check("D9", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))

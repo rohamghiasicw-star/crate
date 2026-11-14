@@ -1823,6 +1823,8 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 .fpvmsg:empty{display:none}
 .fpvmsg b{font-weight:650;color:var(--text)}
 .fpvretry{min-height:44px;padding:0 16px;border-radius:var(--r-pill);background:var(--raise2);color:var(--text);font:inherit;font-weight:650}
+.fpvretry::before{content:"";position:absolute;inset:-3px 0}
+.fpvretry{position:relative}
 .fpvretry:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
 .fpvaud{display:block;width:100%}
 .fpvaud[hidden]{display:none}
