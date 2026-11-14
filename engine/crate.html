@@ -1817,6 +1817,34 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 .iplx::before{content:"";position:absolute;inset:-9px}
 .sadd::before{inset:-6px;border-radius:0}
 #theme::before{inset:0 -4px -8px;border-radius:0}
+/* ROUND 5D (A11Y-B-R5-07): Finds "Oldest first" sits 2px under the top of its scrolling screen, which clipped the top
+   of its 44 pt extender (44x43). It grows down instead, square, like Switch theme. */
+#libsort::before{inset:-4px -4px -8px;border-radius:0}
+/* ROUND 5D (A11Y-B-R5-03): a Search result whose cover has not loaded (or has none) showed the white Play on the light
+   theme's pale tile under the dark veil, 2.56:1. A mid grey tile puts it at 4.8:1; the dark theme already passes. */
+:root[data-theme="light"] .sart{background:#A9A4B6}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .sart{background:#A9A4B6}}
+/* ROUND 5D: FINDS PLAY. The link a find shows when it has nothing to play here (same circle as Play, the link-out
+   arrow); the "Fixed" mark on a find the team corrected; the preview box in the player sheet. */
+.fplay.fout{text-decoration:none}
+.fplay.fout svg{width:15px;height:15px}
+.vchip.fixd{color:var(--muted);background:var(--raise2)}
+.fpv{display:flex;align-items:center;gap:12px;min-width:0;margin:2px 0 12px}
+.fpv .tart{width:56px;height:56px;border-radius:12px;flex:none}
+.fpv img.tart{object-fit:cover;display:block;background:var(--raise2)}
+.fpv .tart.ph svg{width:22px;height:22px}
+.fpvtt{display:flex;flex-direction:column;gap:3px;min-width:0}
+.fpvtt b{font-size:15px;font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fpvtt span{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fpvmsg{margin:0 0 10px;font-size:13px;color:var(--muted);display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.fpvmsg:empty{display:none}
+.fpvmsg b{font-weight:650;color:var(--text)}
+.fpvretry{min-height:44px;padding:0 16px;border-radius:var(--r-pill);background:var(--raise2);color:var(--text);font:inherit;font-weight:650}
+.fpvretry::before{content:"";position:absolute;inset:-3px 0}
+.fpvretry{position:relative}
+.fpvretry:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+.fpvaud{display:block;width:100%}
+.fpvaud[hidden]{display:none}
 /* ROUND 5B (A11Y-R4-07): the global reduced-motion rule is `*`, which never matches a pseudo-element, so the card's
    bloom kept scaling from .55 to 1. Under reduced motion it sits still at its end state. */
 @media (prefers-reduced-motion:reduce){.hero::before,.hero.wl-bl::before{animation:none!important;opacity:.22;transform:translateX(-50%)}}
@@ -2373,13 +2401,20 @@ var KIT_AM=[];
 function amOK(u){u=String(u||''); return /^https:\/\/([a-z0-9-]+\.)*(music|itunes)\.apple\.com\//i.test(u)?u:'';}
 function amKey(s){return String(s||'').toLowerCase().replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
 function kitAMKeep(ans){if(!ans||!ans.matched||!ans.title) return;
-  var u=amOK(ans.appleMusicURL||ans.apple_music_url); if(u) KIT_AM.push({t:amKey(ans.title),a:amKey(ans.artist),u:u});}
-function appleMusicURL(d){if(!d) return '';
-  var u=amOK(d.appleMusicURL||d.apple_music_url); if(u) return u;
-  var t=amKey(d.base_song), a=amKey(d.base_artist); if(!t) return '';
+  var u=amOK(ans.appleMusicURL||ans.apple_music_url); if(u) KIT_AM.push({t:amKey(ans.title),a:amKey(ans.artist),u:u,n:String(ans.title)});}
+/* ROUND 5D (GAPS-KIT-R5-05): the link and the title of the recording it opens (`n`: the song ShazamKit named, else
+   the result's own song), so the card can say which recording that is when it is not the one titled above it. */
+function amLink(d){if(!d) return {u:'',n:''};
+  var u=amOK(d.appleMusicURL||d.apple_music_url); if(u) return {u:u,n:String(d.base_song||'')};
+  var t=amKey(d.base_song), a=amKey(d.base_artist); if(!t) return {u:'',n:''};
   for(var i=0;i<KIT_AM.length;i++){var k=KIT_AM[i];
-    if(k.t===t&&(!a||!k.a||k.a.split(' ')[0]===a.split(' ')[0])) return k.u;}
-  return '';}
+    if(k.t===t&&(!a||!k.a||k.a.split(' ')[0]===a.split(' ')[0])) return {u:k.u,n:k.n||String(d.base_song||'')};}
+  return {u:'',n:''};}
+function appleMusicURL(d){return amLink(d).u;}
+/* The hero's Apple Music line: "Open in Apple Music" only under the very recording it opens (the same title, word for
+   word, brackets included), else it names that recording: "Blow on Apple Music" under a remix of Blow. */
+function amHeroLabel(n,shown){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]+/g,' ').trim();};
+  return (!n||f(n)===f(shown))?'Open in Apple Music':String(n).trim()+' on Apple Music';}
 function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
   fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
   fr.onerror=function(){no(fr.error);}; fr.readAsDataURL(blob);});}
@@ -2587,13 +2622,21 @@ function clipShape(u){var x; try{x=new URL(/^https?:\/\//i.test(u)?u:'https://'+
   if(h==='vt.tiktok.com'||h==='vm.tiktok.com') return /^\/(?:t\/)?[A-Za-z0-9]{5,16}\/?$/.test(q)?{host:'tiktok'}:{page:'TikTok'};
   if(h==='tiktok.com') return (/^\/@[A-Za-z0-9_.\-]{0,64}\/(?:video|photo)\/\d{6,25}\/?$/.test(q)||/^\/t\/[A-Za-z0-9]{5,16}\/?$/.test(q)
     ||/^\/v\/\d{6,25}(?:\.html)?\/?$/.test(q))?{host:'tiktok'}:{page:'TikTok'};
-  if(h==='instagram.com') return /^\/(?:[A-Za-z0-9_.]{1,30}\/)?(?:reel|reels|p|tv)\/[A-Za-z0-9_-]{5,40}\/?$/.test(q)?{host:'instagram'}:{page:'Instagram'};
+  // ROUND 5D (GAPS-KIT-R5-02): instagr.am is Instagram's own short host. The engine only reads instagram.com, so the
+  // clip is handed on as the same path there (`url`)
+  if(h==='instagram.com'||h==='instagr.am') return /^\/(?:[A-Za-z0-9_.]{1,30}\/)?(?:reel|reels|p|tv)\/[A-Za-z0-9_-]{5,40}\/?$/.test(q)
+    ?{host:'instagram',url:h==='instagr.am'?'https://www.instagram.com'+q+x.search:''}:{page:'Instagram'};
   return {};}
-function parseLink(raw){raw=(raw||'').trim(); var all=raw.match(/https?:\/\/[^\s]+/gi)||[], page=null;
-  var cands=all.length?all:[raw];
+/* ROUND 5D (GAPS-KIT-R5-06): a link ends at the first character a URL cannot hold (an emoji, a zero-width space, a
+   quote mark) or where a second link starts, and loses the punctuation the sentence put after it: "(<link>)",
+   "<link>," or "<link>." scan as the clip, not "a TikTok page". The same trim for a link typed without https://. */
+var LINK_RE=/https?:\/\/(?:(?!https?:\/\/)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%])+/gi;
+function linkTrim(u){return String(u||'').replace(/[.,;:!?'"()\[\]{}<>*]+$/,'');}
+function parseLink(raw){raw=(raw||'').trim(); var all=(raw.match(LINK_RE)||[]).map(linkTrim), page=null;
+  var cands=all.length?all:[linkTrim(raw.replace(/^[(\[{<"']+/,'').replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,''))||raw];
   // ROUND 5B: a clip pasted without its scheme ("vt.tiktok.com/...") gets https://, as the engine reads it, so /base and
   // the /progress poll name the same clip (the scan's liveness reads that poll, see SCAN_STILL)
-  for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:/^https?:\/\//i.test(cands[i])?cands[i]:'https://'+cands[i]}; if(r.page&&!page) page=r.page;}
+  for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:r.url||(/^https?:\/\//i.test(cands[i])?cands[i]:'https://'+cands[i])}; if(r.page&&!page) page=r.page;}
   return {host:null,url:all[0]||raw,page:page};}
 function notClipMsg(p){return p&&p.page
   ? 'That link is '+(p.page==='Instagram'?'an ':'a ')+p.page+' page, not a clip. Open the video, tap Share, then Copy link, and paste it here.'
@@ -4361,13 +4404,22 @@ function vfPick(d){
 function vfState(url){
   return {v:(lsGet('addify-verdicts','{}')||{})[url]||'', p:(lsGet('addify-vfpicks','{}')||{})[url]||''};}
 function vfPending(){var a=lsGet(VF_PEND,'[]'); return Array.isArray(a)?a:[];}
+/* ROUND 5D (GAPS-UI-R5-02): `shown` is the title the card put on top (cardName: the crowned upload, else the song),
+   read off the card that is up for this clip when the X is parked, so the banner names what the user turned down,
+   never a song name the card did not show. No card up for it (a park after a relaunch): the Find's own title, at the
+   banner (vfApplyFixes). */
 function vfPendAdd(url,song){
   if(!url) return;
+  var shown=''; try{if(url===curURL&&lastResult) shown=vfShown(lastResult);}catch(e){}
   var a=vfPending();
   for(var i=0;i<a.length;i++) if(a[i]&&a[i].url===url){
-    if(song&&!a[i].song){a[i].song=song; lsSet(VF_PEND,a);}
+    var ch=false;
+    if(song&&!a[i].song){a[i].song=song; ch=true;}
+    if(shown&&!a[i].shown){a[i].shown=shown; ch=true;}
+    if(ch) lsSet(VF_PEND,a);
     return;}
-  a.unshift({url:url,song:song||'',asked_at:Date.now()}); lsSet(VF_PEND,a.slice(0,50));}
+  a.unshift({url:url,song:song||'',shown:shown||'',asked_at:Date.now()}); lsSet(VF_PEND,a.slice(0,50));}
+function vfShown(d){try{return cardName(d).title||'';}catch(e){return '';}}
 function verdictRow(d){
   if(!d||d.result!=='found'||!curURL) return '';
   var pk=vfPick(d), v=vfState(curURL).v;
@@ -4505,10 +4557,17 @@ function vfApplyFixes(fx){
     for(var i=0;i<pend.length;i++) if(pend[i]&&pend[i].url===f.url){it=pend[i]; pend.splice(i,1); break;}
     if(!it) return;                              // not waiting here (already told, or a check)
     n++;
+    // ROUND 5D (GAPS-UI-R5-01): the find now names the upload its Play plays. Its title and its remix/edit word come
+    // from the fixed upload, the way cardName reads a crown; the artist line belonged to the turned-down upload, so it
+    // goes (the song's own artist stands in); the speed stays, it is the clip's own reading. Finds marks it "Fixed".
+    var nt=String(f.right_title||'').trim(), was='';
     crate.forEach(function(x){if(x&&x.clip===f.url){
-      x.url=f.right_url; x.fixed={title:f.right_title||'',at:f.fixed_at||Date.now()}; ch=true;}});
+      was=was||x.title||'';
+      x.url=f.right_url; x.fixed={title:nt,at:f.fixed_at||Date.now()}; ch=true;
+      if(nt){x.title=nt; x.edit=editWord(nt); x.by='';}
+      delete x.pv;}});
     delete vs[f.url]; delete ps[f.url];
-    vfBanQ.push({song:it.song||'',title:f.right_title||'',url:f.right_url});});
+    vfBanQ.push({shown:it.shown||was,title:nt,url:f.right_url});});
   if(!n) return;
   lsSet(VF_PEND,pend); lsSet('addify-verdicts',vs); lsSet('addify-vfpicks',ps);
   if(ch) storeCrate(crate);
@@ -4523,8 +4582,9 @@ function vfBanNext(){
   var b=vfBanQ.shift(), el=document.createElement('div');
   el.className='fixban'; el.id='fixban'; el.setAttribute('role','status'); el.setAttribute('aria-live','polite');
   el.innerHTML='<button type="button" class="fbgo"><span class="fbic">'+VF_OK+'</span>'+
-    '<span class="fbtx"><b>We found the exact version'+(b.song?' of <i>'+esc(b.song)+'</i>':'')+'</b>'+
-    (b.title?'<span>'+esc(b.title)+'</span>':'')+'</span><span class="fbch">'+IC.rchev+'</span></button>'+
+    '<span class="fbtx"><b>We found the exact version</b>'+
+    (b.title?'<span>'+esc(b.title)+'</span>':'')+(b.shown?'<span class="fbwas">Instead of '+esc(b.shown)+'</span>':'')+
+    '</span><span class="fbch">'+IC.rchev+'</span></button>'+
     '<button type="button" class="fbx" aria-label="Dismiss">'+VF_NO+'</button>';
   document.body.appendChild(el);                 // position:fixed lives outside .app (design rule)
   vfBanEl=el;
@@ -5066,11 +5126,11 @@ function renderResult(d,partial){
   if(_cov && !/^https:\/\//i.test(_cov)) _cov='';
   var artHtml=_cov?'<a class="artlink" href="'+esc(_cov)+'" target="_blank" rel="noopener" aria-label="'+
     esc(ex?'Open this version':'Open this song')+'">'+art+'</a>':art;
-  var _am=appleMusicURL(d);   // SHAZAMKIT ATTRIBUTION: a song ShazamKit named links to its Apple Music page
+  var _aml=amLink(d), _am=_aml.u;   // SHAZAMKIT ATTRIBUTION: a song ShazamKit named links to its Apple Music page
   var hero='<div class="hero"><span class="artwrap">'+artHtml+corner+'</span>'+
     '<h2 class="rtitle">'+esc(_htitle)+'</h2>'+
     '<p class="rartist">'+esc(_hartist)+'</p>'+
-    (_am?'<p class="rartist"><a class="playerout" href="'+esc(_am)+'" target="_blank" rel="noopener">Open in Apple Music</a></p>':'')+
+    (_am?'<p class="rartist"><a class="playerout" href="'+esc(_am)+'" target="_blank" rel="noopener">'+esc(amHeroLabel(_aml.n,_htitle))+'</a></p>':'')+
     badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
   // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of
@@ -5575,15 +5635,16 @@ function speedNote(d){
    artist line under it), so Finds, Share and Export say what the card says. `edit`: the crowned upload calls
    itself a remix, edit or cover, so Finds never files it under Original on its speed alone. */
 var EDIT_WORDS=/\b(remix|rmx|edit|slowed|sped|speed ?up|nightcore|daycore|reverb|bass ?boost(ed)?|mashup|bootleg|flip|rework|vip|mix|cover)\b/i;
+function editWord(t){var m=String(t||'').match(EDIT_WORDS), w=m?m[1].toLowerCase():'';
+  return !w?'':w==='cover'?'cover':/remix|rmx|mix|bootleg|flip|rework|vip|mashup/.test(w)?'remix':'edit';}
 function cardName(d){var mv=null; try{mv=mainVersion(d);}catch(e){}
-  var m=mv?String((mv.row&&mv.row.title)||mv.title||'').match(EDIT_WORDS):null, w=m?m[1].toLowerCase():'';
   return {title:mv?mv.title:(d.base_song||''), by:mv?mv.artist:(d.base_artist||''),
-          edit:!w?'':w==='cover'?'cover':/remix|rmx|mix|bootleg|flip|rework|vip|mashup/.test(w)?'remix':'edit'};}
+          edit:mv?editWord((mv.row&&mv.row.title)||mv.title):''};}
 function saveOne(d,final){
   if(!d || !d.base_song) return false;
   var a=loadCrate(), nm=cardName(d);
   var item={song:d.base_song,artist:d.base_artist,title:nm.title,by:nm.by,edit:nm.edit,art:d.art||'',
-            url:songURL(d),speed:d.speed||'',note:speedNote(d),
+            url:songURL(d),pv:findPrev(d),speed:d.speed||'',note:speedNote(d),
             handle:clipWho(d,d.url?curURL:''),ts:Date.now(),listen:!!d.listen,via:d.via||'',
             clip:d.url?(curURL||d.url):''};   // REVIEWER RUNS 2 (LA-1): the link the user scanned, not the server's echo
   if(a.some(function(x){return x.song===item.song&&x.artist===item.artist;})){
@@ -5607,6 +5668,7 @@ function updateSaved(d,clip){
   var x=a[i], crown=(d.exact&&d.exact.url)||'', sameClip=!!(d.url&&(x.clip===d.url||(clip&&x.clip===clip))), ch=false;
   if(!crown && !sameClip) return false;
   if(crown && x.url!==crown){x.url=crown; ch=true;}
+  var _pv=findPrev(d); if((x.pv||'')!==_pv){if(_pv) x.pv=_pv; else delete x.pv; ch=true;}   // ROUND 5D: the song card's preview, or none
   if(d.speed && x.speed!==d.speed){x.speed=d.speed; ch=true;}
   var _nt=speedNote(d); if((x.note||'')!==_nt){x.note=_nt; ch=true;}   // APPLYALL 2026-09-29 (finding 20)
   var _nm=cardName(d); if(x.title!==_nm.title||x.by!==_nm.by||(x.edit||'')!==_nm.edit){x.title=_nm.title; x.by=_nm.by; x.edit=_nm.edit; ch=true;}
@@ -6096,7 +6158,10 @@ function trowHTML(r,rank){
     '<span class="tt"><b>'+ttlHTML(r.title)+'</b>'+
     '<span>'+(tag?'<i class="up" style="font-style:normal">'+esc(tag)+'</i> · ':'')+
       esc(r.by||'')+(r.uses?' · '+plays(r.uses)+' videos':'')+'</span></span></button>'+
-    '<button class="addp'+(inF?' did':'')+'" type="button" aria-label="'+(inF?'Added to Finds':'Add to Finds')+'">'+(inF?IC.tick:IC.plus)+'</button></div>';}
+    '<button class="addp'+(inF?' did':'')+'" type="button" aria-label="'+esc(addLbl(r.title,inF))+'">'+(inF?IC.tick:IC.plus)+'</button></div>';}
+/* ROUND 5D (A11Y-A-R5-03): each plus names its song ("Add Golden Brown to Finds"), so the Buttons rotor tells 15 of
+   them apart. The same for Search's plus. */
+function addLbl(t,did){return (did?'Added ':'Add ')+(String(t||'').trim()||'this song')+' to Finds';}
 /* POLISH 3: a song already in Finds draws its plus as done. saveOne's storeCrate re-renders these rows at once, so
    the tick the tap set used to land on a button that had just been replaced: the row showed + again. */
 function trowInFinds(r){return loadCrate().some(function(x){return x.song===r.title&&x.artist===r.by;});}
@@ -6108,9 +6173,9 @@ function wireTrows(box){
     if(add) add.onclick=function(ev){ev.stopPropagation();
       if(add.classList.contains('did')) return;
       var had=document.activeElement===add, i=row.getAttribute('data-i');
-      saveOne({base_song:r.title,base_artist:r.by,shazam:r.url});   // storeCrate re-renders the rows: this button is replaced
+      saveOne({base_song:r.title,base_artist:r.by,shazam:r.url,art:trowArt(r)});   // storeCrate re-renders the rows: this button is replaced
       var nb=box.querySelector('.trow[data-i="'+i+'"] .addp')||add;   // the plus on screen now
-      nb.classList.add('did'); nb.innerHTML=IC.tick; nb.setAttribute('aria-label','Added to Finds');
+      nb.classList.add('did'); nb.innerHTML=IC.tick; nb.setAttribute('aria-label',addLbl(r.title,true));
       if(had&&nb!==add) try{nb.focus();}catch(e){}};});}   // VoiceOver stays on the button it just pressed
 var trendFilter='All';
 function renderTrend(){
@@ -6118,8 +6183,9 @@ function renderTrend(){
   var kinds=['All','Slowed','Sped up','Remix'].filter(function(k){
     return k==='All'||TREND.rows.some(function(r){return trendTag(r)===k.toLowerCase();});});
   if(kinds.indexOf(trendFilter)<0) trendFilter='All';
-  document.getElementById('trendchips').innerHTML=kinds.map(function(k){
-    return '<button class="chipf'+(trendFilter===k?' on':'')+'" data-k="'+k+'">'+k+'</button>';}).join('');
+  // ROUND 5D: the same pressed state and focus keeping as the Finds chips (A11Y-B-R5-01/02)
+  toggleRow(document.getElementById('trendchips'),kinds.map(function(k){
+    return '<button type="button" class="chipf'+(trendFilter===k?' on':'')+'" data-k="'+k+'" aria-pressed="'+(trendFilter===k)+'">'+k+'</button>';}).join(''),'data-k');
   Array.prototype.forEach.call(document.querySelectorAll('#trendchips .chipf'),function(c){
     c.onclick=function(){trendFilter=c.getAttribute('data-k'); renderTrend();};});
   var b=document.getElementById('trendbody');
@@ -6173,33 +6239,144 @@ function srcLine(x){
   if(x.via==='search') return 'from search';
   if(x.handle) return 'from @'+esc(x.handle);
   return '';}
+/* ROUND 5D: the Finds chip filter on its own (the list adds the month and the search; the month tiles count with it) */
+function libKeep(x){
+  if(libFilter==='Edits') return isEdit(x);
+  if(libFilter==='Originals') return !isEdit(x)&&!x.note;   // APPLYALL (finding 20)
+  if(libFilter==='Liked') return isLiked(x.song,x.artist);
+  return true;}
+var LIB_EMPTY={Edits:'Slowed, sped-up and remixed finds show up here.',Originals:'Finds that play as released show up here.',
+               Liked:'Tap the heart on a result to add it here.'};
+/* ROUND 5D (A11Y-B-R5-02): A ROW OF TOGGLES REDRAWN IN PLACE. A Finds chip or month tile used to rebuild its whole row
+   with innerHTML, which threw away the button that had the focus (focus fell to <body> and the next Tab went back to
+   the first chip) and scrolled the month row back to its start. When the same buttons come back (same keys, same
+   order) each keeps its place and takes its new class, state and text; when the set changed, the row is rebuilt and
+   the focus goes to the button with the same key. */
+function toggleRow(box,html,key){
+  var t=document.createElement('div'); t.innerHTML=html;
+  var nb=t.querySelectorAll('button['+key+']'), ob=box.querySelectorAll('button['+key+']'), same=nb.length>0&&nb.length===ob.length, i;
+  for(i=0;same&&i<nb.length;i++) if(nb[i].getAttribute(key)!==ob[i].getAttribute(key)) same=false;
+  if(same){for(i=0;i<nb.length;i++){var o=ob[i], n=nb[i];
+      if(o.className!==n.className) o.className=n.className;
+      if(o.getAttribute('aria-pressed')!==n.getAttribute('aria-pressed')) o.setAttribute('aria-pressed',n.getAttribute('aria-pressed'));
+      if(o.innerHTML!==n.innerHTML) o.innerHTML=n.innerHTML;}
+    return;}
+  var f=document.activeElement, k=(f&&f!==document.body&&box.contains(f))?f.getAttribute(key):null;
+  box.innerHTML=html;
+  if(k!=null){var m=[].filter.call(box.querySelectorAll('button['+key+']'),function(b){return b.getAttribute(key)===k;})[0];
+    if(m) try{m.focus({preventScroll:true});}catch(e){}}}
+/* ROUND 5D (RETURNING-USER-R5-05, GAPS-UI-R5-04): FINDS PLAY STAYS IN ADDIFY. Play on a find with no SoundCloud or
+   YouTube upload (a song card's scan, a song added from Trending, an older find) handed its Spotify search or Apple
+   Music page to window.open, which leaves the app, under a button named "Play". It now plays the song's 30 s official
+   preview in the player sheet, streamed from Apple's CDN like the song card's own preview (NO-CROWN PLAY): the one
+   the scan returned (x.pv, kept by saveOne), else the one Apple's public lookup gives for the Apple Music track a
+   Trending row links to. A find with neither has a link, not a Play, named for where it goes ("Find <song> on
+   Spotify"), with the arrow every other link out uses. */
+function findPrev(d){
+  if(!d||(d.exact&&d.exact.url)) return '';   // a crowned find plays its upload, never the song's preview
+  var s=(d.source_at_speed&&d.source_at_speed.title)?d.source_at_speed:null, u=String(d.preview_url||'');
+  var nrm=function(v){return String(v||'').toLowerCase().replace(/\s+/g,' ').trim();};
+  if(s && nrm(s.title)!==nrm(d.base_song)) return '';   // as ncPlay: the preview is of base_song, the card names s
+  return NC_PREV.test(u)?u:'';}
+function amTrack(u){u=String(u||''); if(!/^https:\/\/music\.apple\.com\//i.test(u)) return null;
+  var m=u.match(/[?&]i=(\d{5,15})(?:[&#]|$)/)||u.match(/\/song\/[^\/?#\s]+\/(\d{5,15})(?:[\/?#]|$)/); if(!m) return null;
+  var c=u.match(/^https:\/\/music\.apple\.com\/([a-z]{2})\//i); return {id:m[1],cc:c?c[1].toLowerCase():''};}
+function findPlay(x){
+  var u=findURL(x), t=String(x.title||x.song||'').trim();
+  if(embedFor(u,'')) return {url:u, lbl:'Play '+t};
+  if(NC_PREV.test(String(x.pv||''))) return {url:u, pv:x.pv, lbl:'Play a preview of '+t};
+  var am=amTrack(u); if(am) return {url:u, am:am, lbl:'Play a preview of '+t};
+  var h=''; try{h=new URL(u).hostname.toLowerCase().replace(/^(www|m)\./,'');}catch(e){}
+  if(/(^|\.)spotify\.com$/.test(h)) return {url:u, out:1, lbl:(/\/search\//.test(u)?'Find ':'Open ')+t+' on Spotify'};
+  if(/(^|\.)apple\.com$/.test(h)) return {url:u, out:1, lbl:'Open '+t+' in Apple Music'};
+  var nm=''; Object.keys(SRC_NAME).forEach(function(k){if(!nm&&h.indexOf(k)>=0) nm=SRC_NAME[k];});
+  return {url:u, out:1, lbl:'Open '+t+' on '+(nm||h||'the web')};}
+function fpHTML(x){var p=findPlay(x), t=x.title||x.song;
+  if(p.out) return '<a class="fplay fout" href="'+esc(p.url)+'" target="_blank" rel="noopener" aria-label="'+esc(p.lbl)+'">'+IC.open+'</a>';
+  if(p.pv||p.am) return '<button type="button" class="fplay" data-fpv="1" aria-label="'+esc(p.lbl)+'">'+IC.play+'</button>';
+  return '<button type="button" class="fplay" aria-label="'+esc(p.lbl)+'"'+
+    ' data-play="'+esc(p.url)+'" data-src="" data-title="'+esc(t)+'">'+IC.play+'</button>';}
+/* Apple's public lookup for one Apple Music track (no key, answers with CORS): its preview, if it has one. Only an
+   audio-ssl.itunes.apple.com preview for that same track id is used. */
+function fpLookup(am){
+  var ctl=null; try{ctl=new AbortController();}catch(e){}
+  var to=setTimeout(function(){try{if(ctl) ctl.abort();}catch(e){}},8000);
+  return fetch('https://itunes.apple.com/lookup?id='+am.id+(am.cc?'&country='+am.cc:''),
+               {cache:'no-store',credentials:'omit',signal:ctl?ctl.signal:undefined})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(j){clearTimeout(to);
+      var r=((j&&j.results)||[]).filter(function(z){return z&&String(z.trackId)===am.id;})[0];
+      return (r&&NC_PREV.test(String(r.previewUrl||'')))?String(r.previewUrl):'';})
+    .catch(function(){clearTimeout(to); return '';});}
+var FP_GEN=0;
+function fpOpen(i){
+  var x=loadCrate()[i]; if(!x) return;
+  var p=findPlay(x); if(!p.pv&&!p.am) return;
+  var gen=++FP_GEN, t=String(x.title||x.song||''), who=String(x.artist||x.by||''), art=/^https:\/\//i.test(String(x.art||''))?x.art:'';
+  var _ib=document.getElementById('ipl'); if(_ib&&!_ib.hidden) ipClose();   // one player at a time (COVER PLAY)
+  var dz=!!p.pv&&!/itunes\.apple\.com/i.test(p.pv), q=encodeURIComponent((t+' '+who).trim());
+  document.getElementById('playerttl').textContent=t||'Preview';
+  document.getElementById('playersrc').innerHTML=dz?'<span class="src deezer"><span>Deezer</span></span>':srcChip('apple');   // no Deezer glyph
+  // the song's own page in the app the preview comes from: the find's link when it is that app's, else a search there
+  document.getElementById('playerout').href=dz?(/deezer\.com\//i.test(p.url)?p.url:'https://www.deezer.com/search/'+q)
+                                              :(amOK(p.url)||'https://music.apple.com/search?term='+q);
+  var body=document.getElementById('playerbody');
+  body.innerHTML='<div class="fpv">'+(art?'<img class="tart" alt="" src="'+esc(art)+'" data-ph="'+esc(phVars(t+'|'+who))+'">':_phSpan(phVars(t+'|'+who)))+
+      '<span class="fpvtt"><b>'+esc(t)+'</b><span>'+esc(who?who+' · 30-second preview':'30-second preview')+'</span></span></div>'+
+    '<p class="fpvmsg" id="fpvmsg" role="status"></p>'+
+    '<audio class="fpvaud" id="fpvaud" controls playsinline preload="auto"></audio>';
+  var a=document.getElementById('fpvaud'), msg=document.getElementById('fpvmsg');
+  var live=function(){return gen===FP_GEN&&document.getElementById('fpvaud')===a;};
+  var fail=function(){if(!live()) return;
+    msg.innerHTML='<b>Couldn’t load the preview.</b><button type="button" class="fpvretry" id="fpvretry">Try again</button>';
+    a.hidden=true;
+    var rb=document.getElementById('fpvretry'); if(rb) rb.onclick=function(){var had=document.activeElement===rb;
+      fpOpen(i); fkHand(had,document.getElementById('fpvmsg'));};};
+  a.addEventListener('error',fail);
+  var start=function(u){if(!live()) return; msg.textContent=''; a.hidden=false; a.src=u;
+    try{var pr=a.play(); if(pr&&pr.catch) pr.catch(function(){});}catch(e){}};
+  document.getElementById('player').hidden=false;
+  if(p.pv){start(p.pv); return;}
+  msg.textContent='Loading the preview'; a.hidden=true;
+  fpLookup(p.am).then(function(u){
+    if(!live()) return;
+    if(!u){fail(); return;}
+    // kept with the find, so the next Play starts at once. No redraw: nothing on screen changes.
+    var c=loadCrate(); c.forEach(function(y){if(y&&y.song===x.song&&y.artist===x.artist&&y.url===x.url) y.pv=u;}); lsSet('crate-saved',c);
+    start(u);});}
 function renderLib(){
   var all=loadCrate(), un=unmatched();
   var edits=all.filter(isEdit).length;
   document.getElementById('libsub').textContent = all.length
     ? songs(all.length)+(edits?' · '+edits+' of them edit'+(edits===1?'':'s'):'') : 'No finds yet';   // POLISH 3 (LAWYER-05): was 'Nothing saved yet'
-  var chips=[['All',all.length],['Edits',edits],['Originals',all.length-edits]];
+  // ROUND 5D: Originals counts what the Originals filter lists (a find with a note is neither, APPLYALL finding 20)
+  var chips=[['All',all.length],['Edits',edits],['Originals',all.filter(function(x){return !isEdit(x)&&!x.note;}).length]];
   var nLiked=all.filter(function(x){return isLiked(x.song,x.artist);}).length;
   if(nLiked) chips.splice(3,0,['Liked',nLiked]);
   if(un.length) chips.push(['Unmatched',un.length]);
-  document.getElementById('libchips').innerHTML=chips.map(function(c){
+  // ROUND 5D: a filter whose chip has gone (the last like taken away, the last unmatched scan retried) lets go
+  if(!chips.some(function(c){return c[0]===libFilter;})) libFilter='All';
+  // ROUND 5D (A11Y-B-R5-01): each chip says whether it is the one on, like the month tiles (A11Y-B-R5-02: in place)
+  toggleRow(document.getElementById('libchips'),chips.map(function(c){
     return '<button type="button" class="chipf'+(libFilter===c[0]?' on':'')+(c[0]==='Unmatched'?' amber':'')+
-      '" data-k="'+c[0]+'">'+c[0]+(c[1]?' '+c[1]:'')+'</button>';}).join('');
+      '" data-k="'+c[0]+'" aria-pressed="'+(libFilter===c[0])+'">'+c[0]+(c[1]?' '+c[1]:'')+'</button>';}).join(''),'data-k');
   Array.prototype.forEach.call(document.querySelectorAll('#libchips .chipf'),function(c){
     c.onclick=function(){libFilter=c.getAttribute('data-k'); renderLib();};});
 
-  /* finds by month */
+  /* finds by month. ROUND 5D (GAPS-UI-R5-03): the tiles count what the filter shows, so under Edits a month says how
+     many edits it holds and a month with none is not offered. A picked month stays (at 0) so it can be let go. */
   var months={}, order=[];
-  all.forEach(function(x){var k=monthKey(x.ts); if(!months[k]){months[k]=0; order.push(k);} months[k]++;});
+  all.filter(libKeep).forEach(function(x){var k=monthKey(x.ts); if(!months[k]){months[k]=0; order.push(k);} months[k]++;});
+  if(libMonth&&!months[libMonth]){months[libMonth]=0; order.push(libMonth);}
   order.sort().reverse();
   var mb=document.getElementById('libmonths');
   if(order.length && libFilter!=='Unmatched'){
-    mb.innerHTML='<div class="sect">Your finds by month</div><div class="mrow">'+order.map(function(k){
+    toggleRow(mb,'<div class="sect">Your finds by month</div><div class="mrow">'+order.map(function(k){
       var y=+k.slice(0,4), m=+k.slice(5)-1, tint=MONTH_TINT[m];
       return '<button type="button" class="mtile'+(libMonth===k?' on':'')+'" data-m="'+k+'" aria-pressed="'+(libMonth===k)+'">'+
         '<span class="mcov" style="--mt:'+tint+'"><span class="mg">'+waveGlyph(22)+'</span>'+
           '<span class="ml">'+MONTHS[m].slice(0,3).toUpperCase()+' '+y+'</span></span>'+   // APPLYALL 2026-09-29 (build 3): "SEP 26" read as September 26
-        '<b>'+MONTHS[m]+'</b><span>'+songs(months[k])+'</span></button>';}).join('')+'</div>';
+        '<b>'+MONTHS[m]+'</b><span>'+songs(months[k])+'</span></button>';}).join('')+'</div>','data-m');
     Array.prototype.forEach.call(mb.querySelectorAll('.mtile'),function(t){
       t.onclick=function(){var k=t.getAttribute('data-m'); libMonth=(libMonth===k)?'':k; renderLib();};});
   } else mb.innerHTML='';
@@ -6215,10 +6392,7 @@ function renderLib(){
     var list=all.filter(function(x){
       if(!match(x)) return false;
       if(libMonth && monthKey(x.ts)!==libMonth) return false;
-      if(libFilter==='Edits') return isEdit(x);
-      if(libFilter==='Originals') return !isEdit(x)&&!x.note;   // APPLYALL (finding 20)
-      if(libFilter==='Liked') return isLiked(x.song,x.artist);
-      return true;});
+      return libKeep(x);});
     list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
     var groups={}, gorder=[];
     list.forEach(function(x){var g=dayGroup(x.ts); if(!groups[g]){groups[g]=[]; gorder.push(g);} groups[g].push(x);});
@@ -6231,15 +6405,16 @@ function renderLib(){
           '<button type="button" class="fopen">'+
           '<span class="fart">'+(x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.note+'</span>'+
           '<span class="tt"><b>'+ttlHTML(x.title||x.song)+(isLiked(x.song,x.artist)?'<i class="fheart" aria-label="Liked">'+IC.heartfill+'</i>':'')+'</b>'+
-            '<span class="fmeta">'+vchip(x)+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span></button>'+
-          (x.url?'<button type="button" class="fplay" aria-label="Play '+esc(x.title||x.song)+'"'+
-            ' data-play="'+esc(findURL(x))+'" data-src="" data-title="'+esc(x.title||x.song)+'">'+IC.play+'</button>':'')+
+            '<span class="fmeta">'+vchip(x)+(x.fixed?'<span class="vchip fixd">Fixed</span>':'')+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span></button>'+
+          (x.url?fpHTML(x):'')+   // ROUND 5D: FINDS PLAY (below)
           '</div>';}).join('')+'</div>';});
     if(libFilter==='All'&&un.length&&!q&&!libMonth)
       html+='<div class="daylbl">Not matched yet</div><div class="flist">'+un.map(unRow).join('')+'</div>';
   } else html=un.length?'<div class="flist">'+un.map(unRow).join('')+'</div>':'';
-  if(!html) html='<div class="dashcard"><b>'+(q?'No finds match that':(libMonth?'Nothing from that month here':'Nothing here yet'))+'</b>'+
-    '<span>'+(q?'Try the reel you found it in, the creator, or "slowed".':'Songs you scan land here automatically.')+'</span></div>';
+  // ROUND 5D (GAPS-UI-R5-03): an empty filter says which finds it is waiting for, not "Nothing here yet"
+  var fw={Edits:'edits',Originals:'originals',Liked:'liked finds'}[libFilter]||'';
+  if(!html) html='<div class="dashcard"><b>'+(q?'No finds match that':(libMonth?(fw?'No '+fw+' from that month':'Nothing from that month here'):(fw?'No '+fw+' yet':'Nothing here yet')))+'</b>'+
+    '<span>'+(q?'Try the reel you found it in, the creator, or "slowed".':(LIB_EMPTY[libFilter]||'Songs you scan land here automatically.'))+'</span></div>';
   b.innerHTML=html;
   Array.prototype.forEach.call(b.querySelectorAll('.frow[data-i]'),function(row){
     var x=loadCrate()[+row.getAttribute('data-i')]; if(!x) return;
@@ -6247,7 +6422,11 @@ function renderLib(){
     // Through run(), so the flow is the same every time; a finished scan answers from cache.
     // ROUND 5B (A11Y-R4-01): the click bubbles up from the row's own button (Enter and Space click it natively), and
     // Play's never arrives: the delegated [data-play] handler stops it
-    row.onclick=function(){if(x.clip&&!x.listen){urlEl.value=x.clip; run(x.clip,{reopen:true});} else if(x.url) window.open(findURL(x),'_blank','noopener');};});   // REVIEWER RUNS 2 (LA-1): reopening a find is free
+    row.onclick=function(){if(x.clip&&!x.listen){urlEl.value=x.clip; run(x.clip,{reopen:true});} else if(x.url) window.open(findURL(x),'_blank','noopener');};   // REVIEWER RUNS 2 (LA-1): reopening a find is free
+    // ROUND 5D: the preview Play and the named link out answer for themselves, never as a tap on the row
+    var _pb=row.querySelector('.fplay[data-fpv]'), _fo=row.querySelector('.fout');
+    if(_pb) _pb.onclick=function(ev){ev.stopPropagation(); fpOpen(+row.getAttribute('data-i'));};
+    if(_fo) _fo.onclick=function(ev){ev.stopPropagation();};});
   Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
     // ROUND 5C (RETURNING-USER-R5-01): the row stays until the retry ends found and in Finds (unmatchedDone) or with no
@@ -6319,13 +6498,13 @@ function renderSearch(){
                                       :'<span class="conf possible">Possible</span>')+
               (x.src?srcChip(x.src):'')+
               (x.plays?'<span>'+plays(x.plays)+' plays</span>':'')+'</div></span>'+
-          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+(saved?'Added to Finds':'Add to Finds')+'">'+
+          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+esc(addLbl(x.title,saved))+'">'+
             (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>';   // APPLYALL 2026-09-29 (build 3): the "Soon" hum row is gone
     Array.prototype.forEach.call(body.querySelectorAll('.sadd'),function(b){
       b.onclick=function(){var x=sState.res[+b.getAttribute('data-i')]; if(!x||b.classList.contains('did')) return;
         saveOne({base_song:x.title,base_artist:x.artist,art:x.art||'',exact:{url:x.url},
                  speed:x.version||'',handle:'',listen:false,via:'search'});
-        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label','Added to Finds');};});   // POLISH 3 (LAWYER-05): Add, not Save
+        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label',addLbl(x.title,true));};});   // POLISH 3 (LAWYER-05): Add, not Save
     return;}
   var rec=sRecent();
   body.innerHTML='<div class="sect">Three ways to search</div>'+
@@ -6481,15 +6660,25 @@ function scanWatched(tok){return tok===scanTok&&!leftScan&&waveState==='scanning
 document.getElementById('form').addEventListener('submit',function(e){e.preventDefault(); onbQuiet=true; try{run(urlEl.value);}finally{onbQuiet=false;}});   // typed or pasted by hand: never a share
 urlEl.addEventListener('focus',function(){document.getElementById('form').classList.add('focus');});
 urlEl.addEventListener('blur',function(){document.getElementById('form').classList.remove('focus');});
+/* ROUND 5D (A11Y-A-R5-02): the typed "not a clip" message for the link in the box stays until the box is edited (it
+   is a 20-word instruction, and it used to go after 4.5 s), and the box points at it while it shows: aria-invalid, and
+   aria-describedby="err", so VoiceOver reads it with the box. Read here from the message and the box, so run() is
+   untouched. A shared page's message (GP-1, sticky by its caller) keeps its own rule: until the next tap. */
+function errField(on){var u=document.getElementById('url'); if(!u) return;
+  if(on){u.setAttribute('aria-invalid','true'); u.setAttribute('aria-describedby','err');}
+  else {u.removeAttribute('aria-invalid'); u.removeAttribute('aria-describedby');}}
 function showErr(m,opt){var e=document.getElementById('err'); opt=opt||{}; e.hidden=false; e.textContent=m;
-  clearTimeout(showErr._t); showErr.sticky=!!opt.sticky;
+  var bx=String((document.getElementById('url')||{}).value||'').trim(), fld=!opt.sticky&&!opt.btn&&!!bx&&m===notClipMsg(parseLink(bx));
+  clearTimeout(showErr._t); showErr.sticky=!!opt.sticky||fld; showErr.field=fld; errField(fld);
   if(opt.btn){var b=document.createElement('button'); b.type='button'; b.className='errbtn'; b.textContent=opt.btn[0]; b.onclick=opt.btn[1]; e.appendChild(b);}
-  if(!opt.sticky) showErr._t=setTimeout(function(){e.hidden=true;},4500);}
+  if(!showErr.sticky) showErr._t=setTimeout(function(){e.hidden=true; errField(false);},4500);}
 /* REVIEWER RUNS 2. CHAOS-2: a new scan and Back take an old message away (it outlived the scan that replaced
-   it). LIT-5: a sticky message stays until the next tap anywhere but on itself. */
-function errHide(){var e=document.getElementById('err'); if(e) e.hidden=true; clearTimeout(showErr._t); showErr.sticky=false;}
-document.addEventListener('pointerdown',function(ev){
-  if(showErr.sticky&&!(ev.target&&ev.target.closest&&ev.target.closest('#err'))) errHide();},true);
+   it). LIT-5: a sticky message stays until the next tap anywhere but on itself (ROUND 5D: or on the link box it is
+   about), and editing the box takes the box's own message away. */
+function errHide(){var e=document.getElementById('err'); if(e) e.hidden=true; clearTimeout(showErr._t); showErr.sticky=false; showErr.field=false; errField(false);}
+document.addEventListener('pointerdown',function(ev){var t=ev.target&&ev.target.closest?ev.target:null;
+  if(showErr.sticky&&!(t&&(t.closest('#err')||(showErr.field&&t.closest('#form'))))) errHide();},true);
+urlEl.addEventListener('input',function(){if(showErr.field) errHide();});
 /* SCAN LISTENS IMMEDIATELY. It used to read the clipboard first, so that a link sitting
    there would scan without the user pasting it. On iOS that backfires badly: Safari
    answers navigator.clipboard.readText() with its own native "Paste" confirmation button,

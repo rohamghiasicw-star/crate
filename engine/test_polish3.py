@@ -3,7 +3,7 @@ promise-ledger mock engine. No network, no live server: every outside request is
 
   P1  a 4xx with JSON from /base is a link problem (no Try again, no retry loop, not counted); a 5xx, an empty
       or non-JSON body stays "Couldn't reach Addify" with Try again; a 200 with no result still draws a card
-  P2  trending rows: the plus is its own button (nothing interactive nested), 44 pt, "Add to Finds", and it
+  P2  trending rows: the plus is its own button (nothing interactive nested), 44 pt, "Add <song> to Finds", and it
       adds the song to Finds; the row still opens the song
   P3  contrast from rendered pixels, both themes: SCANNING, "Tap x to cancel", the "audio" badge, "plays"
   P4  no save / download / playlist wording near songs, in rendered text and screen-reader labels
@@ -194,9 +194,10 @@ async def main(html, only):
                     rows = await pg.evaluate("(b)=>document.querySelectorAll(b+' .trow').length", box)
                     check("P2a-" + where, "Trending %s: %d rows, and no button, link or role=button sits inside another" % (where, rows), rows >= 3 and not bad, bad)
                     plus = await pg.evaluate("(b)=>[].map.call(document.querySelectorAll(b+' .trow .addp'),function(e){return {tag:e.tagName,type:e.type,label:e.getAttribute('aria-label'),title:e.getAttribute('title')};})", box)
-                    vo = await pg.locator(box).get_by_role("button", name="Add to Finds", exact=True).count()
-                    check("P2b-" + where, "Each plus is a real button labelled 'Add to Finds' (no save or playlist words), and the accessibility tree has one per row",
-                          plus and all(x["tag"] == "BUTTON" and x["type"] == "button" and x["label"] == "Add to Finds" and not WORDS.search((x["title"] or "") + (x["label"] or "")) for x in plus)
+                    # ROUND 5D (A11Y-A-R5-03): the name carries the row's song, "Add Trend Song 1 to Finds" (was "Add to Finds")
+                    vo = await pg.locator(box).get_by_role("button", name=re.compile(r"^Add Trend Song \d to Finds$")).count()
+                    check("P2b-" + where, "Each plus is a real button labelled 'Add <song> to Finds' (no save or playlist words), and the accessibility tree has one per row",
+                          plus and all(x["tag"] == "BUTTON" and x["type"] == "button" and x["label"] == "Add Trend Song %d to Finds" % (i + 1) and not WORDS.search((x["title"] or "") + (x["label"] or "")) for i, x in enumerate(plus))
                           and vo == rows, {"plus": plus[:2], "a11y_buttons": vo, "rows": rows})
                     h = await pg.evaluate(HIT, box + " .trow .addp")
                     check("P2c-" + where, "The plus has a 44 pt hit area", h.get("ok"), h)
@@ -208,14 +209,14 @@ async def main(html, only):
                 r = await pg.evaluate("()=>{var a=document.querySelector('#trendbody .trow .addp'); a.scrollIntoView({block:'center'}); var b=a.getBoundingClientRect(); return {x:b.left+b.width/2,y:b.top+b.height/2};}")
                 await pg.mouse.click(r["x"], r["y"]); await pg.wait_for_timeout(400)
                 after = await pg.evaluate("()=>{var a=document.querySelector('#trendbody .trow .addp'); return {label:a.getAttribute('aria-label'), did:a.classList.contains('did'), finds:loadCrate().map(function(x){return x.song;}), opened:window.__wopen.slice()};}")
-                check("P2e", "Tapping the plus adds the song to Finds, says 'Added to Finds' (the re-rendered row keeps the tick), and does not open the song",
-                      "Trend Song 1" in after["finds"] and after["did"] and after["label"] == "Added to Finds" and not after["opened"], after)
+                check("P2e", "Tapping the plus adds the song to Finds, says 'Added Trend Song 1 to Finds' (the re-rendered row keeps the tick), and does not open the song",
+                      "Trend Song 1" in after["finds"] and after["did"] and after["label"] == "Added Trend Song 1 to Finds" and not after["opened"], after)
                 kb = await pg.evaluate("()=>{var a=document.querySelectorAll('#trendbody .trow .addp')[3]; a.focus(); a.click(); var f=document.activeElement;"
                                        "return {focusLabel:f&&f.getAttribute('aria-label'), focusIsPlus:!!(f&&f.classList.contains('addp')), row:f&&f.closest('.trow')&&f.closest('.trow').getAttribute('data-i')};}")
                 await pg.evaluate("()=>nav('idle')"); await pg.wait_for_timeout(300)
                 home = await pg.evaluate("()=>[].map.call(document.querySelectorAll('#trendteaser .trow .addp'),function(a){return a.getAttribute('aria-label');})")
-                check("P2e2", "A plus pressed from the keyboard keeps focus on the (re-rendered) plus, now 'Added to Finds'; Home's teaser shows the added songs as added",
-                      kb["focusIsPlus"] and kb["focusLabel"] == "Added to Finds" and kb["row"] == "3" and home[:1] == ["Added to Finds"], {"kb": kb, "home": home})
+                check("P2e2", "A plus pressed from the keyboard keeps focus on the (re-rendered) plus, now 'Added Trend Song 4 to Finds'; Home's teaser shows the added songs as added",
+                      kb["focusIsPlus"] and kb["focusLabel"] == "Added Trend Song 4 to Finds" and kb["row"] == "3" and home[:1] == ["Added Trend Song 1 to Finds"], {"kb": kb, "home": home})
                 await pg.evaluate("()=>nav('trending')"); await pg.wait_for_timeout(300)
                 # a tap on the plus's grown edge (inside 44, outside the 28 pt circle) is still the plus
                 r2 = await pg.evaluate("()=>{var a=document.querySelectorAll('#trendbody .trow .addp')[1]; var b=a.getBoundingClientRect(); return {x:b.left-6,y:b.top+b.height/2};}")
@@ -310,7 +311,7 @@ async def main(html, only):
                 fb = await pg.evaluate("()=>(document.getElementById('fbnote')||{}).textContent||''"); await sweep("guess card, after yes")
                 check("P4b", "Home with no finds says 'Every match goes to your Finds.'; empty Finds says 'No finds yet'; month tiles are 'Your finds by month'",
                       "Every match goes to your Finds." in home and libsub == "No finds yet" and months == "Your finds by month", {"home": home, "libsub": libsub, "months": months})
-                check("P4c", "Search's plus reads 'Added to Finds' after a tap (was 'Saved to Finds')", sadd == "Added to Finds", sadd)
+                check("P4c", "Search's plus reads 'Added Song A to Finds' after a tap (was 'Saved to Finds'; ROUND 5D names the song)", sadd == "Added Song A to Finds", sadd)
                 check("P4d", "Clear finds asks 'Clear all your finds?'", pg.dialogs and pg.dialogs[-1] == "Clear all your finds?", pg.dialogs)
                 check("P4e", "A link no-match card says the link is in Finds under Unmatched, and it is; a listen no-match makes no such claim",
                       "It’s in your Finds under Unmatched." in nm and (CLIP % 5) in unm and "Unmatched" not in nml and "pending" not in nml, {"link": nm[-200:], "listen": nml[-200:], "unmatched": unm})

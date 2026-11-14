@@ -98,6 +98,12 @@ jobs:
           - id: soft-replay
             name: 'Soft replay (Chromium)'
             run: python -u engine/test_soft_replay.py --page engine/crate.html
+          - id: r5d-wk
+            name: 'Round 5d Finds, trending and links (WebKit)'
+            run: python -u engine/test_round5d.py
+          - id: r5d-cr
+            name: 'Round 5d Finds, trending and links (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5d.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
