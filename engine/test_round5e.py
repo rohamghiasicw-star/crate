@@ -99,7 +99,8 @@ SHEET = r"""()=>{var p=document.getElementById('player'), f=p&&p.querySelector('
   return {vis:!!p&&!p.hidden, frame:!!fr, src:fr?fr.getAttribute('src'):'', fail:f?f.querySelector('b').textContent:'',
     href:a?a.getAttribute('href'):null, openTxt:a?a.textContent:'', retry:r?r.textContent:'',
     hits:[a,r].filter(Boolean).map(function(x){return Math.round(x.getBoundingClientRect().height);}),
-    focus:ae?(ae.id||ae.tagName):null, body:(document.getElementById('playerbody')||{}).innerHTML||''};}"""
+    focus:ae?(ae.id||ae.tagName):null, body:(document.getElementById('playerbody')||{}).innerHTML||'',
+    outs:[].filter.call(p?p.querySelectorAll('a'):[],function(x){return /Open in app/.test(x.textContent)&&x.getBoundingClientRect().height>0;}).length};}"""
 
 
 class StreamOrigin:
@@ -223,10 +224,12 @@ async def main(html, yml, only):
             song:(r.querySelector('.rtitle')||{}).textContent||'', track:!!r.querySelector('.htrack'),
             sects:[].map.call(r.querySelectorAll('.sect'),function(x){return x.textContent;}),
             orig:/The original release/.test(r.innerText), closest:/The closest version we found/i.test(r.innerText),
+            dial:typeof hgS!=='undefined'&&!!hgS&&!hgS.fin,
             state:document.getElementById('app').getAttribute('data-state')};}"""
         def note_ok(z):
             return (z["ttl"] in ("Match found", "Song identified") and plain(z["note"]).startswith(NOCHECK) and z["notes"] == 1
-                    and z["btn"] == "Try again" and z["btnH"] >= 44 and z["song"] and not z["track"] and not z["orig"] and not z["closest"])
+                    and z["btn"] == "Try again" and z["btnH"] >= 44 and z["song"] and not z["track"] and not z["orig"] and not z["closest"]
+                    and not z["dial"])   # the tracker's dial goes with the tracker
         async def e29_fail(tag, c, routes, wait, what, rescan_ok=True):
             ctx, pg = await page(routes=routes)
             await go(pg, c); t0 = time.time()
@@ -594,15 +597,15 @@ async def main(html, yml, only):
             y = await pg.evaluate(SHEET); await pg.wait_for_timeout(12500)
             y2 = await pg.evaluate(SHEET)
             await close(ctx)
-            ok = (a["vis"] and a["frame"] and not a["fail"] and z["vis"] and plain(z["fail"]) == NOLOAD and not z["frame"]
+            ok = (a["vis"] and a["frame"] and not a["fail"] and a["outs"] == 1 and z["vis"] and plain(z["fail"]) == NOLOAD and not z["frame"] and z["outs"] == 1
                   and z["href"] == url and z["openTxt"] == "Open in app" and z["retry"] == "Try again" and len(z["hits"]) == 2 and all(h >= 44 for h in z["hits"])
-                  and y["vis"] and y["frame"] and not y["fail"] and y["focus"] == "plframe" and y2["frame"] and not y2["fail"] and not pg.errs)
+                  and y["vis"] and y["frame"] and not y["fail"] and y["outs"] == 1 and y["focus"] == "plframe" and y2["frame"] and not y2["fail"] and not pg.errs)
             return ok, {"at1s": a, "at13s": z, "after_try": y, "13s_later": y2, "errs": pg.errs}
         try:
             if want(34):
                 YTU = "https://www.youtube.com/watch?v=LedgerTest1"
                 (oky, ey), (oks, es) = await asyncio.gather(e34("youtube", YTU), e34("soundcloud", LG.SC_CROWN))
-                check("E34-youtube", "Offline, a row's YouTube player in the sheet: at 12 s \"Couldn't load the player.\" with Open in app (the same upload) and Try again (44 pt); with the network back Try again opens it, takes the focus, and it starts (left alone)", oky, ey)
+                check("E34-youtube", "Offline, a row's YouTube player in the sheet: at 12 s \"Couldn't load the player.\" with Open in app (the same upload, the sheet's only one) and Try again (44 pt); with the network back Try again opens it, takes the focus, and it starts (left alone)", oky, ey)
                 check("E34-soundcloud", "The same for a SoundCloud row in the sheet", oks, es)
                 # a sheet that starts, or that is closed before 12 s, is left alone
                 ctx, pg = await page(apis=True)

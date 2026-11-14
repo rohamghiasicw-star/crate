@@ -2865,6 +2865,7 @@ function huntLineOff(){Array.prototype.forEach.call(document.querySelectorAll('#
    card says so, with Try again: the same link scanned again (it was counted with the song, so it is free). */
 function huntFailNote(u){
   var r=document.getElementById('result'); if(!r) return;
+  hgS=null;   // ROUND 5E: the tracker is gone, so is its dial (a crown that still lands draws at once, see hgLand)
   if(r.querySelector('.vcheck')){ huntLineOff(); return; }   // ROUND 5E: one note, however many ways the check failed
   var at=r.querySelector('.htrack, .latehunt'), n=document.createElement('div');
   n.className='vcheck'; n.setAttribute('role','status');
@@ -7084,7 +7085,7 @@ function playHere(url, src, title){
   var _ib=document.getElementById('ipl'); if(_ib&&!_ib.hidden) ipClose();
   document.getElementById('playerttl').textContent=title||'Preview';
   document.getElementById('playersrc').innerHTML=src?srcChip(src):'';
-  document.getElementById('playerout').href=url;
+  var _po=document.getElementById('playerout'); _po.href=url; _po.hidden=false;   // ROUND 5E: plFail hides it
   // playsinline + allowfullscreen match the hero embed job 293 proved plays inside the app;
   // without them iOS WKWebView can throw a YouTube clip into the native/YouTube-app player,
   // which reads to the user as "it took me to YouTube".
@@ -7126,8 +7127,10 @@ function plWatch(url,src,title,isYT){
       w.bind(E.PLAY_PROGRESS,function(e){if(e&&e.currentPosition>0) go();});
     }catch(_){} });}
 function plFail(url,src,title){
-  var pb=document.getElementById('playerbody'), ae=document.activeElement, had=!!(pb&&ae&&pb.contains(ae));
+  var pb=document.getElementById('playerbody'), po=document.getElementById('playerout'), ae=document.activeElement,
+      had=!!(ae&&((pb&&pb.contains(ae))||ae===po));
   plOff(); if(!pb) return;
+  if(po) po.hidden=true;   // one Open in app on the sheet: the box's, beside Try again
   pb.innerHTML='<div class="plfail"><div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
     '<a class="ipfbtn" href="'+esc(url)+'" target="_blank" rel="noopener">Open in app</a>'+
     '<button type="button" class="ipfbtn" id="plretry">Try again</button></span></div></div>';
@@ -7177,8 +7180,7 @@ function ipRing(frac){
 }
 /* ROUND 5B (BAD-NETWORK-R4-5): A PLAYER THAT NEVER STARTS SAYS SO. The band opens showing Pause, and on a dead network
    the YouTube or SoundCloud embed (or the preview) never loads: Pause stayed up over an empty box and did nothing.
-   IP_START ms after Play, a band that still shows Pause with nothing started (the slot never got `playing`: no
-   YouTube PLAYING, no SoundCloud READY or PLAY, no audio `playing`) stops its player, shows Play, and says
+   IP_START ms after Play, a band with nothing started (no playback: see ROUND 5E below) stops its player, shows Play, and says
    "Couldn't load the player." with Open in app (the same upload or song in its own app) and Try again (opens it
    again). The round button and the cover button try again too, so nothing on the band is a dead control. */
 /* ROUND 5E (BAD-NETWORK-B-R5-03): ONLY PLAYBACK IS A START. SoundCloud's READY counted as one, and every YouTube state

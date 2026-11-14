@@ -68,7 +68,11 @@ def server_erase_check(server_py):
     class _CX:
         @staticmethod
         def fixq_erase(rid): return None
-    ns = {"os": os, "json": json, "FEEDBACK": fb, "CX": _CX}
+    import threading
+    ns = {"os": os, "json": json, "re": re, "threading": threading, "FEEDBACK": fb, "CX": _CX}
+    # ROUND 5E: erase_feedback now shares the feedback lock and the erased-id memory (_FB_*) with record_feedback
+    for line in re.findall(r"^_FB_[A-Z_, ]+=.*$", src, re.M):
+        exec(line, ns)
     exec(m.group(0), ns)
     a = ns["erase_feedback"]("fb-1"); b = ns["erase_feedback"]("fb-1"); c = ns["erase_feedback"]("never-sent")
     left = [json.loads(l)["id"] for l in open(fb) if l.strip()]
