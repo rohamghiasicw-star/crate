@@ -391,12 +391,18 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     setTimeout(function(){ bridges('bridges2'); }, 3000);   // again, after the directory has answered
     // Opens /privacy one way or another. When the Safari view has closed (the lab copy calls
     // labSafariClosed), says whether this same page is still here.
+    // The page is scrolled first (a tall page, scrolled 600 px), so the report can say whether
+    // closing the Safari view kept the scroll position.
+    if (__PRIVACY__) { var sp = document.createElement('div'); sp.style.height = '3000px'; document.body.appendChild(sp);
+      window.scrollTo(0, 600); }
     if (__PRIVACY__) setTimeout(function(){
+      r.scrolled = window.scrollY;
       if (__PRIVACY__ === 'anchor') { var a = document.createElement('a'); a.href = '/privacy'; a.target = '_blank';
         a.rel = 'noopener'; document.body.appendChild(a); a.click(); }
       else if (__PRIVACY__ === 'open') window.open('/privacy', '_blank');
       else location.href = '/privacy';
-      window.labSafariClosed = function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }; }, 1000);
+      window.labSafariClosed = function(){ send('back', {lid: lid, href: location.href, port: __PORT__,
+        scrolled: r.scrolled, scrollY: window.scrollY}); }; }, 1000);
     if (__EXPORT__) setTimeout(function(){
       var t0 = performance.now();
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
@@ -816,7 +822,7 @@ def lab_lines(dev, since, label):
                   "--predicate", 'eventMessage CONTAINS "ADDIFY-"', check=False, timeout=180)
     except subprocess.TimeoutExpired:
         out = ""
-    lines = [l.strip() for l in out.splitlines() if "ADDIFY-" in l and "eventMessage" not in l]
+    lines = [mask(l.strip()) for l in out.splitlines() if "ADDIFY-" in l and "eventMessage" not in l]
     for l in lines:
         print("      [%s] %s" % (label, l[l.index("ADDIFY-"):]))
     return lines
@@ -850,7 +856,14 @@ def appcheck_report(dev, scen, res):
 RESULTS = []
 
 
+def mask(text):
+    """The test server's name stays out of the job log and the saved results (this repo is public)."""
+    host = urlsplit(TESTBOX).hostname or ""
+    return text.replace(host, "<test server>") if host and isinstance(text, str) else text
+
+
 def check(dev, scen, name, ok, detail="", info=False):
+    detail = mask(detail)
     RESULTS.append({"device": dev.tag, "scenario": scen, "check": name, "ok": bool(ok),
                     "info": info, "detail": detail})
     tag = "PASS" if ok else ("WARN" if info else "FAIL")
@@ -1210,20 +1223,21 @@ def sharereload(dev, app, version):
 
 def shareretry(dev, app, version):
     """Build 30 (FIRST-LAUNCH-R4-01, reload already running). A share's page answers 502, and the
-    automatic reload that follows is still waiting for its answer (the stub holds it 8 s) when the
-    user leaves the app and comes back, which runs the same launch check as Try again (the directory
-    takes 7.5 s to answer it, inside the app's 8 s limit). That launch check must start over on the
-    share page. Before this fix the reload's page loaded during the lookup and took the link, and
-    the launch check then opened Home over it: the shared clip never scanned. The screenshot is
-    taken 19 s after the reload was asked for, by when either has had time to happen."""
-    sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 8.0}},
-          "B": {"health": False, "down": True}, "G": {"pick": "", "delay_ms": 7500}, "X": {}}
+    automatic reload that follows is still waiting for its answer (the stub holds it 6 s) when the
+    user leaves the app and comes back 1 s after it was asked for, which runs the same launch check
+    as Try again. Its directory lookup gets no answer, so it takes the app's whole 8 s limit, and
+    the held reload answers inside it. That launch check must start over on the share page. Before
+    this fix the reload's page loaded during the lookup and took the link, and the launch check then
+    opened Home over it: the shared clip never scanned. The screenshot is taken 19 s after the
+    reload was asked for, by when either has had time to happen."""
+    sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 6.0}},
+          "B": {"health": False, "down": True}, "G": {"pick": "", "delay_ms": 9000}, "X": {}}
     share = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share"
     second = nth(share, 2)
     res = scenario(dev, app, "shareretry", sr, timeout=90, want=("bridges",),
                    launch_env={"ADDIFY_LAB_OPEN": "addify://scan?url=" + quote(SHARE_LINK, safe="")},
                    actions=(("leave", second, 0.3, lambda d: d.to_background()),
-                            ("return", second, 1.3, lambda d: d.launch()),
+                            ("return", second, 1.0, lambda d: d.launch()),
                             ("settled", second, 19.0, lambda d: d.shot("shareretry-settled"))))
     timeline(res)
     pids = list(dev.pids)
@@ -1236,7 +1250,7 @@ def shareretry(dev, app, version):
     shown = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs]
     back_at = res["done"].get("return")
     check(dev, "shareretry", "the return came while the automatic reload was still waiting",
-          back_at is not None and len(reqs) >= 2 and reqs[1][0] <= back_at <= reqs[1][0] + 7.0,
+          back_at is not None and len(reqs) >= 2 and reqs[1][0] <= back_at <= reqs[1][0] + 5.0,
           "reload asked at %s s, back at %s s" % (reqs[1][0] if len(reqs) >= 2 else None, back_at))
     check(dev, "shareretry", "Home never loaded while the share waited", not [x for x in reqs if x[1].split("?")[0] == "/"],
           json.dumps(shown))
@@ -1314,6 +1328,8 @@ def privacy(dev, app, mode):
     same = load is not None and back is not None and back.get("lid") == load.get("lid") and back.get("href") == load.get("href")
     check(dev, label, "closing returns to the same page, not reloaded", same and len(pages) == 1 and lab_has(res, "ADDIFY-SAFARI closed"),
           "page %s then %s, %d page loads" % ((load or {}).get("lid"), (back or {}).get("lid"), len(pages)))
+    check(dev, label, "scroll position kept after closing", back is not None and back.get("scrolled") == 600
+          and back.get("scrollY") == 600, "scrolled to %s before, %s after" % ((back or {}).get("scrolled"), (back or {}).get("scrollY")))
     uncovered = lab_has(res, "ADDIFY-SAFARI closed covered=0 page=1")
     check(dev, label, "app page on screen after closing", uncovered and same, "%s, screenshot %s %s" % (
         [l for l in sv if "closed" in l], pixel_class(res["shots"].get("after", "")), res["shot_t"].get("after")))
