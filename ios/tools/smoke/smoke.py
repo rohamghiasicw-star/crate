@@ -1032,6 +1032,7 @@ def boot_icon(png):
 def kill_webcontent(dev):
     """Kills the booted simulator's WebKit page processes (SIGKILL), the way iOS ends a page under
     memory pressure. Only one simulator runs at a time here. What it killed goes into the checks."""
+    dev.kill_t = time.time()
     out = run("ps", "-axww", "-o", "pid=,command=", check=False)
     dev.killed, dev.kill_note = [], []
     for line in out.splitlines():
@@ -1117,9 +1118,13 @@ def killed_page(dev, app, version, result):
     label = "killresult" if result else "killscan"
     cfg = {"A": {"health_ms": 20, "share_slow_from": 2, "share_slow_ms": 5000, "result": result},
            "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
-    ready = nth(lambda e: e.get("kind") == ("result" if result else "bridges"), 1)
-    again = nth(lambda e: e.get("kind") == "bridges", 2)
-    dev.killed, dev.kill_note = [], []
+    # The share page's own report (with one address a Home load starts first and may report too),
+    # and the first page report after the kill.
+    on_share = lambda e: "/share?" in ((e.get("report") or {}).get("href") or "")
+    ready = nth(lambda e: e.get("kind") == ("result" if result else "bridges") and on_share(e), 1)
+    after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
+    again = nth(after_kill, 1)
+    dev.killed, dev.kill_note, dev.kill_t = [], [], None
     env = dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(SHARE_LINK, safe=""))
     res = scenario(dev, app, label, cfg, fresh=False, timeout=45, launch_env=env,
                    actions=(("kill", ready, 1.0, kill_webcontent),
@@ -1135,13 +1140,13 @@ def killed_page(dev, app, version, result):
     after = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs if killed_at is not None and t >= killed_at]
     check(dev, label, "the share page loaded before the kill",
           any(p.split("?")[0] == "/share" and link_in(p) == SHARE_LINK and st == 200 for _, p, st in before), json.dumps(before))
-    loads = [e for e in res["entries"] if e.get("kind") == "bridges"]
+    loads = [e for e in res["entries"] if after_kill(e)]
     if result:
         r = report(res, "result")
         check(dev, label, "the page posted its result before the kill", r is not None and not r.get("err"), json.dumps(r))
         check(dev, label, "the reload after the result opened Home, not the share page again",
               bool(after) and after[0][1] == "/" and not [x for x in after if x[1] == "/share"], json.dumps(after))
-        check(dev, label, "a page reported again after the reload", len(loads) >= 2, "%d page reports" % len(loads))
+        check(dev, label, "a page reported again after the reload", bool(loads), "%d page reports after the kill" % len(loads))
     else:
         check(dev, label, "the reload reopened the share page with the same link, not Home",
               bool(after) and after[0][1] == "/share" and after[0][2], json.dumps(after))
@@ -1150,7 +1155,7 @@ def killed_page(dev, app, version, result):
         k, icon = pixel_class(shot), boot_icon(shot)
         check(dev, label, "loading screen while the page reloads (not a blank view)", k == "boot" and icon >= 150,
               "%s, icon %d px, shot %s" % (k, icon, res["shot_t"].get("reloading")))
-        href = loads[1]["report"].get("href") if len(loads) >= 2 else None
+        href = loads[0]["report"].get("href") if loads else None
         check(dev, label, "the reloaded page carries the shared link", link_in(href) == SHARE_LINK, href or "no second page")
     k = pixel_class(res["shots"].get("settled", ""))
     check(dev, label, "page on screen after the reload", k == "page", k)
