@@ -4382,10 +4382,13 @@ function vfPick(d){
 function vfState(url){
   return {v:(lsGet('addify-verdicts','{}')||{})[url]||'', p:(lsGet('addify-vfpicks','{}')||{})[url]||''};}
 function vfPending(){var a=lsGet(VF_PEND,'[]'); return Array.isArray(a)?a:[];}
-/* ROUND 5D (GAPS-UI-R5-02): `shown` is the title the card put on top when the X was tapped (cardName: the crowned
-   upload, else the song), so the banner names what the user turned down, never a song name the card did not show. */
-function vfPendAdd(url,song,shown){
+/* ROUND 5D (GAPS-UI-R5-02): `shown` is the title the card put on top (cardName: the crowned upload, else the song),
+   read off the card that is up for this clip when the X is parked, so the banner names what the user turned down,
+   never a song name the card did not show. No card up for it (a park after a relaunch): the Find's own title, at the
+   banner (vfApplyFixes). */
+function vfPendAdd(url,song){
   if(!url) return;
+  var shown=''; try{if(url===curURL&&lastResult) shown=vfShown(lastResult);}catch(e){}
   var a=vfPending();
   for(var i=0;i<a.length;i++) if(a[i]&&a[i].url===url){
     var ch=false;
@@ -4461,7 +4464,7 @@ function vfAsk(row,d,url,rows,anim){
     var o={kind:'correction',url:url,verdict:c?'pick':'none',guess_song:d.base_song||'',
       guess_artist:d.base_artist||'',crown_title:(pk&&pk.title)||'',crown_url:(pk&&pk.url)||''};
     if(c){o.pick_title=c.title||''; o.pick_url=c.url||'';}
-    vfSend(row,o,function(){vfPendAdd(url,d.base_song||'',vfShown(d));});   // ROUND 5B: parked once the engine has it
+    vfSend(row,o,function(){vfPendAdd(url,d.base_song||'');});   // ROUND 5B: parked once the engine has it
     b.classList.add('sel');
     var had=box.contains(document.activeElement);
     [].forEach.call(box.querySelectorAll('button'),function(x){x.disabled=true;});
@@ -4481,7 +4484,7 @@ function vfWire(d){
   var url=curURL, pk=vfPick(d), st=vfState(url);
   if(st.v){                                      // already voted on this clip
     if(st.v==='wrong'){
-      vfPendAdd(url,d.base_song||'',vfShown(d));
+      vfPendAdd(url,d.base_song||'');
       if(!st.p){var rs0=vfRows(d); if(rs0.length) vfAsk(row,d,url,rs0,false);}}
     return;}
   var vote=function(v){
@@ -4497,7 +4500,7 @@ function vfWire(d){
     var rs=v==='wrong'?vfRows(d):[];
     if(rs.length) vfAsk(row,d,url,rs,true);
     // ROUND 5B (BAD-NETWORK-R4-4): the line thanks only once the engine has the vote (vfLine); an X parks the clip then
-    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'',vfShown(d));}:null);
+    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'');}:null);
     fkHand(had,document.getElementById('vfq'));};
   var y=document.getElementById('vfy'), n=document.getElementById('vfn');
   if(y) y.onclick=function(){vote('right');};
