@@ -38,9 +38,9 @@ final class EngineBridge: ObservableObject {
        to an address nobody checked yet and then replaced by the launch's own page load. */
     var holdShares = false
 
-    /* The shared link waiting for the page. Held until the page posts that scan's result, so a
-       failed load, Try again, a return to the app or a reload after WebKit killed the page reopens
-       the share (PendingShare). */
+    /* The shared link waiting for the page. Held until its scan is over (the page posted the
+       result, or left the scan), so a failed load, Try again, a return to the app or a reload
+       after WebKit killed the page reopens the share (PendingShare). */
     private var share = PendingShare()
     /* Set by the web view's coordinator: opens an engine page in the main frame the way every
        launch load does (EngineWebView open). */
