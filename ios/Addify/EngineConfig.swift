@@ -26,7 +26,7 @@ import Foundation
      3. defaultBaseURL
 
    BUILD 20 (rejections 2026-10-15 and 2026-10-30): App Review's network could not reach
-   161-35-185-80.sslip.io at all. The iPad sat on a blank screen for three minutes, then "Can't
+   the server's sslip.io name at all. The iPad sat on a blank screen for three minutes, then "Can't
    reach Addify", and the Support URL on the same name failed too. The default is now the real
    domain addify.app, the sslip.io name stays as a second address, and the app checks every
    address at launch (pickReachable) and loads the first one that answers, instead of betting

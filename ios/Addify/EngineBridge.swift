@@ -36,11 +36,15 @@ final class EngineBridge: ObservableObject {
     var holdShares = false
 
     /* The shared link waiting for the page. Held until an engine page has loaded with it, so a
-       failed load, Try again or a return to the app reopens the share (PendingShare). */
+       failed load, Try again or a return to the app reopens the share, however long it takes
+       (PendingShare). */
     private var share = PendingShare()
     /* Set by the web view's coordinator: opens an engine page in the main frame the way every
        launch load does (EngineWebView open). */
     var openPage: ((URL) -> Void)?
+    /* Set by the web view's coordinator: stops a main-frame load that is running and cancels the
+       automatic reloads still waiting (EngineWebView cancelReloads). */
+    var cancelReloads: (() -> Void)?
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
@@ -100,7 +104,7 @@ final class EngineBridge: ObservableObject {
        choosing the address (load() opens it then). On the error screen it starts a fresh launch
        check, which opens the share under the loading screen. */
     func flushPending() {
-        guard let link = share.current(), let wv = webView, !holdShares else { return }
+        guard let link = share.current, let wv = webView, !holdShares else { return }
         if unreachable {
             retry()
             return
@@ -112,7 +116,7 @@ final class EngineBridge: ObservableObject {
                 guard let self = self else { return }
                 if (value as? Bool) == true {
                     self.share.taken(link)
-                } else if self.share.current() == link {
+                } else if self.share.current == link {
                     self.loadShare()
                 }
             }
@@ -122,14 +126,14 @@ final class EngineBridge: ObservableObject {
     }
 
     private func loadShare() {
-        guard let open = openPage, share.current() != nil else { return }
+        guard let open = openPage, share.current != nil else { return }
         open(share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL))
     }
 
-    /* The page a launch check opens: the held share's page, else the engine's home. A new launch
-       counts against the share's launch limit (PendingShare.maxLaunches). */
-    func launchURL(newLaunch: Bool) -> URL {
-        if newLaunch { share.newLaunch() }
+    /* The page a launch check opens: the held share's page, else the engine's home. A reload after
+       WebKit killed the page counts against the share's limit (PendingShare.maxCrashReloads). */
+    func launchURL(afterCrash: Bool) -> URL {
+        if afterCrash { share.crashReload() }
         return share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL)
     }
 
@@ -173,8 +177,21 @@ final class EngineBridge: ObservableObject {
         booting = true
         /* A share that arrives during the lookup waits for the launch check, which opens it. */
         holdShares = true
+        /* BUILD 30: Try again and a return to the app start over here. An automatic reload still
+           loading, or one whose timer fires during the lookup, would otherwise load the share page
+           now, which releases the link, and the launch check below would then open Home over the
+           scan it had just started. */
+        cancelReloads?()
         Task { @MainActor in
             await EngineConfig.resolveFromDirectory()
+            /* Nothing loads during the lookup any more. Should a page be up anyway, it stays, and a
+               share that waited is handed to it. */
+            if pageReady {
+                booting = false
+                holdShares = false
+                flushPending()
+                return
+            }
             retry()
         }
     }

@@ -35,7 +35,9 @@ func stub(_ rules: [String: (ms: UInt64, ok: Bool)]) -> @Sendable (URL) async ->
 }
 
 let A = URL(string: "https://addify.app")!
-let S = URL(string: "https://161-35-185-80.sslip.io")!
+// A second address for the launch-check tests, and a name that is not compiled in. A documentation
+// address (RFC 5737), never a real server.
+let S = URL(string: "https://203-0-113-7.sslip.io")!
 
 @main struct HostTests {
     static func main() async {
@@ -66,15 +68,16 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(SharedInbox.drain(), nil, "stale inbox (1h) is dropped")
 
         // the allowlist: compiled-in origins only (scheme, host and port)
+        eq(EngineConfig.knownBaseURLs, ["https://addify.app"], "build 29: addify.app is the only compiled-in address")
         eq(EngineConfig.isTrusted(A), true, "trusted: addify.app")
-        eq(EngineConfig.isTrusted(S), false, "build 29: the old sslip.io name is no longer trusted")
+        eq(EngineConfig.isTrusted(S), false, "build 29: an sslip.io name is not trusted")
         eq(EngineConfig.isTrusted(URL(string: "https://ADDIFY.app:443/share?url=x")), true, "trusted: case, default port, path")
         eq(EngineConfig.isTrusted(scheme: "https", host: "addify.app", port: 0), true, "trusted: security origin with port 0")
         eq(EngineConfig.isTrusted(URL(string: "http://addify.app")), false, "untrusted: http scheme")
         eq(EngineConfig.isTrusted(URL(string: "https://addify.app:8443")), false, "untrusted: other port")
         eq(EngineConfig.isTrusted(URL(string: "https://addify.app.evil.example")), false, "untrusted: suffix trick")
         eq(EngineConfig.isTrusted(URL(string: "https://www.addify.app")), false, "untrusted: subdomain")
-        eq(EngineConfig.isTrusted(URL(string: "https://165-22-231-221.sslip.io")), false, "untrusted: host not compiled in")
+        eq(EngineConfig.isTrusted(URL(string: "https://198-51-100-9.sslip.io")), false, "untrusted: host not compiled in")
         eq(EngineConfig.isTrusted(URL(string: "about:blank")), false, "untrusted: about:blank")
 
         // the toast label: the page's exact.label when usable, else "Closest version"
@@ -97,7 +100,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/")), true, "app page: /")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/?code=abc&state=xyz")), true, "app page: Spotify return")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/share?url=https%3A%2F%2Fvt.tiktok.com%2FZS4a5JyXE%2F")), true, "app page: share landing")
-        eq(EngineConfig.isAppPage(URL(string: "https://161-35-185-80.sslip.io/index.html")), false, "build 29: a page on the old sslip.io name is not the app page")
+        eq(EngineConfig.isAppPage(URL(string: "https://203-0-113-7.sslip.io/index.html")), false, "build 29: a page on an sslip.io name is not the app page")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/crate.html")), true, "app page: crate.html")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/privacy")), false, "not app page: /privacy")
         eq(EngineConfig.isAppPage(URL(string: "https://addify.app/support.html")), false, "not app page: /support.html")
@@ -108,7 +111,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isTrusted(nil), false, "untrusted: nil")
 
         // the directory can only pick a compiled-in address
-        eq(EngineConfig.directoryChoice(gist("https://161-35-185-80.sslip.io")), nil, "build 29: a directory naming the old sslip.io name is ignored")
+        eq(EngineConfig.directoryChoice(gist("https://203-0-113-7.sslip.io")), nil, "build 29: a directory naming an sslip.io name is ignored")
         eq(EngineConfig.directoryChoice(gist("https://addify.app")), "https://addify.app", "gist: addify.app picked")
         eq(EngineConfig.directoryChoice(gist("addify.app/")), "https://addify.app", "gist: bare known host normalised")
         eq(EngineConfig.directoryChoice(gist("https://addify.app/some/path")), "https://addify.app", "gist: compiled spelling returned")
@@ -120,13 +123,13 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         // stored values outside the allowlist are ignored
         AppGroup.defaults.set("https://old-name.trycloudflare.com", forKey: EngineConfig.resolvedKey)
         eq(EngineConfig.baseURLString, EngineConfig.defaultBaseURL, "stale resolved tunnel ignored")
-        AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.resolvedKey)
+        AppGroup.defaults.set("https://203-0-113-7.sslip.io", forKey: EngineConfig.resolvedKey)
         eq(EngineConfig.baseURLString, "https://addify.app", "build 29: a stored sslip.io address is ignored, addify.app used")
         resetEngineKeys()
 
         // launch-check order: the directory's pick first (only if compiled in), then the list
         eq(EngineConfig.candidateURLs().map(\.absoluteString), EngineConfig.knownBaseURLs, "order: compiled list")
-        AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.directoryKey)
+        AppGroup.defaults.set("https://203-0-113-7.sslip.io", forKey: EngineConfig.directoryKey)
         eq(EngineConfig.candidateURLs().map(\.absoluteString), ["https://addify.app"], "build 29: addify.app is the only candidate, whatever the directory stored")
         AppGroup.defaults.set("https://evil.example", forKey: EngineConfig.directoryKey)
         eq(EngineConfig.candidateURLs().map(\.absoluteString), EngineConfig.knownBaseURLs, "order: stored unknown pick ignored")
@@ -153,31 +156,31 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
             let w = await EngineConfig.bestAnswer(list, preferWindow: window, check: stub(rules))
             return (w, Date().timeIntervalSince(t0))
         }
-        var (w, t) = await timed([A, S], 0.75, ["addify.app": (300, true), "161-35-185-80.sslip.io": (50, true)])
+        var (w, t) = await timed([A, S], 0.75, ["addify.app": (300, true), "203-0-113-7.sslip.io": (50, true)])
         eq(w, A, "select: preferred answer inside the window wins over a faster one")
-        (w, t) = await timed([A, S], 0.75, ["addify.app": (100, false), "161-35-185-80.sslip.io": (50, true)])
+        (w, t) = await timed([A, S], 0.75, ["addify.app": (100, false), "203-0-113-7.sslip.io": (50, true)])
         eq(w, S, "select: next one wins once the preferred one failed")
         eq(t < 0.5, true, "select: no full window wait after the preferred one failed (\(String(format: "%.2f", t)) s)")
-        (w, t) = await timed([A, S], 0.3, ["addify.app": (3000, true), "161-35-185-80.sslip.io": (50, true)])
+        (w, t) = await timed([A, S], 0.3, ["addify.app": (3000, true), "203-0-113-7.sslip.io": (50, true)])
         eq(w, S, "select: a slow preferred answer is not waited for past the window")
         eq(t < 1.0, true, "select: wait bounded by the window (\(String(format: "%.2f", t)) s)")
-        (w, t) = await timed([A, S], 0.75, ["addify.app": (50, true), "161-35-185-80.sslip.io": (3000, true)])
+        (w, t) = await timed([A, S], 0.75, ["addify.app": (50, true), "203-0-113-7.sslip.io": (3000, true)])
         eq(w, A, "select: best-ranked answer decides at once")
         eq(t < 0.5, true, "select: no wait when the best-ranked answers first (\(String(format: "%.2f", t)) s)")
-        (w, _) = await timed([A, S], 0.75, ["addify.app": (30, false), "161-35-185-80.sslip.io": (60, false)])
+        (w, _) = await timed([A, S], 0.75, ["addify.app": (30, false), "203-0-113-7.sslip.io": (60, false)])
         eq(w, nil, "select: nothing answered")
 
         // pickReachable writes the winner, and only a compiled-in one
-        w = await EngineConfig.pickReachable(check: stub(["addify.app": (200, true), "161-35-185-80.sslip.io": (20, true)]))
+        w = await EngineConfig.pickReachable(check: stub(["addify.app": (200, true), "203-0-113-7.sslip.io": (20, true)]))
         eq(w, A, "pick: fresh install prefers addify.app when both answer")
         eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), "https://addify.app", "pick: winner stored")
-        AppGroup.defaults.set("https://161-35-185-80.sslip.io", forKey: EngineConfig.directoryKey)
-        w = await EngineConfig.pickReachable(check: stub(["addify.app": (20, true), "161-35-185-80.sslip.io": (200, true)]))
+        AppGroup.defaults.set("https://203-0-113-7.sslip.io", forKey: EngineConfig.directoryKey)
+        w = await EngineConfig.pickReachable(check: stub(["addify.app": (20, true), "203-0-113-7.sslip.io": (200, true)]))
         eq(w, A, "build 29: a stored sslip.io directory pick never wins; addify.app does")
-        w = await EngineConfig.pickReachable(excluding: "161-35-185-80.sslip.io", check: stub(["addify.app": (20, true), "161-35-185-80.sslip.io": (10, true)]))
+        w = await EngineConfig.pickReachable(excluding: "203-0-113-7.sslip.io", check: stub(["addify.app": (20, true), "203-0-113-7.sslip.io": (10, true)]))
         eq(w, A, "pick: excluded host skipped")
         resetEngineKeys()
-        w = await EngineConfig.pickReachable(check: stub(["addify.app": (20, false), "161-35-185-80.sslip.io": (20, false)]))
+        w = await EngineConfig.pickReachable(check: stub(["addify.app": (20, false), "203-0-113-7.sslip.io": (20, false)]))
         eq(w, nil, "pick: nothing answered")
         eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), nil, "pick: nothing stored when nothing answered")
         resetEngineKeys()
@@ -200,53 +203,59 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.isAppPage(EngineConfig.shareURL(for: L1, base: A)), true, "share page: is the app page")
 
         // how long a share is held: until a page loads with it, never forever
-        let t0 = Date()
         let share1 = EngineConfig.shareURL(for: L1, base: A)!
         let share2 = EngineConfig.shareURL(for: L2, base: A)!
         let F = URL(string: "https://addify.app/?code=x")!
         var ps = PendingShare()
-        eq(ps.target(base: A, fallback: A, now: t0), A, "held: nothing held opens Home")
+        eq(ps.target(base: A, fallback: A), A, "held: nothing held opens Home")
         eq(ps.pageLoaded(), false, "held: a page load with nothing held takes nothing")
-        ps.hold(L1, now: t0)
+        ps.hold(L1)
         eq(ps.pageLoaded(), false, "held: a page that loaded before the share page opened does not take it")
-        eq(ps.current(now: t0), L1, "held: still held, so it is handed to that page")
-        ps.newLaunch(now: t0)
-        eq(ps.target(base: A, fallback: A, now: t0), share1, "held: the launch opens the share page")
+        eq(ps.current, L1, "held: still held, so it is handed to that page")
+        eq(ps.target(base: A, fallback: A), share1, "held: the launch opens the share page")
         eq(ps.opened, true, "held: marked opened")
-        eq(ps.current(now: t0 + 1), L1, "held: a failed load keeps it (nothing released it)")
-        eq(ps.target(base: A, fallback: F, now: t0 + 2), share1, "held: an automatic reload opens the share page, not the page that failed")
-        ps.newLaunch(now: t0 + 30)
-        eq(ps.target(base: A, fallback: A, now: t0 + 30), share1, "held: Try again or a return to the app opens the share page, not Home")
+        eq(ps.current, L1, "held: a failed load keeps it (nothing released it)")
+        eq(ps.target(base: A, fallback: F), share1, "held: an automatic reload opens the share page, not the page that failed")
+        eq(ps.target(base: A, fallback: A), share1, "held: Try again or a return to the app opens the share page, not Home")
         eq(ps.pageLoaded(), true, "held: the page that loads after the share page opened has it")
-        eq(ps.current(now: t0 + 31), nil, "held: released once a page loaded")
-        eq(ps.target(base: A, fallback: A, now: t0 + 31), A, "held: the next launch opens Home")
+        eq(ps.current, nil, "held: released once a page loaded")
+        eq(ps.target(base: A, fallback: A), A, "held: the next launch opens Home")
         eq(ps.pageLoaded(), false, "held: a later page load takes nothing")
-        ps.hold(L1, now: t0)
+        ps.hold(L1)
         ps.taken("https://vt.tiktok.com/other/")
-        eq(ps.current(now: t0), L1, "held: the page taking another link leaves it")
+        eq(ps.current, L1, "held: the page taking another link leaves it")
         ps.taken(L1)
-        eq(ps.current(now: t0), nil, "held: the page taking it releases it")
-        ps.hold(L1, now: t0)
-        _ = ps.target(base: A, fallback: A, now: t0)
-        ps.hold(L2, now: t0 + 1)
+        eq(ps.current, nil, "held: the page taking it releases it")
+        ps.hold(L1)
+        _ = ps.target(base: A, fallback: A)
+        ps.hold(L2)
         eq(ps.opened, false, "held: a newer share starts unopened")
-        eq(ps.target(base: A, fallback: A, now: t0 + 1), share2, "held: a newer share replaces the older one")
-        ps.hold(L1, now: t0)
-        eq(ps.current(now: t0 + PendingShare.maxAge - 1), L1, "held: kept inside the inbox's age limit")
-        eq(ps.current(now: t0 + PendingShare.maxAge + 1), nil, "held: dropped past the inbox's age limit")
-        eq(ps.target(base: A, fallback: A, now: t0 + PendingShare.maxAge + 1), A, "held: a stale share opens Home")
-        ps.hold(L1, now: t0)
-        for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
-        eq(ps.current(now: t0 + 10), L1, "held: kept through \(PendingShare.maxLaunches) launch checks")
-        ps.newLaunch(now: t0 + 11)
-        eq(ps.current(now: t0 + 11), nil, "held: dropped at the next launch check, so it never keeps the app off Home")
-        eq(ps.target(base: A, fallback: A, now: t0 + 11), A, "held: that launch opens Home")
-        ps.hold(L1, now: t0)
-        for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
-        ps.hold(L2, now: t0 + 20)
-        ps.newLaunch(now: t0 + 21)
-        eq(ps.current(now: t0 + 21), L2, "held: a new share starts its own launch count")
-        eq(PendingShare.maxAge, SharedInbox.maxAge, "held: same age limit as the share inbox")
+        eq(ps.target(base: A, fallback: A), share2, "held: a newer share replaces the older one")
+        // Offline for a long time, Try again tapped many times: still held, the scan still runs
+        // when a page loads. Only a reload that repeats on its own (after WebKit killed the page)
+        // has a limit.
+        ps.hold(L1)
+        var every = true
+        for _ in 1...20 { every = every && ps.target(base: A, fallback: A) == share1 }
+        eq(every, true, "held: 20 launch checks with no page (Try again, returns to the app) all open the share page")
+        eq(ps.current, L1, "held: kept through those 20 launch checks")
+        for _ in 1...PendingShare.maxCrashReloads { ps.crashReload() }
+        eq(ps.current, L1, "held: kept through \(PendingShare.maxCrashReloads) reloads after WebKit killed the page")
+        ps.crashReload()
+        eq(ps.current, nil, "held: dropped at the next one, so a page that kills WebKit every time never keeps the app off Home")
+        eq(ps.target(base: A, fallback: A), A, "held: that reload opens Home")
+        ps.hold(L1)
+        for _ in 1...PendingShare.maxCrashReloads { ps.crashReload() }
+        ps.hold(L2)
+        ps.crashReload()
+        eq(ps.current, L2, "held: a new share starts its own count")
+        ps.crashReload()
+        eq(ps.current, L2, "held: crash reloads with nothing held count nothing")
+        ps.clear()
+        ps.crashReload()
+        ps.hold(L1)
+        for _ in 1...PendingShare.maxCrashReloads { ps.crashReload() }
+        eq(ps.current, L1, "held: a reload with nothing held did not count against the next share")
 
         // pages that open in a Safari view over the app, and pages that do not
         for path in ["/privacy", "/support", "/terms", "/privacy.html", "/support.html", "/terms.html"] {

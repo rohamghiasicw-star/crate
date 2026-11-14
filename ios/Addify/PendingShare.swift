@@ -13,50 +13,49 @@ import Foundation
    (opened), the next engine page that finishes loading is that page and takes the link. The only
    other main-frame loads in between are this app's own retries, which open the share page too.
 
-   A held link still ends, so it can never keep the app away from Home:
+   A held link ends only when it is done with or replaced:
    - when an engine page loads after its share page was opened (pageLoaded),
    - when the running page takes it directly (run(link) answered true: taken),
    - when a newer share replaces it,
-   - after maxAge, the share inbox's own staleness rule,
-   - after maxLaunches launch checks (launch, Try again, return to the app, or a reload after
-     WebKit killed the page) that never loaded a page. Automatic reloads inside one launch check
-     are already capped (EngineWebView).
+   - after maxCrashReloads reloads that followed WebKit killing the page. That is the one reload
+     that repeats with nobody asking (a share page that kills WebKit every time would otherwise
+     reload forever), so it is the one with a limit. Automatic reloads after a failed load are
+     already capped per launch check (EngineWebView).
+   It is not dropped for time, or for the launch checks Try again and a return to the app run: a
+   user who is offline for an hour, or taps Try again ten times, still gets the scan when a page
+   loads (the first build 30 limits, 10 minutes and 5 launch checks, dropped it with no word and
+   the app then opened Home, the same loss as before). Those launch checks only run when the
+   user asks, so they can't keep the app away from Home on their own.
    Foundation only: the host tests run it on a Mac. */
 struct PendingShare {
-    static let maxAge: TimeInterval = SharedInbox.maxAge
-    static let maxLaunches = 5
+    static let maxCrashReloads = 5
 
     private(set) var link: String?
     /* True once a load of this link's share page started. */
     private(set) var opened = false
-    private(set) var launches = 0
-    private var since = Date.distantPast
+    private(set) var crashReloads = 0
 
     /* A new share. It replaces any older one, which has not scanned and now never will. */
-    mutating func hold(_ link: String, now: Date = Date()) {
+    mutating func hold(_ link: String) {
         self.link = link
-        since = now
-        launches = 0
+        crashReloads = 0
         opened = false
     }
 
-    /* The held link, or nil. One older than maxAge is dropped here. */
-    mutating func current(now: Date = Date()) -> String? {
-        if link != nil, now.timeIntervalSince(since) > Self.maxAge { clear() }
-        return link
-    }
+    /* The held link, or nil. */
+    var current: String? { link }
 
-    /* A launch check (or a reload after WebKit killed the page) is about to load a page. Past
-       maxLaunches the link is dropped and the launch opens Home. */
-    mutating func newLaunch(now: Date = Date()) {
-        guard current(now: now) != nil else { return }
-        launches += 1
-        if launches > Self.maxLaunches { clear() }
+    /* WebKit killed the page and the app is about to load it again. Past maxCrashReloads the link
+       is dropped and that reload opens Home. */
+    mutating func crashReload() {
+        guard link != nil else { return }
+        crashReloads += 1
+        if crashReloads > Self.maxCrashReloads { clear() }
     }
 
     /* The page a load should open: the held link's share page on `base`, else `fallback`. */
-    mutating func target(base: URL, fallback: URL, now: Date = Date()) -> URL {
-        guard let l = current(now: now) else { return fallback }
+    mutating func target(base: URL, fallback: URL) -> URL {
+        guard let l = link else { return fallback }
         guard let u = EngineConfig.shareURL(for: l, base: base) else {
             clear()
             return fallback
@@ -82,6 +81,6 @@ struct PendingShare {
     mutating func clear() {
         link = nil
         opened = false
-        launches = 0
+        crashReloads = 0
     }
 }
