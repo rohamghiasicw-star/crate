@@ -723,10 +723,12 @@ def run_stub_suite(dev, app, version, ipad=False):
 
         down = {"A": {"health_ms": 20, "fail_first": 2}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         first502 = lambda e: e["role"] == "A" and e["status"] == 502
-        # "late": diagnosis only, whether a page that is not on screen at the end paints later.
+        reported = lambda e: e.get("kind") == "bridges"
+        # "recovered" is where the end-of-scenario shot used to land (0.5 s after the page reported).
+        # "late": diagnosis only, whether a page that is not on screen then paints later.
         res = scenario(dev, app, "server5xx", down, timeout=45,
                        after=(("error0", first502, 0.6), ("error", first502, 1.2), ("error2", first502, 2.4),
-                              ("late", lambda e: e.get("kind") == "bridges", 5.0)))
+                              ("recovered", reported, 0.5), ("late", reported, 5.0)))
         r = common(dev, "server5xx", res, version)
         reqs = page_requests(res, "A")
         check(dev, "server5xx", "502, 502, then the page", [s for _, s in reqs][:3] == [502, 502, 200], json.dumps(reqs))
@@ -737,8 +739,8 @@ def run_stub_suite(dev, app, version, ipad=False):
                   "gaps %.1f s and %.1f s" % (g1, g2))
         ok, detail = outage_screen(res, ("error0", "error", "error2"), reqs[2][0] if len(reqs) >= 3 else None)
         check(dev, "server5xx", "error screen with Try again during the outage (not blank)", ok, detail)
-        check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"]["final"]) == "page",
-              pixel_class(res["shots"]["final"]))
+        check(dev, "server5xx", "page on screen after recovery", pixel_class(res["shots"].get("recovered", "")) == "page",
+              "%s, shot %s" % (pixel_class(res["shots"].get("recovered", "")), res["shot_t"].get("recovered")))
         check(dev, "server5xx", "page on screen 5 s after the page reported", pixel_class(res["shots"].get("late", "")) == "page",
               "%s, %s" % (pixel_class(res["shots"].get("late", "")), [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-PAGE" in l]),
               info=True)
@@ -749,7 +751,6 @@ def run_stub_suite(dev, app, version, ipad=False):
         c4 = {"A": {"health_ms": 20, "fail_first": 2, "fail_code": 404, "fail_body": "404 page not found"},
               "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
         first404 = lambda e: e["role"] == "A" and e["status"] == 404
-        reported = lambda e: e.get("kind") == "bridges"
         res = scenario(dev, app, "server4xx", c4, timeout=45,
                        after=(("error0", first404, 0.6), ("error", first404, 1.2), ("error2", first404, 2.4),
                               ("early", reported, 0.5), ("settled", reported, 2.0)))
