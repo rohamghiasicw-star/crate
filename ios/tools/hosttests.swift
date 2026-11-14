@@ -3,9 +3,9 @@
 // Xcode: validate.sh compiles them with the macOS toolchain twice, once as a Release build and once
 // with -D DEBUG. They prove the link regex, host filter, inbox once-only/staleness, URL
 // normalisation, the compiled-in allowlist, the app-page paths, the directory filter, the
-// launch-check order and its selection rule (with stubbed timings), the toast label's fallback,
-// the share page address, how long a share is held (PendingShare) and which pages open in a
-// Safari view.
+// launch-check order and its selection rule (with stubbed timings), what a launch and Try again
+// wait for before their page load, the toast label's fallback, the share page address, how long a
+// share is held (PendingShare) and which pages open in a Safari view.
 import Foundation
 
 var failures = 0
@@ -182,6 +182,54 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), nil, "pick: nothing stored when nothing answered")
         resetEngineKeys()
 
+        // NATIVE-B-R5-01 and NATIVE-B-R5-03: with one compiled-in address a launch and Try again
+        // start their page load at once and ask nothing first (the checks could not change it)
+        final class Counter: @unchecked Sendable { var n = 0 }
+        eq(EngineConfig.knownBaseURLs.count, 1, "fixed: one compiled-in address")
+        eq(EngineConfig.addressIsFixed, true, "fixed: one candidate, so no check can change what loads")
+        AppGroup.defaults.set("https://addify.app", forKey: EngineConfig.directoryKey)
+        eq(EngineConfig.addressIsFixed, true, "fixed: a stored directory pick adds no candidate")
+        resetEngineKeys()
+        let healthAsked = Counter()
+        var order: [String] = []
+        let launchT0 = Date()
+        EngineConfig.beginLaunch(check: { _ in
+            healthAsked.n += 1
+            try? await Task.sleep(nanoseconds: 10_000_000_000)     // a /health that stalls 10 s
+            return true
+        }) { order.append("load") }
+        order.append("returned")
+        let launchT = Date().timeIntervalSince(launchT0)
+        eq(order, ["load", "returned"], "launch: the page load starts before beginLaunch returns")
+        eq(launchT < 0.05, true, "launch: page load at once while /health stalls (\(String(format: "%.3f", launchT)) s, was 14 s)")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        eq(healthAsked.n, 0, "launch: no health check asked before or after the load")
+        eq(AppGroup.defaults.string(forKey: EngineConfig.resolvedKey), nil, "launch: no address written")
+        eq(order, ["load", "returned"], "launch: one page load, nothing after it")
+        let directoryAsked = Counter()
+        order = []
+        let retryT0 = Date()
+        EngineConfig.beginRetry(lookup: {
+            directoryAsked.n += 1
+            try? await Task.sleep(nanoseconds: 10_000_000_000)     // GitHub hangs
+        }) { order.append("retry") }
+        order.append("returned")
+        let retryT = Date().timeIntervalSince(retryT0)
+        eq(order, ["retry", "returned"], "retry: the reload starts before beginRetry returns")
+        eq(retryT < 0.05, true, "retry: reload at once while the directory hangs (\(String(format: "%.3f", retryT)) s, was up to 8 s)")
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        eq(directoryAsked.n, 0, "retry: the directory is not asked")
+        eq(order, ["retry", "returned"], "retry: one reload, nothing after it")
+        #if DEBUG
+        EngineConfig.setBaseURL("https://x.example.com/")
+        eq(EngineConfig.addressIsFixed, true, "debug: a typed address is fixed too")
+        order = []
+        EngineConfig.beginLaunch(check: { _ in healthAsked.n += 1; return true }) { order.append("load") }
+        eq(order, ["load"], "debug: a typed address loads at once")
+        EngineConfig.setBaseURL("")
+        #endif
+        resetEngineKeys()
+
         // the share page: <engine>/share?url=<link>, read back exactly the way the page reads it
         /* URLSearchParams: '+' is a space, then percent-decoding. */
         func pageReads(_ u: URL?) -> String? {
@@ -199,7 +247,7 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         eq(EngineConfig.shareURL(for: L2, base: A)?.query?.contains("+"), false, "share page: no bare '+' in the query")
         eq(EngineConfig.isAppPage(EngineConfig.shareURL(for: L1, base: A)), true, "share page: is the app page")
 
-        // how long a share is held: until a page loads with it, never forever
+        // how long a share is held: until the page posts its result, never forever
         let t0 = Date()
         let share1 = EngineConfig.shareURL(for: L1, base: A)!
         let share2 = EngineConfig.shareURL(for: L2, base: A)!
@@ -207,40 +255,91 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         var ps = PendingShare()
         eq(ps.target(base: A, fallback: A, now: t0), A, "held: nothing held opens Home")
         eq(ps.pageLoaded(), false, "held: a page load with nothing held takes nothing")
+        ps.resultPosted()
+        eq(ps.current(now: t0), nil, "held: a result with nothing held changes nothing")
         ps.hold(L1, now: t0)
+        eq(ps.waiting(now: t0), L1, "held: a new share waits for a page")
         eq(ps.pageLoaded(), false, "held: a page that loaded before the share page opened does not take it")
         eq(ps.current(now: t0), L1, "held: still held, so it is handed to that page")
         ps.newLaunch(now: t0)
         eq(ps.target(base: A, fallback: A, now: t0), share1, "held: the launch opens the share page")
         eq(ps.opened, true, "held: marked opened")
         eq(ps.current(now: t0 + 1), L1, "held: a failed load keeps it (nothing released it)")
-        eq(ps.target(base: A, fallback: F, now: t0 + 2), share1, "held: an automatic reload opens the share page, not the page that failed")
+        eq(ps.retryTarget(base: A, fallback: F, now: t0 + 2), share1, "held: an automatic reload opens the share page, not the page that failed")
         ps.newLaunch(now: t0 + 30)
         eq(ps.target(base: A, fallback: A, now: t0 + 30), share1, "held: Try again or a return to the app opens the share page, not Home")
         eq(ps.pageLoaded(), true, "held: the page that loads after the share page opened has it")
-        eq(ps.current(now: t0 + 31), nil, "held: released once a page loaded")
-        eq(ps.target(base: A, fallback: A, now: t0 + 31), A, "held: the next launch opens Home")
-        eq(ps.pageLoaded(), false, "held: a later page load takes nothing")
+
+        // NATIVE-B-R5-04: the page has it, and it stays held until the page posts a result
+        eq(ps.handed, true, "result: the page has the link")
+        eq(ps.current(now: t0 + 31), L1, "result: still held while its scan runs")
+        eq(ps.waiting(now: t0 + 31), nil, "result: never handed to the page a second time")
+        eq(ps.pageLoaded(), true, "result: a load the page started itself (stale-shell reload) is not handed it again")
+        eq(ps.retryTarget(base: A, fallback: F, now: t0 + 32), F, "result: a failed load the page started reloads that page, not the share page")
+        ps.newLaunch(now: t0 + 40)      // WebKit killed the page mid-scan: a launch
+        eq(ps.target(base: A, fallback: A, now: t0 + 40), share1, "result: a reload after WebKit killed the page mid-scan reopens the share page, not Home")
+        eq(ps.handed, false, "result: the reloaded page has it only once it loads")
+        eq(ps.retryTarget(base: A, fallback: F, now: t0 + 41), share1, "result: a failed reload after the kill retries the share page")
+        ps.resultPosted()
+        eq(ps.current(now: t0 + 41), L1, "result: a result from the page being replaced does not release it")
+        eq(ps.pageLoaded(), true, "result: the reloaded share page has it")
+        ps.resultPosted()
+        eq(ps.current(now: t0 + 60), nil, "result: released once the page posted its result")
+        ps.newLaunch(now: t0 + 61)
+        eq(ps.target(base: A, fallback: A, now: t0 + 61), A, "result: a reload after the result landed opens Home, no second scan")
+        eq(ps.pageLoaded(), false, "result: a later page load takes nothing")
+
+        // the running page takes it directly (run(link) answered true)
         ps.hold(L1, now: t0)
         ps.taken("https://vt.tiktok.com/other/")
-        eq(ps.current(now: t0), L1, "held: the page taking another link leaves it")
+        eq(ps.waiting(now: t0), L1, "held: the page taking another link leaves it waiting")
         ps.taken(L1)
-        eq(ps.current(now: t0), nil, "held: the page taking it releases it")
+        eq(ps.waiting(now: t0), nil, "held: the page that took it is not handed it again")
+        eq(ps.current(now: t0), L1, "result: the page that took it keeps it held until its result")
+        ps.newLaunch(now: t0 + 5)
+        eq(ps.target(base: A, fallback: A, now: t0 + 5), share1, "result: a kill after the page took it reopens the share page")
+        eq(ps.pageLoaded(), true, "result: that share page has it")
+        ps.resultPosted()
+        eq(ps.current(now: t0 + 6), nil, "result: released by its result")
+
+        // a newer share
         ps.hold(L1, now: t0)
         _ = ps.target(base: A, fallback: A, now: t0)
+        _ = ps.pageLoaded()
         ps.hold(L2, now: t0 + 1)
         eq(ps.opened, false, "held: a newer share starts unopened")
+        eq(ps.handed, false, "held: a newer share starts with no page")
+        ps.resultPosted()
+        eq(ps.current(now: t0 + 1), L2, "result: the older scan's result does not release a newer share")
         eq(ps.target(base: A, fallback: A, now: t0 + 1), share2, "held: a newer share replaces the older one")
+
+        // age
         ps.hold(L1, now: t0)
         eq(ps.current(now: t0 + PendingShare.maxAge - 1), L1, "held: kept inside the inbox's age limit")
         eq(ps.current(now: t0 + PendingShare.maxAge + 1), nil, "held: dropped past the inbox's age limit")
         eq(ps.target(base: A, fallback: A, now: t0 + PendingShare.maxAge + 1), A, "held: a stale share opens Home")
+        ps.hold(L1, now: t0)
+        _ = ps.target(base: A, fallback: A, now: t0)
+        _ = ps.pageLoaded()
+        eq(ps.current(now: t0 + PendingShare.maxAge + 1), nil, "result: one that never got a result is dropped at the age limit too")
+
+        // launches
         ps.hold(L1, now: t0)
         for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
         eq(ps.current(now: t0 + 10), L1, "held: kept through \(PendingShare.maxLaunches) launch checks")
         ps.newLaunch(now: t0 + 11)
         eq(ps.current(now: t0 + 11), nil, "held: dropped at the next launch check, so it never keeps the app off Home")
         eq(ps.target(base: A, fallback: A, now: t0 + 11), A, "held: that launch opens Home")
+        ps.hold(L1, now: t0)
+        var reopened = 0
+        for i in 1...(PendingShare.maxLaunches + 3) {      // a share page that kills WebKit every time
+            ps.newLaunch(now: t0 + Double(i))
+            if ps.target(base: A, fallback: A, now: t0 + Double(i)) == share1 {
+                reopened += 1
+                _ = ps.pageLoaded()
+            }
+        }
+        eq(reopened, PendingShare.maxLaunches, "result: a share page that kills WebKit every time reopens \(PendingShare.maxLaunches) times, then Home")
         ps.hold(L1, now: t0)
         for i in 1...PendingShare.maxLaunches { ps.newLaunch(now: t0 + Double(i)) }
         ps.hold(L2, now: t0 + 20)

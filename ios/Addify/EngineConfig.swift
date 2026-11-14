@@ -200,7 +200,9 @@ enum EngineConfig {
 
 
     /* ---------- directory resolution ----------
-       Called at launch, on every foreground, and on Try again. One small GET. The gist can
+       Called at launch, on every return to the app, and on Try again. With a fixed address
+       (addressIsFixed), Try again and a return to the error screen skip it (beginRetry). One
+       small GET. The gist can
        only pick one of knownBaseURLs: its pick is stored under directoryKey and moves that
        address to the front of the next launch check. A host outside the list is ignored and
        clears an older pick. This never writes the address in use, so it cannot change the
@@ -335,6 +337,52 @@ enum EngineConfig {
             if AppGroup.defaults.string(forKey: resolvedKey) != s { AppGroup.defaults.set(s, forKey: resolvedKey) }
         }
         return winner
+    }
+
+    // MARK: what a launch and Try again wait for
+
+    /* NATIVE-B-R5-01 and NATIVE-B-R5-03 (build 30). True when only one address can ever load: one
+       compiled-in address (this build: addify.app alone), or a Debug typed address. Then neither
+       the launch check nor the directory lookup can change which page loads, because load() opens
+       baseURL whatever they answer. */
+    static var addressIsFixed: Bool { candidateURLs().count <= 1 }
+
+    /* Every launch (cold launch, Try again, a return to the error screen, a reload after WebKit
+       killed the page) reaches its page load here. With a fixed address `load` runs at once,
+       before this returns, and nothing is asked first. Before build 30 every launch waited on
+       /health (6 s, then 8 s) whose answer could not change what loaded, so a /health that stalled
+       held the page back 14 s. With more than one compiled-in address (lab copies only) the launch
+       check decides which one loads, so it runs first, as since build 20, and `load` runs on the
+       main actor once it ends. `check` replaces the network health check in host tests. */
+    static func beginLaunch(check: (@Sendable (URL) async -> Bool)? = nil, load: @escaping () -> Void) {
+        if addressIsFixed {
+            load()
+            return
+        }
+        Task { @MainActor in
+            if await pickReachable(timeout: 6, check: check) == nil {
+                await pickReachable(timeout: 8, check: check)
+            }
+            load()
+        }
+    }
+
+    /* Try again, and a return to the error screen (EngineBridge retryResolvingFirst). With a fixed
+       address the directory's answer cannot change which page loads, so `retry` runs at once, before
+       this returns, and the directory is not asked. Before build 30 Try again waited up to 8 s on
+       GitHub first. With more than one compiled-in address the directory's pick can put another one
+       first in the launch check, so it is asked first and `retry` runs on the main actor after it.
+       `lookup` replaces the directory request in host tests. */
+    static func beginRetry(lookup: @escaping () async -> Void = { _ = await resolveFromDirectory() },
+                           retry: @escaping () -> Void) {
+        if addressIsFixed {
+            retry()
+            return
+        }
+        Task { @MainActor in
+            await lookup()
+            retry()
+        }
     }
 
     /* Runs `check` on every URL at once and returns the best-ranked (lowest index) URL that

@@ -35,8 +35,9 @@ final class EngineBridge: ObservableObject {
        to an address nobody checked yet and then replaced by the launch's own page load. */
     var holdShares = false
 
-    /* The shared link waiting for the page. Held until an engine page has loaded with it, so a
-       failed load, Try again or a return to the app reopens the share (PendingShare). */
+    /* The shared link waiting for the page. Held until the page posts that scan's result, so a
+       failed load, Try again, a return to the app or a reload after WebKit killed the page reopens
+       the share (PendingShare). */
     private var share = PendingShare()
     /* Set by the web view's coordinator: opens an engine page in the main frame the way every
        launch load does (EngineWebView open). */
@@ -100,7 +101,8 @@ final class EngineBridge: ObservableObject {
        choosing the address (load() opens it then). On the error screen it starts a fresh launch
        check, which opens the share under the loading screen. */
     func flushPending() {
-        guard let link = share.current(), let wv = webView, !holdShares else { return }
+        /* Only a link no page has yet: one the page already has is scanning (or scanned) there. */
+        guard let link = share.waiting(), let wv = webView, !holdShares else { return }
         if unreachable {
             retry()
             return
@@ -112,7 +114,7 @@ final class EngineBridge: ObservableObject {
                 guard let self = self else { return }
                 if (value as? Bool) == true {
                     self.share.taken(link)
-                } else if self.share.current() == link {
+                } else if self.share.waiting() == link {
                     self.loadShare()
                 }
             }
@@ -133,9 +135,10 @@ final class EngineBridge: ObservableObject {
         return share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL)
     }
 
-    /* The page an automatic reload opens: the held share's page, else the page that failed. */
+    /* The page an automatic reload opens: the held share's page while no page has it, else the
+       page that failed (PendingShare retryTarget). */
     func retryURL(_ failed: URL) -> URL {
-        share.target(base: EngineConfig.baseURL, fallback: failed)
+        share.retryTarget(base: EngineConfig.baseURL, fallback: failed)
     }
 
     /* An engine page finished loading (EngineWebView pageLoaded). If its share page was opened,
@@ -162,10 +165,12 @@ final class EngineBridge: ObservableObject {
         reloadToken += 1
     }
 
-    /* "Try again" on the unreachable screen has to be able to find a NEW hostname, not
-       just re-request the dead one. The tunnel rotates roughly hourly, so a retry that
-       only reloads is a retry that fails every time until the app is relaunched. Resolve
-       first, then reload; reload regardless so a transient network blip still recovers. */
+    /* "Try again" on the unreachable screen, and a return to it. With more than one compiled-in
+       address it has to be able to find a NEW one, not just re-request the dead one, so it asks
+       the directory first, then reloads regardless so a transient network blip still recovers.
+       NATIVE-B-R5-03 (build 30): with one compiled-in address (this build) the directory can only
+       name that address, so the reload starts at once and GitHub is not asked (EngineConfig
+       beginRetry). */
     func retryResolvingFirst() {
         // REVIEWER RUNS 2026-11-12: show the loading screen at once, not after the directory lookup
         unreachable = false
@@ -173,10 +178,7 @@ final class EngineBridge: ObservableObject {
         booting = true
         /* A share that arrives during the lookup waits for the launch check, which opens it. */
         holdShares = true
-        Task { @MainActor in
-            await EngineConfig.resolveFromDirectory()
-            retry()
-        }
+        EngineConfig.beginRetry { [weak self] in self?.retry() }
     }
 
     /* Everything that leaves the engine origin goes through here. open.spotify.com,
@@ -184,6 +186,12 @@ final class EngineBridge: ObservableObject {
        native handoff: the installed app takes the link, otherwise Safari does. */
     func openExternal(_ url: URL) {
         UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    /* NATIVE-B-R5-04 (build 30): the page posted a scan's result. A shared link the page had is
+       done, so a reload after WebKit kills the page opens Home and never scans it again. */
+    func resultPosted() {
+        share.resultPosted()
     }
 
     /* Result landed (posted by finish() in crate.html through the 'addify' handler).

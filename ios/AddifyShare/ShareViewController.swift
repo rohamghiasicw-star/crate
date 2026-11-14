@@ -46,11 +46,16 @@ final class ShareViewController: UIViewController {
             guard let self = self else { return }
             guard let link = link, SharedInbox.isScannable(link) else {
                 /* Say so instead of vanishing. Roham 09-24 20:50: "there shouldn't be
-                   anything silent". */
+                   anything silent". NATIVE-A-R5-01 (build 30): it closes itself after 2.5 s
+                   unless VoiceOver is running then; with VoiceOver it stays until Done, so the
+                   card it announced (showCard) can be heard and read to the end. */
                 self.showCard(title: "No TikTok or Instagram link",
                               body: "Addify scans TikTok and Instagram videos, and this share did not include one.",
                               primary: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.finish(error: true) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    if UIAccessibility.isVoiceOverRunning { return }
+                    self.finish(error: true)
+                }
                 return
             }
             self.link = link
@@ -186,6 +191,9 @@ final class ShareViewController: UIViewController {
             box.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
         ])
         card = box
+        /* NATIVE-A-R5-01 (build 30): a card replaces whatever VoiceOver was on (the host app, or
+           the card before it), so VoiceOver is told the screen changed and starts at its title. */
+        UIAccessibility.post(notification: .screenChanged, argument: t)
     }
 
     /* A real tap: the retry runs with a user gesture behind it. */

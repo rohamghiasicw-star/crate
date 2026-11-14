@@ -111,10 +111,13 @@ struct EngineWebView: UIViewRepresentable {
             return "\(mobile) Addify/\(appVersion)"
         }
 
-        /* BUILD 20: every launch and every Try again starts here. Ask all known engine
-           addresses at once (6 s, then once more with 8 s) and load the first that answers.
-           If none answers, load the current address anyway: the page load is the final word and
-           failed() decides what the user sees. The native loading screen covers all of it. */
+        /* Every launch, every Try again and every reload after WebKit killed the page starts here,
+           under the native loading screen. NATIVE-B-R5-01 (build 30): with one compiled-in address
+           (this build) the page load starts at once; a health check first could not change which
+           page loads, and a /health that stalled held it back 14 s. With more than one (lab copies),
+           BUILD 20's check runs first: all known addresses at once (6 s, then once more with 8 s),
+           and the first that answers loads (EngineConfig beginLaunch). Either way the page load is
+           the final word and failed() decides what the user sees. */
         func boot(_ wv: WKWebView) {
             bridge.booting = true
             bridge.holdShares = true
@@ -123,14 +126,9 @@ struct EngineWebView: UIViewRepresentable {
             retryGeneration += 1
             bootGeneration += 1
             let generation = bootGeneration
-            Task { [weak self, weak wv] in
-                if await EngineConfig.pickReachable(timeout: 6) == nil {
-                    await EngineConfig.pickReachable(timeout: 8)
-                }
-                await MainActor.run {
-                    guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
-                    self.load(wv, newLaunch: true)
-                }
+            EngineConfig.beginLaunch { [weak self, weak wv] in
+                guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
+                self.load(wv, newLaunch: true)
             }
         }
 
@@ -461,10 +459,14 @@ struct EngineWebView: UIViewRepresentable {
         }
 
         /* WebKit killed the content process (memory pressure while backgrounded). A blank
-           white view is what the user sees otherwise. A held share reopens, and the reload counts
-           against its limit like a launch check. */
+           white view is what the user sees otherwise. NATIVE-B-R5-04 (build 30): the reload is a
+           launch (boot), so the loading screen covers it. A shared link whose result the page had
+           not posted yet reopens its share page, so a scan cut off mid-way starts again instead of
+           the user landing on Home with nothing; once the result has landed it opens Home
+           (PendingShare). The reload counts against the link's launch limit like a launch check. */
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            load(webView, newLaunch: true)
+            bridge.pageReady = false
+            boot(webView)
         }
 
         // MARK: ui delegate
@@ -541,6 +543,10 @@ struct EngineWebView: UIViewRepresentable {
             if let d = message.body as? [String: Any], (d["type"] as? String) == "share" {
                 presentShare(url: (d["url"] as? String) ?? "", text: (d["text"] as? String) ?? "")
                 return
+            }
+            /* NATIVE-B-R5-04 (build 30): one result per scan. Its shared link is done (PendingShare). */
+            if let d = message.body as? [String: Any], (d["type"] as? String) == "result" {
+                bridge.resultPosted()
             }
             if let payload = ResultPayload(message: message.body) {
                 bridge.showResult(payload)

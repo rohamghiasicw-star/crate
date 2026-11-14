@@ -11,6 +11,10 @@ iPhone and an iPad simulator. Scenarios:
   exportfirst the page calls the exportFinds handler on a fresh install (the first share sheet, 40 s wait)
   export     the same on that install again, with the page's usual 8 s wait
   sharefail  a share opens the app while its share page fails; a return to the app reopens it
+  fixedboot  one compiled-in address (like the shipped list): the page load starts at once, /health stalls
+  fixedretry one compiled-in address: coming back to the error screen reloads at once, the directory hangs
+  killscan   WebKit's page process is killed mid-scan: the loading screen, then the same share page
+  killresult the same after the page posted its result: Home, the link is not scanned again
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
              it must open in a Safari view over the app, and closing it returns to the same page
 Each simulator starts with one untimed launch (warmup), so the first boot's slow start is not
@@ -24,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import socket
 import struct
 import subprocess
@@ -36,6 +41,10 @@ from urllib.parse import parse_qs, quote, urlsplit
 PORT_A, PORT_B, PORT_G, PORT_X = 8711, 8712, 8719, 8799
 ROLES = {PORT_A: "A", PORT_B: "B", PORT_G: "G", PORT_X: "X"}
 STUB_URLS = '["http://localhost:8711", "http://127.0.0.1:8712"]'
+# Build 30 (NATIVE-B-R5-01/03/04): with ADDIFY_LAB_SINGLE in its launch environment the stub lab copy
+# has one compiled-in address, like the shipped list (addify.app alone). Without it, two, as before.
+STUB_URLS_EXPR = ('(ProcessInfo.processInfo.environment["ADDIFY_LAB_SINGLE"] == nil ? %s : ["http://localhost:8711"])'
+                  % STUB_URLS)
 TESTBOX = "https://165-22-231-221.sslip.io"
 TESTBOX_URLS = '["https://addify.app", "%s"]' % TESTBOX
 GIST_URL = "http://127.0.0.1:8719/gist"
@@ -48,7 +57,8 @@ def patch(ios_dir, variant):
     path = os.path.join(ios_dir, "Addify", "EngineConfig.swift")
     src = open(path).read()
     reps = [(r'static let knownBaseURLs = \[[^\]]*\]',
-             "static let knownBaseURLs = " + (STUB_URLS if variant == "stub" else TESTBOX_URLS)),
+             ("static let knownBaseURLs: [String] = " + STUB_URLS_EXPR) if variant == "stub"
+             else ("static let knownBaseURLs = " + TESTBOX_URLS)),
             (r'static let directoryURL = "[^"]*"', 'static let directoryURL = "%s"' % GIST_URL)]
     if variant == "stub":
         reps.append((r'static let defaultBaseURL = "[^"]*"', 'static let defaultBaseURL = "http://localhost:8711"'))
@@ -223,6 +233,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       else if (__PRIVACY__ === 'open') window.open('/privacy', '_blank');
       else location.href = '/privacy';
       window.labSafariClosed = function(){ send('back', {lid: lid, href: location.href, port: __PORT__}); }; }, 1000);
+    // Build 30 (NATIVE-B-R5-04): the scan's result, posted the way crate.html's finish() posts it.
+    if (__RESULT__) setTimeout(function(){
+      try { H.addify.postMessage({type: 'result', song: 'Smoke song', artist: 'Stub', speed: '', exact: null});
+        send('result', {lid: lid, href: location.href}); }
+      catch(e) { send('result', {lid: lid, err: String(e && e.message || e)}); } }, 500);
     if (__EXPORT__) setTimeout(function(){
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
       .then(function(e){ r.export = e; show(); send('export', r);
@@ -315,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
                 kp = COUNTS[(role, path)]
             if path == "/share" and kp <= cfg.get("share_fail_first", 0):
                 return self.reply(502)
+            if path == "/share" and kp >= cfg.get("share_slow_from", 1 << 30):
+                time.sleep(cfg.get("share_slow_ms", 0) / 1000.0)
             if cfg.get("redirect"):
                 self.send_response(302)
                 self.send_header("Location", cfg["redirect"])
@@ -330,6 +347,7 @@ class Handler(BaseHTTPRequestHandler):
             page = PAGE.replace("__PORT__", str(self.server.server_address[1]))
             page = page.replace("__EXPORT__", "true" if cfg.get("export") else "false")
             page = page.replace("__EXPORT_WAIT__", str(int(cfg.get("export_wait_ms", 8000))))
+            page = page.replace("__RESULT__", "true" if cfg.get("result") else "false")
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
             return self.reply(200, page.encode())
         return self.reply(404)
@@ -711,6 +729,8 @@ def run_stub_suite(dev, app, version, ipad=False):
     appcheck_report(dev, "relaunch", res)
     json.dump(res, open(os.path.join(dev.out, "%s-relaunch.json" % dev.tag), "w"), indent=1)
 
+    fixed_boot(dev, app, version)
+
     if not ipad:
         bad = {"A": {"health_ms": 20}, "B": {"health_ms": 20}, "G": {"pick": "http://localhost:8799"}, "X": {}}
         for label, fresh in (("untrusted", True), ("untrusted2", False)):
@@ -816,6 +836,9 @@ def run_stub_suite(dev, app, version, ipad=False):
         json.dump(res, open(os.path.join(dev.out, "%s-redirect.json" % dev.tag), "w"), indent=1)
 
         sharefail(dev, app, version)
+        fixed_retry(dev, app, version)
+        killed_page(dev, app, version, result=False)
+        killed_page(dev, app, version, result=True)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     exported = lambda e: e.get("kind") == "export"
@@ -961,6 +984,176 @@ def privacy(dev, app, mode):
     uncovered = lab_has(res, "ADDIFY-SAFARI closed covered=0 page=1")
     check(dev, label, "app page on screen after closing", uncovered and same, "%s, screenshot %s %s" % (
         [l for l in sv if "closed" in l], pixel_class(res["shots"].get("after", "")), res["shot_t"].get("after")))
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+# ---------- build 30: one compiled-in address, and a page process that dies ----------
+
+SINGLE = {"ADDIFY_LAB_SINGLE": "1"}
+
+
+def set_cfg(role, key, value):
+    """Changes the stub's answer for one role in the middle of a scenario."""
+    with LOCK:
+        CFG.setdefault(role, {})[key] = value
+
+
+def boot_icon(png):
+    """Purple pixels where the loading screen (BootView) draws its waveform icon, a little above the
+    middle. pixel_class says 'boot' for the loading screen and also for a web view whose page process
+    died (the same ground with nothing on it); only the loading screen has the icon."""
+    if not png or not os.path.exists(png):
+        return 0
+    bmp = png[:-4] + "-icon.bmp"
+    run("sips", "-s", "format", "bmp", png, "--out", bmp, check=False)
+    try:
+        d = open(bmp, "rb").read()
+    except OSError:
+        return 0
+    finally:
+        if os.path.exists(bmp):
+            os.remove(bmp)
+    off = struct.unpack_from("<I", d, 10)[0]
+    w, h = struct.unpack_from("<ii", d, 18)
+    step = struct.unpack_from("<H", d, 28)[0] // 8
+    stride = ((step * 8 * w + 31) // 32) * 4
+    n = 0
+    for y in range(int(abs(h) * 0.30), int(abs(h) * 0.55)):
+        row = off + ((abs(h) - 1 - y) if h > 0 else y) * stride
+        for x in range(int(w * 0.35), int(w * 0.65)):
+            i = row + x * step
+            b, g, r = d[i], d[i + 1], d[i + 2]
+            if 60 <= r <= 130 and 45 <= g <= 110 and b >= 190:
+                n += 1
+    return n
+
+
+def kill_webcontent(dev):
+    """Kills the booted simulator's WebKit page processes (SIGKILL), the way iOS ends a page under
+    memory pressure. Only one simulator runs at a time here. What it killed goes into the checks."""
+    out = run("ps", "-axww", "-o", "pid=,command=", check=False)
+    dev.killed, dev.kill_note = [], []
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if "CoreSimulator" in cmd and "WebContent" in cmd:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+                dev.killed.append("%s %s" % (pid, cmd.rsplit("/", 1)[-1][:60]))
+            except (OSError, ValueError) as ex:
+                dev.kill_note.append("%s: %s" % (pid, ex))
+        elif "CoreSimulator" in cmd and "WebKit" in cmd:
+            dev.kill_note.append(cmd.rsplit("/", 1)[-1][:60])
+    print("      kill: %s, other WebKit: %s" % (dev.killed, dev.kill_note[:6]))
+
+
+def fixed_boot(dev, app, version):
+    """NATIVE-B-R5-01. One compiled-in address: a launch asks for the page at once. /health takes
+    10 s here; before this fix a launch waited on it (6 s, then 8 s) and asked for the page 14 s in."""
+    cfg = {"A": {"health_ms": 10000}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    res = scenario(dev, app, "fixedboot", cfg, fresh=False, timeout=40, launch_env=SINGLE)
+    timeline(res)
+    common(dev, "fixedboot", res, version)
+    first = min((e["dt"] for e in res["entries"]), default=None)
+    pages = page_requests(res, "A")
+    health = [e["dt"] for e in res["entries"] if e["path"].split("?")[0] == "/health"]
+    gap = round(pages[0][0] - first, 2) if pages and first is not None else None
+    check(dev, "fixedboot", "page asked for at once (within 2 s of the app's first request)", gap is not None and gap <= 2.0,
+          "page at %s s, first request at %s s, gap %s s" % (pages[0][0] if pages else None, first, gap))
+    check(dev, "fixedboot", "no health check at all", not health, "/health at %s" % health)
+    others = [e for e in res["entries"] if e["role"] in ("B", "X")]
+    check(dev, "fixedboot", "only the compiled-in address contacted", not others, "%d requests" % len(others))
+    k = pixel_class(res["shots"]["final"])
+    check(dev, "fixedboot", "page on screen", k == "page", k)
+    json.dump(res, open(os.path.join(dev.out, "%s-fixedboot.json" % dev.tag), "w"), indent=1)
+
+
+def fixed_retry(dev, app, version):
+    """NATIVE-B-R5-03. One compiled-in address: coming back to the error screen (the same code as Try
+    again) reloads at once and does not ask the directory, which can only name that address. The
+    directory hangs here (9 s, past the app's own 8 s limit); before this fix the reload waited for
+    it. The page fails until the app is in the background, so only the return can bring it up, and
+    the return lands right after an automatic reload, 4 s before the next one. The stub logs a
+    request when it answers, so the scenario stays open 10 s past the return: a directory request
+    made on the way back is in this scenario's log, not the next one's."""
+    cfg = {"A": {"health_ms": 20, "down": True}, "B": {"health": False, "down": True},
+           "G": {"pick": "", "delay_ms": 9000}, "X": {}}
+    fail = lambda e: e["role"] == "A" and e["status"] == 502
+    reported = lambda e: e.get("kind") == "bridges"
+    second = nth(fail, 2)
+    res = scenario(dev, app, "fixedretry", cfg, fresh=False, timeout=45, launch_env=SINGLE,
+                   after=(("error", fail, 1.2), ("settled", reported, 1.5)),
+                   actions=(("leave", second, 0.3, lambda d: d.to_background()),
+                            ("up", second, 0.8, lambda d: set_cfg("A", "down", False)),
+                            ("return", second, 1.0, lambda d: d.launch()),
+                            ("drain", second, 11.0, lambda d: None)))
+    timeline(res)
+    pids = list(dev.pids)
+    check(dev, "fixedretry", "coming back reached the same process (not a relaunch)",
+          len(pids) == 2 and pids[0] is not None and pids[0] == pids[1], "pids %s" % pids)
+    k = pixel_class(res["shots"].get("error", ""))
+    check(dev, "fixedretry", "error screen while the page failed", k == "error", k)
+    back = res["done"].get("return")
+    nxt = [x for x in page_requests(res, "A") if back is not None and x[0] >= back]
+    gap = round(nxt[0][0] - back, 2) if nxt else None
+    check(dev, "fixedretry", "reloaded at once on the way back (within 2.5 s), not after the directory",
+          gap is not None and gap <= 2.5 and nxt[0][1] == 200, "back at %s s, next page load %s, gap %s s" % (back, nxt[:1], gap))
+    asked = [e["dt"] for e in res["entries"] if e["role"] == "G" and back is not None and e["dt"] >= back]
+    check(dev, "fixedretry", "the directory was not asked on the way back", back is not None and not asked,
+          "directory at %s, back at %s s" % ([e["dt"] for e in res["entries"] if e["role"] == "G"], back))
+    common(dev, "fixedretry", res, version)
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, "fixedretry", "page on screen after coming back", k == "page", k)
+    json.dump(res, open(os.path.join(dev.out, "%s-fixedretry.json" % dev.tag), "w"), indent=1)
+
+
+def killed_page(dev, app, version, result):
+    """NATIVE-B-R5-04. A share opens the app and its share page loads, then WebKit's page process is
+    killed, as iOS does under memory pressure. Before the page posted a result (killscan) the reload
+    must show the loading screen and reopen the share page with the same link, never Home. After it
+    posted one (killresult) the reload must open Home: a link whose result landed is never scanned
+    again. From the second share page load on, the stub takes 5 s to answer, so the loading screen
+    has time to be seen."""
+    label = "killresult" if result else "killscan"
+    cfg = {"A": {"health_ms": 20, "share_slow_from": 2, "share_slow_ms": 5000, "result": result},
+           "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    ready = nth(lambda e: e.get("kind") == ("result" if result else "bridges"), 1)
+    again = nth(lambda e: e.get("kind") == "bridges", 2)
+    dev.killed, dev.kill_note = [], []
+    env = dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(SHARE_LINK, safe=""))
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=45, launch_env=env,
+                   actions=(("kill", ready, 1.0, kill_webcontent),
+                            ("reloading", ready, 2.5, None),
+                            ("settled", again, 1.5, None)))
+    timeline(res)
+    killed_at = res["done"].get("kill")
+    check(dev, label, "WebKit page process killed", bool(dev.killed),
+          "at %s s: %s" % (killed_at, dev.killed or "nothing matched, other WebKit processes %s" % dev.kill_note[:6]))
+    reqs = [(e["dt"], e["path"], e["status"]) for e in res["entries"]
+            if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    before = [x for x in reqs if killed_at is None or x[0] < killed_at]
+    after = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs if killed_at is not None and t >= killed_at]
+    check(dev, label, "the share page loaded before the kill",
+          any(p.split("?")[0] == "/share" and link_in(p) == SHARE_LINK and st == 200 for _, p, st in before), json.dumps(before))
+    loads = [e for e in res["entries"] if e.get("kind") == "bridges"]
+    if result:
+        r = report(res, "result")
+        check(dev, label, "the page posted its result before the kill", r is not None and not r.get("err"), json.dumps(r))
+        check(dev, label, "the reload after the result opened Home, not the share page again",
+              bool(after) and after[0][1] == "/" and not [x for x in after if x[1] == "/share"], json.dumps(after))
+        check(dev, label, "a page reported again after the reload", len(loads) >= 2, "%d page reports" % len(loads))
+    else:
+        check(dev, label, "the reload reopened the share page with the same link, not Home",
+              bool(after) and after[0][1] == "/share" and after[0][2], json.dumps(after))
+        check(dev, label, "Home never loaded after the kill", not [x for x in after if x[1] == "/"], json.dumps(after))
+        shot = res["shots"].get("reloading", "")
+        k, icon = pixel_class(shot), boot_icon(shot)
+        check(dev, label, "loading screen while the page reloads (not a blank view)", k == "boot" and icon >= 150,
+              "%s, icon %d px, shot %s" % (k, icon, res["shot_t"].get("reloading")))
+        href = loads[1]["report"].get("href") if len(loads) >= 2 else None
+        check(dev, label, "the reloaded page carries the shared link", link_in(href) == SHARE_LINK, href or "no second page")
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, label, "page on screen after the reload", k == "page", k)
     check(dev, label, "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
