@@ -139,8 +139,9 @@ struct EngineWebView: UIViewRepresentable {
         func load(_ wv: WKWebView, newLaunch: Bool = false) {
             /* A share that arrived during the launch check opens on the address it chose, through
                the page's own share landing, as a share always did when the page was not up. BUILD 30:
-               the share stays held until a page loads with it, so every later launch check (Try
-               again, a return to the app) opens it again instead of Home (PendingShare). */
+               the share stays held until its scan is over, so every later launch check (Try again,
+               a return to the app, a reload after WebKit killed the page) opens it again instead of
+               Home (PendingShare). */
             bridge.holdShares = false
             self.open(bridge.launchURL(newLaunch: newLaunch), in: wv)
         }

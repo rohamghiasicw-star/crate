@@ -28,7 +28,10 @@ final class EngineBridge: ObservableObject {
     /* Bumped to make the web view reload from the (possibly new) engine base. */
     @Published var reloadToken = 0
 
-    var isActive = true
+    var isActive = true {
+        /* NATIVE-B-R5-04 (build 30): leaving the foreground is when iOS may end the page. */
+        didSet { if oldValue && !isActive { checkScanOnLeave() } }
+    }
     weak var webView: WKWebView?
     /* True while the launch check (EngineWebView boot) is still choosing an address. A share
        that arrives then waits and load() opens it on the chosen address, instead of being sent
@@ -108,7 +111,7 @@ final class EngineBridge: ObservableObject {
             return
         }
         if pageReady {
-            let json = jsString(link)
+            let json = Self.jsString(link)
             let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));return true;}catch(e){return false;}})()"
             wv.evaluateJavaScript(js) { [weak self] value, _ in
                 guard let self = self else { return }
@@ -150,7 +153,7 @@ final class EngineBridge: ObservableObject {
 
     /* JSON-encode a string for embedding in a JS expression. Never string-concatenate a
        user-supplied link into JavaScript; a quote in the URL would otherwise break out. */
-    private func jsString(_ s: String) -> String {
+    private static func jsString(_ s: String) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
         let arr = String(decoding: data, as: UTF8.self)
         return String(arr.dropFirst().dropLast())
@@ -192,6 +195,28 @@ final class EngineBridge: ObservableObject {
        done, so a reload after WebKit kills the page opens Home and never scans it again. */
     func resultPosted() {
         share.resultPosted()
+    }
+
+    /* NATIVE-B-R5-04 (build 30). A shared link the page had is kept, so a reload after WebKit kills
+       the page restarts its scan, only while the page still shows that scan. The page posts a
+       result only for a found song, and after a version hunt only when the hunt ends, well after
+       its card is up. A scan that ended any other way (no match, Back, the paywall) or whose card
+       is on screen must not start again. So when the app leaves the foreground the page is asked
+       what it shows: #app's data-state, and whether its current scan is this link. Any screen but
+       the scan, or a scan of another link, releases it. No answer keeps it. */
+    static func scanScreenProbe(_ link: String) -> String {
+        "(function(l){var a=document.getElementById('app'),s=a?a.getAttribute('data-state'):null;"
+            + "if(s!=='scanning')return s;"
+            + "try{if(typeof curURL==='string'&&curURL&&typeof parseLink==='function'&&parseLink(l).url!==curURL)return 'other';}catch(e){}"
+            + "return s;})(\(jsString(link)))"
+    }
+
+    private func checkScanOnLeave() {
+        guard pageReady, let link = share.handedLink, let wv = webView else { return }
+        wv.evaluateJavaScript(Self.scanScreenProbe(link)) { [weak self] value, error in
+            guard error == nil, let screen = value as? String, screen != "scanning" else { return }
+            self?.share.scanEnded(link)
+        }
     }
 
     /* Result landed (posted by finish() in crate.html through the 'addify' handler).

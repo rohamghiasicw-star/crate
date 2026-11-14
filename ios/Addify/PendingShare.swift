@@ -9,10 +9,10 @@ import Foundation
    reload while no page has it.
 
    NATIVE-B-R5-04 (build 30). Once a page has the link it is still held, until the page posts a
-   result (finish() in crate.html posts one per scan). If WebKit kills the page mid-scan, the reload
-   is a new launch and reopens the share page, so the scan starts again instead of the user landing
-   on Home with nothing. Once the result has landed the link is released, so that reload opens Home
-   and never scans it again.
+   result (finish() in crate.html posts one for a found song) or shows it is no longer on that scan
+   (scanEnded). If WebKit kills the page mid-scan, the reload is a new launch and reopens the share
+   page, so the scan starts again instead of the user landing on Home with nothing. Once the scan is
+   over the link is released, so that reload opens Home and never scans it again.
 
    The page swaps /share?url= for / in the address bar as it starts (history.replaceState), so
    "the page has it" is not read from the URL. Once a load of the link's share page has started
@@ -21,6 +21,7 @@ import Foundation
 
    A held link still ends, so it can never keep the app away from Home:
    - when the page posts a result after it had the link (resultPosted),
+   - when the page it went to shows another screen than its scan (scanEnded),
    - when a newer share replaces it,
    - after maxAge, the share inbox's own staleness rule,
    - after maxLaunches launch checks (launch, Try again, return to the app, or a reload after
@@ -39,6 +40,9 @@ struct PendingShare {
        new load of its share page starts. */
     private(set) var handed = false
     private(set) var launches = 0
+
+    /* The held link while a page has it, or nil. */
+    var handedLink: String? { handed ? link : nil }
     private var since = Date.distantPast
 
     /* A new share. It replaces any older one, which has not scanned and now never will. */
@@ -117,6 +121,13 @@ struct PendingShare {
        has had yet stays: that result is from the page its share page is replacing. */
     mutating func resultPosted() {
         if link != nil, handed { clear() }
+    }
+
+    /* The page that had `l` no longer shows its scan: a result or no-match card, Home, the paywall,
+       another screen, or a scan of another link. Same as a result: released. A newer share, or one
+       whose share page is loading again, stays. */
+    mutating func scanEnded(_ l: String) {
+        if link == l, handed { clear() }
     }
 
     mutating func clear() {
