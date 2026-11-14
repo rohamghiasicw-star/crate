@@ -39,12 +39,15 @@ final class EngineBridge: ObservableObject {
     var holdShares = false
 
     /* The shared link waiting for the page. Held until its scan is over (the page posted the
-       result, or left the scan), so a failed load, Try again, a return to the app or a reload
-       after WebKit killed the page reopens the share (PendingShare). */
+       result, or left the scan), however long that takes, so a failed load, Try again, a return to
+       the app or a reload after WebKit killed the page reopens the share (PendingShare). */
     private var share = PendingShare()
     /* Set by the web view's coordinator: opens an engine page in the main frame the way every
        launch load does (EngineWebView open). */
     var openPage: ((URL) -> Void)?
+    /* Set by the web view's coordinator: stops a main-frame load that is running and cancels the
+       automatic reloads still waiting (EngineWebView cancelReloads). */
+    var cancelReloads: (() -> Void)?
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
@@ -105,7 +108,7 @@ final class EngineBridge: ObservableObject {
        check, which opens the share under the loading screen. */
     func flushPending() {
         /* Only a link no page has yet: one the page already has is scanning (or scanned) there. */
-        guard let link = share.waiting(), let wv = webView, !holdShares else { return }
+        guard let link = share.waiting, let wv = webView, !holdShares else { return }
         if unreachable {
             retry()
             return
@@ -117,7 +120,7 @@ final class EngineBridge: ObservableObject {
                 guard let self = self else { return }
                 if (value as? Bool) == true {
                     self.share.taken(link)
-                } else if self.share.waiting() == link {
+                } else if self.share.waiting == link {
                     self.loadShare()
                 }
             }
@@ -127,14 +130,14 @@ final class EngineBridge: ObservableObject {
     }
 
     private func loadShare() {
-        guard let open = openPage, share.current() != nil else { return }
+        guard let open = openPage, share.current != nil else { return }
         open(share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL))
     }
 
-    /* The page a launch check opens: the held share's page, else the engine's home. A new launch
-       counts against the share's launch limit (PendingShare.maxLaunches). */
-    func launchURL(newLaunch: Bool) -> URL {
-        if newLaunch { share.newLaunch() }
+    /* The page a launch check opens: the held share's page, else the engine's home. A reload after
+       WebKit killed the page counts against the share's limit (PendingShare.maxCrashReloads). */
+    func launchURL(afterCrash: Bool) -> URL {
+        if afterCrash { share.crashReload() }
         return share.target(base: EngineConfig.baseURL, fallback: EngineConfig.baseURL)
     }
 
@@ -181,7 +184,22 @@ final class EngineBridge: ObservableObject {
         booting = true
         /* A share that arrives during the lookup waits for the launch check, which opens it. */
         holdShares = true
-        EngineConfig.beginRetry { [weak self] in self?.retry() }
+        /* BUILD 30: Try again and a return to the app start over here. An automatic reload still
+           loading, or one whose timer fires during the lookup, would otherwise load the share page
+           now and leave the launch check below to open Home over the scan it had just started. */
+        cancelReloads?()
+        EngineConfig.beginRetry { [weak self] in
+            guard let self = self else { return }
+            /* Nothing loads during a lookup any more. Should a page be up anyway, it stays, and a
+               share that waited is handed to it. */
+            if self.pageReady {
+                self.booting = false
+                self.holdShares = false
+                self.flushPending()
+                return
+            }
+            self.retry()
+        }
     }
 
     /* Everything that leaves the engine origin goes through here. open.spotify.com,

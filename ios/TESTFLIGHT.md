@@ -28,8 +28,9 @@ rotates and only another TestFlight build can fix it.
     cloudflared tunnel create addify
     cloudflared tunnel route dns addify addify.rghiasi.com
 
-`EngineConfig.defaultBaseURL` is the live server `https://161-35-185-80.sslip.io` since build 19 (it was `https://addify.rghiasi.com`, which never resolved). Until the
-tunnel above exists, the app cannot reach an engine on first launch.
+`EngineConfig.defaultBaseURL` is `https://addify.app`, and since build 29 it is the only
+compiled-in address. Builds 19 to 28 also used the server's sslip.io name (build 19 made it the
+default; before that it was `https://addify.rghiasi.com`, which never resolved).
 
 Your Mac still has to be awake and running the engine for the app to work at all. That is
 inherent: Instagram fetching reads Chrome cookies out of your Keychain and TikTok

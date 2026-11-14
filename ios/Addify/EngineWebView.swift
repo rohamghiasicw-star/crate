@@ -60,6 +60,10 @@ struct EngineWebView: UIViewRepresentable {
             guard let c = coordinator, let wv = wv else { return }
             c.open(url, in: wv)
         }
+        bridge.cancelReloads = { [weak coordinator = context.coordinator, weak wv] in
+            guard let c = coordinator, let wv = wv else { return }
+            c.cancelReloads(wv)
+        }
         context.coordinator.boot(wv)
         return wv
     }
@@ -118,33 +122,44 @@ struct EngineWebView: UIViewRepresentable {
            page loads, and a /health that stalled held it back 14 s. With more than one (lab copies),
            BUILD 20's check runs first: all known addresses at once (6 s, then once more with 8 s),
            and the first that answers loads (EngineConfig beginLaunch). Either way the page load is
-           the final word and failed() decides what the user sees. */
-        func boot(_ wv: WKWebView) {
+           the final word and failed() decides what the user sees. afterCrash: WebKit killed the
+           page (load). */
+        func boot(_ wv: WKWebView, afterCrash: Bool = false) {
             bridge.booting = true
             bridge.holdShares = true
             hostSwitches = 0
             autoRetries = 0
-            retryGeneration += 1
+            cancelReloads(wv)
             bootGeneration += 1
             let generation = bootGeneration
             EngineConfig.beginLaunch { [weak self, weak wv] in
                 guard let self = self, let wv = wv, generation == self.bootGeneration else { return }
-                self.load(wv, newLaunch: true)
+                self.load(wv, afterCrash: afterCrash)
             }
         }
 
-        /* newLaunch: this load counts against a held share's launch limit (PendingShare.maxLaunches):
-           the end of a launch check (boot), or a reload after WebKit killed the page, so a share
-           page that kills WebKit every time cannot reload forever. A move to another address does
-           not count (hostSwitches caps those). */
-        func load(_ wv: WKWebView, newLaunch: Bool = false) {
+        /* BUILD 30: a launch check, Try again and a return to the app start over. The automatic and
+           quiet reloads still waiting are cancelled, an #app check still waiting is dropped, and a
+           main-frame load that is running is stopped (its -999 is not a failure: see failed()), so
+           none of them can finish later, take a held share's link and leave this launch check to
+           open Home over it. */
+        func cancelReloads(_ wv: WKWebView) {
+            retryGeneration += 1
+            appCheck += 1
+            if wv.isLoading { wv.stopLoading() }
+        }
+
+        /* afterCrash: a reload after WebKit killed the page, which counts against a held share's
+           limit (PendingShare.maxCrashReloads), so a share page that kills WebKit every time cannot
+           reload forever. Launch checks and moves to another address do not count. */
+        func load(_ wv: WKWebView, afterCrash: Bool = false) {
             /* A share that arrived during the launch check opens on the address it chose, through
                the page's own share landing, as a share always did when the page was not up. BUILD 30:
                the share stays held until its scan is over, so every later launch check (Try again,
                a return to the app, a reload after WebKit killed the page) opens it again instead of
                Home (PendingShare). */
             bridge.holdShares = false
-            self.open(bridge.launchURL(newLaunch: newLaunch), in: wv)
+            self.open(bridge.launchURL(afterCrash: afterCrash), in: wv)
         }
 
         /* Every main-frame engine load this code starts (a launch, a share, a move to another
@@ -424,10 +439,12 @@ struct EngineWebView: UIViewRepresentable {
             if let fh = fh, fh == loadedHost, e.domain == NSURLErrorDomain,
                Self.transientCodes.contains(e.code), hostSwitches < 3 {
                 hostSwitches += 1
+                /* A load or launch check started meanwhile (Try again, a share) wins. */
+                let generation = retryGeneration
                 Task { [weak self, weak webView] in
                     let alt = await EngineConfig.pickReachable(excluding: fh, timeout: 6)
                     await MainActor.run {
-                        guard let self = self, let wv = webView else { return }
+                        guard let self = self, let wv = webView, generation == self.retryGeneration else { return }
                         if alt != nil { self.load(wv) } else { self.retryOrGiveUp(e, failing: failing, in: wv) }
                     }
                 }
@@ -462,13 +479,13 @@ struct EngineWebView: UIViewRepresentable {
 
         /* WebKit killed the content process (memory pressure while backgrounded). A blank
            white view is what the user sees otherwise. NATIVE-B-R5-04 (build 30): the reload is a
-           launch (boot), so the loading screen covers it. A shared link whose result the page had
-           not posted yet reopens its share page, so a scan cut off mid-way starts again instead of
-           the user landing on Home with nothing; once the result has landed it opens Home
-           (PendingShare). The reload counts against the link's launch limit like a launch check. */
+           launch (boot), so the loading screen covers it. A shared link whose scan is not over yet
+           reopens its share page, so a scan cut off mid-way starts again instead of the user landing
+           on Home with nothing; once the scan is over it opens Home (PendingShare). The reload
+           counts against the link's limit (afterCrash). */
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             bridge.pageReady = false
-            boot(webView)
+            boot(webView, afterCrash: true)
         }
 
         // MARK: ui delegate

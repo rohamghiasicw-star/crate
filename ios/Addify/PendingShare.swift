@@ -1,37 +1,40 @@
 import Foundation
 
 /* ---------- the share waiting for the page ----------
-   BUILD 30. A shared link is held until the page posts that scan's result, not just until a load
-   was asked for. The load used to take it, so a share that opened the app with no network
-   ("You're offline") was already gone when Try again, a return to the app or a launch-check reload
-   ran: they opened Home and the clip never scanned. Now every launch check, Try again and return
-   to the app opens <engine>/share?url=<link> while the link is held, and so does every automatic
-   reload while no page has it.
+   BUILD 30. A shared link is held until its scan is over, not just until a load was asked for.
+   The load used to take it, so a share that opened the app with no network ("You're offline") was
+   already gone when Try again, a return to the app or a launch-check reload ran: they opened Home
+   and the clip never scanned. Now every launch check, Try again and return to the app opens
+   <engine>/share?url=<link> while the link is held, and so does every automatic reload while no
+   page has it.
 
    NATIVE-B-R5-04 (build 30). Once a page has the link it is still held, until the page posts a
    result (finish() in crate.html posts one for a found song) or shows it is no longer on that scan
-   (scanEnded). If WebKit kills the page mid-scan, the reload is a new launch and reopens the share
-   page, so the scan starts again instead of the user landing on Home with nothing. Once the scan is
-   over the link is released, so that reload opens Home and never scans it again.
+   (scanEnded). If WebKit kills the page mid-scan, the reload reopens the share page, so the scan
+   starts again instead of the user landing on Home with nothing. Once the scan is over the link is
+   released, so that reload opens Home and never scans it again.
 
    The page swaps /share?url= for / in the address bar as it starts (history.replaceState), so
    "the page has it" is not read from the URL. Once a load of the link's share page has started
    (opened), the next engine page that finishes loading is that page and takes the link (handed).
    The only other main-frame loads in between are this app's own retries, which open the share page too.
 
-   A held link still ends, so it can never keep the app away from Home:
+   A held link ends only when it is done with or replaced:
    - when the page posts a result after it had the link (resultPosted),
    - when the page it went to shows another screen than its scan (scanEnded),
    - when a newer share replaces it,
-   - after maxAge, the share inbox's own staleness rule,
-   - after maxLaunches launch checks (launch, Try again, return to the app, or a reload after
-     WebKit killed the page), whether or not a page had it in between, so a share page that kills
-     WebKit every time cannot reload forever. Automatic reloads inside one launch check are already
-     capped (EngineWebView).
+   - after maxCrashReloads reloads that followed WebKit killing the page. That is the one reload
+     that repeats with nobody asking (a share page that kills WebKit every time would otherwise
+     reload forever), so it is the one with a limit, whether or not a page had the link in between.
+     Automatic reloads after a failed load are already capped per launch check (EngineWebView).
+   It is not dropped for time, or for the launch checks Try again and a return to the app run: a
+   user who is offline for an hour, or taps Try again ten times, still gets the scan when a page
+   loads (the first build 30 limits, 10 minutes and 5 launch checks, dropped it with no word and
+   the app then opened Home, the same loss as before). Those launch checks only run when the
+   user asks, so they can't keep the app away from Home on their own.
    Foundation only: the host tests run it on a Mac. */
 struct PendingShare {
-    static let maxAge: TimeInterval = SharedInbox.maxAge
-    static let maxLaunches = 5
+    static let maxCrashReloads = 5
 
     private(set) var link: String?
     /* True once a load of this link's share page started, until an engine page loads. */
@@ -39,45 +42,37 @@ struct PendingShare {
     /* True once a page has the link (its share page loaded, or the running page took it), until a
        new load of its share page starts. */
     private(set) var handed = false
-    private(set) var launches = 0
+    private(set) var crashReloads = 0
 
     /* The held link while a page has it, or nil. */
     var handedLink: String? { handed ? link : nil }
-    private var since = Date.distantPast
 
     /* A new share. It replaces any older one, which has not scanned and now never will. */
-    mutating func hold(_ link: String, now: Date = Date()) {
+    mutating func hold(_ link: String) {
         self.link = link
-        since = now
-        launches = 0
+        crashReloads = 0
         opened = false
         handed = false
     }
 
-    /* The held link, or nil. One older than maxAge is dropped here. */
-    mutating func current(now: Date = Date()) -> String? {
-        if link != nil, now.timeIntervalSince(since) > Self.maxAge { clear() }
-        return link
-    }
+    /* The held link, or nil. */
+    var current: String? { link }
 
     /* The held link while no page has it, or nil: what still has to reach a page. */
-    mutating func waiting(now: Date = Date()) -> String? {
-        guard let l = current(now: now), !handed else { return nil }
-        return l
-    }
+    var waiting: String? { handed ? nil : link }
 
-    /* A launch check (or a reload after WebKit killed the page) is about to load a page. Past
-       maxLaunches the link is dropped and the launch opens Home. */
-    mutating func newLaunch(now: Date = Date()) {
-        guard current(now: now) != nil else { return }
-        launches += 1
-        if launches > Self.maxLaunches { clear() }
+    /* WebKit killed the page and the app is about to load it again. Past maxCrashReloads the link
+       is dropped and that reload opens Home. */
+    mutating func crashReload() {
+        guard link != nil else { return }
+        crashReloads += 1
+        if crashReloads > Self.maxCrashReloads { clear() }
     }
 
     /* The page a launch should open: the held link's share page on `base`, else `fallback`. A page
        that had the link is going away, so the new one has it only once it loads. */
-    mutating func target(base: URL, fallback: URL, now: Date = Date()) -> URL {
-        guard let l = current(now: now) else { return fallback }
+    mutating func target(base: URL, fallback: URL) -> URL {
+        guard let l = link else { return fallback }
         guard let u = EngineConfig.shareURL(for: l, base: base) else {
             clear()
             return fallback
@@ -91,9 +86,9 @@ struct PendingShare {
        the link (waiting), else `fallback`, the page that failed. A load that fails while a page has
        the link is one that page started itself (a Spotify return, or the stale-shell reload, which
        resumes its own scan), so it reloads that page as before. */
-    mutating func retryTarget(base: URL, fallback: URL, now: Date = Date()) -> URL {
-        guard waiting(now: now) != nil else { return fallback }
-        return target(base: base, fallback: fallback, now: now)
+    mutating func retryTarget(base: URL, fallback: URL) -> URL {
+        guard waiting != nil else { return fallback }
+        return target(base: base, fallback: fallback)
     }
 
     /* An engine page finished loading. True when that page has the held link: its share page was
@@ -134,6 +129,6 @@ struct PendingShare {
         link = nil
         opened = false
         handed = false
-        launches = 0
+        crashReloads = 0
     }
 }
