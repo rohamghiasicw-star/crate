@@ -1,6 +1,8 @@
 name: page-tests
-# Headless browser suites for the page the app loads (engine/crate.html), on a clean Linux runner.
+# Headless browser suites for the page the app loads (engine/crate.html), on clean Linux runners.
 # No network to the live server: every suite serves the page from the promise-ledger mock engine.
+# One job per suite, all at once: the same commands the single job ran one after another (about 58 min end to
+# end; this way about 10), and every suite reports even when another one fails.
 on:
   workflow_dispatch:
   push:
@@ -8,59 +10,95 @@ on:
     paths: ['engine/crate.html', 'engine/test_*.py', '.github/workflows/page-tests.yml']
 jobs:
   page:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04   # Playwright 1.60 has no WebKit build for ubuntu 26.04 (failed run 43290437832)
-    timeout-minutes: 90
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ledger
+            name: 'Promise ledger'
+            run: python engine/test_promise_ledger.py
+          - id: thunder
+            name: 'Saved-scan layout'
+            run: python engine/test_thunder_layout.py
+          - id: paywall-wk
+            name: 'Paywall sheet (WebKit)'
+            run: PW_BROWSER=webkit python engine/test_paywall_sheet.py --shots out/paywall
+          - id: onboarding-wk
+            name: 'Onboarding v4 (WebKit)'
+            run: ONB_SHOTS=out/onboarding python engine/test_onboarding_v4.py engine/crate.html
+          - id: rf1-wk
+            name: 'Reviewer-run fixes (WebKit)'
+            run: python engine/test_reviewer_fixes.py
+          - id: rf1-cr
+            name: 'Reviewer-run fixes (Chromium)'
+            run: PW_BROWSER=chromium python engine/test_reviewer_fixes.py
+          - id: rf2-wk
+            name: 'Reviewer-run fixes 2 (WebKit)'
+            run: python -u engine/test_reviewer_fixes2.py
+          - id: rf2-cr
+            name: 'Reviewer-run fixes 2 (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_reviewer_fixes2.py
+          - id: polish3-wk
+            name: 'Polish 3 (WebKit)'
+            run: python -u engine/test_polish3.py
+          - id: polish3-cr
+            name: 'Polish 3 (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_polish3.py
+          - id: preview-wk
+            name: 'Preview gate, App Review 2.5.19 (WebKit)'
+            run: python -u engine/test_preview_gate.py
+          - id: preview-cr
+            name: 'Preview gate, App Review 2.5.19 (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_preview_gate.py
+          - id: round3-wk
+            name: 'Round 3 (WebKit)'
+            run: python -u engine/test_round3.py
+          - id: round3-cr
+            name: 'Round 3 (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round3.py
+          - id: round4-wk
+            name: 'Round 4 (WebKit)'
+            run: python -u engine/test_round4.py
+          - id: round4-cr
+            name: 'Round 4 (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round4.py
+          - id: round5a-wk
+            name: 'Round 5a (WebKit)'
+            run: python -u engine/test_round5a.py
+          - id: round5a-cr
+            name: 'Round 5a (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5a.py
+          - id: round5b-wk
+            name: 'Round 5b (WebKit)'
+            run: python -u engine/test_round5b.py
+          - id: round5b-cr
+            name: 'Round 5b (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5b.py
+          - id: r5b-a11y-wk
+            name: 'Round 5b accessibility and naming (WebKit)'
+            run: python -u engine/test_round5b_a11y.py
+          - id: r5b-a11y-cr
+            name: 'Round 5b accessibility and naming (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5b_a11y.py
+          - id: busy-retry
+            name: 'Busy retry (Chromium)'
+            run: python -u engine/test_busy_retry.py --page engine/crate.html
+          - id: call-retry
+            name: 'Call retry (Chromium)'
+            run: python -u engine/test_call_retry.py --page engine/crate.html
+          - id: soft-replay
+            name: 'Soft replay (Chromium)'
+            run: python -u engine/test_soft_replay.py --page engine/crate.html
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
       - run: pip install playwright==1.60.0 && python -m playwright install --with-deps webkit chromium
-      - name: Promise ledger
-        run: python engine/test_promise_ledger.py
-      - name: Saved-scan layout
-        run: python engine/test_thunder_layout.py
-      - name: Paywall sheet (WebKit)
-        run: PW_BROWSER=webkit python engine/test_paywall_sheet.py --shots out/paywall
-      - name: Onboarding v4 (WebKit)
-        run: ONB_SHOTS=out/onboarding python engine/test_onboarding_v4.py engine/crate.html
-      - name: Reviewer-run fixes (WebKit)
-        run: python engine/test_reviewer_fixes.py
-      - name: Reviewer-run fixes (Chromium)
-        run: PW_BROWSER=chromium python engine/test_reviewer_fixes.py
-      - name: Reviewer-run fixes 2 (WebKit)
-        run: python -u engine/test_reviewer_fixes2.py
-      - name: Reviewer-run fixes 2 (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_reviewer_fixes2.py
-      - name: Polish 3 (WebKit)
-        run: python -u engine/test_polish3.py
-      - name: Polish 3 (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_polish3.py
-      - name: Preview gate, App Review 2.5.19 (WebKit)
-        run: python -u engine/test_preview_gate.py
-      - name: Preview gate, App Review 2.5.19 (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_preview_gate.py
-      - name: Round 3 (WebKit)
-        run: python -u engine/test_round3.py
-      - name: Round 3 (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_round3.py
-      - name: Round 4 (WebKit)
-        run: python -u engine/test_round4.py
-      - name: Round 4 (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_round4.py
-      - name: Round 5a (WebKit)
-        run: python -u engine/test_round5a.py
-      - name: Round 5a (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_round5a.py
-      - name: Round 5b (WebKit)
-        run: python -u engine/test_round5b.py
-      - name: Round 5b (Chromium)
-        run: PW_BROWSER=chromium python -u engine/test_round5b.py
-      - name: Busy retry (Chromium)
-        run: python -u engine/test_busy_retry.py --page engine/crate.html
-      - name: Call retry (Chromium)
-        run: python -u engine/test_call_retry.py --page engine/crate.html
-      - name: Soft replay (Chromium)
-        run: python -u engine/test_soft_replay.py --page engine/crate.html
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
       - if: always()
         uses: actions/upload-artifact@v4
-        with: { name: page-shots, path: out/, if-no-files-found: ignore }
+        with: { name: 'page-shots-${{ matrix.id }}', path: out/, if-no-files-found: ignore }

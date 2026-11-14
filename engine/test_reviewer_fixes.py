@@ -104,8 +104,14 @@ async def main(html):
         check("E2", "No page errors in the no-result scan", not pg.errs, pg.errs); await ctx.close()
         # R4: a no-song scan does not use a free scan
         ctx, pg = await page(overrides={"7000000000000000040": NOMATCH})
-        await go(pg, LG.CLIP % 40); await pg.wait_for_timeout(5000)
-        u = await pg.evaluate(used); note = await pg.evaluate("()=>(document.getElementById('scannote')||{}).textContent||''")
+        await go(pg, LG.CLIP % 40); t0 = time.time(); note = ""
+        # Round 5b (A11Y-R4-04): the toast's line now empties once the toast has faded (VoiceOver kept reading it on
+        # later cards), so its words are read while it is on screen. The count is still read 5 s after the scan.
+        while time.time() - t0 < 5 and not note:
+            note = await pg.evaluate("()=>{var n=document.getElementById('scannote'); return n&&n.classList.contains('on')?n.textContent:'';}")
+            if not note: await pg.wait_for_timeout(100)
+        await pg.wait_for_timeout(max(0, int((5 - (time.time() - t0)) * 1000)))
+        u = await pg.evaluate(used)
         check("R4", "'We couldn't name this one' does not use a free scan and says so", (u in (None, "0")) and "didn't count" in note, {"used": u, "note": note})
         await ctx.close()
         # R7 + R8: after a found scan, Back shows Paste; the same clip with share params counts once
