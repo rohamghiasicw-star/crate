@@ -278,15 +278,30 @@ async def main_async(html, shots):
                   len(buys) == 1 and buys[0].get("id") == YEARLY, buys)
         out.check("B2", "A pending purchase says so on the sheet",
                   st["msg"] == "Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it.", st["msg"])   # round 3: one product name
+        # ROUND 5C (IAP-R5-2): a pending purchase now holds the sheet, so Monthly and Continue buy nothing while it waits
+        # (this check used to buy Monthly over the pending one). Monthly + a cancel moved to a fresh sheet below.
+        await pg.tap(".pwplan[data-i='1']", force=True)
+        await pg.wait_for_timeout(200)
+        await pg.tap("#pwgo", force=True)
+        await pg.wait_for_timeout(300)
+        held = await pg.evaluate("()=>__calls.filter(function(c){return c.op==='buy';})")
+        st = await pg.evaluate(SHEET)
+        out.check("B3a", "While a purchase is pending, Monthly and Continue buy nothing and the pending line stays",
+                  len(held) == 1 and st["msg"] == "Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it."
+                  and st["btnDisabled"] and st["open"], (held, st["msg"], st["btnDisabled"]))
+        await ctx.close()
+
+        ctx = await ctx_for(W, H, D)
+        pg = await page_with(ctx, {"products": "normal", "buy": "cancelled"})
+        await opened(pg)
         await pg.tap(".pwplan[data-i='1']")
         await pg.wait_for_timeout(200)
-        await pg.evaluate("()=>{sessionStorage.setItem('pwmode',JSON.stringify({products:'normal',buy:'cancelled'}));}")
         await pg.tap("#pwgo")
         await pg.wait_for_timeout(300)
         buys = await pg.evaluate("()=>__calls.filter(function(c){return c.op==='buy';})")
         st = await pg.evaluate(SHEET)
         out.check("B3", "Continue on Monthly buys the monthly product; a cancel shows no error",
-                  len(buys) == 2 and buys[1].get("id") == MONTHLY and not st["msg"] and st["open"], (buys, st["msg"]))
+                  len(buys) == 1 and buys[0].get("id") == MONTHLY and not st["msg"] and st["open"], (buys, st["msg"]))
         await ctx.close()
 
         ctx = await ctx_for(W, H, D)

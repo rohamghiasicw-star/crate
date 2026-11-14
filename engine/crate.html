@@ -276,6 +276,13 @@ html.native .app[data-state="profile"]{height:100vh;height:100dvh}
 /* Same for Trending (See all from Home: 15 rows put the tabs at y 1261 of 852) and for
    Search once results land (6 rows put them at y 881). Konnor asked for every tab to show
    Home, Search, Finds and You right away (U22, U26, U27); these were the two left. */
+/* ROUND 5C (LITERAL-B-R5-01): the result card scrolls the whole page, and scrolled content ran under the status bar and
+   the Dynamic Island with nothing behind it (the title, the clip pill, Play, the Open in tiles). A strip the card's own
+   colour now covers the top safe area on every screen, under the sheets (z 50 and up) and over the content. At rest it
+   sits on the card's own top padding, so nothing on screen moves. It takes taps, so nothing hidden under it can be hit. */
+html.native body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);z-index:40;
+  background:var(--card);transition:background-color .45s ease}
+html.native body:has(> .app[data-state="scanning"])::before{background:var(--scan)}
 html.native .app[data-state="trending"],html.native .app[data-state="search"]{height:100vh;height:100dvh}
 .app[data-state="trending"] #s-trend,.app[data-state="search"] #s-search{min-height:0}
 
@@ -715,6 +722,7 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .pwx{flex:none;width:44px;height:44px;margin:-6px -12px 0 0;display:grid;place-items:center;background:none;border:0;
   color:#8E8E93;border-radius:22px;-webkit-tap-highlight-color:transparent}
 .pwx svg{width:20px;height:20px}
+.pwfull{margin:3px 0 0;font-size:13px;line-height:1.3;font-weight:600;color:#C7C7CC}
 .pwsub{margin:4px 0 16px;font-size:14px;line-height:1.4;color:#AEAEB2}
 .pwplans{display:flex;flex-direction:column;gap:10px}
 .pwplan{display:flex;align-items:center;gap:12px;width:100%;padding:14px;border-radius:14px;background:#1C1C21;
@@ -1206,6 +1214,14 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   transition:border-color .15s,filter .15s}
 .opl.ex{background:var(--raise2);border-color:var(--line2)}
 .opl svg{width:24px;height:24px;flex:none}
+/* ROUND 5C: the brands' own icon files (see IC) */
+.bmk{display:block;flex:none;width:24px;height:24px;object-fit:contain}
+.bmk-l{display:none}
+:root[data-theme="light"] .bmk-d{display:none} :root[data-theme="light"] .bmk-l{display:block}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .bmk-d{display:none} :root:not([data-theme="dark"]) .bmk-l{display:block}}
+.src.hasmark .bmk{width:13px;height:13px}
+.trk .src.hasmark .bmk{width:12px;height:12px}
+.ipaud-src .bmk{width:14px;height:14px}
 /* break-word, never `anywhere`: `anywhere` split "SoundCloud" across two lines at 375px. */
 .opl b{font-size:10px;font-weight:650;color:var(--text);line-height:1.25;overflow-wrap:break-word;
   letter-spacing:-.01em}
@@ -1617,6 +1633,7 @@ a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:fil
 .secbtn.sq{flex:0 0 52px;justify-content:center;padding:0;background:var(--raise);border:1px solid var(--line)}
 .secbtn.sq svg{width:19px;height:19px}
 .secbtn.sq.on svg{color:#F3697F}
+.secbtn.did svg{color:var(--good)}
 /* mashup: songs in this mix */
 .list.mix .trk{background:var(--raise);border:1px solid var(--line);padding:10px 12px;gap:12px}
 .mthumb{position:relative;width:42px;height:42px;border-radius:10px;overflow:hidden;flex:none;
@@ -2024,7 +2041,14 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 </div>
 
 <script>
-/* ---------- icons ---------- */
+/* ---------- icons ----------
+   ROUND 5C (GUIDELINE-LAWYER-R5-06): BRAND MARKS ARE THE BRANDS' OWN FILES, UNCHANGED, never drawn here. Apple Music: the
+   colour icon from Apple's Apple Music identity guidelines (marketing.services.apple), which allow it as a link to music
+   in an app. Spotify: the green icon from developer.spotify.com/documentation/design (21 px minimum). SoundCloud: the
+   favicon from soundcloud.com/company/media-kit (24 px minimum; white on the dark theme, black on the light one).
+   YouTube: the red icon from brand.youtube, scaled down. Each sits in an <img> so its file stays as shipped. Below a
+   brand's minimum (the 12-14 px source chips) only Apple Music, which states none, keeps its icon; the others show their
+   name. Deezer's current mark sits behind a sign-in and TikTok's needs written permission, so both show their name. */
 var IC={
   more:'<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18" cy="12" r="1.9"/></svg>',
   clock:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
@@ -2055,11 +2079,10 @@ var IC={
   x:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   quote:'<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M9.5 6.5C6.9 7.8 5.3 10 5.3 12.6c0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2zm8.2 0c-2.6 1.3-4.2 3.5-4.2 6.1 0 2.6 1.5 4.4 3.6 4.4 1.8 0 3.1-1.3 3.1-3 0-1.7-1.2-2.9-2.8-2.9-.3 0-.6 0-.8.1.3-1.2 1.3-2.4 2.7-3.2z"/></svg>',
   ig:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9"><rect x="3.6" y="3.6" width="16.8" height="16.8" rx="5"/><circle cx="12" cy="12" r="3.9"/><circle cx="17.2" cy="6.8" r="1.1" fill="#fff" stroke="none"/></svg>',
-  tt:'<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M16.3 3c.4 2.3 1.8 3.7 4 3.9v2.6c-1.3.1-2.5-.2-3.9-1v5.9c0 4.5-4.4 6.9-8 4.8-2.3-1.4-3-4.6-1.6-7 1.2-2 3.4-2.9 5.7-2.5v2.8c-.4-.1-.8-.2-1.2-.2-1.4 0-2.5 1.1-2.5 2.5s1.1 2.5 2.5 2.5c1.5 0 2.4-1 2.4-2.6V3z"/></svg>',
-  spotify:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#1ED760"/><path d="M17.9 10.9c-3.2-1.9-8.5-2.1-11.6-1.2a.94.94 0 1 1-.54-1.8c3.56-1.08 9.41-.87 13.1 1.32a.94.94 0 0 1-.96 1.62zm-.1 2.85a.78.78 0 0 1-1.08.26c-2.67-1.64-6.73-2.11-9.88-1.16a.78.78 0 1 1-.46-1.5c3.6-1.09 8.08-.56 11.15 1.32.37.23.49.71.27 1.08zm-1.24 2.74a.63.63 0 0 1-.86.21c-2.33-1.43-5.27-1.75-8.73-.96a.63.63 0 0 1-.28-1.22c3.79-.87 7.04-.5 9.66 1.1.29.18.39.57.21.87z" fill="#000"/></svg>',
-  apple:'<svg width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="amg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FB5C74"/><stop offset="1" stop-color="#FA233B"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.2" fill="url(#amg)"/><path d="M16.9 5.6 10.3 7.1a.8.8 0 0 0-.63.79v6.55a2.35 2.35 0 1 0 1.35 2.12V9.53l5.3-1.2v4.32a2.35 2.35 0 1 0 1.35 2.12V6.38a.8.8 0 0 0-.97-.78z" fill="#fff"/></svg>',
-  soundcloud:'<svg width="24" height="24" viewBox="0 0 24 24"><g fill="#FF5500"><rect x="1.2" y="12.6" width="1.5" height="5.2" rx=".75"/><rect x="4" y="10.6" width="1.5" height="7.2" rx=".75"/><rect x="6.8" y="9" width="1.5" height="8.8" rx=".75"/><rect x="9.6" y="7.2" width="1.5" height="10.6" rx=".75"/><path d="M13 6.9c.72-.6 1.63-.95 2.63-.95a4.2 4.2 0 0 1 4.16 3.72A3.1 3.1 0 0 1 19.2 17.8h-6.1a.6.6 0 0 1-.6-.6V7.4c0-.2.09-.38.24-.5z"/></g></svg>',
-  youtube:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.6 7.2a2.9 2.9 0 0 0-2.03-2.05C18.77 4.66 12 4.66 12 4.66s-6.77 0-8.57.49A2.9 2.9 0 0 0 1.4 7.2C.92 9 .92 12 .92 12s0 3 .48 4.8a2.9 2.9 0 0 0 2.03 2.05c1.8.49 8.57.49 8.57.49s6.77 0 8.57-.49a2.9 2.9 0 0 0 2.03-2.05c.48-1.8.48-4.8.48-4.8s0-3-.48-4.8z" fill="#FF0000"/><path d="M9.8 15.3 15.4 12 9.8 8.7z" fill="#fff"/></svg>',
+  spotify:'<img class="bmk" alt="" src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIGlkPSJMYXllcl8xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMzYuMDUgMjI1LjI1Ij48ZGVmcz48c3R5bGU+LmNscy0xe2ZpbGw6IzFlZDc2MDtzdHJva2Utd2lkdGg6MHB4O308L3N0eWxlPjwvZGVmcz48cGF0aCBjbGFzcz0iY2xzLTEiIGQ9Im0xMjIuMzcsMy4zMUM2MS45OS45MSwxMS4xLDQ3LjkxLDguNzEsMTA4LjI5Yy0yLjQsNjAuMzgsNDQuNjEsMTExLjI2LDEwNC45OCwxMTMuNjYsNjAuMzgsMi40LDExMS4yNi00NC42LDExMy42Ni0xMDQuOThDMjI5Ljc0LDU2LjU5LDE4Mi43NCw1LjcsMTIyLjM3LDMuMzFabTQ2LjE4LDE2MC4yOGMtMS4zNiwyLjQtNC4wMSwzLjYtNi41OSwzLjI0LS43OS0uMTEtMS41OC0uMzctMi4zMi0uNzktMTQuNDYtOC4yMy0zMC4yMi0xMy41OS00Ni44NC0xNS45My0xNi42Mi0yLjM0LTMzLjI1LTEuNTMtNDkuNDIsMi40LTMuNTEuODUtNy4wNC0xLjMtNy44OS00LjgxLS44NS0zLjUxLDEuMy03LjA0LDQuODEtNy44OSwxNy43OC00LjMyLDM2LjA2LTUuMjEsNTQuMzItMi42NCwxOC4yNiwyLjU3LDM1LjU4LDguNDYsNTEuNDksMTcuNTEsMy4xMywxLjc5LDQuMjMsNS43NywyLjQ1LDguOTFabTE0LjM4LTI4LjcyYy0yLjIzLDQuMTItNy4zOSw1LjY2LTExLjUxLDMuNDMtMTYuOTItOS4xNS0zNS4yNC0xNS4xNi01NC40NS0xNy44Ni0xOS4yMS0yLjctMzguNDctMS45Ny01Ny4yNiwyLjE2LTEuMDIuMjItMi4wMy4yNi0zLjAxLjEyLTMuNDEtLjQ4LTYuMzMtMy4wMi03LjExLTYuNTktMS4wMS00LjU4LDEuODktOS4xMSw2LjQ3LTEwLjEyLDIwLjc3LTQuNTcsNDIuMDYtNS4zOCw2My4yOC0yLjQsMjEuMjEsMi45OCw0MS40Niw5LjYyLDYwLjE2LDE5Ljc0LDQuMTMsMi4yMyw1LjY2LDcuMzgsMy40MywxMS41MVptMTUuOTQtMzIuMzhjLTIuMSw0LjA0LTYuNDcsNi4xMy0xMC43Myw1LjUzLTEuMTUtLjE2LTIuMjgtLjUyLTMuMzctMS4wOC0xOS43LTEwLjI1LTQwLjkyLTE3LjAyLTYzLjA3LTIwLjEzLTIyLjE1LTMuMTEtNDQuNDItMi40NS02Ni4xOCwxLjk3LTUuNjYsMS4xNS0xMS4xNy0yLjUxLTEyLjMyLTguMTYtMS4xNS01LjY2LDIuNTEtMTEuMTcsOC4xNi0xMi4zMiwyNC4xLTQuODksNDguNzQtNS42Miw3My4yNS0yLjE4LDI0LjUxLDMuNDQsNDcuOTksMTAuOTQsNjkuODEsMjIuMjksNS4xMiwyLjY2LDcuMTEsOC45Nyw0LjQ1LDE0LjA5WiIvPjwvc3ZnPg==">',
+  apple:'<img class="bmk" alt="" src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPCEtLSBHZW5lcmF0b3I6IEFkb2JlIElsbHVzdHJhdG9yIDI0LjIuMSwgU1ZHIEV4cG9ydCBQbHVnLUluIC4gU1ZHIFZlcnNpb246IDYuMDAgQnVpbGQgMCkgIC0tPgo8c3ZnIHZlcnNpb249IjEuMSIgaWQ9IkFydHdvcmsiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIHg9IjBweCIgeT0iMHB4IgoJIHdpZHRoPSI3M3B4IiBoZWlnaHQ9IjczcHgiIHZpZXdCb3g9IjAgMCA3MyA3MyIgc3R5bGU9ImVuYWJsZS1iYWNrZ3JvdW5kOm5ldyAwIDAgNzMgNzM7IiB4bWw6c3BhY2U9InByZXNlcnZlIj4KPHN0eWxlIHR5cGU9InRleHQvY3NzIj4KCS5zdDB7ZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7ZmlsbDp1cmwoI1NWR0lEXzFfKTt9Cgkuc3Qxe2ZpbGwtcnVsZTpldmVub2RkO2NsaXAtcnVsZTpldmVub2RkO2ZpbGw6I0ZGRkZGRjt9Cjwvc3R5bGU+CjxnIGlkPSJMYXllcl81Ij4KPC9nPgo8Zz4KCQoJCTxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSURfMV8iIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iMzYiIHkxPSIyLjI4NTgiIHgyPSIzNiIgeTI9IjcyLjQ1NSIgZ3JhZGllbnRUcmFuc2Zvcm09Im1hdHJpeCgxIDAgMCAtMSAwIDc0LjAwNjgpIj4KCQk8c3RvcCAgb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojRkEyMzNCIi8+CgkJPHN0b3AgIG9mZnNldD0iMSIgc3R5bGU9InN0b3AtY29sb3I6I0ZCNUM3NCIvPgoJPC9saW5lYXJHcmFkaWVudD4KCTxwYXRoIGNsYXNzPSJzdDAiIGQ9Ik03MiwyMi41MmMwLTAuODYsMC0xLjcyLDAtMi41OGMwLTAuNzItMC4wMS0xLjQ1LTAuMDMtMi4xN2MtMC4wNC0xLjU4LTAuMTQtMy4xNy0wLjQyLTQuNzMKCQljLTAuMjgtMS41OC0wLjc1LTMuMDYtMS40OC00LjVjLTAuNzItMS40MS0xLjY2LTIuNzEtMi43OC0zLjgzcy0yLjQyLTIuMDYtMy44My0yLjc4Yy0xLjQ0LTAuNzMtMi45MS0xLjItNC40OS0xLjQ4CgkJYy0xLjU2LTAuMjgtMy4xNS0wLjM3LTQuNzMtMC40MkM1My41MSwwLjAyLDUyLjc4LDAuMDEsNTIuMDYsMGMtMC44NiwwLTEuNzIsMC0yLjU4LDBIMjIuNTJjLTAuODYsMC0xLjcyLDAtMi41OCwwCgkJYy0wLjcyLDAtMS40NSwwLjAxLTIuMTcsMC4wM2MtMS41OCwwLjA0LTMuMTcsMC4xNC00LjczLDAuNDJDMTEuNDYsMC43NCw5Ljk4LDEuMiw4LjU1LDEuOTRDNy4xMywyLjY2LDUuODQsMy42LDQuNzIsNC43MgoJCVMyLjY1LDcuMTMsMS45Myw4LjU1Yy0wLjczLDEuNDQtMS4yLDIuOTEtMS40OCw0LjVjLTAuMjgsMS41Ni0wLjM3LDMuMTUtMC40Miw0LjczQzAuMDIsMTguNSwwLjAxLDE5LjIyLDAsMTkuOTQKCQljMCwwLjg2LDAsMS43MiwwLDIuNTh2MjYuOTVjMCwwLjg2LDAsMS43MiwwLDIuNThjMCwwLjcyLDAuMDEsMS40NSwwLjAzLDIuMTdjMC4wNCwxLjU4LDAuMTQsMy4xNywwLjQyLDQuNzMKCQljMC4yOCwxLjU4LDAuNzUsMy4wNiwxLjQ4LDQuNWMwLjcyLDEuNDEsMS42NiwyLjcxLDIuNzgsMy44M2MxLjEyLDEuMTIsMi40MiwyLjA2LDMuODMsMi43OGMxLjQ0LDAuNzMsMi45MSwxLjIsNC40OSwxLjQ4CgkJYzEuNTYsMC4yOCwzLjE1LDAuMzcsNC43MywwLjQyYzAuNzIsMC4wMiwxLjQ1LDAuMDMsMi4xNywwLjAzYzAuODYsMC4wMSwxLjcyLDAsMi41OCwwaDI2Ljk1YzAuODYsMCwxLjcyLDAsMi41OCwwCgkJYzAuNzIsMCwxLjQ1LTAuMDEsMi4xNy0wLjAzYzEuNTgtMC4wNCwzLjE3LTAuMTQsNC43My0wLjQyYzEuNTgtMC4yOCwzLjA2LTAuNzUsNC40OS0xLjQ4YzEuNDEtMC43MiwyLjcxLTEuNjYsMy44My0yLjc4CgkJYzEuMTItMS4xMiwyLjA2LTIuNDEsMi43OC0zLjgzYzAuNzMtMS40NCwxLjItMi45MSwxLjQ4LTQuNWMwLjI4LTEuNTYsMC4zNy0zLjE1LDAuNDItNC43M2MwLjAyLTAuNzIsMC4wMy0xLjQ1LDAuMDMtMi4xNwoJCWMwLjAxLTAuODYsMC0xLjcyLDAtMi41OEw3MiwyMi41Mkw3MiwyMi41MnoiLz4KPC9nPgo8ZyBpZD0iR2x5cGhfMl8iPgoJPGc+CgkJPHBhdGggY2xhc3M9InN0MSIgZD0iTTUwLjksMTFjLTAuMTcsMC4wMi0xLjcyLDAuMjktMS45MSwwLjMzbC0yMS40LDQuMzJsLTAuMDEsMGMtMC41NiwwLjEyLTEsMC4zMi0xLjMzLDAuNgoJCQljLTAuNDEsMC4zNC0wLjYzLDAuODMtMC43MiwxLjM5Yy0wLjAyLDAuMTItMC4wNSwwLjM2LTAuMDUsMC43MmMwLDAsMCwyMS44NiwwLDI2Ljc4YzAsMC42My0wLjA1LDEuMjMtMC40NywxLjc1CgkJCWMtMC40MiwwLjUyLTAuOTUsMC42Ny0xLjU2LDAuOGMtMC40NywwLjA5LTAuOTMsMC4xOS0xLjQsMC4yOGMtMS43NywwLjM2LTIuOTIsMC42LTMuOTYsMWMtMSwwLjM5LTEuNzQsMC44OC0yLjM0LDEuNQoJCQljLTEuMTgsMS4yMy0xLjY2LDIuOTEtMS40OSw0LjQ4YzAuMTQsMS4zNCwwLjc0LDIuNjIsMS43OCwzLjU2YzAuNywwLjY0LDEuNTcsMS4xMywyLjYsMS4zM2MxLjA3LDAuMjEsMi4yLDAuMTQsMy44Ni0wLjIKCQkJYzAuODgtMC4xOCwxLjcxLTAuNDYsMi41LTAuOTJjMC43OC0wLjQ2LDEuNDUtMS4wNywxLjk3LTEuODJjMC41Mi0wLjc1LDAuODYtMS41OCwxLjA1LTIuNDdjMC4xOS0wLjkxLDAuMjQtMS43NCwwLjI0LTIuNjVWMjguNTYKCQkJYzAtMS4yNCwwLjM1LTEuNTcsMS4zNi0xLjgyYzAsMCwxNy43OS0zLjU5LDE4LjYyLTMuNzVjMS4xNi0wLjIyLDEuNywwLjExLDEuNywxLjMydjE1Ljg2YzAsMC42My0wLjAxLDEuMjYtMC40MywxLjc4CgkJCWMtMC40MiwwLjUyLTAuOTUsMC42Ny0xLjU2LDAuOGMtMC40NywwLjA5LTAuOTMsMC4xOS0xLjQsMC4yOGMtMS43NywwLjM2LTIuOTIsMC42LTMuOTYsMWMtMSwwLjM5LTEuNzQsMC44OC0yLjM0LDEuNQoJCQljLTEuMTgsMS4yMy0xLjcsMi45MS0xLjUzLDQuNDhjMC4xNCwxLjM0LDAuNzgsMi42MiwxLjgyLDMuNTZjMC43LDAuNjQsMS41NywxLjExLDIuNiwxLjMyYzEuMDcsMC4yMSwyLjIsMC4xNCwzLjg2LTAuMgoJCQljMC44OC0wLjE4LDEuNzEtMC40NCwyLjUtMC45MWMwLjc4LTAuNDYsMS40NS0xLjA3LDEuOTctMS44MmMwLjUyLTAuNzUsMC44Ni0xLjU4LDEuMDUtMi40N2MwLjE5LTAuOTEsMC4yLTEuNzQsMC4yLTIuNjVWMTIuODkKCQkJQzUyLjcxLDExLjY2LDUyLjA2LDEwLjksNTAuOSwxMXoiLz4KCTwvZz4KPC9nPgo8L3N2Zz4K">',
+  soundcloud:'<img class="bmk bmk-d" alt="" src="data:image/webp;base64,UklGRjQDAABXRUJQVlA4WAoAAAAQAAAAkwAAjQAAQUxQSIcCAAABoJVtWxDreiMQgQhGIAIRiGCDRYOxgTbQBkQwAhGI8Bx8Omt+cPbhXhExAfrz/58ow7yeFWhnyeG/gX813m9r+HruxSdr+nIrH979V+Pjbf5i/nPw800m3w3r90hU1w3r19jAX4TYAT/fokAwAWIHxIebXv7ihGRmyD0092wn5aLBbDKsPbA+G7QLIJsNSheEJ/OAk+SB1RSofZQnC4CXNAGHOaH1gXuwCERJAThNBVwf+cFmIEmKQDUAvo/yYAuQJSWgSXIm9IGT8949gj9fV+vpzAaskjKAJG9iJ6UCtD354XaYTIBsynteCiZ18mZ7+cFOSGaG465I2t6be4MaxwIWs0MzFah3003uD36GcOFiAg5TAPfWboKUhmEeofIyAaimAZMkgCapvLcOQejPQzMJQJIDSDfcxbGq6y4CQVI2XppM/l0ai9xdBmZJi5mkYJanad3twCFpM1GKZpXcoxB6O4EqaTdJSuaQ/LMsvVUASeW9IulZzt7oJI7WhvD/LtwsozCEfnXctN/lL9FuNhOlaFZJDaiStpswVO2tAvUuSMEskipw3vmbNErp7QSKpOXGm3xTJC3GSd7EUebeNuCQlI2/SZIKcEjKRjdhFN9bBmZJyUiSCZI2YJWUgCZJZhqkqPcEBEkRaKa+lSVF4DQN8IP47jzgJE1AMSfgJGVgljQBxVRAYyzqv3FKkgMOs0GTpAQESR5YTYE6RnUDFBajBtkscJoITJIEZLNBGaJ6jTjpssJsZihmApypkMwCxwin18g7BBNhMQ6abIFgZlgkuc4Wp6EzeDPBbNQoFxs4k2CWpK2nfdLgLgdd7qe/yDVehLrIulK80XLWLsuanP78/7/SAQBWUDgghgAAABAKAJ0BKpQAjgA+bTCWSCQioiEnnzgAgA2JaW7hcSAEQ6NdUvGlci+QOBUPeNK5BJmsA/TJLVXRNVqrGeEXJ8eKG2i+NNaASwF4Hal8hF8gcCoe8aVyL1gAAP7/KwAB///8Jy2//4TjJ/eOf/8Xz//FuH//itCh3/4zx//2widdwAAAAAAA"><img class="bmk bmk-l" alt="" src="data:image/webp;base64,UklGRjIDAABXRUJQVlA4WAoAAAAQAAAAiwAAhwAAQUxQSIQCAAABkFXbVhhJVwISkBAJSEACEuKgcVBxkDhIOUACEpCAhPPxkpoeSP3ORMQE6L///5kzrHttQK8lh+/mX53P+x6+lnvxmy19qZ1fPv1X4tf7+oX878HPN1j8MOzPl2huGPbHO8BfhDgAP09XIJgAcQDiQy0vf1EhmRXyCN09U6VcdFhNhn0E9meCfgFkc0AZgvBEHnCSPLCbAm2M8kQB8JIW4G0q9DFwDxSBKCkA1TTAjZEfaAWSpAg0A+DHKA+0AVlSArokZ8IYODnv3VS+vq726swB7JIygCRv4iClAfQz+WlOWEyAbMpnXgomDfJhf/lJKiSzwvuuSDo+W0eDFucANnNCNw1od8tNHg9+hnLhYgHepgDuo9MEKU3DOlLjZQLQTAcWSQBdUvlsn4IwjoduEoAkB5BuuItzNTdMBIKkbLy0mPxnaS7yMBlYJW1mkYLZnqYPcwJvSYeJUjS75B6FMEoFmqTTJCmZt+SfZRulAUgqnxVJz1JHYZA4Wx/K/71ws83CUPqj903/s/xw/eYwUYpml9SBJum4CVO1URrQ7oIUzCapAfXO36RZyigVKJK2G2/yTZG0GSd5E2dZRzmAt6Rs/E2SVIC3pGx0E2bxo2RglZSMJJkg6QB2SQnokmSWSYpGTUCQFIFu2kdZUgSq6YCfxA/jASdpAYqpgJOUgVXSAhTTAM2xadxOlSQHvM0BXZISECR5YDcF2hzNDVTYjDpks0E1EVgkCcjmgDJF8xp50WWD1axQzAI40yCZDd4zVK8ZTwgmwmYcdNkCwaywSXKDbU5TZvBmgdWoUy4OcCbBKknHSOeiSV0Oujyrv8gtXoS2ybpSvNFW25BlT07//f/PllZQOCCIAAAAUAoAnQEqjACIAD5tNJZIpDEiISZSCNogDYlpbt0AArN8uggSJvl0ECQ7lNa5X6ln8txU9ThURcCEFqRRJKqONqEyaiGLGWjbUyo/7HVYsIe7Soyom+XQQJDoAAD++5zAAJ3MZuQfMVlt9rOxX/0BRZJgYTvQCSoIVoWrID/AAIiDrdAAAAAAAA==">',
+  youtube:'<img class="bmk" alt="" src="data:image/png;base64,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">',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.4 12 3.8l8 6.6V20a1 1 0 0 1-1 1h-4.6v-6h-4.8v6H5a1 1 0 0 1-1-1z"/></svg>',
   flame:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5c3.9 0 6.5-2.5 6.5-6.1 0-2.5-1.4-4.4-2.8-6-.5 1-1.3 1.9-2.2 2.3.3-2.9-1-6.4-3.6-8.2.1 2.3-.7 4-2 5.6-1.3 1.7-2.4 3.6-2.4 6.3 0 3.6 2.6 6.1 6.5 6.1z"/></svg>',
   rows:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h9.5"/></svg>',
@@ -2073,7 +2096,6 @@ var IC={
   sat:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7 17 3l4 4-4 4M10 10l4 4M7 13l-4 4 4 4 4-4M14.5 20a5.5 5.5 0 0 0-11-11"/></svg>',
   lock:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></svg>',
   bolt:'<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.8 2.2 4.6 13.4h5.3L10.2 21.8l8.2-11.2h-5.3z"/></svg>',
-  deezer:'<svg viewBox="0 0 24 24"><g fill="#A238FF"><rect x="15.6" y="4" width="7.4" height="2.6" rx=".5"/><rect x="15.6" y="8" width="7.4" height="2.6" rx=".5"/><rect x="8" y="8" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x="15.6" y="12" width="7.4" height="2.6" rx=".5"/><rect x="8" y="12" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x=".4" y="12" width="7.4" height="2.6" rx=".5" opacity=".3"/><rect x="15.6" y="16" width="7.4" height="2.6" rx=".5"/><rect x="8" y="16" width="7.4" height="2.6" rx=".5" opacity=".55"/><rect x=".4" y="16" width="7.4" height="2.6" rx=".5" opacity=".3"/></g></svg>',
 };
 /* the wave squiggle inside the orb */
 /* THE WAVE. One glyph everywhere - the app mark, the scan button, the splash, the
@@ -3334,7 +3356,7 @@ function showChip(host,sub,thumb,audio){
   scanbox.innerHTML='<div class="chip">'+
     (s.thumb?imgTag({'class':'th', src:s.thumb, alt:'', onerror:"this.remove()"})
             :'<span class="th"></span>')+
-    '<span class="ct"><b><span class="ci">'+(ig?IC.ig:IC.tt)+'</span>Shared from '+
+    '<span class="ct"><b>'+(ig?'<span class="ci">'+IC.ig+'</span>':'')+'Shared from '+
       (ig?'Instagram':'TikTok')+'</b><span>'+esc(s.sub||'')+'</span></span>'+
     '<span class="abadge'+(s.audio?' on':'')+'">audio'+(s.audio?IC.tick:'')+'</span></div>';}
 function hideChip(){scanbox.innerHTML=''; chipState={host:'',sub:'',thumb:'',audio:false};}
@@ -3854,7 +3876,7 @@ var SRC_NAME={youtube:'YouTube', soundcloud:'SoundCloud', apple:'Apple Music',
 function srcChip(src){
   src=(src||'').toLowerCase();
   var label=SRC_NAME[src]||(src.charAt(0).toUpperCase()+src.slice(1));
-  var mark=IC[src]||'';
+  var mark=src==='apple'?IC.apple:'';   // ROUND 5C: the other marks have a minimum above chip size (see IC)
   return '<span class="src '+esc(src)+(mark?' hasmark':'')+'">'+mark+
          '<span>'+esc(label)+'</span></span>';
 }
@@ -5381,7 +5403,8 @@ function renderResult(d,partial){
       prow('Apple Music',_oq.t,_oq.a,'apple')+
       prow('SoundCloud',_oq.t,_oq.a,'soundcloud')+
       prow('YouTube',_oq.t,_oq.a,'youtube')+
-    '</div></div>';   // Konnor item 8: the auto-save note lives in You > Scanning now
+    '</div></div>'+   // Konnor item 8: the auto-save note lives in You > Scanning now
+    addRow(d);        // ROUND 5C (RETURNING-USER-R5-06): Add to Finds, when scans are not added by themselves
   /* A one-word comment is not evidence. Konnor's own screenshot had "opinions" sitting
      under "circles by post malone" with equal weight, and another scan surfaced "fearles".
      Keep a hint only when it has at least two words and some length to it. */
@@ -5425,7 +5448,7 @@ function renderResult(d,partial){
      returns to the scan screen, a Back that does the same as the header arrow, and a link
      straight back to the clip's own app when we know where it came from. */
   var _plabel = _plat==='Instagram' ? 'Back to Instagram' : (_plat==='TikTok' ? 'Back to TikTok' : 'Open the video');
-  var _picon = _plat==='Instagram' ? IC.ig : (_plat==='TikTok' ? IC.tt : IC.open);
+  var _picon = _plat==='Instagram' ? IC.ig : IC.open;   // ROUND 5C: no TikTok mark (see IC)
   // Konnor: the save confirmation card (checkmark + "Saved to Found with Addify") stays
   // gone, it did not look authentic and ate room under the song. But "Find another song"
   // goes back to its original home at the foot of the card, in the same action row as Back
@@ -5478,14 +5501,19 @@ function renderResult(d,partial){
   if(ob) ob.onclick=function(){   // ROUND 3: search links on four apps, shown and hidden here
     var w=document.getElementById('otherwrap'); w.hidden=!w.hidden;
     ob.classList.toggle('on', !w.hidden); ob.setAttribute('aria-expanded', String(!w.hidden));};
-  var lb=document.getElementById('likebtn');
+  var lb=document.getElementById('likebtn'), ab=document.getElementById('addbtn');
   if(lb) lb.onclick=function(){lb.classList.toggle('on');
     var on2=lb.classList.contains('on');
     lb.innerHTML=on2?IC.heartfill:IC.heart; lb.setAttribute('aria-pressed',String(on2));
     lb.setAttribute('aria-label',on2?'Liked':'Like');
     setLiked(d.base_song,d.base_artist,on2);
-    if(on2) saveOne(d);                           // a like is also a keep
-    else { try{ renderLib(); }catch(e){} }};
+    // a like is also a keep. ROUND 5C (RETURNING-USER-R5-06): a find the like itself created (byLike) goes again with
+    // the unlike; one that was already there, or added with Add to Finds, stays
+    if(on2){ if(saveOne(d)) findByLike(d,true); unmatchedDone(d); }
+    else if(!findByLike(d,false)){ try{ renderLib(); }catch(e){} }
+    addPaint(ab,d);};
+  if(ab) ab.onclick=function(){if(ab.getAttribute('aria-disabled')==='true') return;
+    saveOne(d); findByLike(d,null); unmatchedDone(d); addPaint(ab,d);};
   // Konnor's inline player: the cover triangle opens it, the round button pauses/plays,
   // the corner x collapses it back to the triangle.
   // COVER PLAY (Roham 2026-09-30 19:30): the cover button is the small player. The first tap
@@ -5585,6 +5613,24 @@ function updateSaved(d,clip){
   var _hw=clipWho(d,clip); if(_hw&&sameClip&&x.handle!==_hw){x.handle=_hw; ch=true;}   // ROUND 3: the account the card credits
   if(ch){ if(clip) x.clip=clip; storeCrate(a); }
   return ch;}
+/* ROUND 5C (RETURNING-USER-R5-06): WITH "ADD EVERY MATCH TO FINDS" OFF THE CARD HAS ITS OWN ADD. The card had no save
+   control and the heart saved silently, and an unlike left the find behind. addRow is the card's "Add to Finds" (only
+   while autosave is off), "Added to Finds" once the song is in Finds. findByLike marks a find the heart created
+   (on=true), unmarks it (on=null: the user added it), or removes it on an unlike when the heart created it (on=false,
+   true when it did). */
+function inFinds(d){return !!d&&loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;});}
+function addRow(d){if(autoOn()||!d||!d.base_song) return ''; var f=inFinds(d);
+  return '<div class="secrow"><button class="secbtn wide'+(f?' did':'')+'" id="addbtn" type="button"'+(f?' aria-disabled="true"':'')+'>'+
+    (f?IC.tick:IC.plus)+'<span>'+(f?'Added to Finds':'Add to Finds')+'</span></button></div>';}
+function addPaint(ab,d){if(!ab||!document.contains(ab)) return; var f=inFinds(d);
+  ab.classList.toggle('did',f); ab.innerHTML=(f?IC.tick:IC.plus)+'<span>'+(f?'Added to Finds':'Add to Finds')+'</span>';
+  if(f) ab.setAttribute('aria-disabled','true'); else ab.removeAttribute('aria-disabled');}
+function findByLike(d,on){var a=loadCrate(), i=-1;
+  for(var k=0;k<a.length;k++) if(a[k].song===d.base_song&&a[k].artist===d.base_artist){i=k; break;}
+  if(i<0) return false;
+  if(on===false){ if(!a[i].byLike) return false; a.splice(i,1); storeCrate(a); return true; }
+  if(on) a[i].byLike=true; else delete a[i].byLike;
+  storeCrate(a); return false;}
 function autoSave(d,final){
   if(!d || !d.base_song) return;
   // Autosave off: nothing new is saved, but an entry the user saved by hand still takes
@@ -5627,6 +5673,11 @@ function logUnmatched(url,handle){var a=unmatched();
   if(a.some(function(x){return x.url===url;})) return;
   a.unshift({url:url,handle:handle||'',ts:Date.now()}); lsSet('addify-unmatched',a.slice(0,50));}
 function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url;}));}
+/* ROUND 5C (RETURNING-USER-R5-01): the scan on screen named its song and the song is in Finds: its "Not matched yet" row
+   has done its job. Called when the scan ends found and when the card's Add to Finds or Like saves it. */
+function unmatchedDone(d){if(!curURL||!d||!d.base_song||d.result==='no_match'||d.result==='uncertain'||d.unverified_base||d.base_uncertain) return;
+  if(!unmatched().some(function(x){return x.url===curURL;})) return;
+  if(loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL); try{renderLib();}catch(e){}}}
 /* free scans - a real monthly counter, not a prop. The pill does paywall work all day:
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
@@ -5647,15 +5698,32 @@ function storeCall(op,extra){return window.webkit.messageHandlers.addifyStore.po
    purchase is pending, every 15 s; Plus turning on closes the paywall and scans the clip
    that the paywall stopped. */
 var PW_AFTER='', pendT=0;
-function proOn(){PRO=true; PW_BUYING=false; PW_NOTE=''; clearTimeout(PW_BUSYT);   // ROUND 3: the purchase it waited for is in
+/* ROUND 5C (IAP-R5-1, CHAOS-2-R5-02): THE FREE-SCAN GATE WAITS FOR THE FIRST ENTITLEMENT ANSWER. PRO starts false and
+   the status check answers later, so a subscriber who shared a clip at a cold launch (the clip runs 350 ms after boot)
+   got "You used your 5 free scans" with a live buy button until StoreKit answered. Now PRO_KNOWN turns true with the
+   first status answer, or after PRO_WAIT ms if StoreKit never answers. Until then a scan that would open the paywall
+   waits for it (proWait), Listen does too, and the scans pill stays blank. STATUS_IN: a real answer has come. */
+var PRO_KNOWN=!STORE, STATUS_IN=!STORE, PRO_WAIT=3000, proWaiters=[];
+function proKnownNow(){if(PRO_KNOWN) return; PRO_KNOWN=true; paintPill();
+  var w=proWaiters; proWaiters=[]; w.forEach(function(f){try{f();}catch(e){}});}
+function proWait(){return new Promise(function(r){if(PRO_KNOWN) r(); else proWaiters.push(r);});}
+function proOn(){PRO=true; PW_BUYING=false; PW_NOTE=''; clearTimeout(PW_BUSYT); pendKeep(null);   // ROUND 3: the purchase it waited for is in
   var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; paintPill(); try{renderProf();}catch(e){}
   if(PW_AFTER){var l=PW_AFTER; PW_AFTER=''; setTimeout(function(){run(l);},300);}}
 function storeRefresh(){if(!STORE) return Promise.resolve(false);
-  return storeCall('status').then(function(r){var was=PRO; PRO=!!(r&&r.pro); paintPill();
-    if(PRO&&!was) proOn(); else if(was&&!PRO){try{renderProf();}catch(e){}} return PRO;},function(){return PRO;});}
+  return storeCall('status').then(function(r){var was=PRO; PRO=!!(r&&r.pro); var first=!STATUS_IN; STATUS_IN=true;
+    // ROUND 5C: a clip parked while the first answer was out (the paywall closed meanwhile) goes, now the answer is no
+    var pw=document.getElementById('paywall'); if(first&&!PRO&&(!pw||pw.hidden)) PW_AFTER='';
+    if(PRO&&!was) proOn(); else if(was&&!PRO){try{renderProf();}catch(e){}}
+    paintPill(); proKnownNow(); return PRO;},function(){STATUS_IN=true; proKnownNow(); return PRO;});}
+/* ROUND 5C (IAP-R5-2, CHAOS-2-R5-03): a pending purchase (Ask to Buy) is checked every PEND_TICK ms, PEND_TICKS times */
+var PEND_TICK=15000, PEND_TICKS=40;
 function pollPending(){clearInterval(pendT); var n=0;
-  pendT=setInterval(function(){if(++n>40||PRO){clearInterval(pendT); return;} storeRefresh();},15000);}
+  pendT=setInterval(function(){if(++n>PEND_TICKS||PRO){clearInterval(pendT); return;} storeRefresh();},PEND_TICK);}
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&STORE) storeRefresh();});
+// ROUND 5C (CHAOS-2-R5-03): build 30 says so when StoreKit's Transaction.updates delivers a verified transaction (an Ask
+// to Buy approval, a purchase finished in Settings): the page asks for the status at once
+window.addEventListener('addify:entitlements',function(){if(STORE) storeRefresh();});
 function scanKey(){return 'addify-scans-life';}   // Konnor's paywall rules 2026-09-30: the 5 free scans are lifetime
 function scansUsed(){return +(localStorage.getItem(scanKey())||0);}
 function countedURLs(){return lsGet(scanKey()+'-urls','[]')||[];}
@@ -5731,6 +5799,8 @@ function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.
     if(tag==='BUTTON'){n.type='button'; n.className='pill pillbtn';} else n.className='pill';
     pill.parentNode.replaceChild(n,pill); pill=n;}
   pill.hidden=!PAYWALL_ON; if(!PAYWALL_ON){pill.textContent=''; return;}
+  // ROUND 5C (IAP-R5-1): blank until the first entitlement answer (or PRO_WAIT), so a subscriber never sees "0 scans left"
+  pill.style.visibility=PRO_KNOWN?'':'hidden'; if(PRO_KNOWN) pill.removeAttribute('aria-hidden'); else pill.setAttribute('aria-hidden','true');
   pill.textContent = PRO ? 'Unlimited' : left+' scan'+(left===1?'':'s')+' left';   // Konnor: the counter reads "0 scans left"
   if(!PRO) pill.onclick=openPaywall;
   // ROUND 5B (FIRST-LAUNCH-R4-04): an open paywall never keeps an old free-scan count under the new one
@@ -5744,7 +5814,9 @@ function paintPill(){var left=Math.max(0,FREE_SCANS-scansUsed()), pill=document.
    Terms and Privacy open the same pages App Store Connect links to. */
 var PW_TERMS='https://support.addify.app/terms.html', PW_PRIVACY='https://support.addify.app/privacy.html';
 function pwMsg(t){var m=document.getElementById('pwm'); if(m){m.textContent=t; m.hidden=!t;}}
-function closePaywall(){var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; PW_AFTER='';}
+// ROUND 5C (IAP-R5-1): closed before the first entitlement answer came, the stopped clip stays parked: a subscriber's
+// answer still scans it (proOn), and a 'no' drops it (storeRefresh)
+function closePaywall(){var ov=document.getElementById('paywall'); if(ov) ov.hidden=true; if(STATUS_IN) PW_AFTER='';}
 function pwSub(left){return (left?'You have '+left+' free scan'+(left===1?'':'s')+' left. ':'You used your '+FREE_SCANS+' free scans. ')+
     'Get unlimited scans and keep finding versions.';}
 function pwAmount(q){if(q&&typeof q.amount==='number'&&q.amount>0) return q.amount;
@@ -5765,22 +5837,42 @@ function pwEvery(q){return q.period==='year'?'yearly':q.period==='month'?'monthl
    PW_GOT_WAIT the button comes back with the line cleared, so the screen never asks for the same purchase twice. */
 var PW_BUYING=false, PW_RESTORING=false, PW_REPAINT=null, PW_LOADTOK=0, PW_BUSYT=0, PW_NOTE='', PW_GOT_WAIT=60000;
 var PW_GOT='We got your purchase. Addify Plus turns on as soon as the App Store confirms it.';
+/* ROUND 5C (IAP-R5-2, CHAOS-2-R5-03): A PENDING PURCHASE HOLDS THE SHEET LIKE PW_GOT. After Ask to Buy the button came
+   back at once (each tap asked again, either plan) and a reopened sheet lost the pending line. Now the line is PW_NOTE,
+   the button and the rows stay locked until Plus turns on or the pending poll ends (PEND_TICKS checks, PW_PEND_WAIT),
+   and the state outlives a reload (sessionStorage addify-pw-pending: the plan, and when the wait ends), where the
+   poll starts again at boot (pendRestore). */
+var PW_PEND='Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it.';
+var PW_PEND_WAIT=PEND_TICK*(PEND_TICKS+1), PEND_KEY='addify-pw-pending';
+function pendKeep(id,until){try{if(id) sessionStorage.setItem(PEND_KEY,JSON.stringify({id:id,until:until}));
+  else sessionStorage.removeItem(PEND_KEY);}catch(e){}}
+function pwDone(){clearTimeout(PW_BUSYT); PW_BUYING=false; PW_NOTE=''; pendKeep(null); if(PW_REPAINT) PW_REPAINT();}
+// the button stays off until Plus turns on (proOn ends this), or for `ms` at most
+function pwHold(ms,note){clearTimeout(PW_BUSYT); PW_NOTE=note||'';
+  PW_BUSYT=setTimeout(function(){var m=document.getElementById('pwm'); if(note&&m&&m.textContent===note) pwMsg(''); pwDone();},ms);
+  if(note) pwMsg(note); pollPending();}
+function pendRestore(){var k=null; try{k=JSON.parse(sessionStorage.getItem(PEND_KEY)||'null');}catch(e){}
+  if(!k||!k.id) return; var left=(+k.until||0)-Date.now(); if(left<=0){pendKeep(null); return;}
+  PW_BUYING=k.id; pwHold(left,PW_PEND);}
 function pwRestoreBusy(on){var a=document.getElementById('pwr'); if(!a) return;
   a.textContent=on?'Restoring...':'Restore purchases';
   if(on) a.setAttribute('aria-disabled','true'); else a.removeAttribute('aria-disabled');}
 function openPaywall(){
-  if(!STORE) return;
+  if(!STORE||PRO) return;                         // ROUND 5C (IAP-R5-1): never to someone who has Plus
   var ov=document.getElementById('paywall');
   if(!ov){ov=document.createElement('div'); ov.id='paywall'; ov.className='pw'; document.body.appendChild(ov);}
   var left=Math.max(0,FREE_SCANS-scansUsed());
   // IAP-5, LIT-3: what it gives, in the You card's words. POLISH 3: the title on screen stays 'Addify+' (Option A, the
   // co-owners' paywall spec, and the live promise ledger's S6), and the rows on screen read 'Yearly' and 'Monthly'.
-  // ROUND 5B (LITERAL-R4-01, IAP-R4-2): the full name is what a screen reader hears: the sheet is the 'Addify Plus'
-  // dialog and each row's name starts 'Addify Plus Yearly' or 'Addify Plus Monthly' (the row's aria-label).
+  // ROUND 5B (LITERAL-R4-01, IAP-R4-2): the sheet is the 'Addify Plus' dialog and each row's name starts 'Addify Plus
+  // Yearly' or 'Addify Plus Monthly' (the row's aria-label). ROUND 5C (LITERAL-A-R5-02, LITERAL-B-R5-02): the full name
+  // is on screen too, in the line under the title (#pwfull). 'Addify Plus Yearly' beside the SAVE tag and the price did
+  // not stay on one line at 375 pt, so the row names keep Yearly / Monthly.
   var sub=pwSub(left);
   ov.innerHTML='<div class="pws" role="dialog" aria-modal="true" aria-label="Addify Plus" tabindex="-1">'+
     '<div class="pwgrab" aria-hidden="true"></div>'+
-    '<div class="pwtop"><h2 class="pwh" id="pwh">Addify+</h2><button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
+    '<div class="pwtop"><div><h2 class="pwh" id="pwh">Addify+</h2><p class="pwfull" id="pwfull">Addify Plus subscription</p></div>'+
+      '<button class="pwx" id="pwx" aria-label="Close">'+IC.x+'</button></div>'+
     '<p class="pwsub">'+esc(sub)+'</p>'+
     '<div class="pwplans" id="pwb" role="radiogroup" aria-label="Plans"></div>'+
     '<div class="pwfoot"><button class="pwgo" id="pwgo" disabled>Continue</button>'+
@@ -5835,11 +5927,7 @@ function openPaywall(){
       'Cancel anytime in your Apple ID settings at least 24 hours before renewal.';
     lg.hidden=false; go.onclick=buy;};
   var buy=function(){var q=plans[sel]; if(PW_BUYING||!q) return; PW_BUYING=q.id; PW_NOTE=''; pwMsg(''); paint();
-    var done=function(){clearTimeout(PW_BUSYT); PW_BUYING=false; PW_NOTE=''; if(PW_REPAINT) PW_REPAINT();};
-    // the button stays off until Plus turns on (proOn ends this), or for `ms` at most
-    var hold=function(ms,note){clearTimeout(PW_BUSYT); PW_NOTE=note||'';
-      PW_BUSYT=setTimeout(function(){var m=document.getElementById('pwm'); if(note&&m&&m.textContent===note) pwMsg(''); done();},ms);
-      if(note) pwMsg(note); pollPending();};
+    var done=pwDone, hold=pwHold;                 // ROUND 5C: shared with a reloaded page's pending wait (pendRestore)
     storeCall('buy',{id:q.id}).then(function(r){
       var e=(r&&r.error)||'';
       // build 28: the app answers 'busy' while an earlier purchase (say, from before a reload) is still on
@@ -5852,9 +5940,10 @@ function openPaywall(){
       // ROUND 3 (IAP-RV2-2): and the button stays off meanwhile.
       if(r&&!e){hold(PW_GOT_WAIT,PW_GOT); return;}
       if(e==='unverified'){storeRefresh().then(function(p){if(!p) hold(PW_GOT_WAIT,PW_GOT); else done();}); return;}
+      // ROUND 5C (IAP-R5-2): pending holds the sheet (and a reload) until Plus turns on or the poll ends
+      if(e==='pending'){pendKeep(q.id,Date.now()+PW_PEND_WAIT); hold(PW_PEND_WAIT,PW_PEND); return;}
       done();
-      if(e==='pending'){pwMsg('Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it.'); pollPending();}
-      else if(e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
+      if(e!=='cancelled') pwMsg('The purchase did not go through. Try again.');
     },function(){done(); pwMsg('The purchase did not go through. Try again.');});};
   PW_REPAINT=function(){if(live()&&plans.length&&sel>=0) paint();};
   // No products, a refusal or a plan without a price: say so, and the button asks StoreKit again.
@@ -5886,7 +5975,7 @@ function openPaywall(){
       var e=(r&&r.error)||'';
       pwMsg(e==='cancelled'?'':e==='failed'?'Couldn’t reach the App Store. Try again.':'No active subscription found on this Apple ID.');},
       function(){PW_RESTORING=false; pwRestoreBusy(false); pwMsg('Couldn’t reach the App Store. Try again.');});};}
-if(STORE) setTimeout(storeRefresh,0);
+if(STORE){setTimeout(storeRefresh,0); setTimeout(proKnownNow,PRO_WAIT); pendRestore();}   // ROUND 5C: PRO_WAIT caps the wait
 function speedLabel(x){return (x.speed&&x.speed!=='as posted')?x.speed:(x.edit||x.note||'original');}   // APPLYALL (finding 20); REVIEWER RUNS 2: a crowned remix says so
 function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
   if(m<1) return 'just now'; if(m<60) return Math.floor(m)+' min ago';
@@ -5894,7 +5983,10 @@ function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
   return Math.floor(m/1440)+(m<2880?' day ago':' days ago');}
 function dayOf(ts){if(!ts) return 'Earlier'; var d=new Date(ts), n=new Date();
   var d0=new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime();
-  if(ts>=d0) return 'Today'; if(ts>=d0-864e5) return 'Yesterday'; return 'Earlier';}
+  // ROUND 5C (RETURNING-USER-R5-02): yesterday's midnight by the calendar. A DST day is 23 or 25 hours long, so
+  // midnight minus 24 h called a Saturday find Yesterday on Monday and split one day into two groups.
+  var y0=new Date(n.getFullYear(),n.getMonth(),n.getDate()-1).getTime();
+  if(ts>=d0) return 'Today'; if(ts>=y0) return 'Yesterday'; return 'Earlier';}
 /* Export finds. Inside the iOS app a download goes nowhere, so the list goes to the native
    side (the exportFinds handler), which shows the share sheet. An app build without that
    handler but with the song share bridge gets the same text through it. A plain browser
@@ -6112,9 +6204,13 @@ function renderLib(){
       t.onclick=function(){var k=t.getAttribute('data-m'); libMonth=(libMonth===k)?'':k; renderLib();};});
   } else mb.innerHTML='';
 
-  var b=document.getElementById('libbody'), q=libQ.toLowerCase(), html='';
+  // ROUND 5C (RETURNING-USER-R5-04): '@handle' as the rows show it finds the creator, and the clip's link and its app
+  // ('tiktok', 'instagram') find the find, as the empty state promises ("the reel you found it in, the creator")
+  var b=document.getElementById('libbody'), q=libQ.toLowerCase().trim().replace(/^@+/,''), html='';
   function match(x){if(!q) return true;
-    return [x.title||'',x.by||'',x.song,x.artist,x.handle,x.speed,x.listen?'listen mode':'',x.via==='search'?'search':''].join(' ').toLowerCase().indexOf(q)>=0;}
+    var app=x.clip?(clipShape(x.clip).host||''):'';
+    return [x.title||'',x.by||'',x.song,x.artist,x.handle,x.speed,x.listen?'listen mode':'',x.via==='search'?'search':'',
+            x.clip||'',app].join(' ').toLowerCase().indexOf(q)>=0;}
   if(libFilter!=='Unmatched'){
     var list=all.filter(function(x){
       if(!match(x)) return false;
@@ -6154,7 +6250,9 @@ function renderLib(){
     row.onclick=function(){if(x.clip&&!x.listen){urlEl.value=x.clip; run(x.clip,{reopen:true});} else if(x.url) window.open(findURL(x),'_blank','noopener');};});   // REVIEWER RUNS 2 (LA-1): reopening a find is free
   Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
-    row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); dropUnmatched(u); run(u);};});}
+    // ROUND 5C (RETURNING-USER-R5-01): the row stays until the retry ends found and in Finds (unmatchedDone) or with no
+    // song (finish writes it back): a paywall, a busy engine, no network or Back keep it
+    row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); run(u);};});}
 function unRow(x){return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
   '<span class="tt"><b>Unmatched scan'+(x.handle?' · @'+esc(x.handle):'')+'</b>'+
   '<span>Not matched yet · tap Retry to scan it again</span></span>'+
@@ -6501,6 +6599,21 @@ function engineHeard(){NET_HEARD=Date.now();}
 var SCAN_STILL=30000, SCAN_MAX=120000, PG_QUIET=3000, PG_STILL=8000, PG_SAY=1500;
 var SCAN_NET=false, SCAN_ADV=0, SCAN_SIG='', LISTEN_T0=0;
 function scanAdv(){SCAN_ADV=Date.now();}
+/* ROUND 5C (CHAOS-4-R5-01): TIME AWAY IS NOT TIME STANDING STILL. iOS stops the page's JS while Addify is in the
+   background, and every bound above counted wall-clock time, so a healthy scan left for 30 s or more ended on "This
+   scan took too long" the moment the app came back, before the /progress poll or the /base answer already in hand
+   could land. A running scan now keeps an awake clock. Time while the page is hidden, or a gap between its ticks (the
+   JS was stopped without a visibility event), is time away. SCAN_MAX counts awake time only. Coming back starts the
+   no-progress clock (SCAN_ADV) and the no-answer bound (LIVE_BOUND, AWAY.back) again from that moment, and the tick
+   that notices the return decides nothing. AWAY.ms: all time away; AWAY.last: the last tick; AWAY.back: the last return. */
+var AWAY={ms:0, last:0, hid:false, back:0};
+function awayStart(){AWAY.last=Date.now(); AWAY.hid=!!document.hidden;}
+function awayTick(){var now=Date.now(), g=now-(AWAY.last||now), back=false; AWAY.last=now;
+  if(document.hidden){if(AWAY.hid) AWAY.ms+=g; AWAY.hid=true; return false;}
+  if(AWAY.hid||g>2000){AWAY.ms+=AWAY.hid?g:g-500; AWAY.back=now; back=true; if(busy) scanAdv();}
+  AWAY.hid=false; return back;}
+document.addEventListener('visibilitychange',function(){if(!busy) return;
+  if(document.hidden){awayTick(); AWAY.last=Date.now(); AWAY.hid=true;} else awayTick();});
 function stallResult(){var off=netOffline(); return {result:'engine_down', offline:off, stalled:!off};}
 /* why the naming dial holds right now: '' (it may move), 'net' (the phone says it has no network) or 'eng' */
 function pgWaitWhy(){var now=Date.now();
@@ -6514,19 +6627,25 @@ function pgWaitWhy(){var now=Date.now();
    the quiet asks themselves, not only between them, until an answer that is not busy. And BUSY_QUIET_SECS is a
    deadline on the asks: a quiet ask still out when it passes is stopped, and the busy card shows. */
 function baseCall(u,tok){var n=0, t0=Date.now(), tap=SCAN_TAP||t0, last=null, cut=false, ctl=null, stopAsk=null;
+  var aw0=AWAY.ms; awayStart();                       // ROUND 5C: the awake clock (see AWAY)
+  var awake=function(){return Date.now()-tap-(AWAY.ms-aw0);}, wdAt=function(){return Math.max(tap,AWAY.back)+LIVE_BOUND;};
   return new Promise(function(fin){
     var over=false, lv=0, end=function(d){if(over) return; over=true; clearTimeout(wd); clearInterval(lv);
       if(tok===scanTok) SCAN_NET=false; fin(d);};
-    var wd=setTimeout(function(){
+    var wdF=function(){
       if(over||tok!==scanTok||NET_HEARD>=tap) return;   // the engine answered something during this scan
-      cut=true; if(stopAsk) stopAsk(); end(downResult());},Math.max(0,tap+LIVE_BOUND-Date.now()));
+      // ROUND 5C: hidden, or just back: the bound runs again from the return
+      if(awayTick()||document.hidden||Date.now()<wdAt()){wd=setTimeout(wdF,Math.max(250,wdAt()-Date.now())); return;}
+      cut=true; if(stopAsk) stopAsk(); end(downResult());};
+    var wd=setTimeout(wdF,Math.max(0,wdAt()-Date.now()));
     // ROUND 5B: the liveness bound (see SCAN_STILL). A network silent from the tap is the 20 s bound's above.
     lv=setInterval(function(){
       if(over||tok!==scanTok){clearInterval(lv); return;}
+      if(awayTick()||document.hidden) return;          // ROUND 5C: away, or the tick that sees the return: no verdict
       if(pgFrozen){scanAdv(); return;}                 // a quiet busy wait: its own deadline ends it
-      var now=Date.now();
-      if(NET_HEARD<tap&&now-tap<SCAN_MAX) return;
-      if(now-tap>=SCAN_MAX||now-Math.max(SCAN_ADV,tap)>=SCAN_STILL){cut=true; if(stopAsk) stopAsk(); end(stallResult());}},500);
+      var now=Date.now(), aw=awake();
+      if(NET_HEARD<tap&&aw<SCAN_MAX) return;
+      if(aw>=SCAN_MAX||now-Math.max(SCAN_ADV,tap)>=SCAN_STILL){cut=true; if(stopAsk) stopAsk(); end(stallResult());}},500);
     function ask(){var stopped=false, late=false, prev=last, tm=0, ac=window.AbortController?new AbortController():null;
       var stop=function(){stopped=true; if(ac) try{ac.abort();}catch(e){}};   // stops THIS ask only
       stopAsk=stop;
@@ -6558,13 +6677,19 @@ function findReopen(u){var keys=scanKeys(u); if(!keys.length) return false;
 var RUN_GATE=false, SCAN_FREE=false;
 function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
   errHide();
-  var p=parseLink(raw);
+  var p=parseLink(raw), arrived=shareArrival();     // ROUND 5C: a share from the share sheet (no tap on this page)
   var reopen=!!opt.reopen||(!!p.host&&findReopen(p.url));
   if(p.host&&!reopen&&outOfScans()&&!scanCounted(p.url)){
+    // ROUND 5C (IAP-R5-1): before the first entitlement answer the gate waits for it (PRO_WAIT at most), then decides
+    // again, so a subscriber's share scans and never flashes the paywall. A share still counts as one when it runs.
+    if(!PRO_KNOWN){ RUN_GATE=true;
+      proWait().then(function(){RUN_GATE=false; var q0=onbQuiet; onbQuiet=!arrived; try{run(raw,opt);}finally{onbQuiet=q0;}});
+      return;}
     var _vk=devKeyFor(p.url);
     if(!_vk&&devIsShort(p.url)){ RUN_GATE=true;
       vkeyOf(p.url).then(function(k){RUN_GATE=false;
-        if(k&&(scanCounted(p.url)||devHas(k))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
+        // ROUND 5C: Plus may have turned on while the lookup ran: the paywall only if still out of scans
+        if(!outOfScans()||(k&&(scanCounted(p.url)||devHas(k)))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
         else {sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
       return;}
     if(!devHas(_vk)){sheetsOff(true); PW_AFTER=raw||''; openPaywall(); return;}}   // ROUND 5B: the paywall alone, in front
@@ -6575,7 +6700,12 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
   huntEnd(); pgHuntNow=null;                       // PROGRESS 2026-09-29: the last hunt's poll ends here
   result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); startClock(); scanReset(); liveReset();
-  if(!p.host){nav('idle'); showErr(notClipMsg(p)); stopClock(); return;}
+  // ROUND 5C (CHAOS-3-R5-02): a share of a page that is not a clip, into the app that is already up, gets what the cold
+  // share gets (GP-1): the link stays in the box and the message stays until the next tap
+  if(!p.host){nav('idle');
+    if(arrived){urlEl.value=p.url||String(raw||''); if(typeof syncFormAction==='function') syncFormAction(); showErr(notClipMsg(p),{sticky:true});}
+    else showErr(notClipMsg(p));
+    stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
   curURL=p.url;
   var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
@@ -6621,7 +6751,8 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
     if(W.amp.length) showChip(null,null,d&&d.thumb,true);
     if(d&&d.result==='found'&&d.base_song){
       setSpeedFromLabel(d.speed);
-      if(d.handle) showChip(null,(p.host==='instagram'?'reel by @':'clip by @')+d.handle,d.thumb,true);
+      // ROUND 5C (GUIDELINE-LAWYER-R5-02): the account the card names (clipWho), not the sound's creator (d.handle)
+      var _who=clipWho(d,p.url); if(_who) showChip(null,(p.host==='instagram'?'reel by @':'clip by @')+_who,d.thumb,true);
       headline(d.base_song);
       // TRACKER 2026-09-29: the scan screen calls the hunt what the card's tracker calls it (Konnor)
       say(d.edits_pending?'Matching the edit':'Song found');
@@ -6943,6 +7074,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   var _noSong=d.result==='no_match'||d.result==='uncertain'||!!d.unverified_base||!!d.base_uncertain;   // REVIEWER RUNS: notes say a no-song scan doesn't count
   if(_noSong){ try{ if(PAYWALL_ON&&!PRO) scanNote(true); }catch(e){} }
   else if(!d.cached&&!d.dev_hit&&!SCAN_FREE) useScan(curURL,d);   // REVIEWER RUNS 2 (LA-1): a reopened find or this phone's own replay is free
+  if(!_noSong&&!d.listen) unmatchedDone(d);         // ROUND 5C (RETURNING-USER-R5-01)
   if(!held){ logScan(d); postBridge(d); devPut(curURL,d); }   // SPEED FIX 1: the phone's copy
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
@@ -7384,7 +7516,18 @@ document.getElementById('share').onclick=function(){
 var lRec=null, lStream=null, lRaf=null, lTimer=null;
 function micOK(){return !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);}
 var LISTEN_AGAIN=false;   // ROUND 5B: the mic message's Try again had the focus
+/* ROUND 5C (FIRST-LAUNCH-R5-01): LISTEN HAS THE LINK SCAN'S FREE-SCAN GATE. Only run() checked the limit, so at "0 scans
+   left" SCAN with an empty box still recorded, named the song and took the counter to 6 of 5. Out of free scans, Listen
+   opens the paywall before the microphone is asked for (after the first entitlement answer, as run() waits for it),
+   and a listen result spends a scan the way a link scan does (useScan in finish). */
+var LISTEN_GATE=false;
+function listenGate(){
+  if(LISTEN_GATE) return true;
+  if(!(PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS)) return false;
+  if(!PRO_KNOWN){LISTEN_GATE=true; proWait().then(function(){LISTEN_GATE=false; startListen();}); return true;}
+  sheetsOff(true); PW_AFTER=''; openPaywall(); return true;}
 function startListen(){
+  if(listenGate()) return;
   if(!micOK()){
     showErr(location.protocol==='http:'&&location.hostname!=='127.0.0.1'&&location.hostname!=='localhost'
       ? 'Listen mode needs the https link on this network. Paste the clip link instead.'
@@ -7459,17 +7602,25 @@ var LISTEN_PING=1500, LISTEN_PING_WAIT=4000;
    goHome() calls it, and sendListen() drops whatever this scan's call hands back once the user has left it. */
 var LISTEN_STOP=null;
 function listenCall(blob,tok){var n=0, t0=Date.now(), last=null, cut=false, stopAsk=null, pingT=0, pingAc=null;
+  var aw0=AWAY.ms; awayStart();                       // ROUND 5C: the awake clock (see AWAY)
+  var awake=function(){return Date.now()-t0-(AWAY.ms-aw0);}, wdAt=function(){return Math.max(t0,AWAY.back)+LIVE_BOUND;};
   return new Promise(function(fin){
     var over=false, mine=function(){return !over&&tok===scanTok;};
     var stop=function(){cut=true; if(stopAsk) stopAsk(); end({result:'aborted'});};
-    var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT); clearTimeout(cap);
+    var end=function(d){if(over) return; over=true; clearTimeout(wd); clearTimeout(pingT); clearTimeout(cap); clearInterval(tk);
       if(pingAc) try{pingAc.abort();}catch(e){} if(LISTEN_STOP===stop) LISTEN_STOP=null; fin(d);};
     LISTEN_STOP=stop;
-    var wd=setTimeout(function(){
+    var tk=setInterval(awayTick,500);                 // ROUND 5C: the ticks that see a stopped page
+    var wdF=function(){
       if(!mine()||NET_HEARD>=t0) return;          // the engine answered something since the recording went
-      cut=true; if(stopAsk) stopAsk(); end(downResult());},LIVE_BOUND);
-    // ROUND 5B (CHAOS-MONKEY-R4-02): a listen scan always ends too, SCAN_MAX after the recording went
-    var cap=setTimeout(function(){if(!mine()) return; cut=true; if(stopAsk) stopAsk(); end(stallResult());},SCAN_MAX);
+      if(awayTick()||document.hidden||Date.now()<wdAt()){wd=setTimeout(wdF,Math.max(250,wdAt()-Date.now())); return;}   // ROUND 5C
+      cut=true; if(stopAsk) stopAsk(); end(downResult());};
+    var wd=setTimeout(wdF,LIVE_BOUND);
+    // ROUND 5B (CHAOS-MONKEY-R4-02): a listen scan always ends too, SCAN_MAX after the recording went (ROUND 5C: awake time)
+    var capF=function(){if(!mine()) return;
+      if(awayTick()||document.hidden||awake()<SCAN_MAX){cap=setTimeout(capF,Math.max(250,SCAN_MAX-awake())); return;}
+      cut=true; if(stopAsk) stopAsk(); end(stallResult());};
+    var cap=setTimeout(capF,SCAN_MAX);
     (function ping(){if(!mine()||NET_HEARD>=t0) return;
       var ac=window.AbortController?new AbortController():null, tm=0; pingAc=ac;
       if(ac) tm=setTimeout(function(){try{ac.abort();}catch(e){}},LISTEN_PING_WAIT);   // a silent network: one ask at a time
@@ -7630,10 +7781,11 @@ function paintOnb(){
    tap in the last 1.5 s is the share extension. */
 ['pointerdown','touchstart','keydown','click','submit'].forEach(function(t){
   document.addEventListener(t,function(){onbTapAt=Date.now();},true);});
-function onbNoteRun(){
-  if(onbQuiet) return;
+function onbNoteRun(){if(shareArrival()) onbSharedIn();}
+/* a run() the app started from the share sheet: in the app, with no tap on this page behind it */
+function shareArrival(){if(onbQuiet) return false;
   var nat=!!(window.ADDIFY_NATIVE||/Addify(-iOS)?\//.test(navigator.userAgent));
-  if(nat && !window.event && Date.now()-onbTapAt>1500) onbSharedIn();}
+  return nat && !window.event && Date.now()-onbTapAt>1500;}
 function onbSharedIn(){
   onbSet('addify-sharedin','1'); ONB_NOTE='';          // ROUND 5B: a newer share replaces an older page's message
   if(onbOpen()&&onbMode==='first'){onbDone(); return;}   // mid-onboarding: close it, the scan shows

@@ -415,9 +415,21 @@ async def main(html, only):
                 await pg.evaluate("()=>{var r=document.querySelector(\".pwplan[data-i='1']\"); if(r) r.click(); var g=document.getElementById('pwgo'); if(g) g.click();}")
                 await pg.wait_for_timeout(300); s2 = await pg.evaluate(SH)
                 await pg.wait_for_timeout(3000); s3 = await pg.evaluate(SH)
-                check("R2-8", "A purchase in flight: the reopened sheet's button is off, plans locked, no second buy; on again once it answers",
-                      s["goDis"] and all(s["plansDis"]) and s2["buys"] == 1 and s2["legal"] == leg0 and not s3["goDis"] and not any(s3["plansDis"]),
+                # ROUND 5C (IAP-R5-2): the answer here is 'pending', which now holds the sheet (the button and plans stay off
+                # with the pending line) instead of turning the button back on; a purchase that answers otherwise frees it
+                # (test_round5c C3, and R2-8c below)
+                check("R2-8", "A purchase in flight: the reopened sheet's button is off, plans locked, no second buy; once it answers 'pending' it stays held with the pending line",
+                      s["goDis"] and all(s["plansDis"]) and s2["buys"] == 1 and s2["legal"] == leg0 and s3["goDis"] and all(s3["plansDis"])
+                      and s3["msg"] == "Your purchase is pending. Addify Plus turns on as soon as the App Store confirms it.",
                       {"reopened": s, "tapped": s2, "after": s3})
+                await ctx.close()
+                ctx, pg = await page(sk={"buy": "cancelled", "buyMs": 3000})
+                await pg.evaluate(OPEN); await pg.wait_for_timeout(500)
+                await pg.click("#pwgo"); await pg.wait_for_timeout(300); await pg.click("#pwx"); await pg.wait_for_timeout(300)
+                await pg.evaluate(OPEN); await pg.wait_for_timeout(500); s = await pg.evaluate(SH)
+                await pg.wait_for_timeout(3000); s3 = await pg.evaluate(SH)
+                check("R2-8c", "A purchase in flight that answers 'cancelled': locked while it runs, on again once it answers",
+                      s["goDis"] and all(s["plansDis"]) and not s3["goDis"] and not any(s3["plansDis"]), {"reopened": s, "after": s3})
                 await ctx.close()
                 ctx, pg = await page(sk={"buy": "busy"})
                 await pg.evaluate(OPEN); await pg.wait_for_timeout(500); await pg.click("#pwgo"); await pg.wait_for_timeout(600); s = await pg.evaluate(SH)

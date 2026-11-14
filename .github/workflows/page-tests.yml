@@ -83,6 +83,12 @@ jobs:
           - id: r5b-a11y-cr
             name: 'Round 5b accessibility and naming (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round5b_a11y.py
+          - id: round5c-wk
+            name: 'Round 5c (WebKit)'
+            run: python -u engine/test_round5c.py
+          - id: round5c-cr
+            name: 'Round 5c (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round5c.py
           - id: busy-retry
             name: 'Busy retry (Chromium)'
             run: python -u engine/test_busy_retry.py --page engine/crate.html
