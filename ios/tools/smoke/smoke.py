@@ -552,24 +552,27 @@ def scenario(dev, app, label, cfg, fresh=True, want=("bridges",), timeout=35, sh
 
 
 def outage_screen(res, names, good_at):
-    """The screenshots taken while the engine was failing, in order. Each one whose capture ended
-    before the working page was asked for (good_at, s after launch) must show the error screen,
-    or the loading screen before the first error screen, and at least one must show the error
-    screen. One that ended after that may show the recovered page: it is listed as late and not
-    judged. So a slow capture can't fail the check, and a cut-off page, a blank or a 404 shown at
-    any moment of the outage still does."""
-    on_time, late = [], []
+    """The screenshots taken while the engine was failing, in order. A capture can take seconds
+    (a0b7e0b: one ran from 25.5 s to 36.3 s and showed the error screen), so each one is placed by
+    when its capture started and ended against good_at, when the working page was asked for (s
+    after launch). Every shot that ended before good_at was taken during the outage and must show
+    the error screen, or the loading screen before the first error screen. At least one shot that
+    started before good_at must show the error screen. A shot that ended after good_at may have
+    caught the recovered page, so it is listed as late and must show the error screen or the
+    page. So a slow capture can't fail the check, while a cut-off page, a blank or a 404 caught
+    during the outage still does, and a blank or a 404 caught later too."""
+    rows = []
     for n in names:
         t = res.get("shot_t", {}).get(n)
-        k = pixel_class(res["shots"].get(n, ""))
-        if t is not None and good_at is not None and t[2] >= good_at:
-            late.append((n, k, t[2]))
-        else:
-            on_time.append((n, k, t[2] if t else None))
-    kinds = [k for _, k, _ in on_time]
-    first = kinds.index("error") if "error" in kinds else None
-    ok = first is not None and all(k == "boot" for k in kinds[:first]) and all(k == "error" for k in kinds[first:])
-    return ok, "on time %s, late %s" % (on_time, late)
+        rows.append((n, pixel_class(res["shots"].get(n, "")), t[1] if t else None, t[2] if t else None))
+    during = [r for r in rows if r[3] is None or good_at is None or r[3] < good_at]
+    seen = any(k == "error" and (good_at is None or (st is not None and st < good_at)) for _, k, st, _ in rows)
+    kinds = [k for _, k, _, _ in during]
+    first = kinds.index("error") if "error" in kinds else len(kinds)
+    ok = seen and all(k == "boot" for k in kinds[:first]) and all(k == "error" for k in kinds[first:])
+    late = [(n, k, en) for n, k, _, en in rows if not (en is None or good_at is None or en < good_at)]
+    ok = ok and all(k in ("error", "page") for _, k, _ in late)
+    return ok, "during %s, late %s, working page asked at %s s" % ([(n, k, en) for n, k, _, en in during], late, good_at)
 
 
 def lab_lines(dev, since, label):
