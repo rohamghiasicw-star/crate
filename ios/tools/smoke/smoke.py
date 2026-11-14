@@ -121,7 +121,7 @@ def patch(ios_dir, variant):
     else:
         w = w.replace(pold, pold + "            if let v = bridge.webView { NSLog(\"ADDIFY-PAGE loaded %@ window=%ld hidden=%ld alpha=%.2f size=%.0fx%.0f loading=%ld\", "
                       "v.url?.path ?? \"-\", v.window == nil ? 0 : 1, v.isHidden ? 1 : 0, Double(v.alpha), Double(v.bounds.width), "
-                      "Double(v.bounds.height), v.isLoading ? 1 : 0); LabPaint.loaded(v) }\n")
+                      "Double(v.bounds.height), v.isLoading ? 1 : 0); LabPaint.loaded(v); LabStall.event(\"loaded\") }\n")
     # Lab copies only: main-thread stalls, what the share sheet's handler spends, and what the web
     # view holds after a page counts as loaded (see LAB_DIAG).
     dreps = [("        context.coordinator.boot(wv)\n        return wv\n",
@@ -131,6 +131,12 @@ def patch(ios_dir, variant):
               "            let ac = UIActivityViewController(activityItems: [file], applicationActivities: nil)\n"),
              ("            return ([\"ok\": true], nil)\n",
               "            NSLog(\"ADDIFY-EXPORT sheet presented\")\n            return ([\"ok\": true], nil)\n")]
+    dreps += [("        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {\n",
+               "        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {\n"
+               "            LabStall.event(\"start\")\n"),
+              ("                  !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {\n                decisionHandler(.allow)\n",
+               "                  !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {\n                decisionHandler(.allow)\n"
+               "                if navigationResponse.isForMainFrame { LabStall.event(\"response\") }\n")]
     for old, new in dreps:
         if w.count(old) != 1:
             sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
@@ -243,6 +249,21 @@ enum LabStall {
             last = now
         }
         RunLoop.main.add(t, forMode: .common)
+    }
+
+    /* Diagnosis only: ADDIFY_LAB_STALL=<event>:<n>:<seconds> holds the main thread for that long
+       just after the n-th time this lab copy sees the event (response: a main-frame response
+       allowed, start: a main-frame load started, loaded: a page counted as loaded), the way the
+       simulator held it in the runs where the page loaded but nothing was drawn. */
+    static var counts: [String: Int] = [:]
+
+    static func event(_ name: String) {
+        counts[name, default: 0] += 1
+        guard let spec = ProcessInfo.processInfo.environment["ADDIFY_LAB_STALL"] else { return }
+        let parts = spec.split(separator: ":").map(String.init)
+        guard parts.count == 3, parts[0] == name, Int(parts[1]) == counts[name], let secs = Double(parts[2]) else { return }
+        NSLog("ADDIFY-STALL holding the main thread %.1f s after %@ %ld", secs, name, counts[name] ?? 0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { Thread.sleep(forTimeInterval: secs) }
     }
 }
 
@@ -460,13 +481,16 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             cfg = dict(CFG.get(role, {}))
         e = {"t": time.time(), "role": role, "method": self.command, "path": self.path,
-             "ua": self.headers.get("User-Agent", "")}
-        try:
-            e["status"] = self.route(role, parts, cfg, body, e)
-        except (BrokenPipeError, ConnectionResetError):
-            e["status"] = -1
+             "ua": self.headers.get("User-Agent", ""), "status": None}
+        # Logged when it arrives, so a request the stub holds (share_delay) is seen while it waits.
         with LOCK:
             LOG.append(e)
+        try:
+            status = self.route(role, parts, cfg, body, e)
+        except (BrokenPipeError, ConnectionResetError):
+            status = -1
+        with LOCK:
+            e["status"] = status
 
     def route(self, role, parts, cfg, body, e):
         path = parts.path
@@ -862,8 +886,12 @@ def mask(text):
     return text.replace(host, "<test server>") if host and isinstance(text, str) else text
 
 
+DIAG = set()   # diagnosis scenarios: their checks are reported, never failed
+
+
 def check(dev, scen, name, ok, detail="", info=False):
     detail = mask(detail)
+    info = info or scen in DIAG
     RESULTS.append({"device": dev.tag, "scenario": scen, "check": name, "ok": bool(ok),
                     "info": info, "detail": detail})
     tag = "PASS" if ok else ("WARN" if info else "FAIL")
@@ -952,9 +980,10 @@ def run_stub_suite(dev, app, version, ipad=False):
 
         reported = lambda e: e.get("kind") == "bridges"
         server5xx(dev, app, version)
-        # DIAGNOSIS (temporary): the same scenario twice more with the web view probed and nudged.
-        server5xx(dev, app, version, "server5xx-d1", diag=True)
-        server5xx(dev, app, version, "server5xx-d2", diag=True)
+        # DIAGNOSIS (temporary, info only): the same scenario with the web view probed and nudged,
+        # and the main thread held at three points around the page that ends the outage.
+        for n, stall in ((1, "response:1:5"), (2, "start:3:5"), (3, "loaded:1:4")):
+            server5xx(dev, app, version, "server5xx-d%d" % n, diag=stall)
 
         # A 4xx engine page with words on it is the same failed load as a 5xx: the error screen,
         # never "404 page not found" as the whole screen, and the same automatic reloads.
@@ -1110,7 +1139,10 @@ def server5xx(dev, app, version, label="server5xx", diag=False):
              ("recovered", reported, 0.5), ("late", reported, 5.0)]
     env = None
     if diag:
+        DIAG.add(label)
         env = {"ADDIFY_LAB_PAINT": "1", "ADDIFY_LAB_NUDGE": "1"}
+        if isinstance(diag, str):
+            env["ADDIFY_LAB_STALL"] = diag
         after += [("n1", reported, 8.5), ("n2", reported, 11.5), ("n3", reported, 15.5)]
     # "recovered" is where the end-of-scenario shot used to land (0.5 s after the page reported).
     # "late": diagnosis only, whether a page that is not on screen then paints later.
@@ -1275,9 +1307,9 @@ def sharewarm(dev, app, version):
     link = SHARE_LINK + "warm"
     res = scenario(dev, app, "sharewarm", sw, fresh=False, want=("bridges", "run"), timeout=50,
                    after=(("settled", lambda e: e.get("kind") == "run", 1.0),),
-                   actions=(("write", loaded, 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
-                            ("leave", loaded, 1.0, lambda d: d.to_background()),
-                            ("return", loaded, 2.5, lambda d: d.launch())))
+                   actions=(("write", nth(loaded, 1), 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                            ("leave", nth(loaded, 1), 1.0, lambda d: d.to_background()),
+                            ("return", nth(loaded, 1), 2.5, lambda d: d.launch())))
     timeline(res)
     load, ran = report(res, "load"), report(res, "run")
     pages = page_requests(res, "A")
