@@ -254,8 +254,8 @@ async def main(html, yml, only):
                 await go(pg, CLIP % 5)                                           # no match: the toast says why it did not count
                 await until(pg, HAS, 20, "name this one")
                 t_on = await until(pg, "()=>{var n=document.getElementById('scannote'); return !!n&&n.classList.contains('on')&&n.textContent;}", 4)
-                await pg.wait_for_timeout(4500)
-                faded = await pg.evaluate(NOTE)                                  # (a) after its fade
+                await pg.wait_for_timeout(5500)
+                faded = await pg.evaluate(NOTE)                                  # (a) after its fade (3.5 s on, a second to go)
                 await pg.evaluate("()=>document.getElementById('back').click()"); await pg.wait_for_timeout(500)
                 down["on"] = True
                 await go(pg, CLIP % 7)                                           # (b) the network is down

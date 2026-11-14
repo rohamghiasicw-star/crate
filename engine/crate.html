@@ -5607,11 +5607,11 @@ function scanNote(failed){if(!PAYWALL_ON||PRO) return;
   n.textContent=(failed==='busy'?"That scan didn't count. ":failed==='unread'?"Couldn't read that link, so it didn't count. ":failed?"No song found, so it didn't count. ":'')+left+' scan'+(left===1?'':'s')+' left'; n.classList.add('on');   // FIX 4: a busy scan found nothing because it never ran
   clearTimeout(scanNote.t); scanNote.t=setTimeout(function(){scanNoteOff();},3500);}   // ROUND 3: the title steps aside while .on (CSS :has)
 /* ROUND 5B (A11Y-R4-04): the toast is a role=status that opacity alone hid, so VoiceOver kept reading its last line
-   ("No song found, so it didn't count") on every card after it, a network error card included. It now empties once
-   it has faded, and at once when a new scan starts or the user goes Home (scanReset). */
+   ("No song found, so it didn't count") on every card after it, a network error card included. It now empties a
+   second after it has faded, and at once when a new scan starts or the user goes Home (scanReset). */
 function scanNoteOff(now){var n=document.getElementById('scannote'); clearTimeout(scanNote.t); clearTimeout(scanNoteOff.t); if(!n) return;
   n.classList.remove('on');
-  if(now) n.textContent=''; else scanNoteOff.t=setTimeout(function(){if(!n.classList.contains('on')) n.textContent='';},300);}
+  if(now) n.textContent=''; else scanNoteOff.t=setTimeout(function(){if(!n.classList.contains('on')) n.textContent='';},1000);}
 /* REVIEWER RUNS 2 (GP-7): why a scan with no song did not count. A link we could not read is not "no song found". */
 function scanMiss(d){var r=d&&d.result;
   if(d&&d.bad_link) return 'unread';   // POLISH 3: a link the engine turned down
