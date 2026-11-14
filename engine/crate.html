@@ -2664,6 +2664,12 @@ function fkCheck(){fkQ=false;
   try{t.focus({preventScroll:true});}catch(e){}
   fkAuto=(mine&&document.activeElement===t)?t:null;}
 function fkSoon(){if(fkQ) return; fkQ=true; Promise.resolve().then(fkCheck);}
+/* ROUND 5B: a control that goes away under the user's focus on the same screen (a Try again that removes itself, a
+   rating button that locks once it is sent) hands the focus to what now says what happens: the line that reads
+   "Sending...", the player's own Play, the new Try again. Only when that control had the focus, never to <body>. */
+function fkHand(had,to){if(!had||!to||!document.contains(to)) return;
+  if(to.tabIndex<0&&!to.hasAttribute('tabindex')){to.setAttribute('tabindex','-1'); to.setAttribute('data-fk','');}
+  try{to.focus({preventScroll:true});}catch(e){}}
 document.addEventListener('focusin',function(e){var a=document.getElementById('app'); if(a&&e.target!==a&&a.contains(e.target)) fkLast=e.target;},true);
 try{(function(){var mo=new MutationObserver(fkSoon), hd=document.querySelector('#s-match .hd');
   mo.observe(document.getElementById('app'),{attributes:true,attributeFilter:['data-state']});
@@ -4114,7 +4120,8 @@ function vfLine(row){
   if(row._fbBad&&row._fbBad.length){
     q.textContent=FB_FAIL;
     if(!rb){rb=document.createElement('button'); rb.type='button'; rb.id='vfretry'; rb.className='vfretry'; rb.textContent='Try again';
-      rb.onclick=function(){var bad=row._fbBad||[]; row._fbBad=[]; rb.remove(); bad.forEach(function(x){vfSend(row,x.o,x.ok);});};
+      rb.onclick=function(){var had=document.activeElement===rb, bad=row._fbBad||[]; row._fbBad=[]; rb.remove();
+        bad.forEach(function(x){vfSend(row,x.o,x.ok);}); fkHand(had,document.getElementById('vfq'));};
       row.insertBefore(rb,document.getElementById('vfpick'));}
     return;}
   if(rb) rb.remove();
@@ -4407,7 +4414,9 @@ function vfAsk(row,d,url,rows,anim){
     if(c){o.pick_title=c.title||''; o.pick_url=c.url||'';}
     vfSend(row,o,function(){vfPendAdd(url,d.base_song||'');});   // ROUND 5B: parked once the engine has it
     b.classList.add('sel');
+    var had=box.contains(document.activeElement);
     [].forEach.call(box.querySelectorAll('button'),function(x){x.disabled=true;});
+    fkHand(had,document.getElementById('vfq'));     // ROUND 5B: the list locks and goes; the line takes the focus
     setTimeout(function(){vfThanks(row);},320);   // long enough to see the ring fill
   });}
 function vfThanks(row){
@@ -4434,11 +4443,13 @@ function vfWire(d){
     if(v==='wrong') refundScan(url,d);           // Roham 2026-09-30: an X gives the scan back
     row.classList.add('done','is-'+v);
     var b=document.getElementById(v==='right'?'vfy':'vfn'); if(b) b.classList.add('on','pop');
+    var had=!!document.activeElement&&/^vf[yn]$/.test(document.activeElement.id||'');
     ['vfy','vfn'].forEach(function(id){var x=document.getElementById(id); if(x) x.disabled=true;});
     var rs=v==='wrong'?vfRows(d):[];
     if(rs.length) vfAsk(row,d,url,rs,true);
     // ROUND 5B (BAD-NETWORK-R4-4): the line thanks only once the engine has the vote (vfLine); an X parks the clip then
-    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'');}:null);};
+    vfSend(row,o,v==='wrong'?function(){vfPendAdd(url,d.base_song||'');}:null);
+    fkHand(had,document.getElementById('vfq'));};
   var y=document.getElementById('vfy'), n=document.getElementById('vfn');
   if(y) y.onclick=function(){vote('right');};
   if(n) n.onclick=function(){vote('wrong');};}
@@ -4746,7 +4757,7 @@ function renderResult(d,partial){
           '<span class="tt"><b>'+esc(guess)+'</b><span>'+esc(d.base_artist_guess||d.base_artist||'')+' · original</span></span></div>'+
         '<div class="vrow"><button class="vbtn yes" id="fbyes">Yes, that’s it</button>'+
           '<button class="vbtn no" id="fbno">Not it</button></div>'+
-        '<div class="trainnote" id="fbnote">Confirming helps Addify learn this edit for everyone</div>');
+        '<div class="trainnote" id="fbnote" aria-live="polite">Confirming helps Addify learn this edit for everyone</div>');
       var gb={url:curURL,guess_song:guess,guess_artist:d.base_artist_guess||d.base_artist||''};
       // ROUND 5B (BAD-NETWORK-R4-4): "Logged" only once the engine has it; else "Couldn't send that." with Try again
       var gsend=function(v){var n=document.getElementById('fbnote'), n0=n;
@@ -4756,11 +4767,14 @@ function renderResult(d,partial){
           if(ok){n.textContent=v==='yes'?'Logged, and added to your Finds':'Logged. This trains the edit database'; return;}
           n.textContent=FB_FAIL+' ';
           var rb=document.createElement('button'); rb.type='button'; rb.className='vfretry'; rb.textContent='Try again';
-          rb.onclick=function(){gsend(v);}; n.appendChild(rb);});};
+          rb.onclick=function(){var had=document.activeElement===rb; gsend(v); fkHand(had,document.getElementById('fbnote'));};
+          n.appendChild(rb);});};
       var done=function(v){
         if(v==='yes'){saveOne({base_song:guess,base_artist:d.base_artist_guess||d.base_artist||'',handle:d.handle}); dropUnmatched(curURL);}
         gsend(v);
-        ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});};
+        var had=!!document.activeElement&&/^fb(yes|no)$/.test(document.activeElement.id||'');
+        ['fbyes','fbno'].forEach(function(id){var b=document.getElementById(id); if(b){b.disabled=true; b.style.opacity=.45;}});
+        fkHand(had,document.getElementById('fbnote'));};
       var y=document.getElementById('fbyes'), no=document.getElementById('fbno');
       if(y) y.onclick=function(){done('yes');};
       if(no) no.onclick=function(){done('no');};
@@ -7068,7 +7082,8 @@ function ipFail(openURL){
   slot.innerHTML='<div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
     (openURL?'<a class="ipfbtn" href="'+esc(openURL)+'" target="_blank" rel="noopener">Open in app</a>':'')+
     '<button type="button" class="ipfbtn" id="ipfretry">Try again</button></span></div>';
-  var rb=document.getElementById('ipfretry'); if(rb) rb.onclick=function(){if(_ipRetry) _ipRetry();};}
+  var rb=document.getElementById('ipfretry'); if(rb) rb.onclick=function(){var had=document.activeElement===rb;
+    if(_ipRetry) _ipRetry(); fkHand(had,document.getElementById('iplbtn'));};}
 function ipGlyph(playing){
   _ipShowing=!!playing;                          // ROUND 5B: what the band claims, for ipWatch
   var g=document.querySelector('#ipl .ipgl'); if(g) g.innerHTML=playing?IC.pause:IC.play;
@@ -7368,6 +7383,7 @@ document.getElementById('share').onclick=function(){
    ============================================================ */
 var lRec=null, lStream=null, lRaf=null, lTimer=null;
 function micOK(){return !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);}
+var LISTEN_AGAIN=false;   // ROUND 5B: the mic message's Try again had the focus
 function startListen(){
   if(!micOK()){
     showErr(location.protocol==='http:'&&location.hostname!=='127.0.0.1'&&location.hostname!=='localhost'
@@ -7375,7 +7391,7 @@ function startListen(){
       : 'No microphone here. Paste the clip link instead.');
     return;}
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
-    errHide();                                      // ROUND 5B: a mic message from the last try goes
+    errHide(); LISTEN_AGAIN=false;                  // ROUND 5B: a mic message from the last try goes
     lStream=stream; nav0('listening');
     document.getElementById('lstate').textContent='Play the sound out loud';
     /* real levels - the bars move because the mic hears, not because a loop runs */
@@ -7410,11 +7426,13 @@ function startListen(){
       var H=window.webkit&&window.webkit.messageHandlers, os=H&&H.openSettings;
       showErr('Microphone is off for Addify. Turn it on in Settings, or paste the link.',
         {sticky:true, btn:os?['Open Settings',function(){try{var r=os.postMessage({}); if(r&&r.catch) r.catch(function(){});}catch(_){}}]:null});
+      if(LISTEN_AGAIN){LISTEN_AGAIN=false; fkHand(true,document.querySelector('#err .errbtn')||document.getElementById('err'));}
       return;}
     // ROUND 5B (FIRST-LAUNCH-R4-05): any other failure (NotReadableError, AbortError, no capture device) is not a
     // permission problem: the mic is allowed but busy or not there, so the message says that and offers Try again
     showErr('The microphone is busy or not available. Close other apps using it and try again, or paste the link.',
-      {sticky:true, btn:['Try again',function(){errHide(); startListen();}]});});}
+      {sticky:true, btn:['Try again',function(ev){LISTEN_AGAIN=!!ev&&document.activeElement===ev.currentTarget; errHide(); startListen();}]});
+    if(LISTEN_AGAIN){LISTEN_AGAIN=false; fkHand(true,document.querySelector('#err .errbtn'));}});}   // the new Try again keeps the focus
 function cleanupListen(){
   if(lRaf) cancelAnimationFrame(lRaf); lRaf=null;
   clearTimeout(lTimer); lTimer=null;

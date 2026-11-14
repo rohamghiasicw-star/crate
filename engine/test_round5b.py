@@ -31,6 +31,10 @@ promise-ledger mock engine. No network, no live server: every outside request is
       showing Pause and says "Couldn't load the player." with Open in app (the same upload, or the song's own page
       for a preview) and Try again (opens it again, and with the network back the player starts); the round button
       on a failed band tries again too; a player that started (its API answers) is left alone
+  B10 Focus is handed on, never dropped to <body>, when one of these controls goes away under it: the player's
+      Try again (to the band's Play/Pause), the rating row's tick or X, its "Which one was it?" pick and its Try again
+      (to the line that says "Sending..."), the guess card's Yes and its Try again (to its note, which is announced),
+      and the mic message's Try again (to the next message's Try again, or the message itself)
 
 Usage: python engine/test_round5b.py [--file engine/crate.html] [--yml .github/workflows/page-tests.yml] [--only 3,5]
        PW_BROWSER=chromium to use Chromium instead of WebKit (WebKit is the iOS engine).
@@ -550,6 +554,80 @@ async def main(html, yml, only):
                     await close(ctx)
         except Exception as e:
             check("H", "section finished: B9", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
+
+        # ---------------- B10: focus is handed on when a control goes away under it ----------------
+        try:
+            if want(10):
+                AE = r"""()=>{var a=document.activeElement; if(!a||a===document.body||a===document.documentElement) return 'BODY';
+                  var r=a.getBoundingClientRect(); return (a.id||a.className||a.tagName)+((r.width>0&&r.height>0&&!a.closest('[hidden]'))?'':' (hidden)');}"""
+                PRESS = "(sel)=>{var b=document.querySelector(sel); if(!b) return false; b.focus(); if(document.activeElement!==b) return false; b.click(); return true;}"
+                def fbroute(st):
+                    async def fb(route):
+                        if route.request.method != "POST": return await route.continue_()
+                        st["n"] += 1
+                        try:
+                            if st["down"]: return await route.abort("failed")
+                            return await route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "id": "fb%d" % st["n"]}))
+                        except Exception: pass
+                    return fb
+                # a) the player's Try again
+                ctx, pg = await page(apis={"on": False})
+                await go(pg, clip(8)); await until(pg, FINAL, 25); await pg.wait_for_timeout(2600)
+                await pg.evaluate("()=>document.getElementById('artplay').click()")
+                failed = await until(pg, "()=>!!document.getElementById('ipfretry')", 16)
+                pressed = await pg.evaluate(PRESS, "#ipfretry"); await pg.wait_for_timeout(500)
+                player = {"failed": bool(failed), "pressed": pressed, "focus": await pg.evaluate(AE), "errs": pg.errs}
+                await close(ctx)
+                check("B10-player", "The player's Try again hands the focus to the band's Play/Pause",
+                      player["failed"] and player["pressed"] and player["focus"] == "iplbtn" and not player["errs"], player)
+                # b) the rating row: the X, then its Try again; then an X with the pick list, and a pick
+                st = {"down": True, "n": 0}; c = clip(70)
+                ctx, pg = await page(routes={"/base?": answer(dict(FOUND, url=c)), "/feedback": fbroute(st)})
+                await go(pg, c); await until(pg, FINAL, 20)
+                await until(pg, "()=>{var b=document.getElementById('vfn'); if(!b) return false; b.focus(); return document.activeElement===b;}", 8)   # the row is on screen
+                rate = {"x": await pg.evaluate(PRESS, "#vfn")}; await pg.wait_for_timeout(300); rate["after_x"] = await pg.evaluate(AE)
+                await until(pg, "()=>!!document.getElementById('vfretry')", 25)
+                rate["retry_x"] = await pg.evaluate(PRESS, "#vfretry"); await pg.wait_for_timeout(300); rate["after_retry"] = await pg.evaluate(AE)
+                rate["errs"] = pg.errs
+                await close(ctx)
+                st = {"down": False, "n": 0}; c = clip(7)
+                ctx, pg = await page(routes={"/feedback": fbroute(st)})
+                await go(pg, c); await until(pg, FINAL, 25); await pg.wait_for_timeout(2600)
+                await until(pg, "()=>{var b=document.getElementById('vfn'); if(!b) return false; b.focus(); return document.activeElement===b;}", 8)
+                rate["x2"] = await pg.evaluate(PRESS, "#vfn"); await pg.wait_for_timeout(300); rate["after_x2"] = await pg.evaluate(AE)
+                await until(pg, "()=>!!document.querySelector('#vfpick .vpr')", 5)
+                rate["pick"] = await pg.evaluate(PRESS, "#vfpick .vpr"); await pg.wait_for_timeout(800); rate["after_pick"] = await pg.evaluate(AE)
+                rate["list_gone"] = await pg.evaluate("()=>!document.getElementById('vfpick')"); rate["errs"] += pg.errs
+                await close(ctx)
+                check("B10-rate", "The rating row's X, its pick and its Try again hand the focus to the line that says what happens",
+                      all(rate[k] for k in ("x", "retry_x", "x2", "pick", "list_gone")) and all(rate[k] == "vfq" for k in ("after_x", "after_retry", "after_x2", "after_pick"))
+                      and not rate["errs"], rate)
+                # c) the guess card's Yes, then its Try again
+                st = {"down": True, "n": 0}; c = clip(71)
+                guess = {"result": "no_match", "base_song_guess": "Guess Song", "base_artist_guess": "Guess Artist", "url": c}
+                ctx, pg = await page(routes={"/base?": answer(guess), "/find?": answer(guess), "/feedback": fbroute(st)})
+                await go(pg, c); await until(pg, "()=>!!document.getElementById('fbyes')", 20)
+                g = {"yes": await pg.evaluate(PRESS, "#fbyes")}; await pg.wait_for_timeout(300); g["after_yes"] = await pg.evaluate(AE)
+                await until(pg, "()=>!!document.querySelector('#fbnote .vfretry')", 25); st["down"] = False
+                g["retry"] = await pg.evaluate(PRESS, "#fbnote .vfretry"); await pg.wait_for_timeout(300); g["after_retry"] = await pg.evaluate(AE)
+                g["live"] = await pg.evaluate("()=>document.getElementById('fbnote').getAttribute('aria-live')"); g["errs"] = pg.errs
+                await close(ctx)
+                check("B10-guess", "The guess card's Yes and its Try again hand the focus to its note, which is announced (aria-live)",
+                      g["yes"] and g["retry"] and g["after_yes"] == "fbnote" and g["after_retry"] == "fbnote" and g["live"] == "polite" and not g["errs"], g)
+                # d) the mic message's Try again: busy again, then refused
+                ctx, pg = await page(init=MIC)
+                await pg.evaluate("()=>{window.__micErr='NotReadableError'; document.getElementById('url').value=''; document.getElementById('go').click();}")
+                m = {"msg": bool(await until(pg, "()=>!!document.querySelector('#err:not([hidden]) .errbtn')", 5))}
+                m["busy"] = await pg.evaluate(PRESS, "#err .errbtn"); await pg.wait_for_timeout(500); m["after_busy"] = await pg.evaluate(AE)
+                m["again"] = await pg.evaluate("()=>{var b=document.querySelector('#err .errbtn'); return !!b&&document.activeElement===b&&!document.getElementById('err').hidden;}")
+                await pg.evaluate("()=>{window.__micErr='NotAllowedError';}")
+                m["refused"] = await pg.evaluate(PRESS, "#err .errbtn"); await pg.wait_for_timeout(500); m["after_refused"] = await pg.evaluate(AE)
+                m["errs"] = pg.errs
+                await close(ctx)
+                check("B10-mic", "The mic message's Try again hands the focus to the next message's Try again, or to the message when it has none",
+                      m["msg"] and m["busy"] and m["again"] and m["after_busy"] == "errbtn" and m["refused"] and m["after_refused"] == "err" and not m["errs"], m)
+        except Exception as e:
+            check("H", "section finished: B10", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 
         await b.close()
     mock.stop() if hasattr(mock, "stop") else None
