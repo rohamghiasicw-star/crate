@@ -931,7 +931,8 @@ def privacy(dev, app, mode):
     # app and the page is in the window. Screenshots can't say it here: while a Safari view is up,
     # simctl io screenshot stalls for up to 20 s and returns a frame from around its close (b4c4d1b:
     # iPad capture started 19.2 s, ended 38.9 s; iPhone 11.4 s to 21.5 s, then the app page). They
-    # are still taken (2, 4 and 6 s after the request, and 2 s after the close) and reported.
+    # are still taken (2, 4 and 6 s after the request, and 2 s after the close), and what each one
+    # shows and when it was captured goes into the checks' details.
     sheets = ("sheet", "sheet2", "sheet3")
     res = scenario(dev, app, label, pv, fresh=False, want=("bridges", "back"), timeout=75,
                    after=tuple((n, fetched, d) for n, d in zip(sheets, (2.0, 4.0, 6.0))) + (("after", came_back, 2.0),))
@@ -946,18 +947,16 @@ def privacy(dev, app, mode):
     sv = [l[l.index("ADDIFY-SAFARI"):] for l in res["lab"] if "ADDIFY-SAFARI" in l]
     loaded = lab_has(res, "ADDIFY-SAFARI loaded 1")
     shown = any("ADDIFY-SAFARI closing (after load) shown=1 top=1" in l for l in res["lab"])
-    check(dev, label, "the legal page on screen", presented and loaded and shown, "%s" % sv)
     ks = [(n, pixel_class(res["shots"].get(n, "")), res["shot_t"].get(n)) for n in sheets]
-    check(dev, label, "screenshot shows the legal page", any(k == "privacy" for _, k, _ in ks), "%s" % ks, info=True)
+    check(dev, label, "the legal page on screen", presented and loaded and shown, "%s, screenshots %s" % (sv, ks))
     load, back = report(res, "load"), report(res, "back")
     pages = page_requests(res, "A")
     same = load is not None and back is not None and back.get("lid") == load.get("lid") and back.get("href") == load.get("href")
     check(dev, label, "closing returns to the same page, not reloaded", same and len(pages) == 1 and lab_has(res, "ADDIFY-SAFARI closed"),
           "page %s then %s, %d page loads" % ((load or {}).get("lid"), (back or {}).get("lid"), len(pages)))
     uncovered = lab_has(res, "ADDIFY-SAFARI closed covered=0 page=1")
-    check(dev, label, "app page on screen after closing", uncovered and same, "%s" % [l for l in sv if "closed" in l])
-    k = pixel_class(res["shots"].get("after", ""))
-    check(dev, label, "screenshot shows the app page after closing", k == "page", "%s %s" % (k, res["shot_t"].get("after")), info=True)
+    check(dev, label, "app page on screen after closing", uncovered and same, "%s, screenshot %s %s" % (
+        [l for l in sv if "closed" in l], pixel_class(res["shots"].get("after", "")), res["shot_t"].get("after")))
     check(dev, label, "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
