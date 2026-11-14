@@ -47,9 +47,90 @@ let S = URL(string: "https://161-35-185-80.sslip.io")!
         resetEngineKeys()
 
         // share links
-        eq(SharedInbox.firstURL(in: "Check out this TikTok! https://vt.tiktok.com/ZS4a5JyXE/ nice"), "https://vt.tiktok.com/ZS4a5JyXE/", "firstURL from TikTok text")
-        eq(SharedInbox.firstURL(in: "https://www.instagram.com/reel/abc/?igsh=1"), "https://www.instagram.com/reel/abc/?igsh=1", "firstURL clean IG url")
-        eq(SharedInbox.firstURL(in: "no link here"), nil, "firstURL none")
+        eq(SharedInbox.shareLink(in: "Check out this TikTok! https://vt.tiktok.com/ZS4a5JyXE/ nice"), "https://vt.tiktok.com/ZS4a5JyXE/", "shareLink from TikTok text")
+        eq(SharedInbox.shareLink(in: "https://www.instagram.com/reel/abc/?igsh=1"), "https://www.instagram.com/reel/abc/?igsh=1", "shareLink clean IG url")
+        eq(SharedInbox.shareLink(in: "no link here"), nil, "shareLink none")
+        // GAPS-KIT-R5-01/02/03: the testers' share corpus (reviewer-runs/r5/gaps-kit/corpus.json). For each
+        // input: the link the extension hands over (nil: it turns the share down), and whether the page's
+        // own parseLink scans the whole text when it is pasted (WebKit, links1.jsonl). Wherever the page
+        // scans the text, the share must hand over a clip; instagr.am goes over as www.instagram.com.
+        let corpus: [(url: Bool, input: String, link: String?, pageScans: Bool)] = [
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 0
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", true),   // 1
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", true),   // 2
+            (false, "https://vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // 3
+            (false, "https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 4
+            (false, "https://www.tiktok.com/t/ZTabc1234/", "https://www.tiktok.com/t/ZTabc1234/", true),   // 5
+            (false, "http://vm.tiktok.com/ZMabc1234/", "http://vm.tiktok.com/ZMabc1234/", true),   // 6
+            (false, "Check out this video! #fyp #remix https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 7
+            (false, "https://example.com/promo and the clip https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 8
+            (false, "https://linktr.ee/djuser https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 9
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 10
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789 https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 11
+            (false, "Watch this: https://vm.tiktok.com/ZMabc1234/.", "https://vm.tiktok.com/ZMabc1234/.", true),   // 12
+            (false, "(https://vm.tiktok.com/ZMabc1234/)", "https://vm.tiktok.com/ZMabc1234/)", false),   // 13
+            (false, "https://vm.tiktok.com/ZMabc1234/,https://example.com", "https://vm.tiktok.com/ZMabc1234/,https://example.com", false),   // 14
+            (false, "vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // 15
+            (false, "HTTPS://VM.TIKTOK.COM/ZMabc1234/", "HTTPS://VM.TIKTOK.COM/ZMabc1234/", true),   // 16
+            (false, "Https://vm.tiktok.com/ZMabc1234/", "Https://vm.tiktok.com/ZMabc1234/", true),   // 17
+            (false, "https://m.tiktok.com/v/7234567890123456789.html", "https://m.tiktok.com/v/7234567890123456789.html", true),   // 18
+            (false, "https://www.tiktok.com/@dj.user/photo/7234567890123456789", "https://www.tiktok.com/@dj.user/photo/7234567890123456789", true),   // 19
+            (false, "https://www.tiktok.com/embed/v2/7234567890123456789", "https://www.tiktok.com/embed/v2/7234567890123456789", false),   // 20
+            (false, "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", false),   // 21
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789", "https://www.tiktok.com/music/original-sound-7234567890123456789", false),   // 22
+            (false, "https://www.tiktok.com/tag/fyp", "https://www.tiktok.com/tag/fyp", false),   // 23
+            (false, "https://www.tiktok.com/@dj.user/live", "https://www.tiktok.com/@dj.user/live", false),   // 24
+            (false, "https://www.tiktok.com/search?q=song", "https://www.tiktok.com/search?q=song", false),   // 25
+            (false, "https://tiktok.com.evil.example/@u/video/7234567890123456789", "https://tiktok.com.evil.example/@u/video/7234567890123456789", false),   // 26
+            (false, "https://notinstagram.com/reel/C9abcDEFghi/", "https://notinstagram.com/reel/C9abcDEFghi/", false),   // 27
+            (false, "https://example.com/?next=https://www.tiktok.com/@u/video/7234567890123456789", "https://example.com/?next=https://www.tiktok.com/@u/video/7234567890123456789", false),   // 28
+            (false, "https://lite.tiktok.com/@dj.user/video/7234567890123456789", "https://lite.tiktok.com/@dj.user/video/7234567890123456789", false),   // 29
+            (false, "https://www.tiktokv.com/share/video/7234567890123456789/", nil, false),   // 30
+            (true, "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", true),   // 31
+            (true, "https://www.instagram.com/reels/C9abcDEFghi/", "https://www.instagram.com/reels/C9abcDEFghi/", true),   // 32
+            (true, "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", true),   // 33
+            (true, "https://www.instagram.com/tv/C9abcDEFghi/", "https://www.instagram.com/tv/C9abcDEFghi/", true),   // 34
+            (true, "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", true),   // 35
+            (true, "https://instagr.am/p/C9abcDEFghi/", "https://www.instagram.com/p/C9abcDEFghi/", false),   // 36
+            (true, "https://instagr.am/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", false),   // 37
+            (true, "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", false),   // 38
+            (true, "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", false),   // 39
+            (true, "https://www.instagram.com/dj.user?igsh=abc", "https://www.instagram.com/dj.user?igsh=abc", false),   // 40
+            (true, "https://www.instagram.com/reel/C9abcDEFghi/audio/", "https://www.instagram.com/reel/C9abcDEFghi/audio/", false),   // 41
+            (true, "https://www.instagram.com/reels/audio/1234567890123456/", "https://www.instagram.com/reels/audio/1234567890123456/", false),   // 42
+            (true, "https://www.instagram.com/explore/tags/fyp/", "https://www.instagram.com/explore/tags/fyp/", false),   // 43
+            (true, "https://www.threads.net/@dj.user/post/C9abcDEFghi", nil, false),   // 44
+            (true, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 45
+            (false, "Instagram reel https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", true),   // 46
+            (false, "https://www.instagram.com/reel/C9abcDEFghi/\u{A0}shared via Instagram", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // 47
+            (false, "\u{1F525}https://vt.tiktok.com/ZSabc1234/\u{1F525}", "https://vt.tiktok.com/ZSabc1234/\u{1F525}", false),   // 48
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{200B}", "https://vt.tiktok.com/ZSabc1234/\u{200B}", false),   // 49
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{FEFF}", "https://vt.tiktok.com/ZSabc1234/", true),   // 50
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{B}next", "https://vt.tiktok.com/ZSabc1234/", true),   // 51
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{85}next", "https://vt.tiktok.com/ZSabc1234/", false),   // 52
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{3000}next", "https://vt.tiktok.com/ZSabc1234/", true),   // 53
+        ]
+        for (n, c) in corpus.enumerated() {
+            let got: String?
+            if c.url {
+                let s = URL(string: c.input)!.absoluteString
+                let l = SharedInbox.shareLink(in: s) ?? s
+                got = SharedInbox.isScannable(l) ? l : nil
+            } else {
+                got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+            }
+            eq(got, c.link, "corpus \(n): link handed over")
+            if c.pageScans {
+                eq(got.flatMap { SharedInbox.clipLink($0) } != nil, true, "corpus \(n): the page scans this text, so the share hands over a clip")
+            }
+            if let g = got { eq(SharedInbox.shareLink(in: g), g, "corpus \(n): the app reads the same link back") }
+        }
+        eq(SharedInbox.isScannable("https://instagr.am/reel/C9abcDEFghi/"), true, "instagr.am: scannable host")
+        eq(SharedInbox.clipLink("https://instagr.am/p/C9abcDEFghi/?igsh=x"), "https://www.instagram.com/p/C9abcDEFghi/?igsh=x", "instagr.am: handed over as www.instagram.com, query kept")
+        eq(SharedInbox.clipLink("vt.tiktok.com/ZSabc1234/"), "https://vt.tiktok.com/ZSabc1234/", "clip: a bare clip link gets https://")
+        eq(SharedInbox.shareLink(in: "see vt.tiktok.com/ZSabc1234/"), nil, "clip: a bare link inside other words is not read, as on the page")
+        eq(SharedInbox.shareLink(in: "https://example.com https://www.tiktok.com/@dj.user"), "https://www.tiktok.com/@dj.user", "no clip: the first TikTok link still goes, so the page can say what it is")
+
         eq(SharedInbox.isScannable("https://vt.tiktok.com/ZS4a5JyXE/"), true, "scannable vt.tiktok")
         eq(SharedInbox.isScannable("https://www.tiktok.com/@bouch.szn/video/7651437319941066005"), true, "scannable tiktok.com")
         eq(SharedInbox.isScannable("https://www.instagram.com/reel/abc/"), true, "scannable instagram")

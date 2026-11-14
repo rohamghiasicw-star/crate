@@ -17,6 +17,7 @@ iPhone and an iPad simulator. Scenarios:
              screen, then the same share page
   killresult the same after the page posted its result: Home, the link is not scanned again
   killcard   the same after the page left its scan without a result (a no-match card): Home
+  sharetext  a share whose text has another link ahead of the clip opens the clip's share page
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
              it must open in a Safari view over the app, and closing it returns to the same page
 Each simulator starts with one untimed launch (warmup), so the first boot's slow start is not
@@ -842,6 +843,7 @@ def run_stub_suite(dev, app, version, ipad=False):
         fixed_retry(dev, app, version)
         for mode in ("scan", "result", "card"):
             killed_page(dev, app, version, mode)
+        share_text(dev, app, version)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     exported = lambda e: e.get("kind") == "export"
@@ -1191,6 +1193,27 @@ def killed_page(dev, app, version, mode):
     check(dev, label, "page on screen after the reload", k == "page", k)
     check(dev, label, "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+def share_text(dev, app, version):
+    """GAPS-KIT-R5-01/03. A share whose text has another link ahead of the clip (here a TikTok
+    profile, which used to open the app on "That link is a TikTok page, not a clip") reaches the app
+    as addify://scan?url=<the text>. The app must open the clip's share page, the one the page itself
+    scans from the same text."""
+    text = "https://www.tiktok.com/@dj.user and the clip " + SHARE_LINK
+    cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    # Waits for the share page's own report: with one address a Home load starts first and may report.
+    on_share = nth(lambda e: e.get("kind") == "bridges" and "/share?" in ((e.get("report") or {}).get("href") or ""), 1)
+    res = scenario(dev, app, "sharetext", cfg, fresh=False, timeout=40, actions=(("shared", on_share, 0.5, lambda d: None),),
+                   launch_env=dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(text, safe="")))
+    timeline(res)
+    shares = [(e["dt"], link_in(e["path"]), e["status"]) for e in res["entries"]
+              if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
+    check(dev, "sharetext", "the share page opened with the clip, not the profile", bool(shares) and all(l == SHARE_LINK for _, l, _ in shares),
+          json.dumps(shares))
+    r = common(dev, "sharetext", res, version)
+    check(dev, "sharetext", "the page that loaded carries the clip", link_in((r or {}).get("href")) == SHARE_LINK, (r or {}).get("href", "no page"))
+    json.dump(res, open(os.path.join(dev.out, "%s-sharetext.json" % dev.tag), "w"), indent=1)
 
 
 def run_testbox(dev, app):

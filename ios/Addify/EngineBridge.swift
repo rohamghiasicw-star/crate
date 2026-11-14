@@ -66,7 +66,7 @@ final class EngineBridge: ObservableObject {
            query, and discarding the inbox in that case strips the guaranteed path of its
            only copy, so the share would never scan. */
         let fromInbox = SharedInbox.drain()
-        let fromURL = SharedInbox.firstURL(in: raw).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+        let fromURL = SharedInbox.shareLink(in: raw)
         if let link = fromURL ?? fromInbox, SharedInbox.isScannable(link) {
             deliver(link)
         }
