@@ -44,6 +44,7 @@ struct EngineWebView: UIViewRepresentable {
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
         ucc.addScriptMessageHandler(ExportFindsHandler(bridge: bridge), contentWorld: .page, name: ExportFindsHandler.name)
         ucc.addScriptMessageHandler(OpenSettingsHandler(), contentWorld: .page, name: OpenSettingsHandler.name)
+        AddifyStore.shared.bridge = bridge
         AddifyStore.shared.start()
         cfg.userContentController = ucc
 
@@ -582,6 +583,8 @@ final class AddifyStore {
     static let productIDs = ["com.addify.app.unlimited.monthly", "com.addify.app.unlimited.yearly"]
     private var products: [Product] = []
     private var updates: Task<Void, Never>?
+    /* The page to tell when a transaction arrives on its own (transactionArrived). */
+    weak var bridge: EngineBridge?
 
     /* Renewals, refunds and purchases made on another device arrive here; finishing them keeps
        the queue clean. Entitlement is always read fresh from currentEntitlements. */
@@ -589,9 +592,20 @@ final class AddifyStore {
         guard updates == nil else { return }
         updates = Task.detached {
             for await result in Transaction.updates {
-                if case .verified(let t) = result { await t.finish() }
+                if case .verified(let t) = result {
+                    await t.finish()
+                    await AddifyStore.shared.transactionArrived()
+                }
             }
         }
+    }
+
+    /* CHAOS-2-R5-03 (build 30): a verified transaction the page did not wait on (an Ask to Buy
+       approval, a renewal, a purchase made on another device) is finished, then the page is told
+       with the event addify:entitlements, so it reads its entitlement again at once instead of on
+       the next return to the app (EngineBridge entitlementsChanged). */
+    func transactionArrived() {
+        bridge?.entitlementsChanged()
     }
 
     func load() async -> [Product] {

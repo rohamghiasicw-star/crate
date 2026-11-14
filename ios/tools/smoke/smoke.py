@@ -18,6 +18,7 @@ iPhone and an iPad simulator. Scenarios:
   killresult the same after the page posted its result: Home, the link is not scanned again
   killcard   the same after the page left its scan without a result (a no-match card): Home
   sharetext  a share whose text has another link ahead of the clip opens the clip's share page
+  entitlements a StoreKit transaction that arrives on its own tells the loaded page (addify:entitlements)
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
              it must open in a Safari view over the app, and closing it returns to the same page
 Each simulator starts with one untimed launch (warmup), so the first boot's slow start is not
@@ -149,6 +150,23 @@ def patch(ios_dir, variant):
                   "                        NSLog(\"ADDIFY-LAB open %@\", s)\n"
                   "                        bridge.handleIncoming(u)\n"
                   "                    }\n"
+                  # Build 30 (CHAOS-2-R5-03): what Transaction.updates calls after finishing a transaction,
+                  # once before the page is up (it must tell nothing) and once 1 s after it loaded.
+                  "                    if ProcessInfo.processInfo.environment[\"ADDIFY_LAB_ENTITLEMENTS\"] != nil {\n"
+                  "                        NSLog(\"ADDIFY-LAB transaction before the page\")\n"
+                  "                        AddifyStore.shared.transactionArrived()\n"
+                  "                        func whenLoaded() {\n"
+                  "                            if bridge.pageReady {\n"
+                  "                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {\n"
+                  "                                    NSLog(\"ADDIFY-LAB transaction\")\n"
+                  "                                    AddifyStore.shared.transactionArrived()\n"
+                  "                                }\n"
+                  "                            } else {\n"
+                  "                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { whenLoaded() }\n"
+                  "                            }\n"
+                  "                        }\n"
+                  "                        whenLoaded()\n"
+                  "                    }\n"
                   "                }\n")
     open(apath, "w").write(a)
     open(wpath, "w").write(w)
@@ -223,6 +241,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     catch(e) { ok({err: 'throw: ' + String(e && e.message || e)}); }
     setTimeout(function(){ ok({err: 'timeout'}); }, wait || 8000); }); }
   if (__STATE__) document.getElementById('app').setAttribute('data-state', __STATE__);
+  window.addEventListener('addify:entitlements', function(){ send('entitlements', {lid: lid, href: location.href}); });
   send('load', r); show();
   function bridges(kind, done){
     call('addifyKit', {type: 'ping'}).then(function(k){ r.kit = k; return call('addifyStore', {op: 'status'}); })
@@ -734,6 +753,7 @@ def run_stub_suite(dev, app, version, ipad=False):
     json.dump(res, open(os.path.join(dev.out, "%s-relaunch.json" % dev.tag), "w"), indent=1)
 
     fixed_boot(dev, app, version)
+    entitlements(dev, app, version)
 
     if not ipad:
         bad = {"A": {"health_ms": 20}, "B": {"health_ms": 20}, "G": {"pick": "http://localhost:8799"}, "X": {}}
@@ -1193,6 +1213,27 @@ def killed_page(dev, app, version, mode):
     check(dev, label, "page on screen after the reload", k == "page", k)
     check(dev, label, "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+def entitlements(dev, app, version):
+    """CHAOS-2-R5-03. A verified StoreKit transaction that arrives on its own (an Ask to Buy approval,
+    a renewal) is finished and the loaded page is told: the event addify:entitlements. The lab copy
+    calls the same AddifyStore.transactionArrived() Transaction.updates calls, once before the page
+    is up and once 1 s after it loaded; the stub page reports each event it hears."""
+    cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    res = scenario(dev, app, "entitlements", cfg, fresh=False, timeout=40, want=("bridges", "entitlements"),
+                   actions=(("quiet", nth(lambda e: e.get("kind") == "entitlements", 1), 2.0, lambda d: None),),
+                   launch_env=dict(SINGLE, ADDIFY_LAB_ENTITLEMENTS="1"))
+    timeline(res)
+    heard = [e for e in res["entries"] if e.get("kind") == "entitlements"]
+    loads = [e for e in res["entries"] if e.get("kind") == "load"]
+    calls = [l[l.index("ADDIFY-LAB"):] for l in res["lab"] if "ADDIFY-LAB transaction" in l]
+    check(dev, "entitlements", "the loaded page heard addify:entitlements once", len(heard) == 1,
+          "%d events at %s, page loads %d, lab %s" % (len(heard), [e["dt"] for e in heard], len(loads), calls))
+    same = len(heard) == 1 and len(loads) == 1 and heard[0]["report"].get("lid") == loads[0]["report"].get("lid")
+    check(dev, "entitlements", "told without reloading the page", same, "%d page loads" % len(loads))
+    check(dev, "entitlements", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-entitlements.json" % dev.tag), "w"), indent=1)
 
 
 def share_text(dev, app, version):

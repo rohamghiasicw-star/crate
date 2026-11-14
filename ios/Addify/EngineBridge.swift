@@ -191,6 +191,16 @@ final class EngineBridge: ObservableObject {
         UIApplication.shared.open(url, options: [:], completionHandler: nil)
     }
 
+    /* CHAOS-2-R5-03 (build 30): StoreKit delivered a transaction on its own (AddifyStore). Only an
+       engine page that has loaded is told; one that does not listen for the event ignores it, and a
+       page still loading reads its entitlement as it starts anyway. */
+    static let entitlementsEvent = "window.dispatchEvent(new CustomEvent('addify:entitlements'))"
+
+    func entitlementsChanged() {
+        guard pageReady, let wv = webView, EngineConfig.isTrusted(wv.url) else { return }
+        wv.evaluateJavaScript(Self.entitlementsEvent, completionHandler: nil)
+    }
+
     /* NATIVE-B-R5-04 (build 30): the page posted a scan's result. A shared link the page had is
        done, so a reload after WebKit kills the page opens Home and never scans it again. */
     func resultPosted() {
