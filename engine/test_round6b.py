@@ -12,9 +12,10 @@ is stubbed. Contrast is read from rendered pixels and hit areas from the rendere
                    inert until it closes
   R4   A11Y-R6-04  The inline player's Close (Enter) and Escape on its Pause hand the focus to the control that opened
                    the band, never <body>
-  R5   A11Y-R6-05  The player sheet: after "Couldn't load the player." and Try again, the focus stays on the sheet and
-                   Escape closes it (the screen is no longer inert)
-  R7   A11Y-R6-07  The fix banner's Dismiss is at least 44 x 44 pt to tap, every point of it
+  R5   A11Y-R6-05  The player sheet: after "Couldn't load the player." and Try again, the focus stays on the sheet; a
+                   second failure puts it on the new Try again; Escape closes it (the screen is no longer inert)
+  R7   A11Y-R6-07  The fix banner's Dismiss is at least 44 x 44 pt to tap, every point of it, and takes no point of the
+                   banner's main button
   R8   A11Y-R6-08  "Not matched yet" rows: each Retry button is named for its scan ("Retry scan from @creator0"), all
                    different, and still reads "Retry" on screen
   R9   A11Y-R6-09  "Not matched yet" rows: the line under the title and the "?" badge are at least 4.5:1 from pixels in
@@ -328,19 +329,27 @@ async def main(html, yml, only):
                                       " document.getElementById('s-home').appendChild(b); b.focus();}", [url, kind])
                     await pg.keyboard.press("Enter")
                     failed = await until(pg, "()=>!!document.querySelector('#player .plfail')", 6)
-                    flags["api"] = True
                     await pg.evaluate("()=>document.getElementById('plretry').focus()")
                     await pg.keyboard.press("Enter"); await pg.wait_for_timeout(700)
                     retry = await pg.evaluate(SHEET)
+                    # still no player: the second "Couldn't load" hands the focus to its own Try again, as the first did
+                    failed2 = await until(pg, "()=>!!document.querySelector('#player .plfail')", 6)
+                    second = await pg.evaluate(SHEET)
+                    flags["api"] = True
+                    await pg.keyboard.press("Enter"); await pg.wait_for_timeout(700)
+                    retry2 = await pg.evaluate(SHEET)
                     await pg.keyboard.press("Escape"); await pg.wait_for_timeout(500)
                     esc = await pg.evaluate(SHEET)
-                    res[kind] = {"failed": bool(failed), "after_retry": retry, "after_esc": esc, "errs": pg.errs}
+                    res[kind] = {"failed": bool(failed), "after_retry": retry, "failed2": bool(failed2), "second_fail": second,
+                                 "after_retry2": retry2, "after_esc": esc, "errs": pg.errs}
                     await close(ctx)
                 ok = all(v["failed"] and v["after_retry"]["open"] and v["after_retry"]["frame"] and v["after_retry"]["inSheet"]
-                         and not v["after_retry"]["iframe"] and not v["after_esc"]["open"] and not v["after_esc"]["inert"] and not v["errs"]
+                         and not v["after_retry"]["iframe"] and v["failed2"] and v["second_fail"]["focus"] == "plretry"
+                         and v["after_retry2"]["open"] and v["after_retry2"]["frame"] and v["after_retry2"]["inSheet"] and not v["after_retry2"]["iframe"]
+                         and not v["after_esc"]["open"] and not v["after_esc"]["inert"] and not v["errs"]
                          for v in res.values())
-                check("R5", "Player sheet: after \"Couldn't load the player.\" and Try again (Enter) the focus stays on the sheet, not in the frame, "
-                            "and Escape closes it (YouTube and SoundCloud)", ok, res)
+                check("R5", "Player sheet: after \"Couldn't load the player.\" and Try again (Enter) the focus stays on the sheet, not in the frame; "
+                            "a second failure puts it on the new Try again, and after that Try again Escape closes the sheet (YouTube and SoundCloud)", ok, res)
         except Exception as e:
             check("R5", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 
@@ -353,10 +362,18 @@ async def main(html, yml, only):
                     await pg.evaluate(BANNER); await pg.wait_for_timeout(800)
                     res["%dx%d" % (w, h)] = await pg.evaluate(HIT, "#fixban .fbx")
                     vis = await pg.evaluate("()=>{var r=document.querySelector('#fixban .fbx').getBoundingClientRect(); return [r.width,r.height];}")
+                    res["%dx%d" % (w, h)]["edges"] = await pg.evaluate("()=>['.fbgo','.fbx'].map(function(c){var r=document.querySelector('#fixban '+c).getBoundingClientRect(); return [+r.left.toFixed(2),+r.right.toFixed(2)];})")
                     res["%dx%d" % (w, h)]["drawn"] = vis
+                    # and it takes none of the main button: every point of the banner's main button still opens
+                    res["%dx%d" % (w, h)]["main_lost"] = await pg.evaluate(
+                        "()=>{var g=document.querySelector('#fixban .fbgo'), r=g.getBoundingClientRect(), lost=[];"
+                        " var rad=parseFloat(getComputedStyle(g).borderTopRightRadius)||0;"
+                        " for(var x=r.left+0.25;x<r.right;x+=0.5) for(var y=r.top+0.25;y<r.bottom;y+=2){"
+                        " if((x-r.left<rad||r.right-x<rad)&&(y-r.top<rad||r.bottom-y<rad)) continue; var e=document.elementFromPoint(x,y);"
+                        " if(!(e&&(e===g||g.contains(e)))&&lost.length<4) lost.push([+(x-r.left).toFixed(2),+(y-r.top).toFixed(2),e&&e.className]);} return lost;}")
                     await close(ctx)
-                ok = all(hit_ok(v) and v["drawn"] == [36, 36] for v in res.values())
-                check("R7", "The fix banner's Dismiss is still drawn 36 pt and is at least 44 x 44 pt to tap, every point of it", ok, res)
+                ok = all(hit_ok(v) and v["drawn"] == [36, 36] and not v["main_lost"] for v in res.values())
+                check("R7", "The fix banner's Dismiss is still drawn 36 pt and is at least 44 x 44 pt to tap, every point of it, and takes no point of the main button", ok, res)
         except Exception as e:
             check("R7", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 

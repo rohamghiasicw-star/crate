@@ -881,9 +881,12 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .fixban .fbx{width:36px;height:36px;flex:none;border-radius:50%;display:grid;place-items:center;color:var(--faint)}
 .fixban .fbx svg{width:15px;height:15px}
 .fixban .fbx:active{background:var(--raise2)}
-/* ROUND 6 (A11Y-R6-07): Dismiss stays 36 on screen and is 44 to tap, from a square ::before so the corners hit too */
+/* ROUND 6 (A11Y-R6-07): Dismiss stays 36 on screen and is 44 to tap, from a ::before so the corners hit too. It reaches
+   2 px left (the flex gap) and 6 px right (the banner's padding and border). The main button sits a layer above it, so
+   every point of the main button still opens, even at a sub-pixel edge. */
+.fixban .fbgo{position:relative;z-index:1}
 .fixban .fbx{position:relative}
-.fixban .fbx::before{content:"";position:absolute;inset:-4px}
+.fixban .fbx::before{content:"";position:absolute;inset:-4px -6px -4px -2px}
 .fixban button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.fixban,.fixban.out{animation:none}}
 .trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
@@ -7444,9 +7447,9 @@ function playHere(url, src, title){
    band's way, through the platform's own API: YouTube PLAYING or its playhead past 0.1 s, SoundCloud PLAY or a
    PLAY_PROGRESS past 0. A sheet with no start by then says "Couldn't load the player." with Open in app (the same
    upload) and Try again (opens it again). Closing the sheet, or another player opening, ends the watch (plOff). */
-var _plGen=0, _plT=0, _plTick=null, _plYT=null, _plSC=null;
+var _plGen=0, _plT=0, _plTick=null, _plYT=null, _plSC=null, _plBack=false;
 function plOff(){
-  _plGen++; clearTimeout(_plT); if(_plTick){clearInterval(_plTick); _plTick=null;}
+  _plGen++; clearTimeout(_plT); _plBack=false; if(_plTick){clearInterval(_plTick); _plTick=null;}
   try{if(_plSC&&window.SC&&SC.Widget){var E=SC.Widget.Events; [E.PLAY,E.PLAY_PROGRESS].forEach(function(ev){_plSC.unbind(ev);});}}catch(e){}
   _plSC=null; _plYT=null;}
 function plWatch(url,src,title,isYT){
@@ -7471,7 +7474,7 @@ function plWatch(url,src,title,isYT){
     }catch(_){} });}
 function plFail(url,src,title){
   var pb=document.getElementById('playerbody'), po=document.getElementById('playerout'), ae=document.activeElement,
-      had=!!(ae&&((pb&&pb.contains(ae))||ae===po));
+      had=!!(ae&&((pb&&pb.contains(ae))||ae===po||(_plBack&&ae===sheetDialog('player'))));   // ROUND 6: Try again left it on the sheet
   plOff(); if(!pb) return;
   if(po) po.hidden=true;   // one Open in app on the sheet: the box's, beside Try again
   pb.innerHTML='<div class="plfail"><div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
@@ -7479,8 +7482,8 @@ function plFail(url,src,title){
     '<button type="button" class="ipfbtn" id="plretry">Try again</button></span></div></div>';
   var rb=document.getElementById('plretry');
   // ROUND 6 (A11Y-R6-05): the focus stays on the sheet, not in the new player frame: a key pressed inside that
-  // cross-origin frame never reaches the page, so Escape stopped closing the sheet
-  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); fkHand(h,sheetDialog('player'));};
+  // cross-origin frame never reaches the page, so Escape stopped closing the sheet. A second failure hands it to the new Try again.
+  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); _plBack=h; fkHand(h,sheetDialog('player'));};
   fkHand(had,rb);}
 /* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
    purple progress ring and the YouTube video plays beside it, in the card, not a sheet.
