@@ -180,7 +180,9 @@ def patch(ios_dir, variant):
     w += LAB_DIAG
     bpath = os.path.join(ios_dir, "Addify", "EngineBridge.swift")
     b = open(bpath).read()
-    breps = [("        if presentOnTop(ac, over: wv) { staleShare = nil }\n",
+    breps = [("            wv.evaluateJavaScript(js) { [weak self] value, _ in\n",
+              "            NSLog(\"ADDIFY-SHARE run %@\", link)\n            wv.evaluateJavaScript(js) { [weak self] value, _ in\n"),
+             ("        if presentOnTop(ac, over: wv) { staleShare = nil }\n",
               "        if presentOnTop(ac, over: wv) { staleShare = nil; NSLog(\"ADDIFY-STALE asked %@\", link) }\n"),
              ("            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n",
               "            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n"
@@ -278,11 +280,16 @@ final class LabSafariCloser: NSObject, SFSafariViewControllerDelegate {
         c.page = page
         s.delegate = c
         current = c
+        if keep { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak c] in c?.close("never loaded") }
     }
 
+    /* Build 31 (safarishare): the Safari view stays up until something else closes it. */
+    static var keep: Bool { ProcessInfo.processInfo.environment["ADDIFY_LAB_KEEP_SAFARI"] != nil }
+
     func safariViewController(_ controller: SFSafariViewController, didCompleteInitialLoad didLoadSuccessfully: Bool) {
         NSLog("ADDIFY-SAFARI loaded %ld", didLoadSuccessfully ? 1 : 0)
+        if Self.keep { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.close("after load") }
     }
 
@@ -895,7 +902,13 @@ def outage_screen(res, names, good_at, promise="error"):
     so the lab copy's own log has to: the error screen shown by the time that capture started.
     Either way, when the log is there, it must also show the error screen staying up from then
     until good_at. A shot that ended after good_at may show the error screen or the page (and the
-    loading screen only if it was due before the promise), never a blank, a 404 or a cut-off page."""
+    loading screen only if it was due before the promise), never a blank, a 404 or a cut-off page.
+
+    Build 31: good_at is the stub's clock and the screens are the simulator log's. In a slow run
+    (43737158971) the log read 0.3 to 0.4 s behind the stub, so the error screen going away as the
+    working page loaded was logged "before" the page was asked for. The error screen's going away
+    counts as early only when the log has no page loaded (ADDIFY-PAGE loaded, which only a page
+    that passed its #app check logs) between its showing and its going, both on the log's clock."""
     rows = []
     for n in names:
         t = res.get("shot_t", {}).get(n) or [None, None, None]
@@ -920,7 +933,9 @@ def outage_screen(res, names, good_at, promise="error"):
         # when its capture started, if that was later).
         by = pr[4] if pr_on_time else max([x for x in (pr[2], pr[3]) if x is not None] or [None])
         first = shown[0]
-        gone_early = [t for t, s in err if s == "gone" and first <= t < good_at]
+        loaded = [t for t in (lab_time(l, res.get("t0", 0)) for l in res.get("lab", []) if "ADDIFY-PAGE loaded" in l)
+                  if t is not None and t >= first]
+        gone_early = [t for t, s in err if s == "gone" and first <= t < good_at and not any(p <= t for p in loaded)]
         lab_ok = by is not None and first <= by and not gone_early
         if not lab_ok:
             problems.append("lab: error screen shown at %s s (due by %s s), gone at %s" % (first, by, gone_early))
@@ -1778,29 +1793,34 @@ def safari_share(dev, app, version):
     """NATIVE-R6-02 (build 31). The Privacy page is up in a Safari view over the app when a share
     arrives (the user left the app with it open and shared a clip from TikTok). The Safari view
     closes first and the page's run(link) comes after it, so the scan, its banner and its haptic are
-    never behind the sheet. The same page load takes the link: no reload."""
+    never behind the sheet. The same page load takes the link: no reload. The lab copy's Safari view
+    stays up here (ADDIFY_LAB_KEEP_SAFARI): only the share can close it. The share is written to the
+    app's folder once the page is up and handed over on the return to the app (LabOpen)."""
     pv = {"A": {"health_ms": 20, "privacy": "open"}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     fetched = nth(lambda e: e["path"].split("?")[0] == "/privacy", 1)
     link = "https://vt.tiktok.com/ZSsheet01/"
     ran = lambda log: next((e for e in log if e.get("kind") == "run"), None)
-    res = scenario(dev, app, "safarishare", pv, fresh=False, want=("bridges", "run"), timeout=60,
-                   actions=(("write", fetched, 1.0, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
-                            ("leave", fetched, 1.5, lambda d: d.to_background()),
-                            ("return", fetched, 3.0, lambda d: d.launch()),
+    res = scenario(dev, app, "safarishare", pv, fresh=False, want=("bridges", "run"), timeout=75,
+                   launch_env={"ADDIFY_LAB_KEEP_SAFARI": "1"},
+                   actions=(("write", nth(lambda e: e.get("kind") == "bridges", 1), 0.3,
+                             lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                            ("leave", fetched, 1.0, lambda d: d.to_background()),
+                            ("return", fetched, 2.0, lambda d: d.launch()),
                             ("settled", ran, 1.0, None)))
     timeline(res)
-    sv = [l[l.index("ADDIFY-S"):] for l in res["lab"] if "ADDIFY-SAFARI" in l or "ADDIFY-SHEETS" in l]
-    check(dev, "safarishare", "the Safari view was up when the share came", lab_has(res, "ADDIFY-SAFARI presented /privacy"), json.dumps(sv))
-    closing = [l for l in res["lab"] if "ADDIFY-SHEETS closing" in l]
-    closed = [l for l in res["lab"] if "ADDIFY-SHEETS closed" in l]
-    check(dev, "safarishare", "the share closed the Safari view", any("SFSafariViewController" in l for l in closing) and bool(closed),
+    sv = [l[l.index("ADDIFY-S"):] for l in res["lab"] if "ADDIFY-SAFARI" in l or "ADDIFY-SHEETS" in l or "ADDIFY-SHARE" in l]
+    lab = res["lab"]
+    idx = lambda text: next((i for i, l in enumerate(lab) if text in l), None)
+    presented, closing, closed, handed = (idx("ADDIFY-SAFARI presented /privacy"), idx("ADDIFY-SHEETS closing SFSafariViewController"),
+                                          idx("ADDIFY-SHEETS closed"), idx("ADDIFY-SHARE run " + link))
+    check(dev, "safarishare", "the Safari view was up when the share came", presented is not None and closing is not None
+          and presented < closing and not lab_has(res, "ADDIFY-SAFARI closing"), json.dumps(sv))
+    check(dev, "safarishare", "the share closed the Safari view", closing is not None and closed is not None and closing < closed,
           json.dumps(sv))
+    check(dev, "safarishare", "the link went to the page after the Safari view closed (app log order)",
+          closed is not None and handed is not None and closed < handed, json.dumps(sv))
     r = report(res, "run")
-    run_at = next((e["dt"] for e in res["entries"] if e.get("kind") == "run"), None)
-    closed_at = lab_time(closed[0], res["t0"]) if closed else None
-    check(dev, "safarishare", "the page got the link through run(), after the Safari view closed",
-          (r or {}).get("link") == link and run_at is not None and closed_at is not None and closed_at <= run_at,
-          "run %s at %s s, closed at %s s" % (json.dumps(r), run_at, closed_at))
+    check(dev, "safarishare", "the page got the link through run()", (r or {}).get("link") == link, json.dumps(r))
     load = report(res, "load")
     pages = page_requests(res, "A")
     check(dev, "safarishare", "same page load, no reload", load is not None and r is not None and r.get("lid") == load.get("lid")
