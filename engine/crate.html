@@ -175,6 +175,10 @@ img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit
 .uq{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;flex:none;font-weight:800;
   color:var(--warn);background:color-mix(in oklab,var(--warn) 18%,transparent)}
 .urow .tt span{display:block;font-size:11.5px;color:var(--warn);margin-top:3px;opacity:.9}
+/* ROUND 6 (A11Y-R6-09): in the light theme the line under "Unmatched scan" (--warn at 90%) was 3.9:1 and the "?" 3.7:1
+   on its tint. Both take a deeper amber there, full strength: 6.1:1 and 4.9:1. The dark theme is unchanged. */
+:root[data-theme="light"] .urow .tt span,:root[data-theme="light"] .uq{color:#805204;opacity:1}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .urow .tt span,:root:not([data-theme="dark"]) .uq{color:#805204;opacity:1}}
 .urow .retry{font-size:12px;font-weight:700;color:var(--accent2);padding:8px 12px;border-radius:10px;flex:none}
 
 /* ---------- search (Konnor's third tab) ---------- */
@@ -877,6 +881,9 @@ canvas#tlwave{width:100%;height:36px;display:block}
 .fixban .fbx{width:36px;height:36px;flex:none;border-radius:50%;display:grid;place-items:center;color:var(--faint)}
 .fixban .fbx svg{width:15px;height:15px}
 .fixban .fbx:active{background:var(--raise2)}
+/* ROUND 6 (A11Y-R6-07): Dismiss stays 36 on screen and is 44 to tap, from a square ::before so the corners hit too */
+.fixban .fbx{position:relative}
+.fixban .fbx::before{content:"";position:absolute;inset:-4px}
 .fixban button:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.fixban,.fixban.out{animation:none}}
 .trainnote{font-size:11px;color:var(--faint);text-align:center;margin-top:9px}
@@ -1147,6 +1154,9 @@ canvas#wave{width:100%;height:56px;display:block;opacity:.9}
   transition:transform .12s,filter .15s}
 @media (hover:hover) and (pointer:fine){.ipbtn:hover{transform:scale(1.05)}}   /* APPLYALL 2026-09-29 (build 3): unguarded hover sticks after a tap on iOS */
 .ipbtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* ROUND 6 (A11Y-R6-01): the white glyph was 1.15:1 on the light theme's --raise2 fill; it takes the text colour there */
+:root[data-theme="light"] .ipbtn{color:var(--text)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .ipbtn{color:var(--text)}}
 .ipgl{position:relative;z-index:2;display:grid;place-items:center;line-height:0}
 .ipgl svg{width:22px;height:22px}
 .iprg{position:absolute;inset:0;width:64px;height:64px;transform:rotate(-90deg);z-index:1;pointer-events:none}
@@ -4598,7 +4608,7 @@ function vfWire(d){
    vote is dropped too: its answer changed, and a rescan should ask about the new one instead
    of showing "We're on it" under a corrected crown. Offline or an older engine without
    /fixes: nothing happens, the list waits for the next open. */
-var vfFixAt=0, vfFixBusy=false, vfBanQ=[], vfBanEl=null, vfBanT=0;
+var vfFixAt=0, vfFixBusy=false, vfBanQ=[], vfBanEl=null, vfBanT=0, vfBanFrom=null;
 function vfFixCheck(){
   var a=vfPending(); if(!a.length||vfFixBusy) return;
   var now=Date.now(); if(now-vfFixAt<5000) return;      // an open fires load + visibility together
@@ -4634,8 +4644,9 @@ function vfApplyFixes(fx){
   vfBanNext();}
 function vfBanBlocked(){
   if(busy) return true;
-  var s=document.getElementById('splash'), o=document.getElementById('onb');
-  return !!((s&&!s.hidden&&!s.classList.contains('bye'))||(o&&!o.hidden));}
+  var s=document.getElementById('splash'), o=document.getElementById('onb'), pw=document.getElementById('paywall'), pl=document.getElementById('player');
+  // ROUND 6 (A11Y-R6-03): nor while the paywall or the player sheet is open (it would sit behind the sheet, in the Tab order)
+  return !!((s&&!s.hidden&&!s.classList.contains('bye'))||(o&&!o.hidden)||(pw&&!pw.hidden)||(pl&&!pl.hidden));}
 function vfBanNext(){
   if(vfBanEl||!vfBanQ.length) return;
   if(vfBanBlocked()){setTimeout(vfBanNext,2500); return;}
@@ -4650,11 +4661,19 @@ function vfBanNext(){
   vfBanEl=el;
   el.querySelector('.fbgo').onclick=function(){window.open(b.url,'_blank','noopener'); vfBanHide();};
   el.querySelector('.fbx').onclick=vfBanHide;
+  // ROUND 6 (A11Y-R6-02): from the keyboard the banner stays while it has the focus (the 12 s start again when the focus
+  // leaves), Escape dismisses it, and the focus goes back where it came from when it goes (vfBanHide).
+  vfBanFrom=null;
+  el.addEventListener('focusin',function(e){clearTimeout(vfBanT); var r=e.relatedTarget; if(r&&!el.contains(r)) vfBanFrom=r;});
+  el.addEventListener('focusout',function(e){if(vfBanEl!==el||el.contains(e.relatedTarget)) return;
+    clearTimeout(vfBanT); vfBanT=setTimeout(vfBanHide,12000);});
+  el.addEventListener('keydown',function(e){if(e.key!=='Escape') return; e.preventDefault(); e.stopPropagation(); vfBanHide();});
   vfBanT=setTimeout(vfBanHide,12000);}
 function vfBanHide(){
   if(!vfBanEl) return;
   clearTimeout(vfBanT);
   var el=vfBanEl, calm=false; vfBanEl=null;
+  if(el.contains(document.activeElement)) sheetBack(vfBanFrom);   // ROUND 6 (A11Y-R6-02): never to <body>
   try{calm=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(x){}
   el.classList.add('out');
   setTimeout(function(){if(el.parentNode) el.parentNode.removeChild(el); vfBanNext();},calm?0:240);}
@@ -6497,7 +6516,8 @@ function renderLib(){
 function unRow(x){return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
   '<span class="tt"><b>Unmatched scan'+(x.handle?' · @'+esc(x.handle):'')+'</b>'+
   '<span>Not matched yet · tap Retry to scan it again</span></span>'+
-  '<button type="button" class="retry">Retry</button></div>';}
+  // ROUND 6 (A11Y-R6-08): each Retry is named for its scan, so a list of them reads apart
+  '<button type="button" class="retry" aria-label="'+(x.handle?'Retry scan from @'+esc(x.handle):'Retry unmatched scan')+'">Retry</button></div>';}
 document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();};
 (function(){var s=document.getElementById('libsort'); if(!s) return;
   s.innerHTML=IC.sort;
@@ -6726,12 +6746,14 @@ urlEl.addEventListener('blur',function(){document.getElementById('form').classLi
 /* ROUND 5D (A11Y-A-R5-02): the typed "not a clip" message for the link in the box stays until the box is edited (it
    is a 20-word instruction, and it used to go after 4.5 s), and the box points at it while it shows: aria-invalid, and
    aria-describedby="err", so VoiceOver reads it with the box. Read here from the message and the box, so run() is
-   untouched. A shared page's message (GP-1, sticky by its caller) keeps its own rule: until the next tap. */
+   untouched. ROUND 6 (SHARE-R6-03, A11Y-R6-10): a shared page's message (GP-1, sticky by its caller) follows the same
+   rule while the box holds that link: a tap on the box keeps it, an edit (typed, pasted, from the keyboard) clears it,
+   and the box points at it. */
 function errField(on){var u=document.getElementById('url'); if(!u) return;
   if(on){u.setAttribute('aria-invalid','true'); u.setAttribute('aria-describedby','err');}
   else {u.removeAttribute('aria-invalid'); u.removeAttribute('aria-describedby');}}
 function showErr(m,opt){var e=document.getElementById('err'); opt=opt||{}; e.hidden=false; e.textContent=m;
-  var bx=String((document.getElementById('url')||{}).value||'').trim(), fld=!opt.sticky&&!opt.btn&&!!bx&&m===notClipMsg(parseLink(bx));
+  var bx=String((document.getElementById('url')||{}).value||'').trim(), fld=!opt.btn&&!!bx&&m===notClipMsg(parseLink(bx));
   clearTimeout(showErr._t); showErr.sticky=!!opt.sticky||fld; showErr.field=fld; errField(fld);
   if(opt.btn){var b=document.createElement('button'); b.type='button'; b.className='errbtn'; b.textContent=opt.btn[0]; b.onclick=opt.btn[1]; e.appendChild(b);}
   if(!showErr.sticky) showErr._t=setTimeout(function(){e.hidden=true; errField(false);},4500);}
@@ -7456,7 +7478,9 @@ function plFail(url,src,title){
     '<a class="ipfbtn" href="'+esc(url)+'" target="_blank" rel="noopener">Open in app</a>'+
     '<button type="button" class="ipfbtn" id="plretry">Try again</button></span></div></div>';
   var rb=document.getElementById('plretry');
-  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); fkHand(h,document.getElementById('plframe'));};
+  // ROUND 6 (A11Y-R6-05): the focus stays on the sheet, not in the new player frame: a key pressed inside that
+  // cross-origin frame never reaches the page, so Escape stopped closing the sheet
+  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); fkHand(h,sheetDialog('player'));};
   fkHand(had,rb);}
 /* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
    purple progress ring and the YouTube video plays beside it, in the card, not a sheet.
@@ -7565,13 +7589,18 @@ function ipStop(){
   _ipAud=null;
   var v=document.getElementById('ipvid'); if(v){v.innerHTML=''; v.classList.remove('aud');}   // kill the iframe so audio stops
 }
+/* ROUND 6 (A11Y-R6-04): Close or Escape with the focus in the band hands it to the control that opened the band (the
+   cover's Play or a card's triangle, shown again here), else the cover's Play, else the screen's heading. Never <body>. */
+var _ipOpener=null;
 function ipClose(){
+  var ipl=document.getElementById('ipl'), had=!!ipl&&ipl.contains(document.activeElement);
   ipStop();
-  var ipl=document.getElementById('ipl'); if(ipl) ipl.hidden=true;
+  if(ipl) ipl.hidden=true;
   coverRest();                                   // the cover button back to its triangle
   // bring back any crown-card triangle we swapped for the band
   Array.prototype.forEach.call(document.querySelectorAll('[data-ipopen]'),function(x){x.hidden=false;});
   ipRing(0);
+  if(had){var to=[_ipOpener,document.getElementById('artplay')].filter(fkShown)[0]||fkTarget(); fkHand(true,to);}
 }
 function ipOpen(vid,url){
   var isYT=/^[A-Za-z0-9_-]{11}$/.test(String(vid||''));
@@ -7580,6 +7609,7 @@ function ipOpen(vid,url){
   if(!isYT&&!isSC&&!isAud) return;
   var ipl=document.getElementById('ipl'), slot=document.getElementById('ipvid');
   if(!ipl||!slot) return;
+  var _ae=document.activeElement; if(_ae&&(_ae.id==='artplay'||(_ae.hasAttribute&&_ae.hasAttribute('data-ipopen')))) _ipOpener=_ae;   // ROUND 6
   ipStop();                                      // one player at a time, never two playing
   try{closePlayer();}catch(e){}                  // the sheet player too (COVER PLAY 2026-09-30)
   // COVER PLAY: the cover button stays and becomes the pause button with its ring (ipGlyph)
@@ -8182,7 +8212,8 @@ function sheetSync(){
     var dg=sheetDialog(id); if(dg&&!dg.contains(document.activeElement)){try{dg.focus({preventScroll:true});}catch(e){}}});
   var back=null, closed=false;
   for(var i=sheetStack.length-1;i>=0;i--) if(open.indexOf(sheetStack[i].id)<0){back=sheetStack[i].prev; closed=true; sheetStack.splice(i,1);}
-  ['app','tabbar'].forEach(function(id){var x=document.getElementById(id); if(!x) return;
+  // ROUND 6 (A11Y-R6-03): and the fix banner, which lives outside .app, when a sheet opens over it
+  ['app','tabbar','fixban'].forEach(function(id){var x=document.getElementById(id); if(!x) return;
     if(open.length) x.setAttribute('inert',''); else x.removeAttribute('inert');});
   if(!closed) return;
   if(sheetStack.length){var dg=sheetDialog(sheetStack[sheetStack.length-1].id); if(dg){try{dg.focus({preventScroll:true});}catch(e){}}}

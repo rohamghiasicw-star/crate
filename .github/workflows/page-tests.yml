@@ -89,6 +89,12 @@ jobs:
           - id: r5b-a11y-cr
             name: 'Round 5b accessibility and naming (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round5b_a11y.py
+          - id: round6b-wk
+            name: 'Round 6b accessibility, players and fix banner (WebKit)'
+            run: python -u engine/test_round6b.py
+          - id: round6b-cr
+            name: 'Round 6b accessibility, players and fix banner (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round6b.py
           - id: round5c-wk
             name: 'Round 5c (WebKit)'
             run: python -u engine/test_round5c.py
