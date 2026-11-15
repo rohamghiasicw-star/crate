@@ -46,16 +46,13 @@ final class ShareViewController: UIViewController {
             guard let self = self else { return }
             guard let link = link, SharedInbox.isScannable(link) else {
                 /* Say so instead of vanishing. Roham 09-24 20:50: "there shouldn't be
-                   anything silent". NATIVE-A-R5-01 (build 30): it closes itself after 2.5 s
-                   unless VoiceOver is running then; with VoiceOver it stays until Done, so the
-                   card it announced (showCard) can be heard and read to the end. */
+                   anything silent". NATIVE-R6-04 (build 31): the card stays until Done for
+                   everyone. It used to close itself after 2.5 s unless VoiceOver was running,
+                   which still cut off Switch Control and Voice Control users (iOS can't tell
+                   when Voice Control is on), and anyone who reads slowly. */
                 self.showCard(title: "No TikTok or Instagram link",
                               body: "Addify scans TikTok and Instagram videos, and this share did not include one.",
                               primary: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                    if UIAccessibility.isVoiceOverRunning { return }
-                    self.finish(error: true)
-                }
                 return
             }
             self.link = link
@@ -141,15 +138,23 @@ final class ShareViewController: UIViewController {
         box.layer.cornerCurve = .continuous
         box.translatesAutoresizingMaskIntoConstraints = false
 
+        /* NATIVE-R6-04 / A11Y-R6-06 (build 31): every font follows Larger Text. At the default size each
+           is the size it always was; the card scrolls when the text outgrows the screen. */
+        func scaled(_ size: CGFloat, _ weight: UIFont.Weight, _ style: UIFont.TextStyle) -> UIFont {
+            UIFontMetrics(forTextStyle: style).scaledFont(for: .systemFont(ofSize: size, weight: weight))
+        }
+
         let t = UILabel()
         t.text = title
-        t.font = .systemFont(ofSize: 19, weight: .semibold)
+        t.font = scaled(19, .semibold, .title3)
+        t.adjustsFontForContentSizeCategory = true
         t.textColor = .white
         t.numberOfLines = 0
 
         let b = UILabel()
         b.text = body
-        b.font = .systemFont(ofSize: 15)
+        b.font = scaled(15, .regular, .subheadline)
+        b.adjustsFontForContentSizeCategory = true
         b.textColor = UIColor(white: 1, alpha: 0.72)
         b.numberOfLines = 0
 
@@ -162,34 +167,56 @@ final class ShareViewController: UIViewController {
         if let primary = primary {
             let go = UIButton(type: .system)
             go.setTitle(primary, for: .normal)
-            go.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+            go.titleLabel?.font = scaled(17, .semibold, .headline)
+            go.titleLabel?.adjustsFontForContentSizeCategory = true
+            go.titleLabel?.numberOfLines = 0
+            go.titleLabel?.textAlignment = .center
             go.setTitleColor(.white, for: .normal)
             go.backgroundColor = purple
             go.layer.cornerRadius = 14
             go.layer.cornerCurve = .continuous
-            go.heightAnchor.constraint(equalToConstant: 52).isActive = true
+            go.heightAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
             go.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
             stack.addArrangedSubview(go)
         }
         let done = UIButton(type: .system)
         done.setTitle("Done", for: .normal)
-        done.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        done.titleLabel?.font = scaled(16, .medium, .callout)
+        done.titleLabel?.adjustsFontForContentSizeCategory = true
         done.setTitleColor(UIColor(white: 1, alpha: 0.8), for: .normal)
-        done.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        done.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         done.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         stack.addArrangedSubview(done)
 
-        box.addSubview(stack)
+        /* The stack sits in a scroll view that is exactly as tall as the stack, until the card would
+           pass the top of the screen; then it scrolls. */
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.alwaysBounceVertical = false
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.addSubview(stack)
+        box.addSubview(scroll)
         view.addSubview(box)
+        let fit = scroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stack.heightAnchor)
+        fit.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: box.topAnchor, constant: 22),
-            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+            scroll.topAnchor.constraint(equalTo: box.topAnchor, constant: 22),
+            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 20),
+            scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -20),
+            scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            fit,
+            box.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             box.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
             box.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             box.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
         ])
+        /* VoiceOver and Switch Control stay inside the card while it is up. */
+        box.accessibilityViewIsModal = true
         card = box
         /* NATIVE-A-R5-01 (build 30): a card replaces whatever VoiceOver was on (the host app, or
            the card before it), so VoiceOver is told the screen changed and starts at its title. */
@@ -198,7 +225,8 @@ final class ShareViewController: UIViewController {
 
     /* A real tap: the retry runs with a user gesture behind it. */
     @objc private func openTapped() { openAddify(afterTap: true) }
-    @objc private func doneTapped() { finish(error: false) }
+    /* Done on the no-link card cancels the request, as its timed close did (finish). */
+    @objc private func doneTapped() { finish(error: link == nil) }
 
     /* Walk every attachment of every input item. URL first (Instagram, Safari), then
        plain text with a link inside (TikTok). First hit wins. GAPS-KIT-R5-01/03 (build 30): the link

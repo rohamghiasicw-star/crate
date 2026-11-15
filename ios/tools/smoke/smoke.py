@@ -18,6 +18,12 @@ iPhone and an iPad simulator. Scenarios:
   killresult the same after the page posted its result: Home, the link is not scanned again
   killcard   the same after the page left its scan without a result (a no-match card): Home
   sharetext  a share whose text has another link ahead of the clip opens the clip's share page
+  sharetrim  the same with the clip in brackets after a profile link (build 31)
+  appkill    iOS ends the whole app mid-scan: the next launch reopens the share page (build 31)
+  appkillresult the same after the page posted its result: the next launch opens Home (build 31)
+  safarishare a share arrives while the Privacy page's Safari view is up: it closes, then the scan (build 31)
+  staleshare a share parked 11 minutes before the app opens: not scanned on its own, the app asks (build 31)
+  theme      the page's light theme gives dark status bar content, its dark theme light (build 31)
   entitlements a StoreKit transaction that arrives on its own tells the loaded page (addify:entitlements)
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
              it must open in a Safari view over the app, and closing it returns to the same page
@@ -151,11 +157,39 @@ def patch(ios_dir, variant):
               ("                  !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {\n                decisionHandler(.allow)\n",
                "                  !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {\n                decisionHandler(.allow)\n"
                "                if navigationResponse.isForMainFrame { LabStall.event(\"response\") }\n")]
+    # Build 31: what a share closed before it reached the page (NATIVE-R6-02), and the status bar
+    # UIKit shows after the page reported its theme (NATIVE-R6-06): the window scene's status bar
+    # style (0 default, 1 light content, 3 dark content) and the appearance (1 light, 2 dark) of the
+    # window and of its root view controller, which a default style is read against.
+    dreps += [("            base.dismiss(animated: true, completion: done)\n",
+               "            NSLog(\"ADDIFY-SHEETS closing %@\", String(describing: type(of: shown)))\n"
+               "            base.dismiss(animated: true) { NSLog(\"ADDIFY-SHEETS closed\"); done() }\n"),
+              ("                bridge.pageTheme = (d[\"theme\"] as? String) == \"light\" ? \"light\" : \"dark\"\n",
+               "                bridge.pageTheme = (d[\"theme\"] as? String) == \"light\" ? \"light\" : \"dark\"\n"
+               "                let labTheme = bridge.pageTheme\n"
+               "                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in\n"
+               "                    let win = self?.bridge.webView?.window\n"
+               "                    NSLog(\"ADDIFY-THEME %@ statusbar=%ld window=%ld root=%ld\", labTheme,\n"
+               "                          win?.windowScene?.statusBarManager?.statusBarStyle.rawValue ?? -1, win?.traitCollection.userInterfaceStyle.rawValue ?? -1,\n"
+               "                          win?.rootViewController?.traitCollection.userInterfaceStyle.rawValue ?? -1)\n"
+               "                }\n")]
     for old, new in dreps:
         if w.count(old) != 1:
             sys.exit("patch: EngineWebView.swift anchor matched %d times: %r" % (w.count(old), old.strip()))
         w = w.replace(old, new)
     w += LAB_DIAG
+    bpath = os.path.join(ios_dir, "Addify", "EngineBridge.swift")
+    b = open(bpath).read()
+    breps = [("        if presentOnTop(ac, over: wv) { staleShare = nil }\n",
+              "        if presentOnTop(ac, over: wv) { staleShare = nil; NSLog(\"ADDIFY-STALE asked %@\", link) }\n"),
+             ("            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n",
+              "            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n"
+              "            NSLog(\"ADDIFY-HELD restored fresh=%ld %@\", held.fresh ? 1 : 0, held.link)\n")]
+    for old, new in breps:
+        if b.count(old) != 1:
+            sys.exit("patch: EngineBridge.swift anchor matched %d times: %r" % (b.count(old), old.strip()))
+        b = b.replace(old, new)
+    open(bpath, "w").write(b)
     # Lab copies only: when the app's own screens come and go, so a check can say when the error
     # screen was up even when a screenshot came back too late to show it.
     cpath = os.path.join(ios_dir, "Addify", "ContentView.swift")
@@ -209,7 +243,18 @@ def patch(ios_dir, variant):
     aold3 = "    init() {\n"
     if a.count(aold3) != 1:
         sys.exit("patch: AddifyApp.swift init anchor matched %d times" % a.count(aold3))
-    a = a.replace(aold3, aold3 + "        NSLog(\"ADDIFY-LAB start\")\n")
+    # Build 31 (NATIVE-R6-10): the held share outlives the process, so a scenario that ends mid-scan
+    # would hand it to the next scenario's launch. Lab copies start with none unless the launch
+    # environment has ADDIFY_LAB_HELD (appkill). ADDIFY_LAB_PARKED=<link> parks a share in the inbox
+    # 11 minutes old, as if iOS had not opened the app from the share sheet (NATIVE-R6-08, staleshare).
+    a = a.replace(aold3, aold3 + "        NSLog(\"ADDIFY-LAB start\")\n"
+                  "        let labEnv = ProcessInfo.processInfo.environment\n"
+                  "        if labEnv[\"ADDIFY_LAB_HELD\"] == nil { HeldShare.save(nil) }\n"
+                  "        if let parked = labEnv[\"ADDIFY_LAB_PARKED\"] {\n"
+                  "            SharedInbox.write(parked)\n"
+                  "            AppGroup.defaults.set(Date().timeIntervalSince1970 - 11 * 60, forKey: SharedInbox.atKey)\n"
+                  "            NSLog(\"ADDIFY-LAB parked 11 minutes ago %@\", parked)\n"
+                  "        }\n")
     open(apath, "w").write(a)
     open(wpath, "w").write(w)
     print("patched %s and %s for %s" % (path, wpath, variant))
@@ -462,6 +507,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       try { H.addify.postMessage({type: 'result', song: 'Smoke song', artist: 'Stub', speed: '', exact: null});
         send('result', {lid: lid, href: location.href}); }
       catch(e) { send('result', {lid: lid, err: String(e && e.message || e)}); } }, 500);
+    // Build 31 (NATIVE-R6-06): the page switches to its light theme and back, as You > Switch theme does.
+    if (__THEME__) { setTimeout(function(){ document.documentElement.setAttribute('data-theme', 'light');
+        send('theme', {lid: lid, theme: 'light'}); }, 1000);
+      setTimeout(function(){ document.documentElement.setAttribute('data-theme', 'dark');
+        send('theme2', {lid: lid, theme: 'dark'}); }, 3500); }
     if (__EXPORT__) setTimeout(function(){
       var t0 = performance.now();
       call('exportFinds', {filename: 'addify-finds.txt', mimeType: 'text/plain', text: '1. Song - Artist\n2. Other - Someone\n'}, __EXPORT_WAIT__)
@@ -582,6 +632,7 @@ class Handler(BaseHTTPRequestHandler):
             page = page.replace("__RESULT__", "true" if cfg.get("result") else "false")
             page = page.replace("__STATE__", json.dumps(cfg.get("state", "")))
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
+            page = page.replace("__THEME__", "true" if cfg.get("theme") else "false")
             return self.reply(200, page.encode())
         return self.reply(404)
 
@@ -1107,6 +1158,12 @@ def run_stub_suite(dev, app, version, ipad=False):
         for mode in ("scan", "result", "card"):
             killed_page(dev, app, version, mode)
         share_text(dev, app, version)
+        share_text(dev, app, version, "sharetrim", "https://www.tiktok.com/@dj.user (" + SHARE_LINK + ")")
+        for mode in ("scan", "result"):
+            app_killed(dev, app, version, mode)
+        safari_share(dev, app, version)
+        stale_share(dev, app, version)
+        theme(dev, app, version)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
     exported = lambda e: e.get("kind") == "export"
@@ -1141,6 +1198,7 @@ def run_stub_suite(dev, app, version, ipad=False):
     if ipad:
         # The share and Safari view scenarios run on the iPad too (popover presentation, other size).
         sharefail(dev, app, version)
+        safari_share(dev, app, version)
     for mode in ("anchor", "open", "nav"):
         privacy(dev, app, mode)
 
@@ -1640,25 +1698,162 @@ def entitlements(dev, app, version):
     json.dump(res, open(os.path.join(dev.out, "%s-entitlements.json" % dev.tag), "w"), indent=1)
 
 
-def share_text(dev, app, version):
+def share_text(dev, app, version, label="sharetext", text=None):
     """GAPS-KIT-R5-01/03. A share whose text has another link ahead of the clip (here a TikTok
     profile, which used to open the app on "That link is a TikTok page, not a clip") reaches the app
     as addify://scan?url=<the text>. The app must open the clip's share page, the one the page itself
-    scans from the same text."""
-    text = "https://www.tiktok.com/@dj.user and the clip " + SHARE_LINK
+    scans from the same text. sharetrim (NATIVE-R6-01, GAPS-R6-01, build 31): the clip after the
+    profile is in brackets, so a ")" follows it, which the page trims and build 30 did not."""
+    text = text or ("https://www.tiktok.com/@dj.user and the clip " + SHARE_LINK)
     cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     # Waits for the share page's own report: with one address a Home load starts first and may report.
     on_share = nth(lambda e: e.get("kind") == "bridges" and "/share?" in ((e.get("report") or {}).get("href") or ""), 1)
-    res = scenario(dev, app, "sharetext", cfg, fresh=False, timeout=40, actions=(("shared", on_share, 0.5, lambda d: None),),
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=40, actions=(("shared", on_share, 0.5, lambda d: None),),
                    launch_env=dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(text, safe="")))
     timeline(res)
     shares = [(e["dt"], link_in(e["path"]), e["status"]) for e in res["entries"]
               if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
-    check(dev, "sharetext", "the share page opened with the clip, not the profile", bool(shares) and all(l == SHARE_LINK for _, l, _ in shares),
+    check(dev, label, "the share page opened with the clip, not the profile", bool(shares) and all(l == SHARE_LINK for _, l, _ in shares),
           json.dumps(shares))
-    r = common(dev, "sharetext", res, version)
-    check(dev, "sharetext", "the page that loaded carries the clip", link_in((r or {}).get("href")) == SHARE_LINK, (r or {}).get("href", "no page"))
-    json.dump(res, open(os.path.join(dev.out, "%s-sharetext.json" % dev.tag), "w"), indent=1)
+    r = common(dev, label, res, version)
+    check(dev, label, "the page that loaded carries the clip", link_in((r or {}).get("href")) == SHARE_LINK, (r or {}).get("href", "no page"))
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+# ---------- build 31 ----------
+
+def app_killed(dev, app, version, mode):
+    """NATIVE-R6-10 (build 31). A share opens the app and its share page loads, then iOS ends the whole
+    app (simctl terminate), not just WebKit's page, and the user opens it again:
+      scan    the page still shows the scan: the launch reopens the share page with the same link.
+      result  the page posted its result first: the launch opens Home, the link is not scanned again.
+    The lab copy keeps the held share for that one launch (ADDIFY_LAB_HELD)."""
+    label = "appkill" + ("" if mode == "scan" else mode)
+    cfg = {"A": {"health_ms": 20, "result": mode == "result", "state": "scanning" if mode == "scan" else ""},
+           "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    on_share = lambda e: "/share?" in ((e.get("report") or {}).get("href") or "")
+    ready = nth(lambda e: e.get("kind") == ("result" if mode == "result" else "bridges") and on_share(e), 1)
+    dev.kill_t = None
+
+    def end(d):
+        d.kill_t = time.time()
+        d.terminate()
+
+    after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
+    env = dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(SHARE_LINK, safe=""))
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=60, launch_env=env,
+                   actions=(("end", ready, 1.0, end), ("relaunch", ready, 2.5, lambda d: d.launch(dict(SINGLE, ADDIFY_LAB_HELD="1"))),
+                            ("settled", nth(after_kill, 1), 1.0, None)))
+    timeline(res)
+    reqs = [e for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    before = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == SHARE_LINK, e["status"]) for e in reqs
+              if dev.kill_t is None or e["t"] < dev.kill_t]
+    after = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == SHARE_LINK, e["status"]) for e in reqs
+             if dev.kill_t is not None and e["t"] >= dev.kill_t]
+    check(dev, label, "the share page loaded before the app was ended", any(p == "/share" and l and st == 200 for _, p, l, st in before),
+          json.dumps(before))
+    check(dev, label, "the app was ended and opened again", res["done"].get("end") is not None and res["done"].get("relaunch") is not None
+          and len(dev.pids) == 2 and dev.pids[0] != dev.pids[1], "pids %s, done %s" % (dev.pids, res["done"]))
+    held = [l[l.index("ADDIFY-HELD"):] for l in res["lab"] if "ADDIFY-HELD" in l]
+    loads = [e for e in res["entries"] if after_kill(e)]
+    href = loads[0]["report"].get("href") if loads else None
+    if mode == "scan":
+        check(dev, label, "the launch picked up the held link", any("fresh=1 " + SHARE_LINK in l for l in held), json.dumps(held))
+        check(dev, label, "the launch reopened the share page with the same link, not Home",
+              bool(after) and after[0][1] == "/share" and after[0][2] and not [x for x in after if x[1] == "/"], json.dumps(after))
+        check(dev, label, "the page after the launch carries the shared link", link_in(href) == SHARE_LINK, href or "no page")
+    else:
+        r = report(res, "result")
+        check(dev, label, "the page posted its result before the app was ended", r is not None and not r.get("err"), json.dumps(r))
+        check(dev, label, "nothing held once the result landed", not held, json.dumps(held))
+        check(dev, label, "the launch opened Home, not the share page again",
+              bool(after) and after[0][1] == "/" and not [x for x in after if x[1] == "/share"], json.dumps(after))
+    k = pixel_class(res["shots"].get("final", ""))
+    check(dev, label, "page on screen after the launch", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+def safari_share(dev, app, version):
+    """NATIVE-R6-02 (build 31). The Privacy page is up in a Safari view over the app when a share
+    arrives (the user left the app with it open and shared a clip from TikTok). The Safari view
+    closes first and the page's run(link) comes after it, so the scan, its banner and its haptic are
+    never behind the sheet. The same page load takes the link: no reload."""
+    pv = {"A": {"health_ms": 20, "privacy": "open"}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    fetched = nth(lambda e: e["path"].split("?")[0] == "/privacy", 1)
+    link = "https://vt.tiktok.com/ZSsheet01/"
+    ran = lambda log: next((e for e in log if e.get("kind") == "run"), None)
+    res = scenario(dev, app, "safarishare", pv, fresh=False, want=("bridges", "run"), timeout=60,
+                   actions=(("write", fetched, 1.0, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                            ("leave", fetched, 1.5, lambda d: d.to_background()),
+                            ("return", fetched, 3.0, lambda d: d.launch()),
+                            ("settled", ran, 1.0, None)))
+    timeline(res)
+    sv = [l[l.index("ADDIFY-S"):] for l in res["lab"] if "ADDIFY-SAFARI" in l or "ADDIFY-SHEETS" in l]
+    check(dev, "safarishare", "the Safari view was up when the share came", lab_has(res, "ADDIFY-SAFARI presented /privacy"), json.dumps(sv))
+    closing = [l for l in res["lab"] if "ADDIFY-SHEETS closing" in l]
+    closed = [l for l in res["lab"] if "ADDIFY-SHEETS closed" in l]
+    check(dev, "safarishare", "the share closed the Safari view", any("SFSafariViewController" in l for l in closing) and bool(closed),
+          json.dumps(sv))
+    r = report(res, "run")
+    run_at = next((e["dt"] for e in res["entries"] if e.get("kind") == "run"), None)
+    closed_at = lab_time(closed[0], res["t0"]) if closed else None
+    check(dev, "safarishare", "the page got the link through run(), after the Safari view closed",
+          (r or {}).get("link") == link and run_at is not None and closed_at is not None and closed_at <= run_at,
+          "run %s at %s s, closed at %s s" % (json.dumps(r), run_at, closed_at))
+    load = report(res, "load")
+    pages = page_requests(res, "A")
+    check(dev, "safarishare", "same page load, no reload", load is not None and r is not None and r.get("lid") == load.get("lid")
+          and len(pages) == 1, "%d page loads %s" % (len(pages), pages))
+    check(dev, "safarishare", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-safarishare.json" % dev.tag), "w"), indent=1)
+
+
+def stale_share(dev, app, version):
+    """NATIVE-R6-08 (build 31). iOS did not open the app from the share sheet ("Open Addify to scan
+    it"), and the app is opened 11 minutes later. The parked share is not scanned on its own and not
+    dropped without a word: the app opens Home and asks whether to scan it."""
+    cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    link = "https://vt.tiktok.com/ZSstale01/"
+    res = scenario(dev, app, "staleshare", cfg, fresh=False, timeout=40, launch_env=dict(SINGLE, ADDIFY_LAB_PARKED=link),
+                   actions=(("asked", nth(lambda e: e.get("kind") == "bridges", 1), 2.0, None),))
+    timeline(res)
+    shares = [(e["dt"], link_in(e["path"])) for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
+    check(dev, "staleshare", "the share was parked 11 minutes before the launch", lab_has(res, "ADDIFY-LAB parked 11 minutes ago"), "")
+    check(dev, "staleshare", "not scanned on its own", not shares and report(res, "run") is None, json.dumps(shares))
+    r = report(res, "bridges")
+    check(dev, "staleshare", "Home loaded", r is not None and urlsplit(r.get("href", "")).path == "/", (r or {}).get("href", "no page"))
+    check(dev, "staleshare", "the app asked whether to scan it", lab_has(res, "ADDIFY-STALE asked " + link),
+          json.dumps([l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-STALE" in l or "ADDIFY-LAB" in l]))
+    check(dev, "staleshare", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-staleshare.json" % dev.tag), "w"), indent=1)
+
+
+def theme(dev, app, version):
+    """NATIVE-R6-06 (build 31). The page switches to its light theme (You > Switch theme), then back.
+    The status bar follows: dark time and battery over the light theme's near-white strip, light ones
+    over the dark theme, as UIKit reports them (the lab copy logs the window's status bar style and
+    appearance 0.8 s after each switch)."""
+    cfg = {"A": {"health_ms": 20, "theme": True}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    res = scenario(dev, app, "theme", cfg, fresh=False, want=("bridges", "theme2"), timeout=40,
+                   actions=(("settled", nth(lambda e: e.get("kind") == "theme2", 1), 1.5, None),))
+    timeline(res)
+    lines = [l[l.index("ADDIFY-THEME"):] for l in res["lab"] if "ADDIFY-THEME" in l]
+    def style(l):
+        m = re.search(r"ADDIFY-THEME (\w+) statusbar=(-?\d+) window=(-?\d+) root=(-?\d+)", l)
+        return (m.group(1), int(m.group(2)), int(m.group(4))) if m else None
+    seen = [x for x in map(style, lines) if x]
+    dark_text = lambda x: x[1] == 3 or (x[1] == 0 and x[2] == 1)
+    light_text = lambda x: x[1] == 1 or (x[1] == 0 and x[2] == 2)
+    li = next((i for i, x in enumerate(seen) if x[0] == "light"), None)
+    check(dev, "theme", "light theme: dark status bar content", li is not None and dark_text(seen[li]), json.dumps(lines))
+    back = [x for x in seen[(li or 0) + 1:] if x[0] == "dark"] if li is not None else []
+    check(dev, "theme", "dark theme again: light status bar content", bool(back) and light_text(back[-1]), json.dumps(lines))
+    first = seen[0] if seen else None
+    check(dev, "theme", "dark theme at load: light status bar content", first is not None and first[0] == "dark" and light_text(first),
+          json.dumps(lines))
+    check(dev, "theme", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-theme.json" % dev.tag), "w"), indent=1)
 
 
 def run_testbox(dev, app):

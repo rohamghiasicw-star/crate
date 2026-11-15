@@ -38,6 +38,24 @@ jobs:
       - name: Show the targets we are about to build
         run: xcodebuild -list -project ios/Addify.xcodeproj
 
+      # Host checks (ios/tools/hosttests.swift): the link the share extension hands over against the
+      # page's own reading of the same text (the testers' corpus), the inbox and the held share, the
+      # engine address rules. Foundation-only files on the runner's macOS toolchain, Release and DEBUG.
+      - name: Host tests (Release and DEBUG)
+        run: |
+          set -o pipefail
+          cd ios
+          for variant in release debug; do
+            flags=""; [ "$variant" = debug ] && flags="-D DEBUG"
+            # shellcheck disable=SC2086
+            swiftc -swift-version 5 $flags -o "$RUNNER_TEMP/hosttests-$variant" Addify/SharedInbox.swift \
+              Addify/EngineConfig.swift Addify/ResultLabel.swift Addify/PendingShare.swift tools/hosttests.swift
+            "$RUNNER_TEMP/hosttests-$variant" | tee "$RUNNER_TEMP/hosttests-$variant.out"
+            if grep -q '^FAIL' "$RUNNER_TEMP/hosttests-$variant.out"; then echo "host tests failed ($variant)"; exit 1; fi
+            grep -q '^ALL PASS' "$RUNNER_TEMP/hosttests-$variant.out" || { echo "host tests did not finish ($variant)"; exit 1; }
+            echo "host tests $variant: $(grep -c '^PASS' "$RUNNER_TEMP/hosttests-$variant.out") checks passed"
+          done
+
       # Build for the SIMULATOR. A device build insists on a signing identity even with
       # signing disabled; the simulator SDK does not, so this compiles both the app and the
       # share extension with no Apple account involved at all.

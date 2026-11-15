@@ -25,6 +25,9 @@ final class EngineBridge: ObservableObject {
     @Published var showSettings = false
     #endif
     @Published var toast: ResultPayload? = nil
+    /* NATIVE-R6-06 (build 31): the page's theme ("light" or "dark", the data-theme it shows), reported by
+       the page's own script (EngineWebView themeScript). ContentView sets the status bar from it. */
+    @Published var pageTheme = "dark"
     /* Bumped to make the web view reload from the (possibly new) engine base. */
     @Published var reloadToken = 0
 
@@ -41,7 +44,18 @@ final class EngineBridge: ObservableObject {
     /* The shared link waiting for the page. Held until its scan is over (the page posted the
        result, or left the scan), however long that takes, so a failed load, Try again, a return to
        the app or a reload after WebKit killed the page reopens the share (PendingShare). */
-    private var share = PendingShare()
+    private var share = PendingShare() {
+        /* NATIVE-R6-10 (build 31): kept on disk while it is held, so a relaunch after iOS ended the app
+           mid-scan picks it up (HeldShare). */
+        didSet { if share.current != oldValue.current { HeldShare.save(share.current) } }
+    }
+    /* NATIVE-R6-08 and NATIVE-R6-10 (build 31): a shared link that was not scanned and is too old to
+       start on its own. The app asks about it once a page is up (offerStale). */
+    private var staleShare: String?
+    /* Set by the web view's coordinator: closes what this app put over the page (the Safari view, a
+       share sheet, an alert or confirm, answered as Cancel), then runs the block (EngineWebView
+       closeSheets). */
+    var closeSheets: ((@escaping () -> Void) -> Void)?
     /* Set by the web view's coordinator: opens an engine page in the main frame the way every
        launch load does (EngineWebView open). */
     var openPage: ((URL) -> Void)?
@@ -51,6 +65,15 @@ final class EngineBridge: ObservableObject {
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
+
+    /* NATIVE-R6-10 (build 31): a link a previous run was still scanning when iOS ended the app. Held
+       again, the launch opens its share page; too old, or back too many launches in a row, it is asked
+       about instead. */
+    init() {
+        if let held = HeldShare.restore() {
+            if held.fresh { share.hold(held.link) } else { staleShare = held.link }
+        }
+    }
 
     /* addify://scan?url=<link>  (from the Share Extension)
        addify://settings         (dev convenience, Debug builds only: see AddifyApp.init) */
@@ -78,8 +101,27 @@ final class EngineBridge: ObservableObject {
     /* Called on every scenePhase == .active. This is the guaranteed path: the extension's
        direct open is best-effort, the inbox is not. */
     func drainInbox() {
-        guard let link = SharedInbox.drain(), SharedInbox.isScannable(link) else { return }
-        deliver(link)
+        guard let parked = SharedInbox.drainParked(), SharedInbox.isScannable(parked.link) else { return }
+        /* NATIVE-R6-08 (build 31): a share parked past SharedInbox.maxAge (iOS did not open the app and
+           it was opened much later) is not scanned out of nowhere, and not dropped without a word. */
+        if parked.expired { offerStale(parked.link) } else { deliver(parked.link) }
+    }
+
+    /* Asks whether to scan a shared link that is too old to start on its own. Shown once a page is up
+       (engineLoaded), over whatever is on screen; Scan it starts it as a share. */
+    private func offerStale(_ link: String) {
+        staleShare = link
+        showStale()
+    }
+
+    private func showStale() {
+        guard let link = staleShare, pageReady, !booting, !unreachable, let wv = webView else { return }
+        let ac = UIAlertController(title: "Your shared video was not scanned",
+                                   message: "You shared it to Addify more than 10 minutes ago. Scan it now?",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Not now", style: .cancel))
+        ac.addAction(UIAlertAction(title: "Scan it", style: .default) { [weak self] _ in self?.deliver(link) })
+        if presentOnTop(ac, over: wv) { staleShare = nil }
     }
 
     /* Two ways to start a scan, in order of preference:
@@ -100,7 +142,11 @@ final class EngineBridge: ObservableObject {
         lastDelivered = link
         lastDeliveredAt = now
         share.hold(link)
-        flushPending()
+        staleShare = nil
+        /* NATIVE-R6-02 (build 31): the scan, its banner and its haptic are never behind a sheet this app
+           put up (the Privacy or Terms Safari view, the song's share sheet, a confirm). They close
+           first, then the link goes to the page. */
+        if let close = closeSheets { close { [weak self] in self?.flushPending() } } else { flushPending() }
     }
 
     /* Hands the held share to the page, or opens its share page. Waits while a launch check is
@@ -150,6 +196,7 @@ final class EngineBridge: ObservableObject {
     /* An engine page finished loading (EngineWebView pageLoaded). If its share page was opened,
        that page has the link now. A link that arrived while another page loaded is handed over. */
     func engineLoaded() {
+        showStale()
         if share.pageLoaded() { return }
         flushPending()
     }

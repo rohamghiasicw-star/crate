@@ -87,8 +87,10 @@ front, and starts scanning with no second tap.
 
 Two things to know when it does not open: the direct open from an extension uses the
 responder-chain `openURL:` trick that Apple does not document; the link is still parked in
-the app group, so opening Addify by hand starts the scan. And a share older than ten
-minutes is dropped on purpose (`SharedInbox.maxAge`).
+the app group, so opening Addify by hand starts the scan. A share older than ten minutes
+(`SharedInbox.maxAge`) does not start on its own: the app asks whether to scan it (build 31).
+A shared link whose scan was cut off because iOS ended the app is picked up by the next launch
+within the same ten minutes (`HeldShare`, build 31).
 
 ## What was validated on the build Mac, honestly
 
