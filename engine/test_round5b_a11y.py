@@ -445,12 +445,12 @@ async def main(html, yml, only):
                   var R=document.getElementById('result');
                   return {rows:rows, openin:oi, title:(R.querySelector('.rtitle')||{}).textContent||'', artist:(R.querySelector('.rartist')||{}).textContent||'', text:R.innerText};}""")
                 await close(ctx)
-                want_q = "Hoodfellas THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix) Prod. Kryd"
+                want_q = "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix)"   # ROUND 6 (LITERAL-R6-01): one source, no Prod. credit
                 rq = [r["q"] for r in d["rows"]]
                 ok = (len(rq) == 4 and all(x == want_q for x in rq) and d["openin"] and all(x == want_q for x in d["openin"])
-                      and d["title"] in want_q and d["artist"] == "Hoodfellas" and all(x.replace(d["artist"], "", 1).strip() in d["text"] for x in rq)
+                      and want_q in d["title"] and d["artist"] == "Hoodfellas" and all(x.replace(d["artist"], "", 1).strip() in d["text"] for x in rq)
                       and "Electro" not in d["text"])
-                check("C17", "'Find it in another app' searches the crowned title and artist the card shows, the same words as the Open in tiles, "
+                check("C17", "'Find it in another app' searches the crowned title the card shows (round 6: no Shazam artist, no Prod. credit), the same words as the Open in tiles, "
                              "never the song name the card does not show",
                       ok, {"rows": d["rows"], "openin": d["openin"], "title": d["title"], "artist": d["artist"]})
         except Exception as e:

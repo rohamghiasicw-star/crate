@@ -110,6 +110,12 @@ jobs:
           - id: r5d-cr
             name: 'Round 5d Finds, trending and links (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round5d.py
+          - id: round6a-wk
+            name: 'Round 6a (WebKit)'
+            run: python -u engine/test_round6a.py
+          - id: round6a-cr
+            name: 'Round 6a (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round6a.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
