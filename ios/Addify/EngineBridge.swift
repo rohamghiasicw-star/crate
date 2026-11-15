@@ -116,8 +116,10 @@ final class EngineBridge: ObservableObject {
 
     private func showStale() {
         guard let link = staleShare, pageReady, !booting, !unreachable, let wv = webView else { return }
-        let ac = UIAlertController(title: "Your shared video was not scanned",
-                                   message: "You shared it to Addify more than 10 minutes ago. Scan it now?",
+        /* Words that hold for both ways here: parked past ten minutes, or cut off by iOS ending the app
+           (HeldShare), which can be well inside ten minutes. */
+        let ac = UIAlertController(title: "Scan the video you shared?",
+                                   message: "Addify has not scanned a video you shared earlier.",
                                    preferredStyle: .alert)
         ac.addAction(UIAlertAction(title: "Not now", style: .cancel))
         ac.addAction(UIAlertAction(title: "Scan it", style: .default) { [weak self] _ in self?.deliver(link) })
