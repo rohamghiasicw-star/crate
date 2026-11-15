@@ -73,18 +73,23 @@ echo "== 4. Release binaries"
 arc=build/release-flags.xcarchive
 app="$arc/Products/Applications/Addify.app"
 if [ -f "$app/Addify" ]; then
+  # The strings are read once into files and searched there. Piped straight into grep -q under
+  # pipefail, strings dies on a closed pipe once grep has its match, and the pipeline then reads as
+  # "not found" (build 31: a larger binary turned two present handlers into FAIL lacks).
+  strings -a "$app/Addify" > build/app-strings.txt
+  strings -a "$app/PlugIns/AddifyShare.appex/AddifyShare" > build/appex-strings.txt
   for s in "Use automatic address" "engine.example.com" "Test checks GET /health" "Automatic finds the engine"; do
-    if strings -a "$app/Addify" | grep -qF "$s"; then echo "  FAIL Release app still contains '$s'"; fail=1
+    if grep -qF "$s" build/app-strings.txt; then echo "  FAIL Release app still contains '$s'"; fail=1
     else echo "  ok   Release app has no '$s'"; fi
   done
   # The extension keeps its runtime sharedApplication fallback after the responder chain
   # (2026-10-31: the working share path stays as shipped). Reported, not failed.
-  if strings -a "$app/PlugIns/AddifyShare.appex/AddifyShare" | grep -qF "sharedApplication"; then
+  if grep -qF "sharedApplication" build/appex-strings.txt; then
     echo "  note extension keeps the runtime sharedApplication fallback"
   else echo "  ok   extension does not name sharedApplication"; fi
   # Swift keeps string literals of 15 bytes or less inside the code, so only long names show up.
   for h in ExportFindsHandler OpenSettingsHandler; do
-    if strings -a "$app/Addify" | grep -qF "$h"; then echo "  ok   Release app contains $h"
+    if grep -qF "$h" build/app-strings.txt; then echo "  ok   Release app contains $h"
     else echo "  FAIL Release app lacks $h"; fail=1; fi
   done
   want="Addify adds an image to your Photos only when you choose Save Image on it. It never reads your library."
