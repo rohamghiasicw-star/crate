@@ -134,6 +134,12 @@ jobs:
           - id: round6d-cr
             name: 'Round 6d follow-ups, plan check, focus and search words (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round6d.py
+          - id: round7b-wk
+            name: 'Round 7b plan status, busy hold, share timing, delete copy and parked scan (WebKit)'
+            run: python -u engine/test_round7b.py
+          - id: round7b-cr
+            name: 'Round 7b plan status, busy hold, share timing, delete copy and parked scan (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round7b.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
