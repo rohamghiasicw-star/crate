@@ -4908,7 +4908,7 @@ var Q_VER='(?:slowed|sped|speed|super|reverb(?:ed)?|remix(?:ed)?|edit(?:ed)?|hoo
 var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk|chopped|screwed|pitched|hoodtrap|'+
   'bass ?boost(?:ed)?|instrumental|acapella';
 /* ROUND 8 (GAPS-R8-01): the words of another recording. A pipe tail holding one ("| Remix", "| Acoustic Cover", "| Extended
-   Mix", "|| TikTok Remix") names the version the card crowns and stays; Q_SAYS finds them in an uncut title, hashtags too
+   Mix", "|| TikTok Remix") names the version the card crowns and stays; qSays finds them in an uncut title, hashtags too
    ("#remix", "#acousticcover"); Q_COVER is a cover or a "remix by X", someone else's performance */
 /* ROUND 9 (GAPS-R9-01, GAPS-R9-02): ONE SET OF VERSION WORDS. Each rule kept its own list, so each round found a word one
    rule knew and another missed ("| Piano Version", "| Jersey Club Flip", "#coversong" and "#pianocover" went, with "Open in
@@ -7288,7 +7288,9 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
   SCAN_ID=rid('s'); KIT_MOVED=false; SCAN_TAP=Date.now();   // ROUND 3: the tap, for the liveness bound   // NAMING 2026-09-30: this scan's id (hunt fallback), fresh origin state
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
-  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false,arrived||!!opt.share);   // ROUND 9 (LITERAL-R9-01)
+  // ROUND 9 (LITERAL-R9-01): "Shared from" for a share only: one the app hands to the page that is up (arrived), or the
+  // share that opened the page (_viaSheet), whose boot run() is this page's first scan of that link
+  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false,arrived||(_viaSheet&&tok===1&&raw===_shared));
   document.getElementById('tl1').textContent='--:--';
   document.getElementById('tlwin').textContent='reading audio';
   headline('Finding song'); say('Reading the clip');
@@ -8576,7 +8578,7 @@ if(_shared){
   // below. The screen run() paints first (scanning, the clip chip, "Finding song") is up from
   // the first frame; the 350 ms and every step of run() after it are unchanged.
   shareFirstPaint(_shared);
-  setTimeout(function(){onbQuiet=true; run(_shared,{share:_viaSheet}); onbQuiet=false;},350);   // let the splash start first; boot counts the share below; ROUND 9 (LITERAL-R9-01): a share says "Shared from"
+  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
 } else splash();
 if(_sharedPage){   // ROUND 5B (GP-1): the link stays in the box, the address loses the share
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
