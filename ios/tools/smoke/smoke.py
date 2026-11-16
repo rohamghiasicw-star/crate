@@ -37,6 +37,18 @@ iPhone and an iPad simulator. Scenarios:
   killwarmpaywall the same for a share the page that is up takes (run), which opens the paywall (build 33)
   slowboot   one compiled-in address, the page's first byte takes 25 s: the loading screen says it is still
              connecting and offers Try again after 8 s, and the page opens from that first request (build 32)
+  slowtry    one compiled-in address, the page's body takes 14 s to arrive: the loading screen's Try again (taken by
+             the lab copy) keeps that load, and the page opens from its first request (build 34)
+  slowtrynew the first request gets no answer: Try again still starts over, and the page opens from the next (build 34)
+  paidwarm   a share that the page that is up turns down at the paywall, Addify+ bought there, the page scans it and
+             iOS ends the app: the next launch reopens the share page (build 34)
+  paidcold   the same for a share whose share page opens the paywall (build 34)
+  busypage   a TikTok profile shared while a scan runs: the page says it is not a clip where it is, no reload, the
+             scan is not restarted (build 34)
+  busypageold the same with a page that has no hook for it: the share page opens, as before (build 34)
+  shareglued9 a share whose clip link (no https://) is glued to the word before it by an em dash opens the clip's
+             share page (build 34)
+  sharepagewords a TikTok profile link with no https:// after a word opens its share page (build 34)
   theme      the page's light theme gives dark status bar content, its dark theme light (build 31)
   entitlements a StoreKit transaction that arrives on its own tells the loaded page (addify:entitlements)
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
@@ -221,6 +233,18 @@ def patch(ios_dir, variant):
     if c.count(bold) != 1:
         sys.exit("patch: ContentView.swift slow anchor matched %d times" % c.count(bold))
     c = c.replace(bold, bold + "            NSLog(\"ADDIFY-BOOT slow\")\n")
+    # Build 34 (NATIVE-R9-01): no simulator tool can tap, so with ADDIFY_LAB_TAP_RETRY=<n> in its launch environment
+    # the lab copy takes the loading screen's Try again itself, 0.5 s after it shows, the first n times, through the
+    # same action the button runs (BootView tryAgain).
+    tap = "            UIAccessibility.post(notification: .announcement, argument: \"Still connecting\")\n"
+    if c.count(tap) != 1:
+        sys.exit("patch: ContentView.swift announcement anchor matched %d times" % c.count(tap))
+    c = c.replace(tap, tap + "            if let n = Int(ProcessInfo.processInfo.environment[\"ADDIFY_LAB_TAP_RETRY\"] ?? \"\"), attempt < n {\n"
+                  "                try? await Task.sleep(nanoseconds: 500_000_000)\n"
+                  "                guard !Task.isCancelled else { return }\n"
+                  "                NSLog(\"ADDIFY-LAB tap Try again\")\n"
+                  "                tryAgain()\n"
+                  "            }\n")
     open(cpath, "w").write(c)
     # A share that opens the app: simctl openurl stops at "Open in Addify?" on these simulators, and
     # nothing can tap it. The lab copy takes the same addify://scan URL from its launch environment
@@ -261,6 +285,11 @@ def patch(ios_dir, variant):
     if a.count(aold2) != 1:
         sys.exit("patch: AddifyApp.swift scene anchor matched %d times" % a.count(aold2))
     a = a.replace(aold2, "                    if phase == .active, let u = LabOpen.take() { bridge.handleIncoming(u) }\n" + aold2)
+    # Build 34 (NATIVE-R9-01): when coming back to the error screen leaves an automatic reload that is loading be.
+    aold4 = "                        if bridge.unreachable, !bridge.autoReloadRunning { bridge.retryResolvingFirst() }\n"
+    if a.count(aold4) != 1:
+        sys.exit("patch: AddifyApp.swift return anchor matched %d times" % a.count(aold4))
+    a = a.replace(aold4, "                        if bridge.unreachable && bridge.autoReloadRunning { NSLog(\"ADDIFY-LAB return kept the reload\") }\n" + aold4)
     aold3 = "    init() {\n"
     if a.count(aold3) != 1:
         sys.exit("patch: AddifyApp.swift init anchor matched %d times" % a.count(aold3))
@@ -510,17 +539,30 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   // Build 33 (NATIVE-R8-01): the paywall at 0 free scans, a #paywall added to <body> and shown, as crate.html's
   // openPaywall() does. On a share page (?url=) it opens __PAYWALL__ ms in (crate.html's run() runs 350 ms in),
   // at once for 0; with __RUN_PAYWALL__ run(link) opens it and starts no scan.
-  function paywall(){ var p = document.getElementById('paywall') || document.createElement('div');
+  // Build 34 (NATIVE-R9-02): with __PAID__, Addify+ turns on that many ms after the paywall opened and the page runs
+  // the clip the paywall opened for, as crate.html's proOn() does: the paywall closes, and 300 ms later the scan
+  // starts (curURL, busy, #app data-state scanning). parseLink here reads every link as a clip of itself.
+  if (__PAID__ > 0) window.parseLink = function(l){ return {host: 'tiktok', url: String(l)}; };
+  function paywall(link){ var p = document.getElementById('paywall') || document.createElement('div');
     p.id = 'paywall'; p.textContent = 'paywall'; p.hidden = false; document.body.appendChild(p);
-    send('paywall', {lid: lid, href: location.href}); }
-  if (__PAYWALL__ >= 0 && /[?&]url=/.test(location.search)) { if (__PAYWALL__ === 0) paywall(); else setTimeout(paywall, __PAYWALL__); }
+    send('paywall', {lid: lid, href: location.href});
+    if (__PAID__ > 0) setTimeout(function(){ p.hidden = true; setTimeout(function(){
+      window.curURL = String(link || ''); window.busy = true; document.getElementById('app').setAttribute('data-state', 'scanning');
+      send('paid', {lid: lid, href: location.href, link: window.curURL}); }, 300); }, __PAID__); }
+  var sharedHere = new URLSearchParams(location.search).get('url');
+  if (__PAYWALL__ >= 0 && /[?&]url=/.test(location.search)) {
+    if (__PAYWALL__ === 0) paywall(sharedHere); else setTimeout(function(){ paywall(sharedHere); }, __PAYWALL__); }
   window.addEventListener('addify:entitlements', function(){ send('entitlements', {lid: lid, href: location.href}); });
   send('load', r); show();
   // The page's own entry point for a share that arrives while it is up (crate.html run()).
   window.busy = false;
   // Build 33: a scan sets busy, as crate.html's run() does; the paywall does not (NATIVE-R8-01).
-  window.run = function(link){ if (__RUN_PAYWALL__) paywall(); else window.busy = true;
+  window.run = function(link){ if (__RUN_PAYWALL__) paywall(link); else window.busy = true;
     send('run', {link: link, lid: lid, href: location.href, port: __PORT__}); };
+  // Build 34 (CHAOS-R9-01): with __BUSY__ a scan is already running when the page is up; with __NOTCLIP__ the page
+  // has crate.html's addifyNotAClip(link), which says where it is that a shared link is not a clip and answers true.
+  if (__BUSY__) window.busy = true;
+  if (__NOTCLIP__) window.addifyNotAClip = function(l){ send('notclip', {lid: lid, href: location.href, link: l}); return true; };
   function bridges(kind, done){
     call('addifyKit', {type: 'ping'}).then(function(k){ r.kit = k; return call('addifyStore', {op: 'status'}); })
     .then(function(s){ r.store = s; show(); send(kind, r); if (done) done(); }); }
@@ -649,8 +691,9 @@ class Handler(BaseHTTPRequestHandler):
                 kp = COUNTS[(role, path)]
             if path == "/share" and kp <= cfg.get("share_fail_first", 0):
                 return self.reply(502)
-            # Holds one /share request (by number) before answering, like a slow network.
-            hold = (cfg.get("share_delay") or {}).get(str(kp)) if path == "/share" else None
+            # Holds one /share request (by number) before answering, like a slow network. Build 34: home_delay does
+            # the same for a / request.
+            hold = (cfg.get("share_delay" if path == "/share" else "home_delay") or {}).get(str(kp))
             if hold:
                 time.sleep(hold)
             # Build 30: every page load after a kill is slow, so the loading screen can be seen.
@@ -677,7 +720,28 @@ class Handler(BaseHTTPRequestHandler):
             page = page.replace("__LEAVE__", str(int(cfg.get("leave_ms", 0))))
             page = page.replace("__PAYWALL__", str(int(cfg.get("paywall_ms", -1))))
             page = page.replace("__RUN_PAYWALL__", "true" if cfg.get("run_paywall") else "false")
+            page = page.replace("__PAID__", str(int(cfg.get("paid_ms", 0))))
+            page = page.replace("__BUSY__", "true" if cfg.get("busy") else "false")
+            page = page.replace("__NOTCLIP__", "true" if cfg.get("notclip_hook") else "false")
+            if cfg.get("trickle_ms"):
+                return self.trickle(page.encode(), cfg["trickle_ms"] / 1000.0)
             return self.reply(200, page.encode())
+
+    def trickle(self, body, secs, parts=28):
+        """Build 34 (NATIVE-R9-01): the headers at once, then the body in parts over `secs`, like a slow network
+        that is still delivering the page."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.flush()
+        step = (len(body) + parts - 1) // parts
+        for k in range(0, len(body), step):
+            time.sleep(secs / parts)
+            self.wfile.write(body[k:k + step])
+            self.wfile.flush()
+        return 200
         return self.reply(404)
 
 
@@ -1217,12 +1281,20 @@ def run_stub_suite(dev, app, version, ipad=False):
         share_text(dev, app, version, "sharepage", "www.tiktok.com/@dj.user", want="https://www.tiktok.com/@dj.user")
         share_text(dev, app, version, "shareglued", "omg listen " + SHARE_LINK[len("https://"):] + "\U0001F525")
         share_text(dev, app, version, "sharemixed", "https://www.youtube.com/watch?v=dQw4w9WgXcQ " + SHARE_LINK[len("https://"):])
+        share_text(dev, app, version, "shareglued9", "song\u2014" + SHARE_LINK[len("https://"):])
+        share_text(dev, app, version, "sharepagewords", "omg www.tiktok.com/@dj.user lol", want="https://www.tiktok.com/@dj.user")
         for mode in ("scan", "result"):
             app_killed(dev, app, version, mode)
         safari_share(dev, app, version)
         stale_share(dev, app, version)
         stale_kill(dev, app, version)
         slow_boot(dev, app, version)
+        for mode in ("arriving", "waiting"):
+            slow_try(dev, app, version, mode)
+        for mode in ("warm", "cold"):
+            paywall_paid(dev, app, version, mode)
+        for hook in (True, False):
+            busy_page(dev, app, version, hook)
         theme(dev, app, version)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
@@ -1428,7 +1500,10 @@ def shareretry(dev, app, version):
     the held reload answers inside it. That launch check must start over on the share page. Before
     this fix the reload's page loaded during the lookup and took the link, and the launch check then
     opened Home over it: the shared clip never scanned. The screenshot is taken 19 s after the
-    reload was asked for, by when either has had time to happen."""
+    reload was asked for, by when either has had time to happen.
+    Build 34 (NATIVE-R9-01): coming back while an automatic reload is loading no longer starts over (that
+    stopped a page that was arriving and asked for all of it again), so no launch check runs: the reload
+    that was running keeps the share page and its link, and Home never loads over it."""
     sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 6.0}},
           "B": {"health": False, "down": True}, "G": {"pick": "", "delay_ms": 9000}, "X": {}}
     share = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share"
@@ -1455,8 +1530,10 @@ def shareretry(dev, app, version):
           json.dumps(shown))
     loads = [e["report"] for e in res["entries"] if e.get("kind") == "bridges"]
     last = loads[-1] if loads else {}
-    check(dev, "shareretry", "the page on screen at the end is the share page with the link, from the new launch check",
-          link_in(last.get("href")) == SHARE_LINK and (last.get("n") or 0) >= 3,
+    check(dev, "shareretry", "coming back left the automatic reload that was loading be (NATIVE-R9-01)",
+          lab_has(res, "ADDIFY-LAB return kept the reload"), "lab log %s" % [l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-LAB" in l])
+    check(dev, "shareretry", "the page on screen at the end is the share page with the link, from the reload that was running",
+          link_in(last.get("href")) == SHARE_LINK and last.get("n") == 2,
           "pages reported %s" % [(link_in(x.get("href")) == SHARE_LINK, x.get("n")) for x in loads])
     check(dev, "shareretry", "one page reported (no second load over the share page)", len(loads) == 1,
           "%d pages reported" % len(loads))
@@ -2041,6 +2118,160 @@ def slow_boot(dev, app, version):
     check(dev, "slowboot", "page on screen once it answered", k == "page", k)
     check(dev, "slowboot", "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-slowboot.json" % dev.tag), "w"), indent=1)
+
+
+def slow_try(dev, app, version, mode):
+    """NATIVE-R9-01 (build 34). One compiled-in address and a slow page; the lab copy takes the loading screen's
+    Try again each time it shows (ADDIFY_LAB_TAP_RETRY).
+      arriving  slowtry: the page's headers come at once and its body over 14 s, like a slow network still
+                delivering it. Try again keeps that load (it has its response) and only the 8 s note starts
+                again: the page opens from its first request. Build 33 stopped it and asked for the whole page
+                again at every tap, so a user who tapped each time it showed never got in.
+      waiting   slowtrynew: the first request gets no answer for 25 s, the next answers at once. Try again still
+                starts over when nothing has come yet: a second request right after the tap, and the page opens
+                from it."""
+    label = {"arriving": "slowtry", "waiting": "slowtrynew"}[mode]
+    a = {"health_ms": 20}
+    if mode == "arriving":
+        a["trickle_ms"] = 14000
+    else:
+        a["home_delay"] = {"1": 25.0}
+    cfg = {"A": a, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    env = dict(SINGLE, ADDIFY_LAB_TAP_RETRY="3" if mode == "arriving" else "1")
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=60, launch_env=env,
+                   after=(("settled", lambda e: e.get("kind") == "bridges", 1.0),))
+    timeline(res)
+    pages = [(e["dt"], e["status"]) for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] == "/"]
+    taps = [lab_time(l, res["t0"]) for l in res["lab"] if "ADDIFY-LAB tap Try again" in l]
+    loaded = [lab_time(l, res["t0"]) for l in res["lab"] if "ADDIFY-PAGE loaded" in l]
+    r = report(res, "bridges")
+    check(dev, label, "Try again was taken on the loading screen before the page came",
+          bool(taps) and bool(loaded) and taps[0] is not None and loaded[0] is not None and taps[0] < loaded[0],
+          "taps at %s, page loaded at %s" % (taps, loaded))
+    if mode == "arriving":
+        check(dev, label, "Try again kept the load that was arriving: the page opened from its first request",
+              r is not None and len(pages) == 1, "page requests %s, taps %s" % (pages, taps))
+    else:
+        nxt = [t for t, _ in pages[1:2]]
+        check(dev, label, "Try again with no answer yet started over: a second request right after the tap, and the page from it",
+              r is not None and len(pages) == 2 and bool(taps) and taps[0] is not None and taps[0] - 0.5 <= nxt[0] <= taps[0] + 3.0
+              and r.get("n") == 2, "page requests %s, taps %s, page n=%s" % (pages, taps, (r or {}).get("n")))
+    check(dev, label, "no error screen", not screen_times(res, "error"), json.dumps(screen_times(res, "error")))
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, label, "page on screen once it came", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+def paywall_paid(dev, app, version, mode):
+    """NATIVE-R9-02 (build 34). At 0 free scans a shared clip opens the Addify+ paywall and the share is let go
+    (NATIVE-R8-01). The user buys Addify+ there and the page then scans that clip (proOn runs it). iOS ends the
+    whole app during that scan, and the user opens it again: the launch must reopen the share page with the same
+    link, as for any share (NATIVE-R6-10). Build 33 had let the share go for good, so that launch opened Home.
+      warm  paidwarm: the share reaches the page that is up (run(link)), which opens the paywall
+      cold  paidcold: the share opens its share page, whose paywall opens 350 ms in"""
+    label = {"warm": "paidwarm", "cold": "paidcold"}[mode]
+    link = "https://vt.tiktok.com/ZSpaid9%s1/" % mode[0]
+    a = {"health_ms": 20, "state": "idle", "paid_ms": 1500}
+    if mode == "warm":
+        a["run_paywall"] = True
+    else:
+        a["paywall_ms"] = 350
+    cfg = {"A": a, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    paid = nth(lambda e: e.get("kind") == "paid", 1)
+    dev.kill_t = None
+
+    def end(d):
+        d.kill_t = time.time()
+        d.terminate()
+
+    def relaunch(d):
+        # With Addify+ on, the share page scans: no paywall after the launch.
+        set_cfg("A", "run_paywall", False)
+        set_cfg("A", "paywall_ms", -1)
+        set_cfg("A", "paid_ms", 0)
+        set_cfg("A", "state", "scanning")
+        d.launch(dict(SINGLE, ADDIFY_LAB_HELD="1"))
+
+    after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
+    env, acts = dict(SINGLE), []
+    if mode == "warm":
+        loaded = nth(lambda e: e.get("kind") == "bridges", 1)
+        acts += [("write", loaded, 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                 ("leave", loaded, 1.0, lambda d: d.to_background()),
+                 ("return", loaded, 2.5, lambda d: d.launch())]
+    else:
+        env["ADDIFY_LAB_OPEN"] = "addify://scan?url=" + quote(link, safe="")
+    acts += [("end", paid, 1.5, end), ("relaunch", paid, 3.0, relaunch), ("settled", nth(after_kill, 1), 1.0, None)]
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=75, launch_env=env, actions=tuple(acts))
+    timeline(res)
+    reqs = [e for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    before = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == link, e["status"]) for e in reqs
+              if dev.kill_t is None or e["t"] < dev.kill_t]
+    after = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == link, e["status"]) for e in reqs
+             if dev.kill_t is not None and e["t"] >= dev.kill_t]
+    walls = [e["report"] for e in res["entries"] if e.get("kind") == "paywall"]
+    ran, got = report(res, "run"), report(res, "paid")
+    if mode == "warm":
+        check(dev, label, "the page that was up took the share (run) and opened its paywall",
+              (ran or {}).get("link") == link and bool(walls) and walls[0].get("lid") == (ran or {}).get("lid")
+              and not [x for x in before if x[1] == "/share"], "run %s, paywall %s, before %s" % (json.dumps(ran), json.dumps(walls[:1]), json.dumps(before)))
+    else:
+        check(dev, label, "the share page loaded and opened its paywall",
+              any(x[1] == "/share" and x[2] and x[3] == 200 for x in before) and bool(walls) and "/share?" in (walls[0].get("href") or ""),
+              "paywall %s, before %s" % (json.dumps(walls[:1]), json.dumps(before)))
+    check(dev, label, "Addify+ turned on and the page scanned that clip", (got or {}).get("link") == link, json.dumps(got))
+    check(dev, label, "the app was ended mid-scan and opened again", res["done"].get("end") is not None
+          and res["done"].get("relaunch") is not None and len(dev.pids) >= 2 and dev.pids[-1] != dev.pids[-2],
+          "pids %s, done %s" % (dev.pids, res["done"]))
+    held = [l[l.index("ADDIFY-HELD"):] for l in res["lab"] if "ADDIFY-HELD" in l]
+    check(dev, label, "the launch picked up the clip the page was scanning", any("fresh=1 " + link in l for l in held), json.dumps(held))
+    check(dev, label, "the launch reopened the share page with the same link, not Home",
+          bool(after) and after[0][1] == "/share" and after[0][2] and not [x for x in after if x[1] == "/"], json.dumps(after))
+    loads = [e for e in res["entries"] if after_kill(e)]
+    href = loads[0]["report"].get("href") if loads else None
+    check(dev, label, "the page after the launch carries the shared link", link_in(href) == link, href or "no page")
+    k = pixel_class(res["shots"].get("final", ""))
+    check(dev, label, "page on screen after the launch", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
+def busy_page(dev, app, version, hook):
+    """CHAOS-R9-01 (build 34). A scan is running on the page that is up (busy) when a TikTok profile, a link that
+    is not a clip, is shared into the app.
+      hook  busypage: the page has addifyNotAClip. The app asks it to say the link is not a clip where it is: no
+            share page, no reload, the running scan is not restarted. Build 33 opened the profile's share page,
+            which restarted the running scan from 0% and never said the link is not a clip.
+      none  busypageold: a page without the hook gets the share page, as build 33 did."""
+    label = "busypage" if hook else "busypageold"
+    link = "https://www.tiktok.com/@dj.user"
+    a = {"health_ms": 20, "state": "scanning", "busy": True, "notclip_hook": hook}
+    cfg = {"A": a, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    loaded = nth(lambda e: e.get("kind") == "bridges", 1)
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=45, launch_env=SINGLE,
+                   actions=(("write", loaded, 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                            ("leave", loaded, 1.0, lambda d: d.to_background()),
+                            ("return", loaded, 2.5, lambda d: d.launch()),
+                            ("settled", loaded, 8.0, None)))
+    timeline(res)
+    load, said = report(res, "load"), report(res, "notclip")
+    shares = [(e["dt"], link_in(e["path"]), e["status"]) for e in res["entries"]
+              if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
+    loads = [e["report"].get("lid") for e in res["entries"] if e.get("kind") == "load"]
+    if hook:
+        check(dev, label, "the running page was asked to say the link is not a clip",
+              (said or {}).get("link") == link and (said or {}).get("lid") == (load or {}).get("lid"), json.dumps(said))
+        check(dev, label, "no share page and no reload: the running scan was not restarted",
+              not shares and len(loads) == 1, "share pages %s, page loads %s" % (json.dumps(shares), loads))
+    else:
+        check(dev, label, "a page without the hook gets the profile's share page, as before",
+              bool(shares) and shares[0][1] == link and said is None, "share pages %s, hook %s" % (json.dumps(shares), json.dumps(said)))
+    check(dev, label, "the page did not run the link", report(res, "run") is None, json.dumps(report(res, "run")))
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, label, "page on screen", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
 
 def theme(dev, app, version):

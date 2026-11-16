@@ -66,6 +66,10 @@ struct EngineWebView: UIViewRepresentable {
             guard let c = coordinator, let wv = wv else { return }
             c.cancelReloads(wv)
         }
+        bridge.mainLoad = { [weak coordinator = context.coordinator, weak wv] in
+            guard let c = coordinator, let wv = wv else { return (false, false) }
+            return (wv.isLoading, wv.isLoading && c.mainFrameAnswered)
+        }
         bridge.closeSheets = { [weak coordinator = context.coordinator, weak wv] done in
             guard let c = coordinator, let wv = wv else { done(); return }
             c.closeSheets(over: wv, then: done)
@@ -112,6 +116,11 @@ struct EngineWebView: UIViewRepresentable {
         /* The #app check in flight (checkAppPage). A new main-frame load, a failed load or the
            check's own answer moves it on, and an answer for an older check is dropped. */
         var appCheck = 0
+        /* NATIVE-R9-01 (build 34): the main-frame load running now has its response (allowed in decidePolicyFor
+           navigationResponse) or has committed, so the page is arriving and the loading screen's Try again keeps
+           it (EngineBridge tryAgainLoading). False again when a main-frame load starts, fails, is stopped here or
+           counts as loaded. */
+        var mainFrameAnswered = false
 
         init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -197,6 +206,7 @@ struct EngineWebView: UIViewRepresentable {
         func cancelReloads(_ wv: WKWebView) {
             retryGeneration += 1
             appCheck += 1
+            mainFrameAnswered = false
             if wv.isLoading { wv.stopLoading() }
         }
 
@@ -329,6 +339,7 @@ struct EngineWebView: UIViewRepresentable {
                   let url = http.url, isEngineOrigin(url),
                   !(200...299).contains(http.statusCode) || http.expectedContentLength == 0 else {
                 decisionHandler(.allow)
+                if navigationResponse.isForMainFrame { mainFrameAnswered = true }
                 return
             }
             ownCancel = true
@@ -339,6 +350,12 @@ struct EngineWebView: UIViewRepresentable {
         /* A new main-frame load makes any #app check still waiting about a page that is going away. */
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             appCheck += 1
+            mainFrameAnswered = false
+        }
+
+        /* NATIVE-R9-01 (build 34): the main frame's page has started to arrive. */
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            mainFrameAnswered = true
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -367,6 +384,7 @@ struct EngineWebView: UIViewRepresentable {
         /* An engine page is up: the native screens go, the automatic reloads still waiting are
            cancelled and a share that waited for the page is handed over. */
         private func pageLoaded() {
+            mainFrameAnswered = false
             bridge.pageReady = true
             quietRetries = 0
             autoRetries = 0
@@ -468,6 +486,7 @@ struct EngineWebView: UIViewRepresentable {
                                              NSURLErrorInternationalRoamingOff, NSURLErrorCallIsActive]
 
         private func failed(_ error: Error, in webView: WKWebView) {
+            mainFrameAnswered = false
             let e = error as NSError
             /* -999 is our own cancel from decidePolicyFor, not an outage. */
             if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }

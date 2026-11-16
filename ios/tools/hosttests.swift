@@ -552,6 +552,58 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         eq(ps.target(base: A, fallback: A), share1, "queued: a kill while the page checks the plan reopens the share page")
         ps.clear()
 
+        // NATIVE-R9-02 (build 34): a share let go at the paywall is remembered, and held again only when the page
+        // starts a scan of that same link (Addify+ turned on and the page ran it), so iOS ending the app mid-scan
+        // keeps it. Nothing else brings it back: no launch, reload or Try again opens its share page (NATIVE-R8-01).
+        ps.hold(L1)
+        ps.declined(L1)
+        eq(ps.declinedLink, L1, "paid: the share the running page turned down at the paywall is remembered")
+        eq(ps.current, nil, "paid: remembered, not held")
+        ps.crashReload()
+        eq(ps.target(base: A, fallback: A), A, "paid: a reload while the paywall is up still opens Home (NATIVE-R8-01)")
+        eq(ps.retryTarget(base: A, fallback: F), F, "paid: a failed load still reloads the page that failed")
+        eq(ps.pageLoaded(), false, "paid: a page load takes nothing")
+        ps.scanStarted("https://vt.tiktok.com/other/")
+        eq(ps.current, nil, "paid: a scan of another link holds nothing")
+        ps.scanStarted(L1)
+        eq(ps.current, L1, "paid: the page's scan of that link (after the purchase) holds it again")
+        eq(ps.handedLink, L1, "paid: held as the page's, so leaving that scan or its result lets it go")
+        eq(ps.waiting, nil, "paid: never handed to the page a second time")
+        eq(ps.declinedLink, nil, "paid: no longer remembered as declined")
+        ps.crashReload()
+        eq(ps.target(base: A, fallback: A), share1, "paid: a kill mid-scan reopens the share page, as for any share")
+        _ = ps.pageLoaded()
+        ps.resultPosted()
+        eq(ps.current, nil, "paid: released by its result")
+        ps.scanStarted(L1)
+        eq(ps.current, nil, "paid: a second scan of it later is not held again")
+        // its share page opened the paywall (the probe says 'paywall'): remembered the same way
+        ps.hold(L1)
+        _ = ps.target(base: A, fallback: A)
+        _ = ps.pageLoaded()
+        ps.scanEnded(L1, atPaywall: true)
+        eq(ps.current, nil, "paid: a share page that opened the paywall lets the share go")
+        eq(ps.declinedLink, L1, "paid: and remembers it")
+        eq(ps.target(base: A, fallback: A), A, "paid: Try again or a reload then opens Home, not the share page and its paywall")
+        ps.scanStarted(L1)
+        eq(ps.handedLink, L1, "paid: the page's scan of it after the purchase holds it again")
+        ps.scanEnded(L1)
+        eq(ps.current, nil, "paid: leaving that scan lets it go")
+        eq(ps.declinedLink, nil, "paid: and it is not remembered (it did not end at the paywall)")
+        ps.hold(L1)
+        _ = ps.target(base: A, fallback: A)
+        _ = ps.pageLoaded()
+        ps.scanEnded(L1)
+        ps.scanStarted(L1)
+        eq(ps.current, nil, "paid: a scan that ended any other way (no match, Back) is not held again")
+        ps.hold(L1)
+        ps.declined(L1)
+        ps.hold(L2)
+        eq(ps.declinedLink, nil, "paid: a newer share forgets the declined one")
+        ps.scanStarted(L1)
+        eq(ps.current, L2, "paid: a scan of the declined link then leaves the newer share alone")
+        ps.clear()
+
         // a newer share
         ps.hold(L1)
         _ = ps.target(base: A, fallback: A)
@@ -634,7 +686,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             ("www.tiktok.com/@bouch.szn/video/7651437319941066005~", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005~", "GAPS-R7-03 corpus7 #5671"),
             ("(www.instagram.com\u{200B}/reel/DeE4Gy2xjUN/?a=%zz).", "https://www.instagram.com/reel/DeE4Gy2xjUN/?a=%zz", "SHARE-R7-01 a zero-width space inside a word is dropped, as on the page"),
             ("(www.instagram.com\u{200B}/stories/u/3456789012345678901/).", "https://www.instagram.com", "GAPS-R7-03 a page cut at a zero-width space"),
-            ("lol www.tiktok.com/@flprobe", nil, "a page after words is not named by the page either (link_corpus_r7 page-after-words)"),
+            ("lol www.tiktok.com/@flprobe", "https://www.tiktok.com/@flprobe", "a page after words opens the app, where the page names it (SHARE-R9-02, build 34; link_corpus_r7 page-after-words)"),
             ("omg www.tiktok.com/@u/video/7123456789012345611\u{1F525}", "https://www.tiktok.com/@u/video/7123456789012345611", "an emoji stuck to a word's clip ends the word (SHARE-R8-01, build 33; build 32 read it into the path)"),
             ("look vm.ti\u{212A}to\u{212A}.com/ZMhvqKj8L/", nil, "a word ends at a Kelvin sign, a character a URL can't hold (SHARE-R8-01, build 33: the page reads it so too)"),
             ("vm.ti\u{212A}to\u{212A}.com/ZMhvqKj8L/", nil, "a Kelvin sign: the first reading stops at it too"),
@@ -677,7 +729,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             ("omg listen https://" + C8 + "\u{1F525}", "https://" + C8, "SHARE-R8-01 control: the same with https://"),
             (C8 + "\u{1F525}", "https://" + C8, "SHARE-R8-01 control: the clip and emoji with no word before"),
             ("omg\n" + C8, "https://" + C8, "SHARE-R8-01 a line break between a word and the clip"),
-            ("song:" + C8, nil, "a word joined to the clip by a colon is no link on either side"),
+            ("song:" + C8, "https://" + C8, "a word joined to the clip by a colon: the clip (SHARE-R9-03, build 34; no link on either side in build 33)"),
             ("vm.tiktok.com/ZMhvqKj8L/ https://www.youtube.com/watch?v=dQw4w9WgXcQ", VM8, "GAPS-R8-03 a clip with no https:// before a YouTube link"),
             ("Song from vm.tiktok.com/ZMhvqKj8L/ more at https://linktr.ee/x", VM8, "GAPS-R8-03 a clip between words, a linktr.ee link after"),
             ("https://www.youtube.com/watch?v=dQw4w9WgXcQ vm.tiktok.com/ZMhvqKj8L/", VM8, "GAPS-R8-03 a YouTube link, then the clip"),
@@ -691,7 +743,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             ("https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 www." + C8, "https://www." + C8, "GAPS-R8-03 an https profile, then a clip with www."),
             ("via https://example.com/x look " + C8, "https://" + C8, "GAPS-R8-03 another site, words, then the clip"),
             ("https://www.tiktok.com/@flprobe https://www.tiktok.com/music/x-7123456789012345678", "https://www.tiktok.com/@flprobe", "no clip anywhere: the first TikTok page, as before"),
-            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ www.tiktok.com/@flprobe", nil, "no clip anywhere: a TikTok page after words is still not named, and YouTube is no TikTok or Instagram link"),
+            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ www.tiktok.com/@flprobe", "https://www.tiktok.com/@flprobe", "no clip anywhere: a TikTok page after words goes before a YouTube link (SHARE-R9-02, build 34)"),
             ("omg vm.tiktok.com/ZMhvqKj8L/", VM8, "GAPS-R8-03 control: words and the clip only"),
         ]
         for c in r8 {
@@ -700,12 +752,58 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             if let g = got { eq(SharedInbox.shareLink(in: g), g, "r8: the app reads the same link back: " + c.what) }
         }
 
+        // SHARE-R9-02 and SHARE-R9-03 (build 34), the shared word rule: every text in both findings, with the
+        // link the share hands over (nil: the share card says there is no link) and what the page does with the
+        // same text pasted ("clip", "TikTok" or "Instagram" for its not-a-clip message, nil for "That does not
+        // look like a TikTok or Instagram link"). Each word is also searched for its first TikTok or Instagram
+        // host, after a character a host name can't hold; the first clip wins, else the first page.
+        let P9 = "tiktok.com/@flprobe", S9 = "tiktok.com/music/original-sound-7123456789012345678"
+        let r9: [(input: String, link: String?, page: String?, what: String)] = [
+            ("omg " + P9 + " lol", "https://" + P9, "TikTok", "SHARE-R9-02 a profile after a word"),
+            ("omg " + S9 + " lol", "https://" + S9, "TikTok", "SHARE-R9-02 a sound page after a word"),
+            ("omg " + P9 + "\u{1F525}", "https://" + P9, "TikTok", "SHARE-R9-02 a profile with an emoji glued after it"),
+            ("\u{201C}" + S9 + "\u{201D}", "https://" + S9, "TikTok", "SHARE-R9-02 a sound page in curly quotes"),
+            ("omg https://" + P9 + " lol", "https://" + P9, "TikTok", "SHARE-R9-02 control: the profile with https://"),
+            (P9, "https://" + P9, "TikTok", "SHARE-R9-02 control: the profile with no word before it (GAPS-R7-03)"),
+            ("omg www.instagram.com/mako_cars/ lol", "https://www.instagram.com/mako_cars/", "Instagram", "SHARE-R9-02 an Instagram profile after a word"),
+            ("song:" + C8, "https://" + C8, "clip", "SHARE-R9-03 a colon glued before the clip"),
+            ("omg\u{1F525}" + C8, "https://" + C8, "clip", "SHARE-R9-03 an emoji glued before the clip"),
+            ("song\u{2014}" + C8, "https://" + C8, "clip", "SHARE-R9-03 an em dash (iOS smart punctuation)"),
+            ("song\u{FF1A}" + C8, "https://" + C8, "clip", "SHARE-R9-03 a full-width colon"),
+            ("song\u{2014}https://" + C8, "https://" + C8, "clip", "SHARE-R9-03 control: the same with https://"),
+            ("song " + C8, "https://" + C8, "clip", "SHARE-R9-03 control: a space before the link"),
+            ("omg\u{1F525}vm.tiktok.com/ZMhvqKj8L/", VM8, "clip", "SHARE-R9-03 a short link glued after an emoji"),
+            ("look\u{2014}instagr.am/reel/DeE4Gy2xjUN", "https://www.instagram.com/reel/DeE4Gy2xjUN", "clip", "SHARE-R9-03 instagr.am, handed over as www.instagram.com"),
+            ("omg\u{1F525}TIKTOK.COM/@FLPROBE/VIDEO/7123456789012345611", "https://TIKTOK.COM/@FLPROBE/VIDEO/7123456789012345611", "TikTok",
+             "a host in capitals is found, and its path in capitals is a page, as on the page"),
+            ("omg " + P9 + " song\u{2014}" + C8, "https://" + C8, "clip", "a page, then a glued clip: the clip wins"),
+            ("https://www.instagram.com/u/ omg " + P9, "https://www.instagram.com/u/", "Instagram", "no clip: an https page goes before a word's page"),
+            ("song\u{2014}eviltiktok.com/@u/video/7123456789012345611", nil, nil, "a host that only ends in tiktok.com is no TikTok link"),
+            ("song\u{2014}tiktok.com.evil.io/@u/video/7123456789012345611", nil, nil, "tiktok.com inside another host is no TikTok link"),
+            ("song\u{2014}lite.tiktok.com/@u", nil, nil, "a TikTok host the page does not know is no link"),
+            ("song\u{2014}tiktok.com:443/@u/video/7123456789012345611", nil, nil, "a port after the glued host: not found, as on the page"),
+            ("song.tiktok.com/@u/video/7123456789012345611", nil, nil, "a dot before the host makes it part of the host name"),
+            ("x_tiktok.com/@u/video/7123456789012345611", "https://tiktok.com/@u/video/7123456789012345611", "clip", "an underscore can't be part of a host name"),
+            ("https://example.com/?u=tiktok.com/@u/video/7123456789012345611", "https://tiktok.com/@u/video/7123456789012345611", "clip",
+             "a clip inside another site's link is found, as on the page"),
+        ]
+        for c in r9 {
+            let got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+            eq(got, c.link, "r9: " + c.what)
+            if let g = got { eq(SharedInbox.shareLink(in: g), g, "r9: the app reads the same link back: " + c.what) }
+            let kind = got.flatMap { SharedInbox.clipLink($0) != nil ? "clip" : (SharedInbox.pageLink($0) != nil ? "page" : nil) }
+            eq(kind, c.page.map { $0 == "clip" ? "clip" : "page" }, "r9: the link reads as the page reads the text: " + c.what)
+        }
+
         // The share corpus (tools/share-corpus.json, built by tools/share_corpus.py from the round 7 testers'
         // 631,707 texts, 54,011 more with words around a link and engine/link_corpus_r7.json's cases, and
         // WebKit's run of the page's own parseLink (round 7c, rule 3: every word tried for a clip) over each
         // text and over what the share hands over). Build 33: rebuilt from WebKit's run of the round 8 parseLink
         // (a word cut at the first character a URL can't hold, words read whenever no http(s) link is a clip)
-        // over those texts, the round 8 testers' 200,012 and the findings' own; it keeps build 32's 3,902 texts. Each row: the text, the link the share hands over (null: the share card says there is no
+        // over those texts, the round 8 testers' 200,012 and the findings' own; it keeps build 32's 3,902 texts.
+        // Build 34 (SHARE-R9-02, SHARE-R9-03): rebuilt from WebKit's run of the shared word rule (each word also searched
+        // for its first TikTok or Instagram host) over 954,438 texts, the round 9 share tester's and 122,249 words glued
+        // to a link among them; it keeps build 33's 4,447 texts, 353 of them with the new rule's answer. Each row: the text, the link the share hands over (null: the share card says there is no
         // link), and what the page does with the pasted text ("clip", "TikTok" or "Instagram" for its
         // not-a-clip message, null for "That does not look like a TikTok or Instagram link"). Wherever the
         // page scans, the share hands over a clip; wherever it names a page, the share opens the app on a page

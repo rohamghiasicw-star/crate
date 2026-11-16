@@ -125,7 +125,7 @@ jobs:
     needs: build
     if: github.event_name == 'workflow_dispatch' && inputs.smoke
     runs-on: macos-26
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

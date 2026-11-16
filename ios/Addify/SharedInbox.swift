@@ -98,7 +98,14 @@ enum SharedInbox {
        GAPS-R7-03 (build 32): also a page with no https:// ("www.tiktok.com/@u") or with a
        percent-encoded host, which isScannable can't read: it gets https:// and its host as the page
        reads it (pageLink), instead of the share card saying the share had no link. Otherwise the
-       first http(s) link isScannable passes, as before. nil when there is none. */
+       first http(s) link isScannable passes, as before. nil when there is none.
+       SHARE-R9-02 and SHARE-R9-03 (build 34), the shared word rule (the page's parseLink reads text the same
+       way): each word is also searched for its first TikTok or Instagram host (hostRun), so a link glued to the
+       word before it is found ("omg\u{1F525}tiktok.com/@u/video/...", "song\u{2014}tiktok.com/...",
+       "song:tiktok.com/...", "song\u{FF1A}tiktok.com/..."). Word by word, the first clip either reading finds
+       wins. With no clip anywhere, the first TikTok or Instagram page that search found goes through after
+       one the first two readings found ("omg tiktok.com/@u lol"), so the app opens and the page says "That
+       link is a TikTok page, not a clip" for it, as it does for the same link with https://. */
     static func shareLink(in text: String) -> String? {
         let raw = text.trimmingCharacters(in: jsSpaces)
         let links = linkRuns(raw).map(linkTrim)
@@ -113,10 +120,14 @@ enum SharedInbox {
             if read.clip { return read.link }
             if page == nil { page = read.link }
         }
+        var wordPage: String?
         for word in words(raw) {
-            if let clip = clipLink(word) { return clip }
+            if let clip = clipLink(word.read) { return clip }
+            guard let found = word.host, let read = readLink(found) else { continue }
+            if read.clip { return read.link }
+            if wordPage == nil { wordPage = read.link }
         }
-        return page ?? links.first(where: isScannable)
+        return page ?? wordPage ?? links.first(where: isScannable)
     }
 
     /* SHARE-R7-01 (build 32): the words of a text, as the page's parseLink reads each one for a clip:
@@ -127,8 +138,10 @@ enum SharedInbox {
        at the first one after that, as in the page's
        .replace(/^(?:[(\[{<"']|[^<URL characters>])+/,'').replace(/[^<URL characters>][\s\S]*$/,'').
        Read code point by code point (a character outside ASCII is never a URL character, so this is the
-       page's reading of UTF-16 code units). Empty words are left out. */
-    private static func words(_ raw: String) -> [String] {
+       page's reading of UTF-16 code units). Empty words are left out.
+       SHARE-R9-02 and SHARE-R9-03 (build 34): with each word, the first TikTok or Instagram host in it, from the
+       same word without its zero-width characters (hostRun), or nil. */
+    private static func words(_ raw: String) -> [(read: String, host: String?)] {
         let space: (Unicode.Scalar) -> Bool = {
             switch $0.value {
             case 0x09...0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000: return true
@@ -140,8 +153,38 @@ enum SharedInbox {
         return raw.unicodeScalars.split(whereSeparator: space).compactMap { w in
             let kept = w.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0x2060 && $0.value != 0xFEFF }
             let word = linkTrim(text(kept.drop(while: { lead.contains($0) || !urlChar($0) }).prefix(while: urlChar)))
-            return word.isEmpty ? nil : word
+            let host = hostRun(Array(text(kept).utf16))
+            return word.isEmpty && host == nil ? nil : (word, host)
         }
+    }
+
+    /* SHARE-R9-02 and SHARE-R9-03 (build 34): the first TikTok or Instagram host in a word, found the way the
+       page's /(?:^|[^A-Za-z0-9.-])((?:[a-z0-9-]+\.)*(?:tiktok\.com|instagram\.com|instagr\.am)\/\S*)/i finds it:
+       at the start of the word or after a character a host name can't hold (an emoji, an em dash, a colon, a
+       full-width colon), any labels each ending in a dot, then tiktok.com/, instagram.com/ or instagr.am/ in
+       any case of ASCII letters. It ends at the first character a URL can't hold and loses the punctuation after
+       it (linkTrim), as a word does. Read on UTF-16 code units, as JavaScript reads the text. nil when the word
+       has none. */
+    private static func hostRun(_ u: [UInt16]) -> String? {
+        let label: (UInt16) -> Bool = { (0x30...0x39).contains($0) || (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) || $0 == 0x2D }
+        let names = ["tiktok.com/", "instagram.com/", "instagr.am/"].map { Array($0.utf16) }
+        func name(at p: Int) -> Bool {
+            names.contains { n in
+                p + n.count <= u.count && zip(u[p..<(p + n.count)], n).allSatisfy { $0 == $1 || ((0x61...0x7A).contains($1) && $0 == $1 - 0x20) }
+            }
+        }
+        for i in u.indices where i == 0 || !(label(u[i - 1]) || u[i - 1] == 0x2E) {
+            var p = i
+            while true {
+                if name(at: p) {
+                    let end = u[i...].firstIndex(where: { !isURLChar($0) }) ?? u.endIndex
+                    return linkTrim(String(decoding: u[i..<end], as: UTF16.self))
+                }
+                guard let q = u[p...].firstIndex(where: { !label($0) }), q > p, u[q] == 0x2E else { break }
+                p = q + 1
+            }
+        }
+        return nil
     }
 
     /* The characters LINK_RE lets into a link: A-Z a-z 0-9 - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = % */
