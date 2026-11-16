@@ -1,10 +1,10 @@
 {
- "about": "Which clip a shared or pasted text names. The page's parseLink (engine/crate.html) and the share extension's SharedInbox.shareLink (ios/Addify/SharedInbox.swift) read text by the same rule, so a share and a paste of the same text scan the same clip. engine/test_round7c.py and engine/test_round8c.py check parseLink against every case here.",
+ "about": "Which clip a shared or pasted text names. The page's parseLink (engine/crate.html) and the share extension's SharedInbox.shareLink (ios/Addify/SharedInbox.swift) read text by the same rule, so a share and a paste of the same text scan the same clip. engine/test_round7c.py, engine/test_round8c.py and engine/test_round9c.py check parseLink against every case here.",
  "rule": [
   "1. Every http(s) link in the text is a candidate, in order; the first candidate that is a clip wins (unchanged).",
   "2. With no http(s) link, the leading run of URL characters (leading characters in strip_leading dropped first, trailing characters in strip_trailing dropped after; the whole text when that run is empty) is the next candidate (unchanged).",
-  "3. ROUND 7C, ROUND 8C: with no clip from steps 1 and 2 (whether or not the text holds http(s) links), split the text into words on the separators below. For each word, in order: remove every zero-width character, then drop every leading character that is in strip_leading or is not in url_chars (an emoji, a curly quote, a full-width bracket), then cut the word at the first character not in url_chars, then drop the trailing characters in strip_trailing, then test the word as a clip (https:// is added when it has no scheme). The first word that is a clip wins.",
-  "4. A profile, sound, tag, story or other page link, or another site's link, never wins over a clip anywhere in the text (ROUND 8C: an http(s) page or other link before or after a clip written without https:// included). With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2 ('page')."
+  "3. ROUND 7C, ROUND 8C, ROUND 9C: with no clip from steps 1 and 2 (whether or not the text holds http(s) links), split the text into words on the separators below. For each word, in order: remove every zero-width character, then search the word for its first TikTok or Instagram host with word_search (so a host glued to the word before it is found: an emoji, an em dash, a colon or a full-width colon before it), then cut the match at the first character not in url_chars, then drop the trailing characters in strip_trailing, then read it with the clip test (https:// is added). The first word that is a clip wins. A word whose match is a TikTok or Instagram page (not a clip) is kept as the word page; only the first one counts.",
+  "4. A profile, sound, tag, story or other page link, or another site's link, never wins over a clip anywhere in the text (ROUND 8C: an http(s) page or other link before or after a clip written without https:// included). With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2, else (ROUND 9C) the app of the first word page from step 3 ('page'), so 'omg tiktok.com/@u lol' names TikTok as its https form does. The share extension hands that page link over (https:// added)."
  ],
  "separators": "Unicode White_Space: U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000",
  "zero_width": [
@@ -17,6 +17,7 @@
  "strip_leading": "([{<\"'",
  "strip_trailing": ".,;:!?'\"()[]{}<>*",
  "url_chars": "A-Z a-z 0-9 - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = % (the characters LINK_RE reads as part of a link)",
+ "word_search": "(?:^|[^A-Za-z0-9.-])((?:[a-z0-9-]+\\.)*(?:tiktok\\.com|instagram\\.com|instagr\\.am)\\/\\S*) (JavaScript, ignoring case; the link is group 1)",
  "clip_shapes": "tiktok.com (www., m.): /@user/video/<6-25 digits>, /@user/photo/<6-25 digits>, /t/<5-16 alnum>, /v/<6-25 digits>(.html); vm.tiktok.com or vt.tiktok.com: /<5-16 alnum> or /t/<5-16 alnum>; instagram.com or instagr.am (www., m.): /(<user>/)(reel|reels|p|tv)/<5-40 code>. A trailing slash is allowed. instagr.am is handed on as www.instagram.com.",
  "fields": {
   "clip": "the link parseLink hands on to the scan, exactly, or null when the text names no clip",
@@ -302,7 +303,7 @@
    "text": "lol www.tiktok.com/@flprobe",
    "clip": null,
    "key": null,
-   "page": null
+   "page": "TikTok"
   },
   {
    "id": "words-only",
@@ -535,6 +536,126 @@
    "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
    "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
    "page": null
+  },
+  {
+   "id": "r9-noscheme-profile-after-word",
+   "item": "SHARE-R9-02",
+   "text": "omg tiktok.com/@flprobe lol",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "r9-noscheme-sound-after-word",
+   "item": "SHARE-R9-02",
+   "text": "omg tiktok.com/music/original-sound-7123456789012345678 lol",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "r9-noscheme-profile-glued-emoji",
+   "item": "SHARE-R9-02",
+   "text": "omg tiktok.com/@flprobe🔥",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "r9-noscheme-sound-curly-quotes",
+   "item": "SHARE-R9-02",
+   "text": "“tiktok.com/music/original-sound-7123456789012345678”",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "r9-noscheme-ig-profile-after-word",
+   "item": "SHARE-R9-02",
+   "text": "look instagram.com/flprobe lol",
+   "clip": null,
+   "key": null,
+   "page": "Instagram"
+  },
+  {
+   "id": "r9-emoji-glued-before-clip",
+   "item": "SHARE-R9-03",
+   "text": "omg🔥tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r9-emdash-glued-before-clip",
+   "item": "SHARE-R9-03",
+   "text": "song—tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r9-colon-glued-before-clip",
+   "item": "SHARE-R9-03",
+   "text": "song:tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r9-fullwidth-colon-glued-before-clip",
+   "item": "SHARE-R9-03",
+   "text": "song：tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r9-emoji-glued-before-reel",
+   "item": "SHARE-R9-03",
+   "text": "omg🔥instagram.com/reel/DeE4Gy2xjUN/",
+   "clip": "https://instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r9-word-page-then-glued-clip",
+   "item": "rule",
+   "text": "omg tiktok.com/@flprobe then song:tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r9-https-page-before-word-page",
+   "item": "rule",
+   "text": "omg instagram.com/flprobe then https://www.tiktok.com/@bouch.szn",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "r9-hyphen-glued-is-not-a-host",
+   "item": "rule",
+   "text": "song-tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-lookalike-host-after-word",
+   "item": "rule",
+   "text": "see xtiktok.com/@flprobe/video/7123456789012345611",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-https-profile-after-word",
+   "item": "control",
+   "text": "omg https://www.tiktok.com/@flprobe lol",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
   },
   {
    "id": "control-full-link-1",

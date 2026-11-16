@@ -714,6 +714,13 @@ html.native .tabbar{margin-bottom:min(0px,calc(env(safe-area-inset-bottom) - 10p
    area never takes the bottom rows of their 44 pt targets */
 #s-match .hd>#back,#s-match .hd>#share{z-index:3}
 #s-match .hd:has(>.scannote.on)>#matchttl{display:none}
+/* ROUND 9C (CHAOS-R9-01): on the scan screen the same toast covers the tip card (clipNote), so it hides no title and
+   no clip, and a 3-line message stays on screen at 320 wide; the tip under it waits (tipsOn) */
+#tip{position:relative}
+#tip>.scannote{left:0;right:0;top:auto;bottom:0;min-height:100%;width:auto;display:flex;align-items:center;justify-content:center;
+  transform:translateY(6px)}
+#tip>.scannote.on{transform:none}
+#tip:has(>.scannote.on)>:not(.scannote){visibility:hidden}
 @media (prefers-reduced-motion:reduce){.scannote{transition:none}}
 /* PAYWALL, Option A (Konnor, Telegram 2061-2063, 2026-11-10; branch kfix-9-paywall). A half-screen
    sheet over the real screen, dimmed with 60% black. Colours are his spec's fixed values in both
@@ -2699,11 +2706,21 @@ function parseLink(raw){raw=(raw||'').trim(); var all=(raw.match(LINK_RE)||[]).m
   // ROUND 8C (SHARE-R8-01, GAPS-R8-03): a word loses every leading character a URL cannot hold (an emoji, a curly quote,
   // a full-width bracket) as well as ( [ { < " ', and ends at the first one (an emoji glued after the link, a closing curly quote).
   // The words are read when the http(s) links hold no clip too, so a clip anywhere wins over a page or another site's link.
-  {var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/);
-    for(var j=0;j<tk.length;j++){var t=linkTrim(tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,'')
+  // ROUND 9C (SHARE-R9-02, SHARE-R9-03): each word is then searched for its first TikTok or Instagram host, so one glued to
+  // the word before it (an emoji, an em dash, a colon or a full-width colon: "song:tiktok.com/...") is found too; the match
+  // ends at the first character a URL cannot hold. Word by word, the first clip either reading finds wins. With no clip
+  // anywhere and no page from the http(s) links, the first page this search found names the app ("omg tiktok.com/@u lol"
+  // says "a TikTok page", as its https form does). The share extension reads words by the same rule.
+  {var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/), wpage=null;
+    for(var j=0;j<tk.length;j++){var w=tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,''), t=linkTrim(w
         .replace(/^(?:[(\[{<"']|[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%])+/,'').replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,'')),
       r2=t?clipShape(t):{};
-      if(r2.host) return {host:r2.host,url:r2.url||(/^https?:\/\//i.test(t)?t:'https://'+t)};}}
+      if(r2.host) return {host:r2.host,url:r2.url||(/^https?:\/\//i.test(t)?t:'https://'+t)};
+      var m=w.match(/(?:^|[^A-Za-z0-9.-])((?:[a-z0-9-]+\.)*(?:tiktok\.com|instagram\.com|instagr\.am)\/\S*)/i),
+        h=m?linkTrim(m[1].replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,'')):'', r3=h?clipShape(h):{};
+      if(r3.host) return {host:r3.host,url:r3.url||'https://'+h};
+      if(r3.page&&!wpage) wpage=r3.page;}
+    if(!page) page=wpage;}
   return {host:null,url:all[0]||raw,page:page};}
 function notClipMsg(p){return p&&p.page
   ? 'That link is '+(p.page==='Instagram'?'an ':'a ')+p.page+' page, not a clip. Open the video, tap Share, then Copy link, and paste it here.'
@@ -3572,7 +3589,8 @@ var tipI=0, tipT=null;
 function tipsOn(){tipI=0; var b=document.getElementById('tip');
   document.getElementById('tiptxt').textContent=tipText(0); b.classList.remove('swap');
   clearInterval(tipT);
-  tipT=setInterval(function(){tipI=(tipI+1)%TIPS.length; b.classList.add('swap');
+  tipT=setInterval(function(){if(b.querySelector('.scannote.on')) return;   // ROUND 9C: not under the toast (clipNote)
+    tipI=(tipI+1)%TIPS.length; b.classList.add('swap');
     setTimeout(function(){document.getElementById('tiptxt').textContent=tipText(tipI);
       b.classList.remove('swap');},280);},4600);}
 function tipsOff(){clearInterval(tipT); tipT=null;}
@@ -6100,6 +6118,21 @@ function scanNote(failed){if(!PAYWALL_ON||PRO||!STATUS_IN||PW_BUYING) return;   
 function scanNoteOff(now){var n=document.getElementById('scannote'); clearTimeout(scanNote.t); clearTimeout(scanNoteOff.t); if(!n) return;
   n.classList.remove('on');
   if(now) n.textContent=''; else scanNoteOff.t=setTimeout(function(){if(!n.classList.contains('on')) n.textContent='';},1000);}
+/* ROUND 9C (CHAOS-R9-01): A LINK THAT IS NOT A CLIP, SHARED WHILE A SCAN RUNS, GETS ITS MESSAGE AS THE TOAST. The app
+   reloaded the page for it, so the running scan started again from 0% and "That link is a TikTok page, not a clip" never
+   showed. The app hands such a link to window.addifyNotAClip(url) instead (true when shown). The toast covers the scan
+   screen's tip card (on the card it takes the title slot, as the scan count does) for 6 s; the scan, its dial and the
+   Home box are left as they are. Off those screens it is Home's message. */
+function clipNote(m){var st=document.getElementById('app').getAttribute('data-state'),
+    hd=st==='scanning'?document.getElementById('tip'):st==='locked'?document.querySelector('#s-match .hd'):null;
+  if(!hd){showErr(m); return true;}
+  var n=document.getElementById('scannote');
+  if(!n){n=document.createElement('div'); n.id='scannote'; n.className='scannote'; n.setAttribute('role','status');}
+  if(n.parentNode!==hd) hd.appendChild(n);
+  n.textContent=m; n.classList.add('on');
+  clearTimeout(scanNote.t); clearTimeout(scanNoteOff.t); scanNote.t=setTimeout(function(){scanNoteOff();},6000);
+  return true;}
+window.addifyNotAClip=function(u){try{var p=parseLink(String(u||'')); return !p.host&&clipNote(notClipMsg(p));}catch(e){return false;}};
 /* REVIEWER RUNS 2 (GP-7): why a scan with no song did not count. A link we could not read is not "no song found". */
 function scanMiss(d){var r=d&&d.result;
   if(d&&d.bad_link) return 'unread';   // POLISH 3: a link the engine turned down
@@ -7216,14 +7249,18 @@ var RUN_GATE=false, SCAN_FREE=false, RUN_NEXT=null;
 function pendPark(u){try{if(u&&sessionStorage.getItem('addify-pending-again')!==u) sessionStorage.setItem('addify-pending',u);}catch(e){}}
 function pendDone(u){try{if(!u||sessionStorage.getItem('addify-pending')===u) sessionStorage.removeItem('addify-pending');
   sessionStorage.removeItem('addify-pending-again');}catch(e){}}
+/* ROUND 9C (IAP-R9-01): whether a run is a share is decided once, when its link comes, and goes through the gate with it
+   (opt.arrived): a tap during "Checking your plan..." never turns a share into a typed link, so the shared clip still goes
+   in the Home box when the paywall opens for it. */
 function runNext(raw,opt,arr){var nx=RUN_NEXT; RUN_NEXT=null; if(nx){raw=nx.raw; opt=nx.opt; arr=nx.arr;}
+  opt=Object.assign({},opt,{arrived:!!arr});
   var q0=onbQuiet; onbQuiet=!arr; try{run(raw,opt);}finally{onbQuiet=q0;}}
-function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,arr:shareArrival()}; return;} opt=opt||{};
+function run(raw,opt){if(busy) return; opt=opt||{}; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,arr:'arrived' in opt?opt.arrived:shareArrival()}; return;}
   // ROUND 6C (SHARE-R6-01): a link that arrives while Listen records (a share, EngineBridge's run) ends the recording
   // first: the mic is released and nothing is sent, so the recording never replaces the link's card or spends a scan
   stopListen(); if(waveState==='listening') nav('idle');
   errHide();
-  var p=parseLink(raw), arrived=shareArrival();     // ROUND 5C: a share from the share sheet (no tap on this page)
+  var p=parseLink(raw), arrived='arrived' in opt?opt.arrived:shareArrival();     // ROUND 5C: a share from the share sheet (no tap on this page)
   var reopen=!!opt.reopen||(!!p.host&&findReopen(p.url));
   // ROUND 8C (CHAOS-R8-01): a shared clip the paywall opens for goes in the Home box first, so the box, PW_AFTER and the
   // share name the same clip, and closing the paywall leaves it there ready to scan (the box kept the earlier clip). The
@@ -7240,12 +7277,12 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
     if(!_vk&&devIsShort(p.url)){ RUN_GATE=true;
       vkeyOf(p.url).then(function(k){RUN_GATE=false; if(RUN_NEXT){runNext(); return;}   // ROUND 7 (CHAOS-R7-01)
         // ROUND 5C: Plus may have turned on while the lookup ran: the paywall only if still out of scans
-        if(!outOfScans()||(k&&(scanCounted(p.url)||devHas(k)))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
+        if(!outOfScans()||(k&&(scanCounted(p.url)||devHas(k)))){onbQuiet=true; try{run(raw,{arrived:arrived});}finally{onbQuiet=false;}}
         else {pwBox(); sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
       return;}
     if(!devHas(_vk)){pwBox(); sheetsOff(true); PW_AFTER=raw||''; openPaywall(); return;}}   // ROUND 5B: the paywall alone, in front
   SCAN_FREE=reopen||let6;
-  onbNoteRun();                                    // ONBOARDING v4: a share-sheet arrival marks onboarding done
+  onbNoteRun(arrived);                             // ONBOARDING v4: a share-sheet arrival marks onboarding done
   sheetsOff();                                     // ROUND 5B: the scan (or its message) is never behind a sheet
   HUNT_ON=false;                                   // TRACKER 2026-09-29: a new scan starts clean
   KIT_AM=[];                                       // SHAZAMKIT ATTRIBUTION: no Apple Music link from the last scan
@@ -8165,13 +8202,20 @@ var LISTEN_AGAIN=false;   // ROUND 5B: the mic message's Try again had the focus
    opens the paywall before the microphone is asked for (after the first entitlement answer, as run() waits for it),
    and a listen result spends a scan the way a link scan does (useScan in finish). */
 var LISTEN_GATE=false;
+/* ROUND 9C (SHARE-R9-01): ANY TAP OR KEY BUT SCAN CANCELS THE PARKED LISTEN. Typing or pasting in the link box, Paste,
+   a trending row or its plus left it waiting, and the mic came on over the typing when the plan answer came. Every tap,
+   key, paste or input outside SCAN counts (lAct); the parked Listen starts only if none came after the Listen tap that
+   parked it (another Listen tap while it waits counts from there). */
+var lAct=0, lActAt=0;
+['pointerdown','touchstart','keydown','click','input','paste'].forEach(function(t){
+  document.addEventListener(t,function(e){var g=document.getElementById('go'); if(!(g&&e.target&&g.contains(e.target))) lAct++;},true);});
 function listenGate(){
-  if(LISTEN_GATE) return true;
+  if(LISTEN_GATE){lActAt=lAct; return true;}
   if(!(PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS)||PRO_LET) return false;   // ROUND 6 (IAP-R6-01): no answer by PRO_CAP: it goes
   // ROUND 7 (SHARE-R7-03): a share, Back or Cancel while it waits (stopListen bumps lGen) cancels the parked Listen,
   // so the mic is never asked for after the user moved on
-  if(!PRO_KNOWN){var g0=lGen; LISTEN_GATE=true; planNote(true);
-    proWait().then(function(){LISTEN_GATE=false; planNote(false); if(g0===lGen&&waveState==='idle') startListen();}); return true;}
+  if(!PRO_KNOWN){var g0=lGen; LISTEN_GATE=true; lActAt=lAct; planNote(true);
+    proWait().then(function(){LISTEN_GATE=false; planNote(false); if(g0===lGen&&waveState==='idle'&&lAct===lActAt) startListen();}); return true;}
   sheetsOff(true); PW_AFTER=''; openPaywall(); return true;}
 /* ROUND 8C (SHARE-R8-02): a tab, See all or any other nav away from Home cancels the parked Listen as Back does, and it
    starts only on Home, so the mic is never turned on over You, Search or Finds. A new tap on Home waits again. */
@@ -8435,7 +8479,7 @@ function paintOnb(){
    tap in the last 1.5 s is the share extension. */
 ['pointerdown','touchstart','keydown','click','submit'].forEach(function(t){
   document.addEventListener(t,function(){onbTapAt=Date.now();},true);});
-function onbNoteRun(){if(shareArrival()) onbSharedIn();}
+function onbNoteRun(a){if(a) onbSharedIn();}   // ROUND 9C (IAP-R9-01): run() decides once (arrived)
 /* a run() the app started from the share sheet: in the app, with no tap on this page behind it */
 function shareArrival(){if(onbQuiet) return false;
   var nat=!!(window.ADDIFY_NATIVE||/Addify(-iOS)?\//.test(navigator.userAgent));
@@ -8551,7 +8595,10 @@ if(_shared){
   // below. The screen run() paints first (scanning, the clip chip, "Finding song") is up from
   // the first frame; the 350 ms and every step of run() after it are unchanged.
   shareFirstPaint(_shared);
-  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
+  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;
+    // ROUND 9C (CHAOS-R9-01): a page that is not a clip, shared while a scan ran (the app reloaded for it), keeps its message:
+    // the resumed scan's start took Home's message away, so it shows as the scan screen's toast
+    if(_sharedPage) clipNote(_sharedPage.msg);},350);   // let the splash start first; boot counts the share below
 } else splash();
 if(_sharedPage){   // ROUND 5B (GP-1): the link stays in the box, the address loses the share
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);

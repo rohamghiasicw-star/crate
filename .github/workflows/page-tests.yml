@@ -170,6 +170,12 @@ jobs:
           - id: round8c-cr
             name: 'Round 8c link parsing, Listen wait and share into the paywall (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round8c.py
+          - id: round9c-wk
+            name: 'Round 9c Listen wait, link words, share through the plan wait, page shared mid-scan (WebKit)'
+            run: python -u engine/test_round9c.py
+          - id: round9c-cr
+            name: 'Round 9c Listen wait, link words, share through the plan wait, page shared mid-scan (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round9c.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
