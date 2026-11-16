@@ -603,7 +603,12 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             ("www.instagram.com/stories/mako_cars/3456789012345678901/", "https://www.instagram.com/stories/mako_cars/3456789012345678901/", "GAPS-R7-03 an Instagram story"),
             ("www.tiktok.com/discover/funny.", "https://www.tiktok.com/discover/funny", "GAPS-R7-03 a TikTok page, trimmed"),
             ("www.tiktok.com/@bouch.szn/video/7651437319941066005~", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005~", "GAPS-R7-03 corpus7 #5671"),
-            ("(www.instagram.com\u{200B}/reel/DeE4Gy2xjUN/?a=%zz).", "https://www.instagram.com", "GAPS-R7-03 a page cut at a zero-width space"),
+            ("(www.instagram.com\u{200B}/reel/DeE4Gy2xjUN/?a=%zz).", "https://www.instagram.com/reel/DeE4Gy2xjUN/?a=%zz", "SHARE-R7-01 a zero-width space inside a word is dropped, as on the page"),
+            ("(www.instagram.com\u{200B}/stories/u/3456789012345678901/).", "https://www.instagram.com", "GAPS-R7-03 a page cut at a zero-width space"),
+            ("lol www.tiktok.com/@flprobe", nil, "a page after words is not named by the page either (link_corpus_r7 page-after-words)"),
+            ("omg www.tiktok.com/@u/video/7123456789012345611\u{1F525}", nil, "an emoji stuck to a word's clip: the page reads it into the path too"),
+            ("look vm.ti\u{212A}to\u{212A}.com/ZMhvqKj8L/", "https://vm.tiktok.com/ZMhvqKj8L/", "a Kelvin sign for k goes over as k, which the app's link reader keeps"),
+            ("vm\u{2024}tiktok\u{2024}com/ZMhvqKj8L/", nil, "a one dot leader is no dot to the page's URL(), nor to the share"),
             ("lol HTTPS://www.%74ik%74ok.com/ZMhvqKj8L/ \u{1F602}", "HTTPS://www.tiktok.com/ZMhvqKj8L/", "GAPS-R7-03 a page with a percent-encoded host"),
             ("\u{200B}vm.tiktok.com/ZMabc1234/\u{1F602}x", "https://vm.tiktok.com", "GAPS-R7-03 a page whose cut path would read as a clip goes over as the host"),
             ("www.tiktok.com/@u?next=1 vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", "a page before a clip: the clip wins"),
@@ -627,8 +632,9 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         eq(SharedInbox.pageLink("www.threads.net/@u"), nil, "r7: pageLink of another app is nil")
 
         // The share corpus (tools/share-corpus.json, built by tools/share_corpus.py from the round 7 testers'
-        // 686,000 texts and WebKit's run of the page's parseLink over each text and over what the share hands
-        // over). Each row: the text, the link the share hands over (null: the share card says there is no
+        // 631,707 texts, 54,011 more with words around a link and engine/link_corpus_r7.json's cases, and
+        // WebKit's run of the page's own parseLink (round 7c, rule 3: every word tried for a clip) over each
+        // text and over what the share hands over). Each row: the text, the link the share hands over (null: the share card says there is no
         // link), and what the page does with the pasted text ("clip", "TikTok" or "Instagram" for its
         // not-a-clip message, null for "That does not look like a TikTok or Instagram link"). Wherever the
         // page scans, the share hands over a clip; wherever it names a page, the share opens the app on a page
@@ -661,7 +667,8 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
                    a page comes back unchanged; a clip comes back as the same clip, at most cut where its query
                    holds a character a URL can't (it was so before build 32, and the clip is the same). */
                 if let g = got, let back = SharedInbox.shareLink(in: g) {
-                    ok = ok && (back == g || (page == "clip" && SharedInbox.clipLink(back) != nil && g.hasPrefix(back)))
+                    ok = ok && (back == g || (page == "clip" && SharedInbox.clipLink(back) != nil
+                                              && g.unicodeScalars.starts(with: back.unicodeScalars)))
                 } else if got != nil { ok = false }
                 if !ok {
                     bad += 1

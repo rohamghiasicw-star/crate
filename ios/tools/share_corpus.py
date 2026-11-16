@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Builds tools/share-corpus.json, the share corpus the host tests read (hosttests.swift).
 
-Round 7 (build 32, SHARE-R7-01, GAPS-R7-03, GAPS-R7-04). The testers' texts, the link the share extension
+Round 7 (build 32, SHARE-R7-01, GAPS-R7-03, GAPS-R7-04). The testers' texts (and engine/link_corpus_r7.json's
+cases, whose rule the page and the share follow), the link the share extension
 hands over for each (SharedInbox.shareLink, run on a Mac), and what the page's own parseLink does with the
 pasted text in WebKit (Playwright, the page's clipShape/LINK_RE/linkTrim/parseLink copied from crate.html).
 Only texts where the two agree go in: wherever the page scans, the share hands over a clip of the same video;
