@@ -20,10 +20,14 @@ on:
         description: 'Also run the simulator smoke test (iPhone and iPad, local stub engine plus one real page load from the test server)'
         type: boolean
         default: false
+      build_runner:
+        description: 'Runner for the build job (macos-15; macos-26 or macos-15-intel when GitHub has no macos-15 capacity)'
+        type: string
+        default: 'macos-15'
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: ${{ inputs.build_runner || 'macos-15' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
