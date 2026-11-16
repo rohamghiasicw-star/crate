@@ -1494,7 +1494,7 @@ def sharereload(dev, app, version):
 
 def shareretry(dev, app, version):
     """Build 30 (FIRST-LAUNCH-R4-01, reload already running). A share's page answers 502, and the
-    automatic reload that follows is still waiting for its answer (the stub holds it 6 s) when the
+    automatic reload that follows is still waiting for its answer (the stub holds it 9 s; 6 s before build 34) when the
     user leaves the app and comes back 1 s after it was asked for, which runs the same launch check
     as Try again. Its directory lookup gets no answer, so it takes the app's whole 8 s limit, and
     the held reload answers inside it. That launch check must start over on the share page. Before
@@ -1503,8 +1503,10 @@ def shareretry(dev, app, version):
     reload was asked for, by when either has had time to happen.
     Build 34 (NATIVE-R9-01): coming back while an automatic reload is loading no longer starts over (that
     stopped a page that was arriving and asked for all of it again), so no launch check runs: the reload
-    that was running keeps the share page and its link, and Home never loads over it."""
-    sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 6.0}},
+    that was running keeps the share page and its link, and Home never loads over it. The return has to land
+    while that reload is still held, and leaving and coming back through simctl took 4.7 to 7.4 s on these
+    runners, so the stub holds it 9 s and the return may come up to 8 s after it was asked for (5 s before)."""
+    sr = {"A": {"health_ms": 20, "share_fail_first": 1, "share_delay": {"2": 9.0}},
           "B": {"health": False, "down": True}, "G": {"pick": "", "delay_ms": 9000}, "X": {}}
     share = lambda e: e["role"] == "A" and e["path"].split("?")[0] == "/share"
     second = nth(share, 2)
@@ -1524,7 +1526,7 @@ def shareretry(dev, app, version):
     shown = [(t, p.split("?")[0], link_in(p) == SHARE_LINK, st) for t, p, st in reqs]
     back_at = res["done"].get("return")
     check(dev, "shareretry", "the return came while the automatic reload was still waiting",
-          back_at is not None and len(reqs) >= 2 and reqs[1][0] <= back_at <= reqs[1][0] + 5.0,
+          back_at is not None and len(reqs) >= 2 and reqs[1][0] <= back_at <= reqs[1][0] + 8.0,
           "reload asked at %s s, back at %s s" % (reqs[1][0] if len(reqs) >= 2 else None, back_at))
     check(dev, "shareretry", "Home never loaded while the share waited", not [x for x in reqs if x[1].split("?")[0] == "/"],
           json.dumps(shown))
