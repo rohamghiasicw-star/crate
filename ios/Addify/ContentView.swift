@@ -122,8 +122,10 @@ struct BootView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(!slow)
-            /* Below the line, over the space under it, so what is above stays where it was. */
+            /* Below the line, over the space under it, so what is above stays where it was. The space is
+               given the screen's width and the button its own size (a spacer in a column has no width). */
             Spacer()
+                .frame(maxWidth: .infinity)
                 .overlay(alignment: .top) {
                     if slow {
                         Button("Try again") {
@@ -133,6 +135,7 @@ struct BootView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(red: 0.36, green: 0.29, blue: 0.91))
+                        .fixedSize()
                         .padding(.top, 2)
                     }
                 }
