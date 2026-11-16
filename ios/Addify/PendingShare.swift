@@ -171,3 +171,24 @@ enum HeldShare {
         return (link, fresh)
     }
 }
+
+/* ---------- a share that is asked about ----------
+   NATIVE-R7-03 (build 32). A shared link too old to start on its own (parked past SharedInbox.maxAge, or
+   a held share back too many launches in a row) is asked about once a page is up (EngineBridge
+   offerStale). It used to wait for that in memory only, while the inbox and HeldShare copies were
+   already gone, so when no page loaded in that run (no network, the error screen) and the app was
+   closed, the next launch had nothing to ask about and the clip was dropped without a word. It is now
+   kept here until the question is answered (Scan it or Not now), or a newer share replaces it.
+   Foundation only: the host tests run it on a Mac. */
+enum StaleShare {
+    static let linkKey = "staleShareURL"
+
+    static func save(_ link: String?, in d: UserDefaults = .standard) {
+        if let link = link, !link.isEmpty { d.set(link, forKey: linkKey) } else { d.removeObject(forKey: linkKey) }
+    }
+
+    static func restore(in d: UserDefaults = .standard) -> String? {
+        guard let link = d.string(forKey: linkKey), !link.isEmpty else { return nil }
+        return link
+    }
+}

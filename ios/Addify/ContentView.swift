@@ -96,9 +96,15 @@ struct ContentView: View {
 
 /* BUILD 20: what the app shows while it finds a working engine address and loads the page.
    Same ground and accent as the page and the error screen, so nothing flashes. After 8 s it
-   says it is still connecting, so a slow network never looks frozen. */
+   says it is still connecting, so a slow network never looks frozen. NATIVE-R7-02 (build 32): with
+   it comes the error screen's Try again, which starts the load over (the load itself now waits up to
+   WebKit's 60 s with one address). NATIVE-R7-06 (build 32): VoiceOver hears "Still connecting" when
+   it appears, and the empty line before it is not a stop for VoiceOver. */
 struct BootView: View {
+    @EnvironmentObject private var bridge: EngineBridge
     @State private var slow = false
+    /* Each Try again waits its own 8 s before the line and the button come back. */
+    @State private var attempt = 0
 
     var body: some View {
         VStack(spacing: 16) {
@@ -115,7 +121,21 @@ struct BootView: View {
             Text(slow ? "Still connecting..." : " ")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(!slow)
+            /* Below the line, over the space under it, so what is above stays where it was. */
             Spacer()
+                .overlay(alignment: .top) {
+                    if slow {
+                        Button("Try again") {
+                            slow = false
+                            attempt += 1
+                            bridge.retryResolvingFirst()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(red: 0.36, green: 0.29, blue: 0.91))
+                        .padding(.top, 2)
+                    }
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea())
@@ -123,9 +143,11 @@ struct BootView: View {
         /* NATIVE-R6-09 (build 31): VoiceOver stays on this screen while it covers the page. */
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
-        .task {
+        .task(id: attempt) {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
             slow = true
+            UIAccessibility.post(notification: .announcement, argument: "Still connecting")
         }
     }
 }

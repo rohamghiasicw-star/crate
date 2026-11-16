@@ -40,6 +40,7 @@ struct EngineWebView: UIViewRepresentable {
         let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true,shazamkit:\(ShazamProbe.protocolVersion),store:1};"
         ucc.addUserScript(WKUserScript(source: flag, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.addUserScript(WKUserScript(source: Coordinator.themeScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        ucc.addUserScript(WKUserScript(source: Coordinator.screenScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         ucc.add(context.coordinator, name: "addify")
         ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
@@ -121,6 +122,16 @@ struct EngineWebView: UIViewRepresentable {
             + "if(!h||!r)return;var last='';function send(){var t=r.getAttribute('data-theme')==='light'?'light':'dark';"
             + "if(t===last)return;last=t;try{h.postMessage({type:'theme',theme:t});}catch(e){}}send();"
             + "try{new MutationObserver(send).observe(r,{attributes:true,attributeFilter:['data-theme']});}catch(e){}})();"
+
+        /* NATIVE-R7-05 (build 32): reports each change of the page's screen (#app's data-state) with the
+           screen it left, so a shared link whose scan the user left is let go at once (EngineBridge
+           screenChanged), not only when the app leaves the foreground. Only the engine's own page is
+           listened to (userContentController). */
+        static let screenScript = "(function(){var w=window.webkit,h=w&&w.messageHandlers&&w.messageHandlers.addify,"
+            + "a=document.getElementById('app');if(!h||!a)return;var last=a.getAttribute('data-state');"
+            + "try{new MutationObserver(function(){var s=a.getAttribute('data-state');if(s===last&&s!=='scanning')return;"
+            + "var f=last;last=s;try{h.postMessage({type:'screen',from:f,to:s});}catch(e){}})"
+            + ".observe(a,{attributes:true,attributeFilter:['data-state']});}catch(e){}})();"
 
         /* NATIVE-R6-02 (build 31): a share arrived. Whatever this app presented over the page goes away
            first, so the scan, its banner and its haptic are not hidden behind it: an alert or confirm is
@@ -207,11 +218,16 @@ struct EngineWebView: UIViewRepresentable {
             loadedHost = url.host?.lowercased()
             var req = URLRequest(url: url)
             req.cachePolicy = .reloadIgnoringLocalCacheData   // the build stamp must be current or the stale-shell guard loops
-            /* BUILD 20: 20 s, not WebKit's 60 s. A stalled address now hands over to the next one
-               in seconds instead of leaving a reviewer on a blank screen for three minutes. */
-            req.timeoutInterval = 20
+            req.timeoutInterval = Self.mainFrameTimeout
             wv.load(req)
         }
+
+        /* BUILD 20: 20 s, not WebKit's 60 s, so a stalled address hands over to the next one in
+           seconds. NATIVE-R7-02 (build 32): with one compiled-in address (this build) there is no next
+           one, and the 20 s cap only cut off a page whose first byte took longer, every reload too, so
+           the app could never open on a slow network. With one address the main-frame load gets
+           WebKit's own 60 s, under the loading screen, whose Try again shows after 8 s (BootView). */
+        static var mainFrameTimeout: TimeInterval { EngineConfig.addressIsFixed ? 60 : 20 }
 
         /* Hosts allowed to render INSIDE the web view as the main page. Everything else opens
            in the OS, except the legal and support pages, which open in a Safari view over the app
@@ -413,7 +429,7 @@ struct EngineWebView: UIViewRepresentable {
                 /* A share still held is what the user is waiting for: its page, whatever failed. */
                 var req = URLRequest(url: self.bridge.retryURL(url))
                 req.cachePolicy = .reloadIgnoringLocalCacheData
-                req.timeoutInterval = 20
+                req.timeoutInterval = Self.mainFrameTimeout
                 wv.load(req)
             }
         }
@@ -438,8 +454,8 @@ struct EngineWebView: UIViewRepresentable {
         static let transientCodes: Set<Int> = [NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
                                                NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
                                                NSURLErrorDNSLookupFailed, NSURLErrorSecureConnectionFailed]
-        /* BUILD 20: a timeout already cost 20 s, so it is never retried on the same address;
-           it moves to another address or ends in "Can't reach Addify". */
+        /* BUILD 20: a timeout already cost 20 s (60 s with one address, NATIVE-R7-02), so it is never
+           retried on the same address; it moves to another address or ends in "Can't reach Addify". */
         static let quietRetryCodes: Set<Int> = transientCodes.subtracting([NSURLErrorTimedOut])
         static let offlineCodes: Set<Int> = [NSURLErrorNotConnectedToInternet, NSURLErrorDataNotAllowed,
                                              NSURLErrorInternationalRoamingOff, NSURLErrorCallIsActive]
@@ -497,7 +513,7 @@ struct EngineWebView: UIViewRepresentable {
                     guard let self = self, let wv = webView, generation == self.retryGeneration else { return }
                     var req = URLRequest(url: self.bridge.retryURL(failing))
                     req.cachePolicy = .reloadIgnoringLocalCacheData
-                    req.timeoutInterval = 20
+                    req.timeoutInterval = Self.mainFrameTimeout
                     wv.load(req)
                 }
                 return
@@ -608,6 +624,10 @@ struct EngineWebView: UIViewRepresentable {
             guard message.frameInfo.isTrustedEngineFrame else { return }
             if let d = message.body as? [String: Any], (d["type"] as? String) == "theme" {
                 bridge.pageTheme = (d["theme"] as? String) == "light" ? "light" : "dark"
+                return
+            }
+            if let d = message.body as? [String: Any], (d["type"] as? String) == "screen" {
+                bridge.screenChanged(from: d["from"] as? String, to: d["to"] as? String)
                 return
             }
             /* The song's share button. WKWebView never exposes navigator.share, so the page

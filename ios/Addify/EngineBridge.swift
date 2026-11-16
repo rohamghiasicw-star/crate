@@ -50,8 +50,14 @@ final class EngineBridge: ObservableObject {
         didSet { if share.current != oldValue.current { HeldShare.save(share.current) } }
     }
     /* NATIVE-R6-08 and NATIVE-R6-10 (build 31): a shared link that was not scanned and is too old to
-       start on its own. The app asks about it once a page is up (offerStale). */
-    private var staleShare: String?
+       start on its own. The app asks about it once a page is up (offerStale). NATIVE-R7-03 (build 32):
+       kept on disk until the question is answered, so a run in which no page loads does not lose it
+       (StaleShare). */
+    private var staleShare: String? {
+        didSet { if staleShare != oldValue { StaleShare.save(staleShare) } }
+    }
+    /* The question while it is up, so a second page load does not ask it twice. */
+    private weak var staleAlert: UIAlertController?
     /* Set by the web view's coordinator: closes what this app put over the page (the Safari view, a
        share sheet, an alert or confirm, answered as Cancel), then runs the block (EngineWebView
        closeSheets). */
@@ -70,9 +76,11 @@ final class EngineBridge: ObservableObject {
        again, the launch opens its share page; too old, or back too many launches in a row, it is asked
        about instead. */
     init() {
+        staleShare = StaleShare.restore()
         if let held = HeldShare.restore() {
             if held.fresh { share.hold(held.link) } else { staleShare = held.link }
         }
+        StaleShare.save(staleShare)     // an initializer's own assignments skip didSet
     }
 
     /* addify://scan?url=<link>  (from the Share Extension)
@@ -115,15 +123,18 @@ final class EngineBridge: ObservableObject {
     }
 
     private func showStale() {
-        guard let link = staleShare, pageReady, !booting, !unreachable, let wv = webView else { return }
+        guard let link = staleShare, staleAlert == nil, pageReady, !booting, !unreachable, let wv = webView else { return }
         /* Words that hold for both ways here: parked past ten minutes, or cut off by iOS ending the app
            (HeldShare), which can be well inside ten minutes. */
         let ac = UIAlertController(title: "Scan the video you shared?",
                                    message: "Addify has not scanned a video you shared earlier.",
                                    preferredStyle: .alert)
-        ac.addAction(UIAlertAction(title: "Not now", style: .cancel))
+        /* NATIVE-R7-03 (build 32): the link is let go only once the question is answered. */
+        ac.addAction(UIAlertAction(title: "Not now", style: .cancel) { [weak self] _ in
+            if self?.staleShare == link { self?.staleShare = nil }
+        })
         ac.addAction(UIAlertAction(title: "Scan it", style: .default) { [weak self] _ in self?.deliver(link) })
-        if presentOnTop(ac, over: wv) { staleShare = nil }
+        if presentOnTop(ac, over: wv) { staleAlert = ac }
     }
 
     /* Two ways to start a scan, in order of preference:
@@ -289,6 +300,21 @@ final class EngineBridge: ObservableObject {
     }
 
     private func checkScanOnLeave() {
+        probeHandedScan()
+    }
+
+    /* NATIVE-R7-05 (build 32). The page reported that its screen changed while the app is in front
+       (EngineWebView screenScript). Leaving the foreground was the only time the probe ran, so a share
+       the user left in the app (Back, a no-match card, another link pasted on Home) stayed held, and a
+       reload after WebKit killed the page or a Try again reopened its share page and scanned that clip
+       again. Now a change away from the scan, or a scan starting, runs the same probe at once, so a
+       share the user left is let go before any reload or launch check can reopen it. */
+    func screenChanged(from: String?, to: String?) {
+        guard from == "scanning" || to == "scanning" else { return }
+        probeHandedScan()
+    }
+
+    private func probeHandedScan() {
         guard pageReady, let link = share.handedLink, let wv = webView else { return }
         wv.evaluateJavaScript(Self.scanScreenProbe(link)) { [weak self] value, error in
             guard error == nil, let screen = value as? String, screen != "scanning" else { return }

@@ -107,8 +107,10 @@ final class ShareViewController: UIViewController {
         if !SharedInbox.hasPending { finish(error: false); return }
         if afterTap {
             if AppGroup.isShared {
+                /* LAWYER-R7-05 (build 32): no "starts scanning right away". Opened within ten minutes the
+                   app scans it; later it asks first (EngineBridge offerStale). */
                 showCard(title: "Open Addify to scan it",
-                         body: "iOS did not let Addify open from here. Open Addify from your home screen and this video starts scanning right away.",
+                         body: "iOS did not let Addify open from here. Open Addify from your home screen to scan this video.",
                          primary: nil)
             } else {
                 /* No app group in this build: the inbox stays in the extension, so hand the user
