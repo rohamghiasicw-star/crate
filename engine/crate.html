@@ -2696,8 +2696,13 @@ function parseLink(raw){raw=(raw||'').trim(); var all=(raw.match(LINK_RE)||[]).m
   // Every word between Unicode spaces is tried, without zero-width characters, the ( [ { < " ' before it or the punctuation
   // after it (linkTrim), and the first CLIP wins: a profile, sound or other page link before it never does. The share
   // extension reads shared text by the same rule; engine/link_corpus_r7.json holds the rule and its texts.
-  if(!all.length){var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/);
-    for(var j=0;j<tk.length;j++){var t=linkTrim(tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,'').replace(/^[(\[{<"']+/,'')), r2=t?clipShape(t):{};
+  // ROUND 8C (SHARE-R8-01, GAPS-R8-03): a word loses every leading character a URL cannot hold (an emoji, a curly quote,
+  // a full-width bracket) as well as ( [ { < " ', and ends at the first one (an emoji glued after the link, a closing curly quote).
+  // The words are read when the http(s) links hold no clip too, so a clip anywhere wins over a page or another site's link.
+  {var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/);
+    for(var j=0;j<tk.length;j++){var t=linkTrim(tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,'')
+        .replace(/^(?:[(\[{<"']|[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%])+/,'').replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,'')),
+      r2=t?clipShape(t):{};
       if(r2.host) return {host:r2.host,url:r2.url||(/^https?:\/\//i.test(t)?t:'https://'+t)};}}
   return {host:null,url:all[0]||raw,page:page};}
 function notClipMsg(p){return p&&p.page
@@ -6347,7 +6352,8 @@ function exportFinds(){var a=loadCrate(); if(!a.length) return;
    TABS + the four tab pages
    ============================================================ */
 var TABS=['idle','search','library','profile'];
-function nav(state){setState(state);
+function nav(state){if(state!=='idle') listenUnpark();   // ROUND 8C (SHARE-R8-02): leaving Home cancels a Listen that waits
+  setState(state);
   /* Konnor, 2026-09-23: tabs are Home, Search, Finds, You. Trending keeps its screen but
      stops owning a tab - it is reached from "See all" on Home, so while it is open the
      Home tab stays lit and the header carries a back button. */
@@ -7033,7 +7039,9 @@ if(pasteBtn) pasteBtn.onclick=function(){
   navigator.clipboard.readText().then(function(t){
     // onbQuiet: this run() fires from the clipboard promise after the OS Paste callout, which
     // is not a page event, so onbNoteRun would take it for a share-sheet arrival
-    if(parseLink(t).host){urlEl.value=t; syncFormAction(); onbQuiet=true; try{run(t);}finally{onbQuiet=false;}}
+    // ROUND 8C (SHARE-R8-01): the box is one line, so a line break in the text becomes a space ("omg" + line break +
+    // "tiktok.com/..." stays two words there, not "omgtiktok.com/...")
+    if(parseLink(t).host){urlEl.value=t.replace(/\r\n?|\n/g,' '); syncFormAction(); onbQuiet=true; try{run(t);}finally{onbQuiet=false;}}
     else {urlEl.focus(); showErr('No TikTok or Instagram link on the clipboard.');}
   }).catch(function(){urlEl.focus();});};
 
@@ -7217,6 +7225,10 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
   errHide();
   var p=parseLink(raw), arrived=shareArrival();     // ROUND 5C: a share from the share sheet (no tap on this page)
   var reopen=!!opt.reopen||(!!p.host&&findReopen(p.url));
+  // ROUND 8C (CHAOS-R8-01): a shared clip the paywall opens for goes in the Home box first, so the box, PW_AFTER and the
+  // share name the same clip, and closing the paywall leaves it there ready to scan (the box kept the earlier clip). The
+  // box's button follows what it holds (Find it, not Paste), as it does for a cold share's link
+  var pwBox=function(){if(arrived) urlEl.value=p.url; if(typeof syncFormAction==='function') syncFormAction();};
   var let6=PRO_LET&&!!p.host&&!reopen&&outOfScans()&&!scanCounted(p.url);   // ROUND 6 (IAP-R6-01): no answer by PRO_CAP: it goes, uncounted
   if(p.host&&!reopen&&!let6&&outOfScans()&&!scanCounted(p.url)){
     // ROUND 5C (IAP-R5-1): before the first entitlement answer the gate waits for it (ROUND 6: PRO_CAP at most), then decides
@@ -7229,9 +7241,9 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
       vkeyOf(p.url).then(function(k){RUN_GATE=false; if(RUN_NEXT){runNext(); return;}   // ROUND 7 (CHAOS-R7-01)
         // ROUND 5C: Plus may have turned on while the lookup ran: the paywall only if still out of scans
         if(!outOfScans()||(k&&(scanCounted(p.url)||devHas(k)))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
-        else {sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
+        else {pwBox(); sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
       return;}
-    if(!devHas(_vk)){sheetsOff(true); PW_AFTER=raw||''; openPaywall(); return;}}   // ROUND 5B: the paywall alone, in front
+    if(!devHas(_vk)){pwBox(); sheetsOff(true); PW_AFTER=raw||''; openPaywall(); return;}}   // ROUND 5B: the paywall alone, in front
   SCAN_FREE=reopen||let6;
   onbNoteRun();                                    // ONBOARDING v4: a share-sheet arrival marks onboarding done
   sheetsOff();                                     // ROUND 5B: the scan (or its message) is never behind a sheet
@@ -8159,8 +8171,11 @@ function listenGate(){
   // ROUND 7 (SHARE-R7-03): a share, Back or Cancel while it waits (stopListen bumps lGen) cancels the parked Listen,
   // so the mic is never asked for after the user moved on
   if(!PRO_KNOWN){var g0=lGen; LISTEN_GATE=true; planNote(true);
-    proWait().then(function(){LISTEN_GATE=false; planNote(false); if(g0===lGen) startListen();}); return true;}
+    proWait().then(function(){LISTEN_GATE=false; planNote(false); if(g0===lGen&&waveState==='idle') startListen();}); return true;}
   sheetsOff(true); PW_AFTER=''; openPaywall(); return true;}
+/* ROUND 8C (SHARE-R8-02): a tab, See all or any other nav away from Home cancels the parked Listen as Back does, and it
+   starts only on Home, so the mic is never turned on over You, Search or Finds. A new tap on Home waits again. */
+function listenUnpark(){if(!LISTEN_GATE) return; lGen++; LISTEN_GATE=false; if(!RUN_GATE) planNote(false);}
 function startListen(){
   if(listenGate()) return;
   if(!micOK()){
