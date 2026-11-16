@@ -88,6 +88,11 @@ enum SharedInbox {
        space, each without its zero-width characters, the ( [ { < " ' before it and the punctuation
        after it (linkTrim) ("omg listen www.tiktok.com/@u/video/... \u{1F525}", "look instagr.am/reel/...").
        A clip there gets https://.
+       SHARE-R8-01 and GAPS-R8-03 (build 33): as the page's parseLink reads words since round 8, a word also
+       loses every character before it a URL cannot hold (an emoji, a curly quote, a full-width bracket) and
+       ends at the first such character after it ("omg tiktok.com/@u/video/...\u{1F525}",
+       "\u{201C}tiktok.com/@u/video/...\u{201D}"), and the words are read whenever the http(s) links hold no
+       clip, not only when there are none ("vm.tiktok.com/ZM.../ https://www.youtube.com/...").
        With no clip anywhere, a TikTok or Instagram page found by the first two readings goes through,
        so the app opens and the page says what it is ("That link is a TikTok page, not a clip").
        GAPS-R7-03 (build 32): also a page with no https:// ("www.tiktok.com/@u") or with a
@@ -108,20 +113,21 @@ enum SharedInbox {
             if read.clip { return read.link }
             if page == nil { page = read.link }
         }
-        if links.isEmpty {
-            for word in words(raw) {
-                if let clip = clipLink(word) { return clip }
-            }
+        for word in words(raw) {
+            if let clip = clipLink(word) { return clip }
         }
         return page ?? links.first(where: isScannable)
     }
 
-    /* SHARE-R7-01 (build 32): the words of a text with no http(s) link, as the page's parseLink reads
-       each one for a clip: split on Unicode white space (U+0009 to U+000D, space, U+0085, U+00A0,
-       U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000), every zero-width character
-       (U+200B to U+200D, U+2060, U+FEFF) taken out, then the leading ( [ { < " ' and the trailing
-       punctuation (linkTrim) dropped, and what the URL parser drops at the end (control characters).
-       Read code point by code point. Empty words are left out. */
+    /* SHARE-R7-01 (build 32): the words of a text, as the page's parseLink reads each one for a clip:
+       split on Unicode white space (U+0009 to U+000D, space, U+0085, U+00A0, U+1680, U+2000 to U+200A,
+       U+2028, U+2029, U+202F, U+205F, U+3000), every zero-width character (U+200B to U+200D, U+2060,
+       U+FEFF) taken out, then the leading ( [ { < " ' dropped and the trailing punctuation (linkTrim).
+       SHARE-R8-01 (build 33): every leading character LINK_RE cannot hold is dropped too, and the word ends
+       at the first one after that, as in the page's
+       .replace(/^(?:[(\[{<"']|[^<URL characters>])+/,'').replace(/[^<URL characters>][\s\S]*$/,'').
+       Read code point by code point (a character outside ASCII is never a URL character, so this is the
+       page's reading of UTF-16 code units). Empty words are left out. */
     private static func words(_ raw: String) -> [String] {
         let space: (Unicode.Scalar) -> Bool = {
             switch $0.value {
@@ -130,9 +136,10 @@ enum SharedInbox {
             }
         }
         let lead = Set("([{<\"'".unicodeScalars)
+        let urlChar: (Unicode.Scalar) -> Bool = { $0.isASCII && isURLChar(UInt16($0.value)) }
         return raw.unicodeScalars.split(whereSeparator: space).compactMap { w in
             let kept = w.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0x2060 && $0.value != 0xFEFF }
-            let word = asOneURL(linkTrim(text(kept.drop(while: { lead.contains($0) }))))
+            let word = linkTrim(text(kept.drop(while: { lead.contains($0) || !urlChar($0) }).prefix(while: urlChar)))
             return word.isEmpty ? nil : word
         }
     }

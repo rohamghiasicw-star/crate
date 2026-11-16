@@ -27,6 +27,14 @@ iPhone and an iPad simulator. Scenarios:
   killback   the page leaves its scan in the foreground (Back), then WebKit's page process is killed: Home (build 32)
   sharewords a share whose text has words before a clip link with no https:// opens the clip's share page (build 32)
   sharepage  a TikTok page link with no https:// opens its share page, where the page says it is a page (build 32)
+  shareglued a share whose clip link (no https://) follows a word with an emoji glued after it opens the clip's
+             share page (build 33)
+  sharemixed a share whose text has a YouTube link, then a clip link with no https://, opens the clip's share
+             page (build 33)
+  killpaywall the share page opens the paywall (0 free scans) and no scan; WebKit's page process is killed with
+             the app in front: Home, not the share page and its paywall again (build 33)
+  killpaywallnow the same with the paywall up before the page finished loading (build 33)
+  killwarmpaywall the same for a share the page that is up takes (run), which opens the paywall (build 33)
   slowboot   one compiled-in address, the page's first byte takes 25 s: the loading screen says it is still
              connecting and offers Try again after 8 s, and the page opens from that first request (build 32)
   theme      the page's light theme gives dark status bar content, its dark theme light (build 31)
@@ -499,11 +507,20 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     catch(e) { ok({err: 'throw: ' + String(e && e.message || e)}); }
     setTimeout(function(){ ok({err: 'timeout'}); }, wait || 8000); }); }
   if (__STATE__) document.getElementById('app').setAttribute('data-state', __STATE__);
+  // Build 33 (NATIVE-R8-01): the paywall at 0 free scans, a #paywall added to <body> and shown, as crate.html's
+  // openPaywall() does. On a share page (?url=) it opens __PAYWALL__ ms in (crate.html's run() runs 350 ms in),
+  // at once for 0; with __RUN_PAYWALL__ run(link) opens it and starts no scan.
+  function paywall(){ var p = document.getElementById('paywall') || document.createElement('div');
+    p.id = 'paywall'; p.textContent = 'paywall'; p.hidden = false; document.body.appendChild(p);
+    send('paywall', {lid: lid, href: location.href}); }
+  if (__PAYWALL__ >= 0 && /[?&]url=/.test(location.search)) { if (__PAYWALL__ === 0) paywall(); else setTimeout(paywall, __PAYWALL__); }
   window.addEventListener('addify:entitlements', function(){ send('entitlements', {lid: lid, href: location.href}); });
   send('load', r); show();
   // The page's own entry point for a share that arrives while it is up (crate.html run()).
   window.busy = false;
-  window.run = function(link){ send('run', {link: link, lid: lid, href: location.href, port: __PORT__}); };
+  // Build 33: a scan sets busy, as crate.html's run() does; the paywall does not (NATIVE-R8-01).
+  window.run = function(link){ if (__RUN_PAYWALL__) paywall(); else window.busy = true;
+    send('run', {link: link, lid: lid, href: location.href, port: __PORT__}); };
   function bridges(kind, done){
     call('addifyKit', {type: 'ping'}).then(function(k){ r.kit = k; return call('addifyStore', {op: 'status'}); })
     .then(function(s){ r.store = s; show(); send(kind, r); if (done) done(); }); }
@@ -658,6 +675,8 @@ class Handler(BaseHTTPRequestHandler):
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
             page = page.replace("__THEME__", "true" if cfg.get("theme") else "false")
             page = page.replace("__LEAVE__", str(int(cfg.get("leave_ms", 0))))
+            page = page.replace("__PAYWALL__", str(int(cfg.get("paywall_ms", -1))))
+            page = page.replace("__RUN_PAYWALL__", "true" if cfg.get("run_paywall") else "false")
             return self.reply(200, page.encode())
         return self.reply(404)
 
@@ -1190,10 +1209,14 @@ def run_stub_suite(dev, app, version, ipad=False):
         fixed_retry(dev, app, version)
         for mode in ("scan", "result", "card", "back"):
             killed_page(dev, app, version, mode)
+        for mode in ("cold", "coldnow", "warm"):
+            paywall_share(dev, app, version, mode)
         share_text(dev, app, version)
         share_text(dev, app, version, "sharetrim", "https://www.tiktok.com/@dj.user (" + SHARE_LINK + ")")
         share_text(dev, app, version, "sharewords", "omg listen " + SHARE_LINK[len("https://"):] + " \U0001F525")
         share_text(dev, app, version, "sharepage", "www.tiktok.com/@dj.user", want="https://www.tiktok.com/@dj.user")
+        share_text(dev, app, version, "shareglued", "omg listen " + SHARE_LINK[len("https://"):] + "\U0001F525")
+        share_text(dev, app, version, "sharemixed", "https://www.youtube.com/watch?v=dQw4w9WgXcQ " + SHARE_LINK[len("https://"):])
         for mode in ("scan", "result"):
             app_killed(dev, app, version, mode)
         safari_share(dev, app, version)
@@ -1722,6 +1745,70 @@ def killed_page(dev, app, version, mode):
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
 
+def paywall_share(dev, app, version, mode):
+    """NATIVE-R8-01 (build 33). At 0 free scans a shared clip opens the Addify+ paywall and the page never
+    starts its scan (#app stays on Home). That share is over: WebKit's page process is then killed with the
+    app in front, and the reload must open Home, not the share page, which would open the paywall again
+    with no tap. Build 32 kept the share and reopened it.
+      cold     the share opens its share page, whose paywall opens 350 ms in, as crate.html's run() does
+      coldnow  the same with the paywall up before the page finished loading
+      warm     the share reaches the page that is up (run(link)), which opens the paywall and starts no scan"""
+    label = {"cold": "killpaywall", "coldnow": "killpaywallnow", "warm": "killwarmpaywall"}[mode]
+    a = {"health_ms": 20, "state": "idle"}
+    if mode == "warm":
+        a["run_paywall"] = True
+    else:
+        a["paywall_ms"] = 0 if mode == "coldnow" else 350
+    cfg = {"A": a, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    link = SHARE_LINK if mode != "warm" else SHARE_LINK + "8"
+    paid = nth(lambda e: e.get("kind") == "paywall", 1)
+    after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
+    dev.killed, dev.kill_note, dev.kill_t, dev.reload_shot, dev.reload_shot_t = [], [], None, "", None
+    env, acts = dict(SINGLE), []
+    if mode == "warm":
+        loaded = nth(lambda e: e.get("kind") == "bridges", 1)
+        acts += [("write", loaded, 0.5, lambda d: d.write_lab_open("addify://scan?url=" + quote(link, safe=""))),
+                 ("leave", loaded, 1.0, lambda d: d.to_background()),
+                 ("return", loaded, 2.5, lambda d: d.launch())]
+    else:
+        env["ADDIFY_LAB_OPEN"] = "addify://scan?url=" + quote(link, safe="")
+    acts += [("kill", paid, 2.0, lambda d: kill_webcontent(d, label)), ("settled", nth(after_kill, 1), 1.5, None)]
+    res = scenario(dev, app, label, cfg, fresh=False, timeout=75, launch_env=env, actions=tuple(acts))
+    timeline(res)
+    check(dev, label, "WebKit page process killed", bool(dev.killed),
+          "%s" % (dev.killed or "nothing matched, other WebKit processes %s" % dev.kill_note[:6]))
+    reqs = [e for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
+    before = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == link, e["status"]) for e in reqs
+              if dev.kill_t is None or e["t"] < dev.kill_t]
+    after = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == link, e["status"]) for e in reqs
+             if dev.kill_t is not None and e["t"] >= dev.kill_t]
+    walls = [e for e in res["entries"] if e.get("kind") == "paywall"]
+    wall = walls[0]["report"] if walls else {}
+    if mode == "warm":
+        ran = report(res, "run")
+        check(dev, label, "the page that was up took the share (run) and opened its paywall, no share page",
+              (ran or {}).get("link") == link and wall.get("lid") == (ran or {}).get("lid") and not [x for x in before if x[1] == "/share"],
+              "run %s, paywall %s, before the kill %s" % (json.dumps(ran), json.dumps(wall), json.dumps(before)))
+    else:
+        check(dev, label, "the share page loaded and opened its paywall before the kill",
+              any(x[1] == "/share" and x[2] and x[3] == 200 for x in before) and "/share?" in (wall.get("href") or ""),
+              "paywall on %s, before the kill %s" % (wall.get("href"), json.dumps(before)))
+    check(dev, label, "the reload opened Home, not the share page and its paywall again",
+          bool(after) and after[0][1] == "/" and not [x for x in after if x[1] == "/share"], json.dumps(after))
+    check(dev, label, "no paywall after the reload", not [e for e in walls if dev.kill_t is not None and e["t"] > dev.kill_t],
+          "%d paywall reports, kill at %s" % (len(walls), dev.kill_t and round(dev.kill_t - res["t0"], 2)))
+    k, icon = pixel_class(dev.reload_shot), boot_icon(dev.reload_shot)
+    check(dev, label, "loading screen while the page reloads (not a blank view)", k == "boot" and icon >= 150,
+          "%s, icon %d px, shot %s s after the kill" % (k, icon, dev.reload_shot_t))
+    loads = [e for e in res["entries"] if after_kill(e)]
+    check(dev, label, "a page reported again after the reload", bool(loads),
+          loads[0]["report"].get("href") if loads else "no page after the kill")
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, label, "page on screen after the reload", k == "page", k)
+    check(dev, label, "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
+
+
 def entitlements(dev, app, version):
     """CHAOS-2-R5-03. A verified StoreKit transaction that arrives on its own (an Ask to Buy approval,
     a renewal) is finished and the loaded page is told: the event addify:entitlements. The lab copy
@@ -1751,7 +1838,9 @@ def share_text(dev, app, version, label="sharetext", text=None, want=SHARE_LINK)
     profile is in brackets, so a ")" follows it, which the page trims and build 30 did not.
     sharewords (SHARE-R7-01, build 32): words before a clip link with no https://, an emoji after it.
     sharepage (GAPS-R7-03, build 32): a TikTok page with no https:// opens its share page (want), where the
-    page says it is a page, not a clip; the share card no longer says the share had no link."""
+    page says it is a page, not a clip; the share card no longer says the share had no link.
+    shareglued (SHARE-R8-01, build 33): an emoji glued after a clip link with no https:// that follows a word.
+    sharemixed (GAPS-R8-03, build 33): a YouTube link, then a clip link with no https://."""
     text = text or ("https://www.tiktok.com/@dj.user and the clip " + SHARE_LINK)
     cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     # Waits for the share page's own report: with one address a Home load starts first and may report.

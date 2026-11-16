@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds tools/share-corpus.json, the share corpus the host tests read (hosttests.swift).
 
-Round 7 (build 32, SHARE-R7-01, GAPS-R7-03, GAPS-R7-04). The testers' texts (and engine/link_corpus_r7.json's
+Round 7 (build 32, SHARE-R7-01, GAPS-R7-03, GAPS-R7-04), round 8 (build 33, SHARE-R8-01, GAPS-R8-03). The testers' texts (and engine/link_corpus_r7.json's
 cases, whose rule the page and the share follow), the link the share extension
 hands over for each (SharedInbox.shareLink, run on a Mac), and what the page's own parseLink does with the
 pasted text in WebKit (Playwright, the page's clipShape/LINK_RE/linkTrim/parseLink copied from crate.html).
