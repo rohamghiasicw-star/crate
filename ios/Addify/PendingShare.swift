@@ -21,7 +21,8 @@ import Foundation
 
    A held link ends only when it is done with or replaced:
    - when the page posts a result after it had the link (resultPosted),
-   - when the page it went to shows another screen than its scan (scanEnded),
+   - when the page it went to shows another screen than its scan (scanEnded), the paywall included,
+   - when the running page it was handed to did not start its scan (declined, NATIVE-R8-01),
    - when a newer share replaces it,
    - after maxCrashReloads reloads that followed WebKit killing the page. That is the one reload
      that repeats with nobody asking (a share page that kills WebKit every time would otherwise
@@ -110,6 +111,14 @@ struct PendingShare {
         guard link == l else { return }
         opened = false
         handed = true
+    }
+
+    /* NATIVE-R8-01 (build 33). The running page was handed `l` (run(link)) and neither started nor
+       queued its scan: it opened the paywall, or said the link is not a clip. That share is over, as
+       when the user leaves a scan (scanEnded), so a reload or Try again never reopens its share page
+       or the paywall. A newer share that arrived meanwhile stays. */
+    mutating func declined(_ l: String) {
+        if link == l { clear() }
     }
 
     /* The page posted a scan's result. A link the page had is done and released. A link no page

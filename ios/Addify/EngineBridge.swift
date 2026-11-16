@@ -174,10 +174,17 @@ final class EngineBridge: ObservableObject {
         }
         if pageReady {
             let json = Self.jsString(link)
-            let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));return true;}catch(e){return false;}})()"
+            /* NATIVE-R8-01 (build 33): true only when run() started the scan (busy) or queued it (RUN_GATE,
+               "Checking your plan..."). Anything else it did (the paywall at 0 free scans, "That link is a
+               TikTok page, not a clip") answers 'over': the share is done, and a reload or Try again must
+               not reopen its share page, which would open the paywall again on its own. */
+            let js = "(function(){try{if(typeof run!=='function'||window.busy)return false;run(\(json));"
+                + "return window.busy===true||window.RUN_GATE===true?true:'over';}catch(e){return false;}})()"
             wv.evaluateJavaScript(js) { [weak self] value, _ in
                 guard let self = self else { return }
-                if (value as? Bool) == true {
+                if (value as? String) == "over" {
+                    self.share.declined(link)
+                } else if (value as? Bool) == true {
                     self.share.taken(link)
                 } else if self.share.waiting == link {
                     self.loadShare()
@@ -210,7 +217,13 @@ final class EngineBridge: ObservableObject {
        that page has the link now. A link that arrived while another page loaded is handed over. */
     func engineLoaded() {
         showStale()
-        if share.pageLoaded() { return }
+        if share.pageLoaded() {
+            /* NATIVE-R8-01 (build 33): the share page may have opened the paywall (0 free scans) or said
+               the link is not a clip before its load finished; the paywall opens 350 ms in. Such a share
+               is over. A share page still starting its scan answers otherwise and is kept. */
+            probeHandedScan(over: ["paywall", "page"])
+            return
+        }
         flushPending()
     }
 
@@ -291,10 +304,14 @@ final class EngineBridge: ObservableObject {
        its card is up. A scan that ended any other way (no match, Back, the paywall) or whose card
        is on screen must not start again. So when the app leaves the foreground the page is asked
        what it shows: #app's data-state, and whether its current scan is this link. Any screen but
-       the scan, or a scan of another link, releases it. No answer keeps it. */
+       the scan, or a scan of another link, releases it. No answer keeps it.
+       NATIVE-R8-01 (build 33): off the scan it also says 'paywall' while the Addify+ paywall is up, and
+       'page' when the page does not read the link as a clip (it shows "That link is a TikTok page, not a
+       clip"), so a share page that loaded onto either is let go (engineLoaded). */
     static func scanScreenProbe(_ link: String) -> String {
         "(function(l){var a=document.getElementById('app'),s=a?a.getAttribute('data-state'):null;"
-            + "if(s!=='scanning')return s;"
+            + "if(s!=='scanning'){var p=document.getElementById('paywall');if(p&&!p.hidden)return 'paywall';"
+            + "try{if(typeof parseLink==='function'&&!parseLink(l).host)return 'page';}catch(e){}return s;}"
             + "try{if(typeof curURL==='string'&&curURL&&typeof parseLink==='function'&&parseLink(l).url!==curURL)return 'other';}catch(e){}"
             + "return s;})(\(jsString(link)))"
     }
@@ -308,16 +325,21 @@ final class EngineBridge: ObservableObject {
        the user left in the app (Back, a no-match card, another link pasted on Home) stayed held, and a
        reload after WebKit killed the page or a Try again reopened its share page and scanned that clip
        again. Now a change away from the scan, or a scan starting, runs the same probe at once, so a
-       share the user left is let go before any reload or launch check can reopen it. */
+       share the user left is let go before any reload or launch check can reopen it.
+       NATIVE-R8-01 (build 33): the paywall opening is reported too (to 'paywall', EngineWebView
+       screenScript). At 0 free scans a shared clip opens it and #app never leaves Home, so the share
+       was kept and a reload or Try again reopened its share page and the paywall with no tap. */
     func screenChanged(from: String?, to: String?) {
-        guard from == "scanning" || to == "scanning" else { return }
+        guard from == "scanning" || to == "scanning" || to == "paywall" else { return }
         probeHandedScan()
     }
 
-    private func probeHandedScan() {
+    /* Asks the page what it shows (scanScreenProbe) and lets the handed share go on an answer in
+       `over`, or by default on any answer but the scan. */
+    private func probeHandedScan(over: Set<String>? = nil) {
         guard pageReady, let link = share.handedLink, let wv = webView else { return }
         wv.evaluateJavaScript(Self.scanScreenProbe(link)) { [weak self] value, error in
-            guard error == nil, let screen = value as? String, screen != "scanning" else { return }
+            guard error == nil, let screen = value as? String, over?.contains(screen) ?? (screen != "scanning") else { return }
             self?.share.scanEnded(link)
         }
     }

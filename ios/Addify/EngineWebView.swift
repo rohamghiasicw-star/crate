@@ -126,12 +126,19 @@ struct EngineWebView: UIViewRepresentable {
         /* NATIVE-R7-05 (build 32): reports each change of the page's screen (#app's data-state) with the
            screen it left, so a shared link whose scan the user left is let go at once (EngineBridge
            screenChanged), not only when the app leaves the foreground. Only the engine's own page is
-           listened to (userContentController). */
+           listened to (userContentController).
+           NATIVE-R8-01 (build 33): and the Addify+ paywall (#paywall, which the page adds to <body> and shows
+           and hides with its hidden attribute) each time it opens, as a change to 'paywall'. At 0 free scans
+           a shared clip opens it while #app stays on Home, so this is the only word that the share is over. */
         static let screenScript = "(function(){var w=window.webkit,h=w&&w.messageHandlers&&w.messageHandlers.addify,"
             + "a=document.getElementById('app');if(!h||!a)return;var last=a.getAttribute('data-state');"
             + "try{new MutationObserver(function(){var s=a.getAttribute('data-state');if(s===last&&s!=='scanning')return;"
             + "var f=last;last=s;try{h.postMessage({type:'screen',from:f,to:s});}catch(e){}})"
-            + ".observe(a,{attributes:true,attributeFilter:['data-state']});}catch(e){}})();"
+            + ".observe(a,{attributes:true,attributeFilter:['data-state']});}catch(e){}"
+            + "var pw=false;function paywall(){var p=document.getElementById('paywall'),o=!!p&&!p.hidden;if(o===pw)return;pw=o;"
+            + "if(o)try{h.postMessage({type:'screen',from:a.getAttribute('data-state'),to:'paywall'});}catch(e){}}"
+            + "try{new MutationObserver(paywall).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});}catch(e){}"
+            + "paywall();})();"
 
         /* NATIVE-R6-02 (build 31): a share arrived. Whatever this app presented over the page goes away
            first, so the scan, its banner and its haptic are not hidden behind it: an alert or confirm is
