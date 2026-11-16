@@ -182,6 +182,12 @@ jobs:
           - id: round9b-cr
             name: 'Round 9b Finds sort, old unmatched rows, chip hint, contrast and tap areas (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round9b.py
+          - id: round9c-wk
+            name: 'Round 9c Listen wait, link words, share through the plan wait, page shared mid-scan (WebKit)'
+            run: python -u engine/test_round9c.py
+          - id: round9c-cr
+            name: 'Round 9c Listen wait, link words, share through the plan wait, page shared mid-scan (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round9c.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
