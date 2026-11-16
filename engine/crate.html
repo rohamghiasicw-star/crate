@@ -2463,7 +2463,10 @@ function appleMusicURL(d){return amLink(d).u;}
    word, brackets included), else it names that recording: "Blow on Apple Music" under a remix of Blow. */
 // ROUND 6 (GAPS-R6-04): and only when the artist is known to be the same (same:false names the recording)
 // ROUND 7 (GAPS-R7-01): titles in any script compare word for word (two Japanese titles no longer both read as '')
-function amHeroLabel(n,shown,same){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(U_NW,' ').trim();};
+// ROUND 8 (GAPS-R8-01): `raw` is the uncut upload title. When it says remix, cover, acoustic or mashup and the recording
+// does not, the hero (its tag cut, "Kesha - Blow #remix" shown as "Blow") is not that recording: the line says "Original"
+function amHeroLabel(n,shown,same,raw){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(U_NW,' ').trim();};
+  if(same!==false&&(!n||f(n)===f(shown))&&Q_SAYS.test(raw||'')&&!Q_SAYS.test(n||shown)) return 'Original on Apple Music';
   return (same!==false&&(!n||f(n)===f(shown)))?'Open in Apple Music':String(n||shown).trim()+' on Apple Music';}
 function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
   fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
@@ -4834,8 +4837,10 @@ function mainVersion(d){
   // #music", with four emoji) filled five lines of the hero at 375px.
   // ROUND 7 (GAPS-R7-02): a hashtag made of version words (#nightcore, #slowedreverb, #spedup) names the version: it stays
   // (Q_MOD's sound words only: #edit, #fyp, #live, #mix, #tiktok are tags and go)
-  var _hc='up|down|and|n|remix|edit|version|mix|[+_-]',
-      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?:'+Q_MOD+'|'+_hc+')+$','i');
+  // ROUND 8 (GAPS-R8-01): so does a tag naming another recording (#acousticcover, #mashup, #tiktokremix); a lone #remix
+  // or #cover is still a tag and goes (the Apple Music line then reads the uncut title, amHeroLabel)
+  var _hc='up|down|and|n|edit|version|mix|tiktok|[+_-]', _hr='remix(?:ed)?|rmx|covers?|acoustic|mash-?up',
+      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?!(?:remix(?:ed)?|rmx|covers?)$)(?:'+Q_MOD+'|'+_hr+'|'+_hc+')+$','i');
   t=t.replace(/#[^\s#]+/g,function(h){return _hv.test(h)?' '+h+' ':' ';});
   try{ t=t.replace(new RegExp('[\\p{Extended_Pictographic}\\uFE0F\\u200D]','gu'),''); }catch(e){}
   t=t.replace(/\s+/g,' ').trim();
@@ -4852,7 +4857,8 @@ function mainVersion(d){
   // A " || Ringtone II 2024" style tail goes when the part before it already names the song.
   // ROUND 7 (GAPS-R7-02): a tail with a sound word in it (" | Nightcore", " | slowed + reverb") is the version: it stays;
   // " || Ringtone 2024 TikTok", " | Official Audio", " | Live" still go
-  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b(?:'+Q_MOD+')\\b','i');
+  // ROUND 8 (GAPS-R8-01): so does a tail naming another recording (" | Remix", " | Cover by Jane", " || TikTok Remix")
+  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b(?:'+Q_MOD+'|'+Q_REC+')\\b','i');
   if(_seg.length>1 && bs && core(_seg[0]).indexOf(bs)>=0){var _k=_seg[0];
     for(var _i=2;_i<_seg.length;_i+=2) if(_vw.test(_seg[_i])) _k+=_seg[_i-1]+_seg[_i];
     t=_k;}
@@ -4863,6 +4869,9 @@ function mainVersion(d){
   // Not when the title starts with that artist, the credit names them, or they uploaded it.
   else if(bs && who && !named){var _pc=(t.replace(Q_PROD_BR,'$1prod.').match(new RegExp(Q_PROD.source,'i'))||[''])[0], _wa=core(who);
     if(_pc && _wa && core(_pc).indexOf(_wa)<0 && core(ex.uploader).indexOf(_wa)<0){who=d.base_song+' · '+who; of=true;}}
+  // ROUND 8 (GAPS-R8-01): a cover ("| Cover by Jane", "#acousticcover") or a "remix by X" is someone else's performance, so
+  // Shazam's artist is not printed as its performer: the line names the song and its artist. Not when they uploaded it.
+  if(!of && bs && who && Q_COVER.test(t) && !Q_COVER.test(d.base_song) && core(ex.uploader).indexOf(core(who))<0){who=d.base_song+' · '+who; of=true;}
   // ROUND 6 (LITERAL-R6-01): the search words, from the upload alone: its title (with the artist only when the title
   // itself starts with it). A title that does not name the song searches nothing of its own (searchQ uses the song).
   // ROUND 7 (GAPS-R7-02): a version hashtag searches as its words ("#nightcore" as "nightcore")
@@ -4885,6 +4894,12 @@ var Q_VER='(?:slowed|sped|speed|super|reverb(?:ed)?|remix(?:ed)?|edit(?:ed)?|hoo
    crowns; Q_VER's wider words (edit, live, mix, cover, version, tiktok) are everyday tags there */
 var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk|chopped|screwed|pitched|hoodtrap|'+
   'bass ?boost(?:ed)?|instrumental|acapella';
+/* ROUND 8 (GAPS-R8-01): the words of another recording. A pipe tail holding one ("| Remix", "| Acoustic Cover", "| Extended
+   Mix", "|| TikTok Remix") names the version the card crowns and stays; Q_SAYS finds them in an uncut title, hashtags too
+   ("#remix", "#acousticcover"); Q_COVER is a cover or a "remix by X", someone else's performance */
+var Q_REC='remix(?:ed)?|rmx|mix|covers?|acoustic|mash-?up|bootleg',
+    Q_SAYS=/remix|\brmx\b|acoustic|mash-?up|(?:\b|piano|guitar|tiktok)cover/i,
+    Q_COVER=/(?:\b|acoustic|piano|guitar|tiktok)cover|\bremix(?:ed)?\s+by\b/i;
 // ROUND 7 (FU-3): a bare "prod" that opens brackets ("(prod Kryd)", "[Prod Kryd]") is a credit too: read as "prod."
 var Q_PROD_BR=/([(\[]\s*)prod(?=\s+(?!by\b)[^\s()\[\]])/gi;
 // ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by" (or a bare "prod" opening brackets, Q_PROD_BR);
@@ -5051,8 +5066,10 @@ function renderResult(d,partial){
       return;}
     // APPLYALL 2026-09-29 (build 3): "No song here" read as "this clip has no music"
     result.innerHTML=errCard('?', d.result==='no_match'?'We couldn’t name this one':'Couldn’t nail this one',
+      // ROUND 8 (LAWYER-R8-03): only a Listen recording was listened to; a pasted or shared link's clip was read
       d.result==='no_match'
-        ? 'We listened all the way through and couldn’t match it. It may be sped up, edited, or just not in our database yet.'
+        ? ((d.listen||(WV_MIC&&!curURL))?'We listened all the way through and couldn’t match it.':'We checked the whole clip and couldn’t match it.')+
+          ' It may be sped up, edited, or just not in our database yet.'
         : (d.note||'The clip may be muted, private, or too transformed to match.'),
       '<button class="cta" id="nm-search">Describe it instead</button>'+
       _nmBack+
@@ -5318,7 +5335,7 @@ function renderResult(d,partial){
   var hero='<div class="hero"><span class="artwrap">'+artHtml+corner+'</span>'+
     '<h2 class="rtitle">'+esc(_htitle)+'</h2>'+
     '<p class="rartist">'+esc(_hartist)+'</p>'+
-    (_am?'<p class="rartist"><a class="playerout" href="'+esc(_am)+'" target="_blank" rel="noopener">'+esc(amHeroLabel(_aml.n,_htitle,_aml.same))+'</a></p>':'')+
+    (_am?'<p class="rartist"><a class="playerout" href="'+esc(_am)+'" target="_blank" rel="noopener">'+esc(amHeroLabel(_aml.n,_htitle,_aml.same,_mv?_mv.row.title:''))+'</a></p>':'')+
     badge+'</div>';
   // MASHUPS. The engine already splits a multi-song clip and names each part - it has a
   // dedicated mashup pass and returns `sections`/`songs` with per-part timestamps. None of

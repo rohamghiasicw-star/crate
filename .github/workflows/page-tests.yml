@@ -152,6 +152,12 @@ jobs:
           - id: round7a-cr
             name: 'Round 7a result card, crown labels and scan text (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round7a.py
+          - id: round8a-wk
+            name: 'Round 8a version labels, no-match wording and privacy path (WebKit)'
+            run: python -u engine/test_round8a.py
+          - id: round8a-cr
+            name: 'Round 8a version labels, no-match wording and privacy path (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round8a.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
