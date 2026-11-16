@@ -99,7 +99,8 @@ struct ContentView: View {
    says it is still connecting, so a slow network never looks frozen. NATIVE-R7-02 (build 32): with
    it comes the error screen's Try again, which starts the load over (the load itself now waits up to
    WebKit's 60 s with one address). NATIVE-R7-06 (build 32): VoiceOver hears "Still connecting" when
-   it appears, and the empty line before it is not a stop for VoiceOver. */
+   it appears, and the empty line before it is not a stop for VoiceOver. NATIVE-R9-01 (build 34): Try
+   again starts the load over only while it has no response yet; a page already arriving is kept. */
 struct BootView: View {
     @EnvironmentObject private var bridge: EngineBridge
     @State private var slow = false
@@ -128,11 +129,7 @@ struct BootView: View {
             Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .top) {
                     if slow {
-                        Button("Try again") {
-                            slow = false
-                            attempt += 1
-                            bridge.retryResolvingFirst()
-                        }
+                        Button("Try again") { tryAgain() }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(red: 0.36, green: 0.29, blue: 0.91))
                         .fixedSize()
@@ -152,6 +149,14 @@ struct BootView: View {
             slow = true
             UIAccessibility.post(notification: .announcement, argument: "Still connecting")
         }
+    }
+
+    /* NATIVE-R9-01 (build 34): the 8 s note starts over, and so does the load unless it already has its
+       response, which is kept (EngineBridge tryAgainLoading). */
+    private func tryAgain() {
+        slow = false
+        attempt += 1
+        bridge.tryAgainLoading()
     }
 }
 

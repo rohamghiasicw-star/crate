@@ -68,6 +68,9 @@ final class EngineBridge: ObservableObject {
     /* Set by the web view's coordinator: stops a main-frame load that is running and cancels the
        automatic reloads still waiting (EngineWebView cancelReloads). */
     var cancelReloads: (() -> Void)?
+    /* Set by the web view's coordinator: whether a main-frame load is running, and whether that load already
+       has its response or has committed (EngineWebView mainFrameAnswered). NATIVE-R9-01 (build 34). */
+    var mainLoad: (() -> (running: Bool, answered: Bool))?
     private var lastDelivered: String? = nil
     private var lastDeliveredAt = Date.distantPast
     private let haptic = UINotificationFeedbackGenerator()
@@ -187,11 +190,29 @@ final class EngineBridge: ObservableObject {
                 } else if (value as? Bool) == true {
                     self.share.taken(link)
                 } else if self.share.waiting == link {
-                    self.loadShare()
+                    self.notAClipOrLoad(link, in: wv)
                 }
             }
         } else {
             loadShare()
+        }
+    }
+
+    /* CHAOS-R9-01 (build 34). The page did not take the share, most often because a scan is running (busy).
+       For a clip its share page opens, which replaces that scan, as before. A link that is not a clip (a
+       profile, a sound page) can't be scanned, and opening its share page restarted the running scan from 0%
+       with the page's "That link is a TikTok page, not a clip" lost behind it. The page is asked to say so
+       where it is (window.addifyNotAClip), and on true the share is over. A page without that hook, or any
+       other answer, gets the share page as before. */
+    private func notAClipOrLoad(_ link: String, in wv: WKWebView) {
+        guard SharedInbox.clipLink(link) == nil else { loadShare(); return }
+        wv.evaluateJavaScript("window.addifyNotAClip && window.addifyNotAClip(\(Self.jsString(link)))") { [weak self] value, _ in
+            guard let self = self else { return }
+            if (value as? Bool) == true {
+                self.share.declined(link)
+            } else if self.share.waiting == link {
+                self.loadShare()
+            }
         }
     }
 
@@ -275,6 +296,21 @@ final class EngineBridge: ObservableObject {
         }
     }
 
+    /* NATIVE-R9-01 (build 34). The loading screen's Try again (BootView). A main-frame load that already has
+       its response, or has committed, is the page arriving: on a slow network stopping it threw away what had
+       come and asked for the whole page again, so a user who tapped each time the button showed never got in.
+       That load is kept and BootView starts its 8 s note again; WebKit's 60 s limit still ends a load that
+       stalls on "Can't reach Addify". A load with no answer yet starts over, as before. */
+    func tryAgainLoading() {
+        if mainLoad?().answered == true { return }
+        retryResolvingFirst()
+    }
+
+    /* NATIVE-R9-01 (build 34): on "Can't reach Addify", one of its automatic reloads is loading right now.
+       Coming back to the app then leaves it be (AddifyApp): that reload is already the next try, and starting
+       over stopped it and lost what it had received. */
+    var autoReloadRunning: Bool { unreachable && mainLoad?().running == true }
+
     /* Everything that leaves the engine origin goes through here. open.spotify.com,
        music.apple.com and soundcloud.com are universal links, so this single call IS the
        native handoff: the installed app takes the link, otherwise Safari does. */
@@ -331,7 +367,28 @@ final class EngineBridge: ObservableObject {
        was kept and a reload or Try again reopened its share page and the paywall with no tap. */
     func screenChanged(from: String?, to: String?) {
         guard from == "scanning" || to == "scanning" || to == "paywall" else { return }
+        if to == "scanning" { probeDeclinedScan() }
         probeHandedScan()
+    }
+
+    /* NATIVE-R9-02 (build 34). A share let go at the paywall (0 free scans) was gone for good, so when the
+       user bought Addify+ there and the page then scanned that clip, iOS ending the app mid-scan lost it:
+       the next launch opened Home with no word. When a scan starts, the page is asked whether it is a scan
+       of that share (its curURL is what parseLink reads from the link), and if so the share is held again
+       (PendingShare scanStarted). Nothing but a scan the page started holds it again, so no launch, reload
+       or Try again reopens its share page or the paywall (NATIVE-R8-01). */
+    static func declinedScanProbe(_ link: String) -> String {
+        "(function(l){var a=document.getElementById('app');if(!a||a.getAttribute('data-state')!=='scanning')return false;"
+            + "try{return typeof curURL==='string'&&!!curURL&&typeof parseLink==='function'&&parseLink(l).url===curURL;}catch(e){return false;}})"
+            + "(\(jsString(link)))"
+    }
+
+    private func probeDeclinedScan() {
+        guard pageReady, share.current == nil, let link = share.declinedLink, let wv = webView else { return }
+        wv.evaluateJavaScript(Self.declinedScanProbe(link)) { [weak self] value, error in
+            guard error == nil, (value as? Bool) == true else { return }
+            self?.share.scanStarted(link)
+        }
     }
 
     /* Asks the page what it shows (scanScreenProbe) and lets the handed share go on an answer in
@@ -340,7 +397,8 @@ final class EngineBridge: ObservableObject {
         guard pageReady, let link = share.handedLink, let wv = webView else { return }
         wv.evaluateJavaScript(Self.scanScreenProbe(link)) { [weak self] value, error in
             guard error == nil, let screen = value as? String, over?.contains(screen) ?? (screen != "scanning") else { return }
-            self?.share.scanEnded(link)
+            /* NATIVE-R9-02 (build 34): let go at the paywall, the share is remembered (PendingShare declinedLink). */
+            self?.share.scanEnded(link, atPaywall: screen == "paywall")
         }
     }
 

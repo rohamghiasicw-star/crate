@@ -23,6 +23,10 @@ import Foundation
    - when the page posts a result after it had the link (resultPosted),
    - when the page it went to shows another screen than its scan (scanEnded), the paywall included,
    - when the running page it was handed to did not start its scan (declined, NATIVE-R8-01),
+   - NATIVE-R9-02 (build 34): a share let go at the paywall is remembered (declinedLink) until a newer
+     share arrives, and is held again only when the page starts a scan of that same link (scanStarted):
+     after Addify+ turns on, the page runs the clip the paywall opened for. A launch, a reload or Try
+     again never opens a remembered share (NATIVE-R8-01 stands).
    - when a newer share replaces it,
    - after maxCrashReloads reloads that followed WebKit killing the page. That is the one reload
      that repeats with nobody asking (a share page that kills WebKit every time would otherwise
@@ -44,6 +48,9 @@ struct PendingShare {
        new load of its share page starts. */
     private(set) var handed = false
     private(set) var crashReloads = 0
+    /* NATIVE-R9-02 (build 34): the share last let go at the paywall (or that the page said is not a clip,
+       which no scan can start for), until a newer share arrives. Never a page to open (target). */
+    private(set) var declinedLink: String?
 
     /* The held link while a page has it, or nil. */
     var handedLink: String? { handed ? link : nil }
@@ -54,6 +61,7 @@ struct PendingShare {
         crashReloads = 0
         opened = false
         handed = false
+        declinedLink = nil
     }
 
     /* The held link, or nil. */
@@ -118,7 +126,20 @@ struct PendingShare {
        when the user leaves a scan (scanEnded), so a reload or Try again never reopens its share page
        or the paywall. A newer share that arrived meanwhile stays. */
     mutating func declined(_ l: String) {
-        if link == l { clear() }
+        guard link == l else { return }
+        clear()
+        declinedLink = l
+    }
+
+    /* NATIVE-R9-02 (build 34). The page started a scan of `l`, the share it turned down at the paywall: once
+       Addify+ turns on, the page runs the clip the paywall opened for (proOn). That share is held again, as
+       a page has it, so it is kept on disk (HeldShare) and a launch after iOS ended the app mid-scan reopens
+       its share page, as for any share (NATIVE-R6-10). */
+    mutating func scanStarted(_ l: String) {
+        guard link == nil, declinedLink == l else { return }
+        declinedLink = nil
+        link = l
+        handed = true
     }
 
     /* The page posted a scan's result. A link the page had is done and released. A link no page
@@ -129,9 +150,12 @@ struct PendingShare {
 
     /* The page that had `l` no longer shows its scan: a result or no-match card, Home, the paywall,
        another screen, or a scan of another link. Same as a result: released. A newer share, or one
-       whose share page is loading again, stays. */
-    mutating func scanEnded(_ l: String) {
-        if link == l, handed { clear() }
+       whose share page is loading again, stays. NATIVE-R9-02 (build 34): let go at the paywall, it is
+       remembered as declined. */
+    mutating func scanEnded(_ l: String, atPaywall: Bool = false) {
+        guard link == l, handed else { return }
+        clear()
+        if atPaywall { declinedLink = l }
     }
 
     mutating func clear() {
