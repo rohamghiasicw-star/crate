@@ -2426,11 +2426,12 @@ function kitStop(){if(KIT) KIT.on=false; KIT=null;}
    https music.apple.com or itunes.apple.com address is used. */
 var KIT_AM=[];
 function amOK(u){u=String(u||''); return /^https:\/\/([a-z0-9-]+\.)*(music|itunes)\.apple\.com\//i.test(u)?u:'';}
-/* ROUND 7 (GAPS-R7-01, GAPS-R7-05): names compare in any script. Letters and digits of every script count ('방탄소년단',
-   'ドライフラワー'), accents fold ('Beyoncé' is 'Beyonce'); before, only a-z and 0-9 counted, so those names keyed to ''. */
-var U_NW=(function(){try{return new RegExp('[^\\p{L}\\p{N}]+','gu');}catch(e){return /[^a-z0-9]+/g;}})(),
-    U_MK=(function(){try{return new RegExp('\\p{M}+','gu');}catch(e){return /[\u0300-\u036f]+/g;}})();
-function amKey(s){return String(s||'').normalize('NFKD').toLowerCase().replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(U_MK,'').replace(U_NW,' ').trim();}
+/* ROUND 7 (GAPS-R7-01, GAPS-R7-05): names compare in any script. Letters, marks and digits of every script count
+   ('방탄소년단', 'ドライフラワー'); only accents on a-z fold ('Beyoncé' is 'Beyonce'), so a dakuten or an Indic vowel sign
+   still tells two names apart. Before, only a-z and 0-9 counted, so those names keyed to ''. */
+var U_NW=(function(){try{return new RegExp('[^\\p{L}\\p{M}\\p{N}]+','gu');}catch(e){return /[^a-z0-9]+/g;}})();
+function uFold(s){return String(s||'').normalize('NFKD').toLowerCase().replace(/([a-z])[\u0300-\u036f]+/g,'$1').normalize('NFC');}
+function amKey(s){return uFold(s).replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(U_NW,' ').trim();}
 function kitAMKeep(ans){if(!ans||!ans.matched||!ans.title) return;
   var u=amOK(ans.appleMusicURL||ans.apple_music_url); if(u) KIT_AM.push({t:amKey(ans.title),a:amKey(ans.artist),r:String(ans.artist||''),u:u,n:String(ans.title)});}
 /* ROUND 5D (GAPS-KIT-R5-05): the link and the title of the recording it opens (`n`: the song ShazamKit named, else
@@ -4819,8 +4820,10 @@ function mainVersion(d){
   // ("...Fearless Lofi (slowed+reverb)... || Ringtone II 2024 SVM #trending#shortsfeed
   // #music", with four emoji) filled five lines of the hero at 375px.
   // ROUND 7 (GAPS-R7-02): a hashtag made of version words (#nightcore, #slowedreverb, #spedup) names the version: it stays
-  var _hv=new RegExp('^#(?:'+Q_VER.replace(/\\b$/,'')+'|up|down|and)+$','i');
-  t=t.replace(/#[^\s#]+/g,function(h){return _hv.test(h)&&!/^#tiktok$/i.test(h)?' '+h+' ':' ';});   // #tiktok alone is a tag
+  // (Q_MOD's sound words only: #edit, #fyp, #live, #mix, #tiktok are tags and go)
+  var _hc='up|down|and|n|remix|edit|version|mix|[+_-]',
+      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?:'+Q_MOD+'|'+_hc+')+$','i');
+  t=t.replace(/#[^\s#]+/g,function(h){return _hv.test(h)?' '+h+' ':' ';});
   try{ t=t.replace(new RegExp('[\\p{Extended_Pictographic}\\uFE0F\\u200D]','gu'),''); }catch(e){}
   t=t.replace(/\s+/g,' ').trim();
   // "Flo Rida - Gdfr (Slowed + Reverb)" over "Flo Rida": drop the repeated artist prefix
@@ -4830,12 +4833,13 @@ function mainVersion(d){
     if(rest && rest.length<t.length-ba.length){named=t.slice(0,ba.length); t=rest;}}
   if(!t) return null;
   // ROUND 7 (GAPS-R7-05): letters of any script count (U_NW), so a Japanese or Korean song is matched in its upload title too
-  var core=function(x){return String(x||'').normalize('NFKD').toLowerCase()
-    .replace(/\([^)]*\)|\[[^\]]*\]/g,' ').replace(/\b(feat|ft)\b.*$/,'').replace(U_MK,'').replace(U_NW,'');};
+  var core=function(x){return uFold(x)
+    .replace(/\([^)]*\)|\[[^\]]*\]/g,' ').replace(/\b(feat|ft)\b.*$/,'').replace(U_NW,'');};
   var bs=core(d.base_song), who=d.base_artist||'', of=false;
   // A " || Ringtone II 2024" style tail goes when the part before it already names the song.
-  // ROUND 7 (GAPS-R7-02): a tail with a version word in it (" | Nightcore", " | slowed + reverb") is the version: it stays
-  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b'+Q_VER,'i');
+  // ROUND 7 (GAPS-R7-02): a tail with a sound word in it (" | Nightcore", " | slowed + reverb") is the version: it stays;
+  // " || Ringtone 2024 TikTok", " | Official Audio", " | Live" still go
+  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b(?:'+Q_MOD+')\\b','i');
   if(_seg.length>1 && bs && core(_seg[0]).indexOf(bs)>=0){var _k=_seg[0];
     for(var _i=2;_i<_seg.length;_i+=2) if(_vw.test(_seg[_i])) _k+=_seg[_i-1]+_seg[_i];
     t=_k;}
@@ -4844,7 +4848,7 @@ function mainVersion(d){
   // ROUND 7 (LITERAL-R7-01): an upload that credits its own producer ("... Prod. Kryd") is that producer's version, so
   // Shazam's artist is not printed under it as if it were theirs: the line names the song and its artist, as above.
   // Not when the title starts with that artist, the credit names them, or they uploaded it.
-  else if(bs && who && !named){var _pc=(t.match(new RegExp(Q_PROD.source,'i'))||[''])[0], _wa=core(who);
+  else if(bs && who && !named){var _pc=(t.replace(Q_PROD_BR,'$1prod.').match(new RegExp(Q_PROD.source,'i'))||[''])[0], _wa=core(who);
     if(_pc && _wa && core(_pc).indexOf(_wa)<0 && core(ex.uploader).indexOf(_wa)<0){who=d.base_song+' · '+who; of=true;}}
   // ROUND 6 (LITERAL-R6-01): the search words, from the upload alone: its title (with the artist only when the title
   // itself starts with it). A title that does not name the song searches nothing of its own (searchQ uses the song).
@@ -4864,10 +4868,16 @@ function mainVersion(d){
    is never empty or one letter: it falls back to the song and artist as Shazam named them. */
 var Q_VER='(?:slowed|sped|speed|super|reverb(?:ed)?|remix(?:ed)?|edit(?:ed)?|hoodtrap|bass|boosted|nightcore|daycore|lo-?fi|'+
   'extended|instrumental|acapella|mashup|bootleg|flip|remaster(?:ed)?|version|mix|cover|live|tiktok|8d|phonk|chopped|screwed|pitched)\\b';
-// ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by"; a bare word "prod" in a real title ("Prod Me") is
-// part of that title and stays
+/* ROUND 7 (GAPS-R7-02): the sound words of a version. A pipe tail or hashtag holding one names the version the card
+   crowns; Q_VER's wider words (edit, live, mix, cover, version, tiktok) are everyday tags there */
+var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk|chopped|screwed|pitched|hoodtrap|'+
+  'bass ?boost(?:ed)?|instrumental|acapella';
+// ROUND 7 (FU-3): a bare "prod" that opens brackets ("(prod Kryd)", "[Prod Kryd]") is a credit too: read as "prod."
+var Q_PROD_BR=/([(\[]\s*)prod(?=\s+(?!by\b)[^\s()\[\]])/gi;
+// ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by" (or a bare "prod" opening brackets, Q_PROD_BR);
+// a bare word "prod" in a real title ("Prod Me") is part of that title and stays
 var Q_PROD=new RegExp('\\bprod(?:uced)?(?:[.:]\\s*(?:by\\b[.:]?\\s*)?|\\s+by\\b[.:]?\\s*)(?:(?!\\s+[-|/\\u2013\\u2014])(?!\\s*\\b'+Q_VER+')[^()\\[\\]])*','gi');
-function qTidy(s){s=String(s||'').replace(/\uE000/g,' ').replace(Q_PROD,'\uE000');   // \uE000 marks where a credit was
+function qTidy(s){s=String(s||'').replace(/\uE000/g,' ').replace(Q_PROD_BR,'$1prod.').replace(Q_PROD,'\uE000');   // \uE000 marks where a credit was
   [[/[(\[]\s*\uE000\s*[)\]]/g,' '],                                   // "(Prod. X)": its brackets go too
    [/([(\[])\s*\uE000\s*(?:[-|\/\u2013\u2014]+\s*)?/g,'$1'],          // "(Prod. X - slowed)": "(slowed)"
    [/\s*(?:[-|\/\u2013\u2014]+\s*)?\uE000\s*([)\]])/g,'$1'],          // "(slowed - prod. X)": "(slowed)"

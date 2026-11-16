@@ -9,11 +9,12 @@ every outside request is stubbed.
                      the artist and a plain slowed upload keep the artist (Share "<title> by <artist>")
   R2  GAPS-R7-01     A ShazamKit answer gives the hero an Apple Music link only for the same artist, in any script: a
                      Hangul, symbol-only or missing artist on either side gets no link; the same Hangul artist on both
-                     sides does
+                     sides does. Only a-z accents fold: a dakuten or an Indic vowel sign still tells two names apart
   R3  GAPS-R7-02     A version in a " | Nightcore" tail or a #nightcore hashtag stays in the hero title, the search words
                      and the result post, and the Apple Music line names the recording ("Blow on Apple Music"); a tail
-                     with no version word (" || Ringtone II 2024") still goes. FU-3: a bare word "prod" in a real title
-                     ("Prod Me", "Cattle Prod Blues") is not a credit; "prod." / "prod by" / "produced by" still are
+                     with no sound word (" || Ringtone 2024 TikTok", " | Live") and an everyday tag (#edit #fyp #live
+                     #mix) still go. FU-3: a bare word "prod" in a real title ("Prod Me", "Cattle Prod Blues") is not a
+                     credit; "prod." / "prod by" / "produced by" and a bracketed "(prod Kryd)" still are
   R4  GAPS-R7-05     A Japanese song's version words reach the Open in tiles and the "Find it in another app" rows
                      ("ドライフラワー (slowed + reverb)"), as the Latin "Blow (Nightcore)" does
   R5  LAWYER-R7-01   On the fast path (a complete /base answer, no hunt) the result post goes once, when the card takes
@@ -161,7 +162,8 @@ async def main(html, yml, only):
                     exact:{url:'https://soundcloud.com/ledger-uploader/x',title:t,uploader:up||'ledger-uploader',source:'soundcloud'}};};
                   var C=[['Blow prod. Kryd (slowed)','','Blow · Kesha'],['Blow (produced by Kryd) sped up','','Blow · Kesha'],
                          ['Kesha - Blow prod. kryd','','Kesha'],['Blow (prod. Kesha) slowed','','Kesha'],['Blow Prod. Kryd','kesha','Kesha'],
-                         ['Blow (slowed)','','Kesha'],['Blow prod Kryd sped up','','Kesha']];
+                         ['Blow (slowed)','','Kesha'],['Blow prod Kryd sped up','','Kesha'],
+                         ['Blow (prod Kryd) slowed','','Blow · Kesha']];
                   return C.map(function(c){var n=cardName(ex(c[0],c[1])); return [c[0],n.by,c[2],n.of];});}"""
                 rules = await pg.evaluate(FN)
                 errs = pg.errs; await close(ctx)
@@ -198,11 +200,17 @@ async def main(html, yml, only):
                                       " KIT_AM=[]; kitAMKeep({matched:true,title:a[2],artist:a[3],appleMusicURL:a[4]}); renderResult(d);}",
                                       [song, artist, ksong, kartist, AMU])
                     await pg.wait_for_timeout(300); r[key] = await pg.evaluate(HERO)
+                mk = await pg.evaluate("()=>[[amKey('ガ'),amKey('カ')],[amKey('कि'),amKey('क')],[amKey('Beyoncé'),amKey('Beyonce')],"
+                                       "[amKey('ドライフラワー'),amKey('ﾄﾞﾗｲﾌﾗﾜｰ')]]")
+                r["marks"] = mk
                 errs = pg.errs; await close(ctx)
                 ok = (all(r[k]["link"] is None for k in ("hangul_base", "hangul_kit", "noartist_base", "symbol_artist"))
+                      and mk[0][0] != mk[0][1] and mk[1][0] != mk[1][1] and mk[2][0] == mk[2][1] == "beyonce" and mk[3][0] == mk[3][1]
+                      and mk[0][0] == "ガ" 
                       and r["hangul_base"]["title"] == "Dynamite" and r["hangul_same"]["link"] == "Open in Apple Music" and not errs)
                 check("R2", "A ShazamKit answer by another artist with the same title gives no Apple Music link when either artist is "
-                            "Hangul, symbol-only or missing; the same Hangul artist on both sides gets 'Open in Apple Music'", ok, dict(r, errs=errs))
+                            "Hangul, symbol-only or missing; the same Hangul artist on both sides gets 'Open in Apple Music'; only a-z "
+                            "accents fold (a dakuten or an Indic vowel sign still tells names apart)", ok, dict(r, errs=errs))
         except Exception as e:
             check("R2", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 
@@ -215,29 +223,39 @@ async def main(html, yml, only):
                     d["errs"] = pg.errs; res[key] = d
                     if key == "pipe":
                         FN = r"""()=>{var T=['Prod Me (slowed)','Cattle Prod Blues','Blow prod Kryd sped up','Blow prod. Kryd sped up',
-                              'Blow PROD BY KRYD sped up','Blow | produced by Kryd | nightcore'];
+                              'Blow PROD BY KRYD sped up','Blow | produced by Kryd | nightcore','Blow (prod Kryd) sped up','Blow [Prod Kryd]'];
                           var ex=function(s,a,t){return {base_song:s,base_artist:a,exact:{url:'https://soundcloud.com/ledger-uploader/x',title:t}};};
                           var d1=ex('Prod Me','Test Artist','Prod Me (slowed)'), d2=ex('Test Song','Test Artist','Test Song (slowed) || Ringtone II 2024'),
                               d3=ex('Test Song','Test Artist','Test Song (slowed) | Test Artist');
-                          return {tidy:T.map(function(t){return [t,qTidy(t)];}),
+                          var G=['Blow #edit #fyp #viral','Blow #live #mix #cover','Blow #tiktok #remix','Blow || Ringtone 2024 TikTok',
+                                 'Blow | Official Audio','Blow | Live','Blow #nightcoreremix'];
+                          return {gen:G.map(function(t){var m=mainVersion(ex('Blow','Kesha',t)); return [t,m.title,m.q];}),
+                                  tidy:T.map(function(t){return [t,qTidy(t)];}),
                                   prodme:searchQ(d1,mainVersion(d1)), ring:mainVersion(d2).title, tailart:mainVersion(d3).title};}"""
                         res["fn"] = await pg.evaluate(FN)
                     await close(ctx)
                 pp, hh, fn = res["pipe"], res["hash"], res["fn"]
                 want_tidy = [["Prod Me (slowed)", "Prod Me (slowed)"], ["Cattle Prod Blues", "Cattle Prod Blues"],
                              ["Blow prod Kryd sped up", "Blow prod Kryd sped up"], ["Blow prod. Kryd sped up", "Blow sped up"],
-                             ["Blow PROD BY KRYD sped up", "Blow sped up"], ["Blow | produced by Kryd | nightcore", "Blow | nightcore"]]
+                             ["Blow PROD BY KRYD sped up", "Blow sped up"], ["Blow | produced by Kryd | nightcore", "Blow | nightcore"],
+                             ["Blow (prod Kryd) sped up", "Blow sped up"], ["Blow [Prod Kryd]", "Blow"]]
+                # everyday tags and tails name no version: they go, as before; a sound-word tag stays
+                want_gen = [["Blow #edit #fyp #viral", "Blow", "Blow"], ["Blow #live #mix #cover", "Blow", "Blow"],
+                            ["Blow #tiktok #remix", "Blow", "Blow"], ["Blow || Ringtone 2024 TikTok", "Blow", "Blow"],
+                            ["Blow | Official Audio", "Blow", "Blow"], ["Blow | Live", "Blow", "Blow"],
+                            ["Blow #nightcoreremix", "Blow #nightcoreremix", "Blow nightcoreremix"]]
                 ok = (pp["final"] and pp["title"] == "Blow | Nightcore" and pp["am"] == "Blow on Apple Music" and pp["amHref"] == AMU
                       and pp["tiles"] and all(x == "Blow | Nightcore" for x in pp["tiles"]) and all(x == "Blow | Nightcore" for x in pp["rows"])
                       and len(pp["posts"]) == 1 and pp["posts"][0].get("song") == "Blow | Nightcore"
                       and hh["final"] and hh["title"] == "Blow #slowedreverb #nightcore" and hh["am"] == "Blow on Apple Music"
                       and hh["tiles"] and all(x == "Kesha Blow slowedreverb nightcore" for x in hh["tiles"])
                       and len(hh["posts"]) == 1 and hh["posts"][0].get("song") == "Blow #slowedreverb #nightcore"
-                      and fn["tidy"] == want_tidy and fn["prodme"] == "Prod Me (slowed)" and fn["ring"] == "Test Song (slowed)"
+                      and fn["tidy"] == want_tidy and fn["gen"] == want_gen and fn["prodme"] == "Prod Me (slowed)" and fn["ring"] == "Test Song (slowed)"
                       and fn["tailart"] == "Test Song (slowed)" and not pp["errs"] and not hh["errs"])
                 check("R3", "'Blow | Nightcore' and 'Kesha - Blow #slowedreverb #nightcore' keep their version in the hero, the searches "
                             "and the result post, and the Apple Music line says 'Blow on Apple Music'; a tail with no version word still goes; "
-                            "a bare 'prod' in a title is not a credit, 'prod.' / 'prod by' / 'produced by' still are", ok,
+                            "everyday tags and tails (#edit #fyp, '|| Ringtone 2024 TikTok', '| Live') still go; a bare 'prod' in a "
+                            "title is not a credit, 'prod.' / 'prod by' / 'produced by' and a bracketed '(prod X)' still are", ok,
                       {"pipe": {k: pp[k] for k in ("title", "am", "tiles", "rows", "posts", "errs")},
                        "hash": {k: hh[k] for k in ("title", "am", "tiles", "posts", "errs")}, "fn": fn})
         except Exception as e:
