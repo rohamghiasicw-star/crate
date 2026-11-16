@@ -3,7 +3,8 @@ browser against the page file and the promise-ledger mock engine. No network, no
 is stubbed. The /feedback row-id change on the server side has its own offline test (test_feedback_ids.py).
 
   E29 A version check that fails AFTER the 4 s budget (the stream and /edits refused, /edits answering an error late,
-      the phone going offline right after /base, or nothing answering at all until the 90 s cap) ends like one that
+      the phone going offline right after /base, or nothing answering at all: since round 6c it ends SCAN_STILL (30 s)
+      after the check last moved, not at the 90 s cap) ends like one that
       fails before it: the card keeps its title and says "Couldn't check versions." with a 44 pt Try again, and never
       "The closest version we found ... The original release". Try again with the network back checks the versions
       (the crown lands). A crown that lands after the budget still upgrades the card (no note).
@@ -299,12 +300,12 @@ async def main(html, yml, only):
             ctx, pg = await page(routes={"/base?": answer(hunting(c)), "/progress": answer(DONE_P), "/edits": hold})
             await go(pg, c); t0 = time.time()
             await until(pg, FINAL, 25)
-            await pg.wait_for_timeout(60000); mid = await pg.evaluate(LOOK29)
+            await pg.wait_for_timeout(20000); mid = await pg.evaluate(LOOK29)   # ROUND 6C: the bound is SCAN_STILL after the last move
             await until(pg, "()=>!!document.querySelector('#result .vcheck')", 45)
             await pg.wait_for_timeout(600); z = await pg.evaluate(LOOK29); secs = round(time.time() - t0, 1)
-            ok = mid["track"] and not mid["notes"] and note_ok(z) and 88 <= secs <= 110 and not pg.errs
-            check("E29-hang", "Nothing answers the version check: the tracker until the 90 s cap (%.0f s), then \"Couldn't check versions.\" with Try again, not the closest-version card" % secs,
-                  ok, {"at60s": mid, "end": z, "secs": secs, "errs": pg.errs})
+            ok = mid["track"] and not mid["notes"] and note_ok(z) and 30 <= secs <= 46 and not pg.errs
+            check("E29-hang", "Nothing answers the version check: the tracker until SCAN_STILL after its last move (%.0f s), then \"Couldn't check versions.\" with Try again, not the closest-version card" % secs,
+                  ok, {"at20s": mid, "end": z, "secs": secs, "errs": pg.errs})
             await close(ctx)
         async def e29_late_crown():
             ctx, pg = await page()

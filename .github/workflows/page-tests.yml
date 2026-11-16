@@ -122,6 +122,12 @@ jobs:
           - id: round6a-cr
             name: 'Round 6a (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round6a.py
+          - id: round6c-wk
+            name: 'Round 6c scan flows, Finds and bad network (WebKit)'
+            run: python -u engine/test_round6c.py
+          - id: round6c-cr
+            name: 'Round 6c scan flows, Finds and bad network (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round6c.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

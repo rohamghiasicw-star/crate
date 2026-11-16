@@ -4222,15 +4222,24 @@ var FB_BACKOFF=[800,2500], FB_WAIT=6000, FB_FAIL='Couldn’t send that.';
 function fbKeep(id,was){var a=lsGet('addify-fbids','[]'); if(!Array.isArray(a)) a=[];
   if(was) a=a.filter(function(x){return x!==was;});
   if(a.indexOf(id)<0) a.push(id); lsSet('addify-fbids',a);}
-function sendFeedback(obj){var n=0;
+/* ROUND 6C (BAD-NETWORK-R6-02): DELETE ACCOUNT STOPS EVERY SEND STILL OUT. A try or a retry still running when the erase
+   started could store the body again and write the vote and the fix-list entry back after the phone was cleared (a slow
+   reload keeps the old page running). fbStop() moves FB_GEN on and aborts the tries in flight (FB_ACS): a send from
+   before it never tries again and writes nothing (it ends as not sent). */
+var FB_GEN=0, FB_ACS=[];
+function fbStop(){FB_GEN++; FB_ACS.splice(0).forEach(function(a){try{a.abort();}catch(e){}});}
+function sendFeedback(obj){var n=0, g=FB_GEN;
   if(!obj.id) obj.id=rid('');
   fbKeep(obj.id);
-  function once(){var ac=window.AbortController?new AbortController():null, tm=ac?setTimeout(function(){try{ac.abort();}catch(e){}},FB_WAIT):0;
+  function once(){if(g!==FB_GEN) return Promise.resolve(false);
+    var ac=window.AbortController?new AbortController():null, tm=ac?setTimeout(function(){try{ac.abort();}catch(e){}},FB_WAIT):0;
+    if(ac) FB_ACS.push(ac);
     return fetch(ENGINE+'/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(obj),signal:ac?ac.signal:undefined})
       .then(function(r){return r.json().then(function(j){return r.ok&&j&&j.ok!==false&&(j.id||j.ok===true)?j:null;});})
       .catch(function(){return null;})
-      .then(function(j){clearTimeout(tm);
+      .then(function(j){clearTimeout(tm); var i=FB_ACS.indexOf(ac); if(i>=0) FB_ACS.splice(i,1);
+        if(g!==FB_GEN) return false;
         if(j){if(j.id&&j.id!==obj.id) fbKeep(String(j.id),obj.id); return true;}
         if(n<FB_BACKOFF.length) return netSleep(FB_BACKOFF[n++]).then(once);
         return false;});}
@@ -5854,7 +5863,9 @@ function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function
    has done its job. Called when the scan ends found and when the card's Add to Finds or Like saves it. */
 function unmatchedDone(d){if(!curURL||!d||!d.base_song||d.result==='no_match'||d.result==='uncertain'||d.unverified_base||d.base_uncertain) return;
   if(!unmatched().some(function(x){return x.url===curURL;})) return;
-  if(loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL); try{renderLib();}catch(e){}}}
+  // ROUND 6C (RETURNING-R6-03): with "Add every match to Finds" off the scan's card offers Add to Finds, and the row no
+  // longer says "Not matched yet" for a clip that just matched
+  if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL); try{renderLib();}catch(e){}}}
 /* free scans - a real monthly counter, not a prop. The pill does paywall work all day:
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
@@ -6521,8 +6532,12 @@ function renderLib(){
 
   // ROUND 5C (RETURNING-USER-R5-04): '@handle' as the rows show it finds the creator, and the clip's link and its app
   // ('tiktok', 'instagram') find the find, as the empty state promises ("the reel you found it in, the creator")
+  // ROUND 6C (RETURNING-R6-01): a pasted clip link finds its find by the video (scanKeys: the clip id, or the link with its
+  // share params, www. and m. off), so a fresh share link with new ?_r=, ?_t= or ?igsh= params still matches
   var b=document.getElementById('libbody'), q=libQ.toLowerCase().trim().replace(/^@+/,''), html='';
+  var qp=parseLink(libQ.trim()), qk=qp.host?scanKeys(qp.url):[];
   function match(x){if(!q) return true;
+    if(qk.length&&x.clip&&scanKeys(x.clip).some(function(k){return qk.indexOf(k)>=0;})) return true;
     var app=x.clip?(clipShape(x.clip).host||''):'';
     return [x.title||'',x.by||'',x.song,x.artist,x.handle,x.speed,x.listen?'listen mode':'',x.via==='search'?'search':'',
             x.clip||'',app].join(' ').toLowerCase().indexOf(q)>=0;}
@@ -6567,7 +6582,8 @@ function renderLib(){
     if(_fo) _fo.onclick=function(ev){ev.stopPropagation();};});
   Array.prototype.forEach.call(b.querySelectorAll('.urow[data-url]'),function(row){
     var u=row.getAttribute('data-url');
-    // ROUND 5C (RETURNING-USER-R5-01): the row stays until the retry ends found and in Finds (unmatchedDone) or with no
+    // ROUND 5C (RETURNING-USER-R5-01): the row stays until the retry ends found and in Finds (ROUND 6C: or found with
+    // autosave off; unmatchedDone) or with no
     // song (finish writes it back): a paywall, a busy engine, no network or Back keep it
     row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); run(u);};});}
 function unRow(x){return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
@@ -6760,7 +6776,8 @@ function renderProf(){
   var _pfexp=document.getElementById('pfexp'); if(_pfexp) _pfexp.onclick=exportFinds;
   var _pfh=document.getElementById('pfhowto'); if(_pfh) _pfh.onclick=function(){openOnb(1,'replay');};   // ONBOARDING v3
   document.getElementById('pfclear').onclick=function(){
-    if(confirm('Clear all your finds?')){storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
+    // ROUND 6C (RETURNING-R6-02): the likes and the "Not matched yet" rows go too, so nothing cleared comes back in Finds
+    if(confirm('Clear all your finds?')){lsSet('addify-liked',[]); lsSet('addify-unmatched',[]); storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
   // Privacy and support sit next to the deletion path. Same engine-resolved URLs as the sheet.
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
@@ -6770,6 +6787,7 @@ function renderProf(){
   // cleared only after every server row is gone; otherwise nothing is cleared and the user can try again.
   var pfdel=document.getElementById('pfdel'), erase=function(){
     PF_DELETING=true; pfDelPaint();
+    fbStop();                                   // ROUND 6C (BAD-NETWORK-R6-02): no try or retry still out sends or writes again
     lsSet(FB_OUT,[]);                           // ROUND 5E: feedback not sent yet is never sent now (its row ids are erased below)
     eraseMyFeedback().then(function(v){         // server rows first, then the local copy
       if(v==='all'){ try{localStorage.clear();}catch(e){} location.reload(); return; }
@@ -7008,6 +7026,9 @@ function findReopen(u){var keys=scanKeys(u); if(!keys.length) return false;
   return loadCrate().some(function(x){return !!(x&&x.clip&&!x.listen)&&scanKeys(x.clip).some(function(k){return keys.indexOf(k)>=0;});});}
 var RUN_GATE=false, SCAN_FREE=false;
 function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
+  // ROUND 6C (SHARE-R6-01): a link that arrives while Listen records (a share, EngineBridge's run) ends the recording
+  // first: the mic is released and nothing is sent, so the recording never replaces the link's card or spends a scan
+  stopListen(); if(waveState==='listening') nav('idle');
   errHide();
   var p=parseLink(raw), arrived=shareArrival();     // ROUND 5C: a share from the share sheet (no tap on this page)
   var reopen=!!opt.reopen||(!!p.host&&findReopen(p.url));
@@ -7337,10 +7358,16 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
               // final, and the card says the versions went unchecked ("Couldn't check versions." with Try again) instead
               // of being redrawn as "The closest version we found ... The original release". A crown that lands later
               // still upgrades the card (lateUpgrade).
-              lateCap=setTimeout(function(){
+              // ROUND 6C (BAD-NETWORK-R6-01): and a check that stopped moving ends there SCAN_STILL ms after its last move
+              // (HG_ADV: a hunt count, a row, a version on the stream), the naming scan's rule, instead of at 90 s. A check
+              // that keeps reporting runs on to the cap. Time away (hidden, or the page's JS stopped) starts the wait again.
+              var capAt=Date.now(), stillAt=capAt, capTick=capAt, capF=function(){
+                var now=Date.now(); if(document.hidden||now-capTick>2000) stillAt=now; capTick=now;
+                var still=!HG_GOT&&tok===scanTok&&onScan()&&now-Math.max(HG_ADV,stillAt)>=SCAN_STILL;
+                if(!still&&now-capAt<90000){ lateCap=setTimeout(capF,500); return; }
                 finalize(null);                  // the 90 s cap: the named song is final (HUNT_ON off)
-                if(tok===scanTok&&onScan()) huntFailNote(scanURL);
-              }, 90000);}}
+                if(tok===scanTok&&onScan()) huntFailNote(scanURL);};
+              lateCap=setTimeout(capF,500);}}
             // held: the log entry and the bridge post wait for the final answer (finalize)
             // APPLYALL (finding 14): a song-less failure finishes as the named song, not as an
             // error (engine_down keeps its retry queue, as before)
@@ -7923,7 +7950,7 @@ document.getElementById('share').onclick=function(){
    LISTEN MODE - the mic is real: WebAudio levels on screen, the
    recording goes to the engine's own Shazam sweep via /listen.
    ============================================================ */
-var lRec=null, lStream=null, lRaf=null, lTimer=null;
+var lRec=null, lStream=null, lRaf=null, lTimer=null, lGen=0;
 function micOK(){return !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);}
 var LISTEN_AGAIN=false;   // ROUND 5B: the mic message's Try again had the focus
 /* ROUND 5C (FIRST-LAUNCH-R5-01): LISTEN HAS THE LINK SCAN'S FREE-SCAN GATE. Only run() checked the limit, so at "0 scans
@@ -7943,7 +7970,9 @@ function startListen(){
       ? 'Listen mode needs the https link on this network. Paste the clip link instead.'
       : 'No microphone here. Paste the clip link instead.');
     return;}
+  var g=++lGen;                                     // ROUND 6C (SHARE-R6-01): stopListen() while the mic is asked for wins
   navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    if(g!==lGen){stream.getTracks().forEach(function(t){t.stop();}); return;}
     errHide(); LISTEN_AGAIN=false;                  // ROUND 5B: a mic message from the last try goes
     lStream=stream; nav0('listening');
     document.getElementById('lstate').textContent='Play the sound out loud';
@@ -7972,7 +8001,7 @@ function startListen(){
     /* 12 seconds of room audio is what the engine's own probes use */
     document.getElementById('lstate').textContent='Listening…';
     lTimer=setTimeout(function(){if(lRec&&lRec.state==='recording') lRec.stop();},12000);
-  }).catch(function(e){var n=e&&e.name;
+  }).catch(function(e){var n=e&&e.name; if(g!==lGen) return;
     // REVIEWER RUNS 2 (LIT-5): iOS asks for the mic once, so after Don't Allow the message says where to turn it
     // on and stays up. App builds that can open Settings (the openSettings handler) get a button for it.
     if(n==='NotAllowedError'||n==='SecurityError'||n==='PermissionDeniedError'){
@@ -7991,7 +8020,9 @@ function cleanupListen(){
   clearTimeout(lTimer); lTimer=null;
   if(startListen._ac){try{startListen._ac.close();}catch(e){} startListen._ac=null;}
   if(lStream){lStream.getTracks().forEach(function(t){t.stop();}); lStream=null;}}
-function stopListen(){if(lRec&&lRec.state==='recording'){lRec.onstop=null; lRec.stop();} lRec=null; cleanupListen();}
+/* ROUND 6C (SHARE-R6-01): the recording's onstop goes even when the recorder already stopped (the 12 s timer fired and
+   onstop has not run yet), so a stopped Listen never sends; lGen drops a mic still being granted */
+function stopListen(){lGen++; if(lRec){lRec.onstop=null; if(lRec.state==='recording') lRec.stop();} lRec=null; cleanupListen();}
 /* FIX 4 round 2: listen mode gets the same quiet retries as a link scan (busyAgain): a busy
    /listen answer sends the SAME recording again after retry_after (the engine kept the Shazam
    answers its windows already got), and the busy card's Try again sends it once more
