@@ -176,6 +176,12 @@ jobs:
           - id: round8c-cr
             name: 'Round 8c link parsing, Listen wait and share into the paywall (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round8c.py
+          - id: round9b-wk
+            name: 'Round 9b Finds sort, old unmatched rows, chip hint, contrast and tap areas (WebKit)'
+            run: python -u engine/test_round9b.py
+          - id: round9b-cr
+            name: 'Round 9b Finds sort, old unmatched rows, chip hint, contrast and tap areas (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round9b.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
