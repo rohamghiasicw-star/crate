@@ -1887,7 +1887,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
   background:rgba(255,90,90,.12);font-size:13.5px;line-height:1.4;color:var(--text)}
 .pfdelmsg span{flex:1 1 180px}
 .pfdelmsg button{min-height:44px;padding:0 16px;border-radius:999px;background:var(--raise2);color:var(--text);font-weight:700}
-.setrow:disabled{opacity:.6}
+.setrow:disabled,.setrow[aria-disabled="true"],.pfdelmsg button[aria-disabled="true"]{opacity:.6}
 /* CHAOS-3: a sheet that takes the focus shows no ring around itself */
 .onbcard:focus,.sheetcard:focus{outline:none}
 /* LIT-5: the button under the microphone message */
@@ -1994,6 +1994,7 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
     <div class="chips" id="libchips"></div>
     <div id="libmonths"></div>
     <div id="libbody"></div>
+    <p id="lstat" class="vh" role="status"></p>
   </section>
 
   <!-- ============ PROFILE ============ -->
@@ -5854,8 +5855,10 @@ function updateSaved(d,clip){
   var a=loadCrate(), i=-1;
   for(var k=0;k<a.length;k++) if(a[k].song===d.base_song&&a[k].artist===d.base_artist){i=k;break;}
   if(i<0) return false;
-  var x=a[i], crown=(d.exact&&d.exact.url)||'', sameClip=!!(d.url&&(x.clip===d.url||(clip&&x.clip===clip))), ch=false;
-  if(!crown && !sameClip) return false;
+  // ROUND 8B (RETURNING-R8-02): only the clip the find was saved from updates it. Another video with the same song (a
+  // trending sound) never repoints the find's version, link or clip, and with autosave off never rewrites a hand-added find
+  var x=a[i], crown=(d.exact&&d.exact.url)||'', sameClip=!!(d.url&&findClipIs(x,d,clip)), ch=false;
+  if(!sameClip) return false;
   if(crown && x.url!==crown){x.url=crown; ch=true;}
   var _pv=findPrev(d); if((x.pv||'')!==_pv){if(_pv) x.pv=_pv; else delete x.pv; ch=true;}   // ROUND 5D: the song card's preview, or none
   if(d.speed && x.speed!==d.speed){x.speed=d.speed; ch=true;}
@@ -5869,12 +5872,21 @@ function updateSaved(d,clip){
    while autosave is off), "Added to Finds" once the song is in Finds. findByLike marks a find the heart created
    (on=true), unmarks it (on=null: the user added it), or removes it on an unlike when the heart created it (on=false,
    true when it did). */
-function inFinds(d){return !!d&&loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;});}
-function addRow(d){if(autoOn()||!d||!d.base_song) return ''; var f=inFinds(d);
+/* ROUND 8B (RETURNING-R8-02): the find is this clip's when it was saved from the same video (the same link, or any share
+   of it by its video key); a find with no clip (a Listen scan) is this card's when the card has no clip either */
+function findClipIs(x,d,clip){var xc=(x&&x.clip)||''; if(!xc||!clip) return xc===(clip||'');
+  if(xc===clip||(d&&xc===d.url)) return true;
+  var ks=scanKeys(clip,d); return scanKeys(xc).some(function(k){return ks.indexOf(k)>=0;});}
+/* 0: not in Finds, 1: this clip's find is there ("Added to Finds"), 2: the song is in Finds from another clip */
+function addState(d){if(!d) return 0; var c=d.url?(curURL||d.url):'', x=null;
+  loadCrate().some(function(y){if(y.song===d.base_song&&y.artist===d.base_artist){x=y; return true;} return false;});
+  return !x?0:findClipIs(x,d,c)?1:2;}
+function addLabel(f){return f===1?'Added to Finds':f===2?'Song already in Finds':'Add to Finds';}
+function addRow(d){if(autoOn()||!d||!d.base_song) return ''; var f=addState(d);
   return '<div class="secrow"><button class="secbtn wide'+(f?' did':'')+'" id="addbtn" type="button"'+(f?' aria-disabled="true"':'')+'>'+
-    (f?IC.tick:IC.plus)+'<span>'+(f?'Added to Finds':'Add to Finds')+'</span></button></div>';}
-function addPaint(ab,d){if(!ab||!document.contains(ab)) return; var f=inFinds(d);
-  ab.classList.toggle('did',f); ab.innerHTML=(f?IC.tick:IC.plus)+'<span>'+(f?'Added to Finds':'Add to Finds')+'</span>';
+    (f?IC.tick:IC.plus)+'<span>'+addLabel(f)+'</span></button></div>';}
+function addPaint(ab,d){if(!ab||!document.contains(ab)) return; var f=addState(d);
+  ab.classList.toggle('did',!!f); ab.innerHTML=(f?IC.tick:IC.plus)+'<span>'+addLabel(f)+'</span>';
   if(f) ab.setAttribute('aria-disabled','true'); else ab.removeAttribute('aria-disabled');}
 function findByLike(d,on){var a=loadCrate(), i=-1;
   for(var k=0;k<a.length;k++) if(a[k].song===d.base_song&&a[k].artist===d.base_artist){i=k; break;}
@@ -5922,16 +5934,21 @@ function logScan(d,ts){var a=scanLog(), e={song:d.base_song,artist:d.base_artist
 function unmatched(){return lsGet('addify-unmatched','[]');}
 /* ROUND 7C (RETURNING-R7-01): one row per VIDEO, not per link. A fresh share link of the same clip (new ?_r= or ?_t=,
    no www., its short link once known, the scan's own video key) is the same row, as for the scan counter (scanKeys). */
-function unSame(u,ks){return scanKeys(u).some(function(k){return ks.indexOf(k)>=0;});}
-function logUnmatched(url,handle){var a=unmatched(), ks=scanKeys(url);
-  if(a.some(function(x){return x.url===url||unSame(x.url,ks);})) return;
-  a.unshift({url:url,handle:handle||'',ts:Date.now()}); lsSet('addify-unmatched',a.slice(0,50));}
+/* ROUND 8B (RETURNING-R8-01): a row keeps the no-match answer's video key (vkey), so a short link (vt.tiktok.com,
+   tiktok.com/t/) is the same row as the video's full link and its other short links. A row saved before has none. */
+function unKeys(x){return scanKeys(x.url,x.vkey?{vkey:x.vkey}:null);}
+function unSame(x,ks){return unKeys(x).some(function(k){return ks.indexOf(k)>=0;});}
+function logUnmatched(url,handle,vkey){var a=unmatched(), ks=scanKeys(url,vkey?{vkey:vkey}:null), i=-1;
+  for(var j=0;j<a.length;j++) if(a[j].url===url||unSame(a[j],ks)){i=j; break;}
+  if(i>=0){ if(vkey&&!a[i].vkey){a[i].vkey=vkey; lsSet('addify-unmatched',a);} return; }
+  var e={url:url,handle:handle||'',ts:Date.now()}; if(vkey) e.vkey=vkey;
+  a.unshift(e); lsSet('addify-unmatched',a.slice(0,50));}
 function dropUnmatched(url,d){var ks=scanKeys(url,d);
-  lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url&&!unSame(x.url,ks);}));}
+  lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url&&!unSame(x,ks);}));}
 /* ROUND 5C (RETURNING-USER-R5-01): the scan on screen named its song and the song is in Finds: its "Not matched yet" row
    has done its job. Called when the scan ends found and when the card's Add to Finds or Like saves it. */
 function unmatchedDone(d){if(!curURL||!d||!d.base_song||d.result==='no_match'||d.result==='uncertain'||d.unverified_base||d.base_uncertain) return;
-  var ks=scanKeys(curURL,d); if(!unmatched().some(function(x){return x.url===curURL||unSame(x.url,ks);})) return;   // ROUND 7C (RETURNING-R7-01)
+  var ks=scanKeys(curURL,d); if(!unmatched().some(function(x){return x.url===curURL||unSame(x,ks);})) return;   // ROUND 7C (RETURNING-R7-01)
   // ROUND 6C (RETURNING-R6-03): with "Add every match to Finds" off the scan's card offers Add to Finds, and the row no
   // longer says "Not matched yet" for a clip that just matched
   if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL,d); try{renderLib();}catch(e){}}}
@@ -6639,14 +6656,16 @@ function renderLib(){
   // ROUND 7C (RETURNING-R7-02): the search reads the "Not matched yet" rows too (on All and on Unmatched): their reel link
   // (any share of it, by the video), the creator, the app and the row's own words
   var unq=un.filter(function(x){if(!q) return true;
-    if(qk.length&&scanKeys(x.url).some(function(k){return qk.indexOf(k)>=0;})) return true;
-    return [x.handle||'',x.url||'',clipShape(x.url||'').host||'','unmatched scan'].join(' ').toLowerCase().indexOf(q)>=0;});
+    if(qk.length&&unSame(x,qk)) return true;
+    // ROUND 8B (RETURNING-R8-03): and the words the row shows ("Not matched yet", "Retry")
+    return [x.handle||'',x.url||'',clipShape(x.url||'').host||'','unmatched scan not matched yet retry'].join(' ').toLowerCase().indexOf(q)>=0;});
+  var unShown=0, unHid=0, nList=0;
   if(libFilter!=='Unmatched'){
     var list=all.filter(function(x){
       if(!match(x)) return false;
       if(libMonth && monthKey(x.ts)!==libMonth) return false;
       return libKeep(x);});
-    list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
+    list.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);}); nList=list.length;
     var groups={}, gorder=[];
     list.forEach(function(x){var g=dayGroup(x.ts); if(!groups[g]){groups[g]=[]; gorder.push(g);} groups[g].push(x);});
     gorder.forEach(function(g){
@@ -6661,9 +6680,16 @@ function renderLib(){
             '<span class="fmeta">'+vchip(x)+(x.fixed?'<span class="vchip fixd">Fixed</span>':'')+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span></button>'+
           (x.url?fpHTML(x):'')+   // ROUND 5D: FINDS PLAY (below)
           '</div>';}).join('')+'</div>';});
-    if(libFilter==='All'&&unq.length&&!libMonth)
-      html+='<div class="daylbl">Not matched yet</div><div class="flist">'+unq.map(unRow).join('')+'</div>';
-  } else html=unq.length?'<div class="flist">'+unq.map(unRow).join('')+'</div>':'';
+    if(libFilter==='All'&&unq.length&&!libMonth){unShown=unq.length;
+      html+='<div class="daylbl">Not matched yet</div><div class="flist">'+unq.map(unRow).join('')+'</div>';}
+    // ROUND 8B (RETURNING-R8-03): a month tile hides the "Not matched yet" rows; a search that matches one says so
+    else if(libFilter==='All'&&unq.length&&q) unHid=unq.length;
+  } else {unShown=unq.length; html=unq.length?'<div class="flist">'+unq.map(unRow).join('')+'</div>':'';}
+  var hidB=unHid+' unmatched scan'+(unHid===1?' matches':'s match'), hidS='Tap the month again to see '+(unHid===1?'it':'them')+'.';
+  if(unHid) html+='<div class="dashcard"><b>'+hidB+'</b><span>'+hidS+'</span></div>';
+  // ROUND 8B (A11Y-R8-04): what the search found, for a screen reader, without moving the focus (as sSay on Search)
+  var nShown=nList+unShown;
+  lSay(!q?'':(nShown?nShown+(nShown===1?' result':' results'):unHid?'':'No finds match that')+(unHid?(nShown?'. ':'')+hidB+'. '+hidS:''));
   // ROUND 5D (GAPS-UI-R5-03): an empty filter says which finds it is waiting for, not "Nothing here yet"
   var fw={Edits:'edits',Originals:'originals',Liked:'liked finds'}[libFilter]||'';
   if(!html) html='<div class="dashcard"><b>'+(q?'No finds match that':(libMonth?(fw?'No '+fw+' from that month':'Nothing from that month here'):(fw?'No '+fw+' yet':'Nothing here yet')))+'</b>'+
@@ -6686,11 +6712,16 @@ function renderLib(){
     // autosave off; unmatchedDone) or with no
     // song (finish writes it back): a paywall, a busy engine, no network or Back keep it
     row.querySelector('.retry').onclick=function(ev){ev.stopPropagation(); run(u);};});}
-function unRow(x){return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
+function lSay(t){var s=document.getElementById('lstat'); if(s&&s.textContent!==t) s.textContent=t;}
+function unRow(x,i,arr){
+  // ROUND 6 (A11Y-R6-08): each Retry is named for its scan, so a list of them reads apart. ROUND 8B (A11Y-R8-03): two
+  // rows from one creator, or with no creator, also say which one they are ("Retry scan 2 of 3 from @name")
+  var h=String(x.handle||'').toLowerCase(), same=(arr||[x]).filter(function(y){return String(y.handle||'').toLowerCase()===h;}),
+      n=same.length>1?' '+(same.indexOf(x)+1)+' of '+same.length:'';
+  return '<div class="urow" data-url="'+esc(x.url)+'"><span class="uq">?</span>'+
   '<span class="tt"><b>Unmatched scan'+(x.handle?' · @'+esc(x.handle):'')+'</b>'+
   '<span>Not matched yet · tap Retry to scan it again</span></span>'+
-  // ROUND 6 (A11Y-R6-08): each Retry is named for its scan, so a list of them reads apart
-  '<button type="button" class="retry" aria-label="'+(x.handle?'Retry scan from @'+esc(x.handle):'Retry unmatched scan')+'">Retry</button></div>';}
+  '<button type="button" class="retry" aria-label="'+(x.handle?'Retry scan'+n+' from @'+esc(x.handle):'Retry unmatched scan'+n)+'">Retry</button></div>';}
 document.getElementById('libq').oninput=function(){libQ=this.value; renderLib();};
 (function(){var s=document.getElementById('libsort'); if(!s) return;
   s.innerHTML=IC.sort;
@@ -6719,6 +6750,10 @@ function sRemember(q){var a=sRecent().filter(function(x){return x.toLowerCase()!
   a.unshift(q); lsSet('addify-recent-searches',a.slice(0,8));}
 /* ROUND 7C (A11Y-R7-07): the list is no live region; this short line is what a screen reader hears for each search */
 function sSay(t){var s=document.getElementById('sstat'); if(s&&s.textContent!==t) s.textContent=t;}
+/* ROUND 8B (A11Y-R8-02): a row's Play and Add name the version the row shows (its artist and version line), so three
+   recordings of one song read apart: "Play Wildest Dreams by Duomo, cover", "Add Wildest Dreams by Duomo, cover, to Finds" */
+function sName(x,mid){var t=String(x.title||'').trim(), a=String(x.artist||'').trim(), v=String(x.version||'').trim();
+  return (t||'Untitled')+(a?' by '+a:'')+(v?', '+v+(mid?',':''):'');}
 function renderSearch(){
   var body=document.getElementById('sbody'), inp=document.getElementById('sq');
   document.getElementById('sclear').hidden=!inp.value;
@@ -6748,7 +6783,7 @@ function renderSearch(){
         var sub=[x.artist,x.version].filter(Boolean).join(' · ');
         var saved=loadCrate().some(function(c){return c.song===x.title&&c.artist===x.artist;});
         return '<div class="srow'+(i===0?' top':'')+'">'+
-          '<span class="sart" role="button" tabindex="0" aria-label="Play '+esc(x.title||'')+'"'+
+          '<span class="sart" role="button" tabindex="0" aria-label="Play '+esc(sName(x))+'"'+
             ' data-play="'+esc(x.url||'')+'" data-src="'+esc(x.src||'')+'" data-title="'+esc(x.title||'')+'">'+
             (x.art?'<img src="'+esc(x.art)+'" alt="" loading="lazy" decoding="async" onerror="this.remove()">':'')+IC.play+'</span>'+
           '<span class="tt"><div class="nm">'+ttlHTML(x.title||'Untitled')+'</div>'+
@@ -6758,13 +6793,13 @@ function renderSearch(){
                                       :'<span class="conf possible">Possible</span>')+
               (x.src?srcChip(x.src):'')+
               (x.plays?'<span>'+plays(x.plays)+' plays</span>':'')+'</div></span>'+
-          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+esc(addLbl(x.title,saved))+'">'+
+          '<button type="button" class="sadd'+(saved?' did':'')+'" data-i="'+i+'" aria-label="'+esc(addLbl(sName(x,1),saved))+'">'+
             (saved?IC.tick:IC.plus)+'</button></div>';}).join('')+'</div>';   // APPLYALL 2026-09-29 (build 3): the "Soon" hum row is gone
     Array.prototype.forEach.call(body.querySelectorAll('.sadd'),function(b){
       b.onclick=function(){var x=sState.res[+b.getAttribute('data-i')]; if(!x||b.classList.contains('did')) return;
         saveOne({base_song:x.title,base_artist:x.artist,art:x.art||'',exact:{url:x.url},
                  speed:x.version||'',handle:'',listen:false,via:'search'});
-        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label',addLbl(x.title,true));};});   // POLISH 3 (LAWYER-05): Add, not Save
+        b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label',addLbl(sName(x,1),true));};});   // POLISH 3 (LAWYER-05): Add, not Save
     return;}
   var rec=sRecent(); sSay('');
   body.innerHTML='<div class="sect">Three ways to search</div>'+
@@ -6850,12 +6885,17 @@ function planOn(){return PAYWALL_ON&&PRO;}
 var PF_DELETING=false, PF_DELFAIL=false;   // REVIEWER RUNS 2 (BN-1): kept across a redraw of the You tab; ROUND 4: 'some' or 'late'; ROUND 5: or 'busy'
 var PF_DELTXT={busy:'Addify is busy. Try again in a minute.', some:'Couldn’t finish deleting. Try again.',
                late:'Addify didn’t confirm in time. Try again to finish deleting.'};
+/* ROUND 8B (A11Y-R8-01): Delete account and Try again keep the focus through the whole erase. Neither is disabled or
+   hidden while it runs (a disabled or hidden button drops the focus to the page): aria-disabled and aria-busy say so, the
+   handlers already ignore a press, and a retry shows "Deleting..." in the message box in place of hiding it */
+function pfDelBusy(b){if(!b) return; b.setAttribute('aria-busy',PF_DELETING?'true':'false');
+  if(PF_DELETING) b.setAttribute('aria-disabled','true'); else b.removeAttribute('aria-disabled');}
 function pfDelPaint(){var b=document.getElementById('pfdel'), m=document.getElementById('pfdelmsg'); if(!b) return;
-  b.disabled=PF_DELETING; b.setAttribute('aria-busy',PF_DELETING?'true':'false');
+  pfDelBusy(b); pfDelBusy(document.getElementById('pfdelretry'));
   b.querySelector('.st').textContent=PF_DELETING?'Deleting...':'Delete account';
-  if(m) m.hidden=PF_DELETING||!PF_DELFAIL;
+  if(m) m.hidden=!PF_DELFAIL;
   var t=document.getElementById('pfdeltxt');   // ROUND 5: no line claims nothing was deleted (the page cannot know)
-  if(t) t.textContent=PF_DELTXT[PF_DELFAIL]||PF_DELTXT.some;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
+  if(t) t.textContent=PF_DELETING?'Deleting...':PF_DELTXT[PF_DELFAIL]||PF_DELTXT.some;}   // PAYWALL 2026-09-30: the App Store entitlement, never a local flag
 function renderProf(){
   var b=document.getElementById('profbody'), left=Math.max(0,FREE_SCANS-scansUsed());
   var name='You';
@@ -7567,7 +7607,7 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   if(!(d&&d.base_song)){tipsOff(); scanAnimOff(); hideChip();
     try{ if(PAYWALL_ON&&!PRO&&d&&d.result!=='engine_down') scanNote(scanMiss(d)); }catch(e){}   // Konnor: failed scans don't count, say so (REVIEWER RUNS 2, GP-7: with the right reason)
     if(d&&(d.result==='no_match'||d.result==='uncertain'||d.base_uncertain)&&curURL&&!d.listen)
-      logUnmatched(curURL, d.handle);
+      logUnmatched(curURL, d.handle, isVkey(d.vkey)?d.vkey:'');   // ROUND 8B (RETURNING-R8-01): and the video it is
     if(leftScan||(waveState!=='scanning'&&waveState!=='locked')) return;   // the user backed out (ROUND 5: or is on another screen); do not drag them onto a No match card
     setState('locked'); setEndTitle(d); return;}
   var _noSong=d.result==='no_match'||d.result==='uncertain'||!!d.unverified_base||!!d.base_uncertain;   // REVIEWER RUNS: notes say a no-song scan doesn't count
