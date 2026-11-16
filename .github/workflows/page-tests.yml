@@ -146,6 +146,12 @@ jobs:
           - id: round7c-cr
             name: 'Round 7c Finds, Search, keyboard and tap targets, link parsing (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round7c.py
+          - id: round7a-wk
+            name: 'Round 7a result card, crown labels and scan text (WebKit)'
+            run: python -u engine/test_round7a.py
+          - id: round7a-cr
+            name: 'Round 7a result card, crown labels and scan text (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round7a.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

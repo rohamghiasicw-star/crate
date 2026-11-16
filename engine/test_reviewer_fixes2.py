@@ -641,7 +641,8 @@ async def main(html, only):
                 q = card["t"]
                 check("R2-19a", "Finds and Share use the title and artist the card shows for the crown",
                       q == "Test Song (Hoodtrap Remix) Prod. Kryd" and saved.get("title") == q and row and row["t"].startswith("Test Song") and "Hoodtrap Remix" in row["t"]
-                      and share and share["text"] == q + " by " + card["a"], {"card": card, "saved": saved, "row": row, "share": share})
+                      and card["a"] == "Test Song · Test Artist" and share and share["text"] == q + " - " + card["a"],   # ROUND 7 (LITERAL-R7-01)
+                      {"card": card, "saved": saved, "row": row, "share": share})
                 check("R2-19b", "Export uses the card's name", exp.startswith(q + " - "), exp[:200])
                 from urllib.parse import quote
                 check("R2-19c", "Open-in search tiles search for the card's title", card["tiles"] and all(quote("Hoodtrap") in u for u in card["tiles"]), card["tiles"])

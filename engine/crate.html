@@ -2432,7 +2432,12 @@ function kitStop(){if(KIT) KIT.on=false; KIT=null;}
    https music.apple.com or itunes.apple.com address is used. */
 var KIT_AM=[];
 function amOK(u){u=String(u||''); return /^https:\/\/([a-z0-9-]+\.)*(music|itunes)\.apple\.com\//i.test(u)?u:'';}
-function amKey(s){return String(s||'').toLowerCase().replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
+/* ROUND 7 (GAPS-R7-01, GAPS-R7-05): names compare in any script. Letters, marks and digits of every script count
+   ('방탄소년단', 'ドライフラワー'); only accents on a-z fold ('Beyoncé' is 'Beyonce'), so a dakuten or an Indic vowel sign
+   still tells two names apart. Before, only a-z and 0-9 counted, so those names keyed to ''. */
+var U_NW=(function(){try{return new RegExp('[^\\p{L}\\p{M}\\p{N}]+','gu');}catch(e){return /[^a-z0-9]+/g;}})();
+function uFold(s){return String(s||'').normalize('NFKD').toLowerCase().replace(/([a-z])[\u0300-\u036f]+/g,'$1').normalize('NFC');}
+function amKey(s){return uFold(s).replace(/[\(\[][^\)\]]*[\)\]]/g,' ').replace(U_NW,' ').trim();}
 function kitAMKeep(ans){if(!ans||!ans.matched||!ans.title) return;
   var u=amOK(ans.appleMusicURL||ans.apple_music_url); if(u) KIT_AM.push({t:amKey(ans.title),a:amKey(ans.artist),r:String(ans.artist||''),u:u,n:String(ans.title)});}
 /* ROUND 5D (GAPS-KIT-R5-05): the link and the title of the recording it opens (`n`: the song ShazamKit named, else
@@ -2448,14 +2453,17 @@ function amSameArtist(x,y){var a=amArts(x), b=amArts(y); if(!a.length||!b.length
 function amLink(d){if(!d) return {u:'',n:''};
   var u=amOK(d.appleMusicURL||d.apple_music_url); if(u) return {u:u,n:String(d.base_song||''),same:true};
   var t=amKey(d.base_song), a=amKey(d.base_artist); if(!t) return {u:'',n:''};
+  // ROUND 7 (GAPS-R7-01): never on an artist that is missing on either side or has no letters ('¥$'): the same title
+  // by another artist ('Dynamite' by Taio Cruz under 'Dynamite' by 방탄소년단) is another recording
   for(var i=0;i<KIT_AM.length;i++){var k=KIT_AM[i];
-    if(k.t===t&&(!a||!k.a||amSameArtist(k.r,d.base_artist))) return {u:k.u,n:k.n||String(d.base_song||''),same:!!(a&&k.a)};}
+    if(k.t===t&&a&&k.a&&amSameArtist(k.r,d.base_artist)) return {u:k.u,n:k.n||String(d.base_song||''),same:true};}
   return {u:'',n:''};}
 function appleMusicURL(d){return amLink(d).u;}
 /* The hero's Apple Music line: "Open in Apple Music" only under the very recording it opens (the same title, word for
    word, brackets included), else it names that recording: "Blow on Apple Music" under a remix of Blow. */
 // ROUND 6 (GAPS-R6-04): and only when the artist is known to be the same (same:false names the recording)
-function amHeroLabel(n,shown,same){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]+/g,' ').trim();};
+// ROUND 7 (GAPS-R7-01): titles in any script compare word for word (two Japanese titles no longer both read as '')
+function amHeroLabel(n,shown,same){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(U_NW,' ').trim();};
   return (same!==false&&(!n||f(n)===f(shown)))?'Open in Apple Music':String(n||shown).trim()+' on Apple Music';}
 function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
   fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
@@ -3065,6 +3073,10 @@ function wvSVG(kind,v){
    "Finding the exact version..." from 70 (Konnor's table), crossfading */
 var WV_ST=['Listening…','Matching the fingerprint…','Finding the closest version…','Addify is busy, keeping your place',
            'Waiting for Addify…','Waiting for a connection…'];   // ROUND 5B: 4 and 5, the dial on hold (pgWaitSay)
+/* ROUND 7 (LAWYER-R7-03): "Listening…" only for a Listen recording (WV_MIC, set by sendListen). A link or share scan uses
+   no microphone: its dial opens on the words the scan screen already says for links. */
+var WV_MIC=false;
+function wvSt(i){ return i===0&&!WV_MIC?'Reading the clip…':WV_ST[i]; }
 function wvStage(v){ return pgFrozen?3:pgWaitShown==='net'?5:pgWaitShown?4:v>=70?2:v>=34?1:0; }
 function wvHTML(v){
   var t=rlText(v), f=Math.max(0,Math.min(1,v/100));
@@ -3072,7 +3084,7 @@ function wvHTML(v){
       '<i class="wv-g wv-g1" style="opacity:'+(.5*f).toFixed(3)+'"></i><div class="wv-tile">'+wvSVG('big',v)+'</div></div>'+
     '<div class="wv-num" id="dnum" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+t+'" aria-label="Scan progress">'+
       '<span class="wv-pct" id="dpct">'+t+'</span><i aria-hidden="true">%</i></div>'+
-    '<div class="wv-st" id="dstage" aria-live="polite"><span class="on">'+WV_ST[wvStage(v)]+'</span><span aria-hidden="true"></span></div>'; }
+    '<div class="wv-st" id="dstage" aria-live="polite"><span class="on">'+wvSt(wvStage(v))+'</span><span aria-hidden="true"></span></div>'; }
 var HT_OK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>';
 function wvSmHTML(v){
   var t=rlText(v);
@@ -3101,8 +3113,8 @@ function wvStatus(root,v){
   if(!box) return;
   i=wvStage(v); if(box._wvi===i) return;
   sp=box.children; on=sp[0].classList.contains('on')?0:1;
-  if(box._wvi==null){ box._wvi=i; sp[on].textContent=WV_ST[i]; return; }
-  box._wvi=i; sp[1-on].textContent=WV_ST[i]; sp[1-on].classList.add('on'); sp[1-on].removeAttribute('aria-hidden');
+  if(box._wvi==null){ box._wvi=i; sp[on].textContent=wvSt(i); return; }
+  box._wvi=i; sp[1-on].textContent=wvSt(i); sp[1-on].classList.add('on'); sp[1-on].removeAttribute('aria-hidden');
   sp[on].classList.remove('on'); sp[on].setAttribute('aria-hidden','true'); }
 /* the displayed values: e = {a (from), b (to), t0, T}, a linear run from a to b over T seconds,
    retargeted from wherever it is on every new value, the way a CSS transition is */
@@ -3177,7 +3189,9 @@ function wlSettle(root){
 /* ROUND 5 (item 1): `still` says whether the user is still watching this scan (scanWatched). The finish takes the
    screen (setState('locked')) only while it holds; once they pressed Back or Cancel, the finish is called off and they
    stay where they went. */
-function wlMorph(still){
+// ROUND 7 (LAWYER-R7-01): onLock runs the moment the card takes the screen (finish() posts the app's banner then)
+function wlMorph(still,onLock){
+  var locked=function(){ setState('locked'); if(onLock) try{ onLock(); }catch(e){} };
   wlCancel();
   var my=wlTok, M=wlM={anims:[],timers:[],scan:[],ov:null,stage:null};
   var live=function(){ return my===wlTok; };
@@ -3192,7 +3206,7 @@ function wlMorph(still){
         art=result.querySelector('.hero .art'), R0=tile&&tile.getBoundingClientRect();
     if(wvReduced()||!art||!R0||!R0.width||!document.body.animate){
       // reduced motion, or no cover slot to land in: no flight; the screen hands over after a beat
-      return wait(wvReduced()?.3:.36).then(function(){ if(!live()||gone()) return false; setState('locked'); return true; });
+      return wait(wvReduced()?.3:.36).then(function(){ if(!live()||gone()) return false; locked(); return true; });
     }
     var acs=getComputedStyle(art), aw=parseFloat(acs.width)||150, arad=parseFloat(acs.borderTopLeftRadius)||20,
         u=R0.width/380, s1=aw/R0.width, r0=92*u, r1=62*u/1.08, r2=arad/s1,
@@ -3223,7 +3237,7 @@ function wlMorph(still){
     an(ov.querySelector('.wvm-hl'),[{opacity:0},{opacity:1}],{delay:900,duration:500,easing:'ease',fill:'both'});
     at(WLT.swap,function(){
       if(gone()) return;
-      setState('locked');
+      locked();
       var sm=document.getElementById('s-match'), a2=result.querySelector('.hero .art'), R1, dx, dy;
       result.classList.add('wl-hold');
       void sm.offsetWidth; wlSettle(sm);
@@ -4818,7 +4832,11 @@ function mainVersion(d){
   // Uploader junk that names no version: hashtags and emoji. Clip 23's crown title
   // ("...Fearless Lofi (slowed+reverb)... || Ringtone II 2024 SVM #trending#shortsfeed
   // #music", with four emoji) filled five lines of the hero at 375px.
-  t=t.replace(/#[^\s#]+/g,' ');
+  // ROUND 7 (GAPS-R7-02): a hashtag made of version words (#nightcore, #slowedreverb, #spedup) names the version: it stays
+  // (Q_MOD's sound words only: #edit, #fyp, #live, #mix, #tiktok are tags and go)
+  var _hc='up|down|and|n|remix|edit|version|mix|[+_-]',
+      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?:'+Q_MOD+'|'+_hc+')+$','i');
+  t=t.replace(/#[^\s#]+/g,function(h){return _hv.test(h)?' '+h+' ':' ';});
   try{ t=t.replace(new RegExp('[\\p{Extended_Pictographic}\\uFE0F\\u200D]','gu'),''); }catch(e){}
   t=t.replace(/\s+/g,' ').trim();
   // "Flo Rida - Gdfr (Slowed + Reverb)" over "Flo Rida": drop the repeated artist prefix
@@ -4827,22 +4845,33 @@ function mainVersion(d){
     var rest=t.slice(ba.length).replace(/^\s*[-\u2013\u2014:|]\s*/,'');
     if(rest && rest.length<t.length-ba.length){named=t.slice(0,ba.length); t=rest;}}
   if(!t) return null;
-  var core=function(x){return String(x||'').normalize('NFKC').toLowerCase()
-    .replace(/\([^)]*\)|\[[^\]]*\]/g,' ').replace(/\b(feat|ft)\b.*$/,'').replace(/[^a-z0-9]+/g,'');};
-  var bs=core(d.base_song), who=d.base_artist||'';
+  // ROUND 7 (GAPS-R7-05): letters of any script count (U_NW), so a Japanese or Korean song is matched in its upload title too
+  var core=function(x){return uFold(x)
+    .replace(/\([^)]*\)|\[[^\]]*\]/g,' ').replace(/\b(feat|ft)\b.*$/,'').replace(U_NW,'');};
+  var bs=core(d.base_song), who=d.base_artist||'', of=false;
   // A " || Ringtone II 2024" style tail goes when the part before it already names the song.
-  var _seg=t.split(/\s+\|\|?\s+/);
-  if(_seg.length>1 && bs && core(_seg[0]).indexOf(bs)>=0) t=_seg[0];
+  // ROUND 7 (GAPS-R7-02): a tail with a sound word in it (" | Nightcore", " | slowed + reverb") is the version: it stays;
+  // " || Ringtone 2024 TikTok", " | Official Audio", " | Live" still go
+  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b(?:'+Q_MOD+')\\b','i');
+  if(_seg.length>1 && bs && core(_seg[0]).indexOf(bs)>=0){var _k=_seg[0];
+    for(var _i=2;_i<_seg.length;_i+=2) if(_vw.test(_seg[_i])) _k+=_seg[_i-1]+_seg[_i];
+    t=_k;}
   // A version titled "sad edit" no longer names the song, so the artist line says it.
-  if(bs && core(t).indexOf(bs)<0) who=d.base_song+(who?' · '+who:'');
+  if(bs && core(t).indexOf(bs)<0){who=d.base_song+(who?' · '+who:''); of=true;}
+  // ROUND 7 (LITERAL-R7-01): an upload that credits its own producer ("... Prod. Kryd") is that producer's version, so
+  // Shazam's artist is not printed under it as if it were theirs: the line names the song and its artist, as above.
+  // Not when the title starts with that artist, the credit names them, or they uploaded it.
+  else if(bs && who && !named){var _pc=(t.replace(Q_PROD_BR,'$1prod.').match(new RegExp(Q_PROD.source,'i'))||[''])[0], _wa=core(who);
+    if(_pc && _wa && core(_pc).indexOf(_wa)<0 && core(ex.uploader).indexOf(_wa)<0){who=d.base_song+' · '+who; of=true;}}
   // ROUND 6 (LITERAL-R6-01): the search words, from the upload alone: its title (with the artist only when the title
   // itself starts with it). A title that does not name the song searches nothing of its own (searchQ uses the song).
-  var q=(bs && core(t).indexOf(bs)>=0) ? qTidy((named?named+' ':'')+t) : '';
+  // ROUND 7 (GAPS-R7-02): a version hashtag searches as its words ("#nightcore" as "nightcore")
+  var q=(bs && core(t).indexOf(bs)>=0) ? qTidy(((named?named+' ':'')+t).replace(/(^|\s)#(?=\S)/g,'$1')) : '';
   if(q && core(q).indexOf(bs)<0) q='';   // ROUND 6D (FU-3): a credit before the song took it: search the song instead
   // YouTube stays on mqdefault: hqdefault is 4:3 with black letterbox bars, which the
   // square cover crop leaves on screen. SoundCloud serves the same art at 500px.
   var art=rowArt(ex).replace(/-t\d+x\d+(\.\w+)$/,'-t500x500$1');
-  return {row:ex, title:t, artist:who, art:art||d.art||'', q:q};}
+  return {row:ex, title:t, artist:who, art:art||d.art||'', q:q, of:of};}   // of: the artist line is the song line
 /* ROUND 6 (LITERAL-R6-01): ONE SOURCE PER SEARCH. The Open in search tiles and the "Find it in another app" rows paired
    the Shazam artist with the crowned upload's title ("Hoodfellas THIS PLACE ABOUT TO BLOW (...) Prod. Kryd"), words no
    catalogue holds together. They now search the upload's own title (mainVersion's q), else the song and its artist as
@@ -4852,8 +4881,16 @@ function mainVersion(d){
    is never empty or one letter: it falls back to the song and artist as Shazam named them. */
 var Q_VER='(?:slowed|sped|speed|super|reverb(?:ed)?|remix(?:ed)?|edit(?:ed)?|hoodtrap|bass|boosted|nightcore|daycore|lo-?fi|'+
   'extended|instrumental|acapella|mashup|bootleg|flip|remaster(?:ed)?|version|mix|cover|live|tiktok|8d|phonk|chopped|screwed|pitched)\\b';
-var Q_PROD=new RegExp('\\bprod(?:uced)?(?:[.:]\\s*|\\s+)(?:by\\b[.:]?\\s*)?(?:(?!\\s+[-|/\\u2013\\u2014])(?!\\s*\\b'+Q_VER+')[^()\\[\\]])*','gi');
-function qTidy(s){s=String(s||'').replace(/\uE000/g,' ').replace(Q_PROD,'\uE000');   // \uE000 marks where a credit was
+/* ROUND 7 (GAPS-R7-02): the sound words of a version. A pipe tail or hashtag holding one names the version the card
+   crowns; Q_VER's wider words (edit, live, mix, cover, version, tiktok) are everyday tags there */
+var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk|chopped|screwed|pitched|hoodtrap|'+
+  'bass ?boost(?:ed)?|instrumental|acapella';
+// ROUND 7 (FU-3): a bare "prod" that opens brackets ("(prod Kryd)", "[Prod Kryd]") is a credit too: read as "prod."
+var Q_PROD_BR=/([(\[]\s*)prod(?=\s+(?!by\b)[^\s()\[\]])/gi;
+// ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by" (or a bare "prod" opening brackets, Q_PROD_BR);
+// a bare word "prod" in a real title ("Prod Me") is part of that title and stays
+var Q_PROD=new RegExp('\\bprod(?:uced)?(?:[.:]\\s*(?:by\\b[.:]?\\s*)?|\\s+by\\b[.:]?\\s*)(?:(?!\\s+[-|/\\u2013\\u2014])(?!\\s*\\b'+Q_VER+')[^()\\[\\]])*','gi');
+function qTidy(s){s=String(s||'').replace(/\uE000/g,' ').replace(Q_PROD_BR,'$1prod.').replace(Q_PROD,'\uE000');   // \uE000 marks where a credit was
   [[/[(\[]\s*\uE000\s*[)\]]/g,' '],                                   // "(Prod. X)": its brackets go too
    [/([(\[])\s*\uE000\s*(?:[-|\/\u2013\u2014]+\s*)?/g,'$1'],          // "(Prod. X - slowed)": "(slowed)"
    [/\s*(?:[-|\/\u2013\u2014]+\s*)?\uE000\s*([)\]])/g,'$1'],          // "(slowed - prod. X)": "(slowed)"
@@ -5791,7 +5828,7 @@ function editWord(t){var m=String(t||'').match(EDIT_WORDS), w=m?m[1].toLowerCase
   return !w?'':w==='cover'?'cover':/remix|rmx|mix|bootleg|flip|rework|vip|mashup/.test(w)?'remix':'edit';}
 function cardName(d){var mv=null; try{mv=mainVersion(d);}catch(e){}
   return {title:mv?mv.title:(d.base_song||''), by:mv?mv.artist:(d.base_artist||''),
-          edit:mv?editWord((mv.row&&mv.row.title)||mv.title):''};}
+          edit:mv?editWord((mv.row&&mv.row.title)||mv.title):'', of:!!(mv&&mv.of)};}
 function saveOne(d,final){
   if(!d || !d.base_song) return false;
   var a=loadCrate(), nm=cardName(d);
@@ -7151,7 +7188,7 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
     else showErr(notClipMsg(p));
     stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
-  curURL=p.url; pendPark(p.url);   // ROUND 7 (NATIVE-R7-04)
+  curURL=p.url; pendPark(p.url); WV_MIC=false;   // ROUND 7 (NATIVE-R7-04) + (LAWYER-R7-03): a link scan: no "Listening…" on the dial
   var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
   SCAN_ID=rid('s'); KIT_MOVED=false; SCAN_TAP=Date.now();   // ROUND 3: the tap, for the liveness bound   // NAMING 2026-09-30: this scan's id (hunt fallback), fresh origin state
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
@@ -7537,7 +7574,11 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   if(_noSong){ try{ if(PAYWALL_ON&&!PRO) scanNote(true); }catch(e){} }
   else if(!d.cached&&!d.dev_hit&&!SCAN_FREE) useScan(curURL,d);   // REVIEWER RUNS 2 (LA-1): a reopened find or this phone's own replay is free
   if(!_noSong&&!d.listen) unmatchedDone(d);         // ROUND 5C (RETURNING-USER-R5-01)
-  if(!held){ logScan(d); postBridge(d); devPut(curURL,d); }   // SPEED FIX 1: the phone's copy
+  // ROUND 7 (LAWYER-R7-01): the app's "Match found" banner and its haptic wait for the card. The post goes when the card
+  // takes the screen (wlMorph's onLock), at once when the card is already up, the user left this scan or the page is
+  // hidden (a share from TikTok), and at the latest 2.5 s after the dial lands, so a finish that is called off still posts
+  var _bp=!!held, bridge=function(){ if(_bp) return; _bp=true; postBridge(d); };
+  if(!held){ logScan(d); devPut(curURL,d); if(document.hidden) bridge(); }   // SPEED FIX 1: the phone's copy
   // Land on a full ring before handing over. The jump to the result is the payoff, and
   // arriving there straight off a spinning 94% reads as interrupted rather than finished.
   // APPLYALL 2026-09-29 (DIAL): the dial turns mint when the run ARRIVES at 100 (below)
@@ -7556,17 +7597,18 @@ function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
   // The user pressed back while the version hunt was still running. The scan is done and
   // saved, but they are on Home now, so the hunt's finish must not haul them back to the
   // result. Clean up the scan visuals and leave them where they are.
-  if(leftScan){scanAnimOff(); hideChip(); return;}
+  if(leftScan){bridge(); scanAnimOff(); hideChip(); return;}
   var handed=document.getElementById('app').getAttribute('data-state')==='locked';
   // Wait for the RING, not for a guessed 1000ms. The old fixed pause was set when the
   // run to 100 took a fixed 450ms; now that the sweep is timed by the distance it has
   // to cover, a blind timer can cut the number off before it arrives - the exact
   // failure being fixed. Landing first, then handing over, is the whole point.
-  if(handed){scanAnimOff(); setState('locked'); hideChip(); return;}
+  if(handed){scanAnimOff(); setState('locked'); hideChip(); bridge(); return;}
   // WAVE 2026-09-30: the wave lands on 100, then the finish: the tile becomes the album art (wlMorph)
   // ROUND 5 (item 1): only while the user is still on this scan, checked again when the screen would switch
   var _ftok=scanTok, still=function(){return scanWatched(_ftok);};
-  pgDone().then(function(){ return still()?wlMorph(still):false; }).then(function(ok){ if(!ok||leftScan) return; scanAnimOff(); hideChip(); });}
+  pgDone().then(function(){ if(!_bp) setTimeout(bridge,2500); return still()?wlMorph(still,bridge):false; })
+    .then(function(ok){ bridge(); if(!ok||leftScan) return; scanAnimOff(); hideChip(); }, bridge);}
 
 /* ---------- settings ---------- */
 function autoOn(){try{return localStorage.getItem('addify-autosave')!=='off';}catch(e){return true;}}
@@ -8019,7 +8061,9 @@ document.getElementById('share').onclick=function(){
   var sh=document.getElementById('share');
   var confirm=function(){sh.innerHTML=IC.tick; setTimeout(function(){sh.innerHTML=IC.share;},1400);};   // APPLYALL 2026-09-29 (build 3): a tick, not the saved bookmark
   var _nm=cardName(d), title=_nm.title||'Addify', artist=_nm.by||'';   // REVIEWER RUNS 2 (LAWYER-06): the card's name
-  var text=_nm.title?(_nm.title+(artist?' by '+artist:'')):'';
+  // ROUND 7 (LITERAL-R7-01): a song line ("Blow (Electro Remix) · Hoodfellas") is not who made the upload: it follows the
+  // title as the app's banner prints it ("<title> - <line>"), never "<title> by <song>"
+  var text=_nm.title?(_nm.title+(artist?(_nm.of?' - ':' by ')+artist:'')):'';
   // Inside the app the share sheet has to come from the native side. WKWebView does not
   // expose navigator.share, so the old web-only call did nothing and the clipboard fallback
   // ran silently, which is why the button looked dead. Hand the song to the native bridge
@@ -8189,7 +8233,7 @@ function sendListen(blob){
   // the old /base answer or hunt budget cannot draw over the listen result
   endHunt(); huntEnd(); scanTok++; p1Busy=false;   // PROGRESS 2026-09-29: the hunt poll too
   if(LISTEN_STOP){ var _ls=LISTEN_STOP; LISTEN_STOP=null; try{_ls();}catch(e){} }   // ROUND 5: an older recording's ask stops too
-  var tok=scanTok; LISTEN_BLOB=blob;
+  var tok=scanTok; LISTEN_BLOB=blob; WV_MIC=true;   // ROUND 7 (LAWYER-R7-03): a Listen recording: the dial may say "Listening…"
   curURL=''; result.innerHTML=''; W.amp=[]; setSpeedFromLabel(''); scanReset();
   busy=true; leftScan=false; setState('scanning'); hideChip();
   showChip('mic','room audio · '+Math.round(blob.size/1024)+' KB','',true);
