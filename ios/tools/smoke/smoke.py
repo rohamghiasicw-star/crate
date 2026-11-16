@@ -1942,8 +1942,12 @@ def slow_boot(dev, app, version):
     check(dev, "slowboot", "the loading screen said it is still connecting, with Try again, before the page came",
           bool(slow) and bool(loaded) and slow[0] is not None and loaded[0] is not None and slow[0] < loaded[0],
           "slow at %s, page loaded at %s" % (slow, loaded))
-    k = pixel_class(res["shots"].get("t13", ""))
-    check(dev, "slowboot", "the app's own screen at 13 s, not the page or a blank view", k in ("boot", "error"), k)
+    # At 13 s: the loading screen's icon where it always was (a little above the middle) and the purple
+    # Try again below the middle, which pixel_class reads as the error screen's button.
+    shot = res["shots"].get("t13", "")
+    k, icon = pixel_class(shot), boot_icon(shot)
+    check(dev, "slowboot", "at 13 s the loading screen keeps its layout and shows Try again below it", k == "error" and icon >= 150,
+          "%s, icon %d px" % (k, icon))
     k = pixel_class(res["shots"].get("settled", ""))
     check(dev, "slowboot", "page on screen once it answered", k == "page", k)
     check(dev, "slowboot", "app still running", res["alive"], "")

@@ -108,7 +108,10 @@ struct BootView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Spacer()
+            /* Two equal spaces above and below keep the icon, the name and the spinner in the middle, as
+               the two spacers did. The button sits over the top of the lower one, so nothing moves when
+               it comes, and inside its bounds (a spacer has no width), where a tap and VoiceOver reach it. */
+            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             Image(systemName: "waveform")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(Color(red: 0.36, green: 0.29, blue: 0.91))
@@ -122,10 +125,7 @@ struct BootView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(!slow)
-            /* Below the line, over the space under it, so what is above stays where it was. The space is
-               given the screen's width and the button its own size (a spacer in a column has no width). */
-            Spacer()
-                .frame(maxWidth: .infinity)
+            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .top) {
                     if slow {
                         Button("Try again") {
