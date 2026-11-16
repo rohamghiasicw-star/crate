@@ -166,12 +166,21 @@ enum SharedInbox {
        it (linkTrim), as a word does. Read on UTF-16 code units, as JavaScript reads the text. nil when the word
        has none. */
     private static func hostRun(_ u: [UInt16]) -> String? {
-        let label: (UInt16) -> Bool = { (0x30...0x39).contains($0) || (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) || $0 == 0x2D }
-        let names = ["tiktok.com/", "instagram.com/", "instagr.am/"].map { Array($0.utf16) }
+        func lower(_ c: UInt16) -> Bool { c >= 0x61 && c <= 0x7A }
+        func label(_ c: UInt16) -> Bool { (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || lower(c) || c == 0x2D }
+        let names: [[UInt16]] = ["tiktok.com/", "instagram.com/", "instagr.am/"].map { Array($0.utf16) }
+        /* One of the names at p, its ASCII letters in either case. */
         func name(at p: Int) -> Bool {
-            names.contains { n in
-                p + n.count <= u.count && zip(u[p..<(p + n.count)], n).allSatisfy { $0 == $1 || ((0x61...0x7A).contains($1) && $0 == $1 - 0x20) }
+            for n in names where p + n.count <= u.count {
+                var k = 0
+                while k < n.count {
+                    let c: UInt16 = u[p + k], want: UInt16 = n[k]
+                    guard c == want || (lower(want) && c == want - 0x20) else { break }
+                    k += 1
+                }
+                if k == n.count { return true }
             }
+            return false
         }
         for i in u.indices where i == 0 || !(label(u[i - 1]) || u[i - 1] == 0x2E) {
             var p = i

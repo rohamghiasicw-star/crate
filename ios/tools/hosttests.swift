@@ -791,8 +791,11 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             let got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
             eq(got, c.link, "r9: " + c.what)
             if let g = got { eq(SharedInbox.shareLink(in: g), g, "r9: the app reads the same link back: " + c.what) }
-            let kind = got.flatMap { SharedInbox.clipLink($0) != nil ? "clip" : (SharedInbox.pageLink($0) != nil ? "page" : nil) }
-            eq(kind, c.page.map { $0 == "clip" ? "clip" : "page" }, "r9: the link reads as the page reads the text: " + c.what)
+            var kind: String? = nil
+            if let g = got, SharedInbox.clipLink(g) != nil { kind = "clip" } else if let g = got, SharedInbox.pageLink(g) != nil { kind = "page" }
+            var want: String? = nil
+            if let p = c.page { want = p == "clip" ? "clip" : "page" }
+            eq(kind, want, "r9: the link reads as the page reads the text: " + c.what)
         }
 
         // The share corpus (tools/share-corpus.json, built by tools/share_corpus.py from the round 7 testers'
