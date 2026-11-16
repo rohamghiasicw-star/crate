@@ -150,12 +150,36 @@ enum SharedInbox {
         }
         let lead = Set("([{<\"'".unicodeScalars)
         let urlChar: (Unicode.Scalar) -> Bool = { $0.isASCII && isURLChar(UInt16($0.value)) }
-        return raw.unicodeScalars.split(whereSeparator: space).compactMap { w in
-            let kept = w.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0x2060 && $0.value != 0xFEFF }
-            let word = linkTrim(text(kept.drop(while: { lead.contains($0) || !urlChar($0) }).prefix(while: urlChar)))
-            let host = hostRun(Array(text(kept).utf16))
-            return word.isEmpty && host == nil ? nil : (word, host)
+        return raw.unicodeScalars.split(whereSeparator: space).flatMap { w -> [(read: String, host: String?)] in
+            let kept = Array(w.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0x2060 && $0.value != 0xFEFF })
+            return schemePieces(kept).compactMap { piece -> (read: String, host: String?)? in
+                let word = linkTrim(text(piece.drop(while: { lead.contains($0) || !urlChar($0) }).prefix(while: urlChar)))
+                let host = hostRun(Array(text(piece).utf16))
+                return word.isEmpty && host == nil ? nil : (word, host)
+            }
         }
+    }
+
+    /* Build 34 parity, the page's .split(/(?=https?:\/\/)/i): a word also ends where an http:// or https:// (ASCII
+       letters in either case) starts inside it, as a LINK_RE link does, so a link glued to the one before it
+       ("tiktok.com/@u/video/1https://example.com") is read on its own. A scheme at the very start is no break. */
+    private static func schemePieces(_ s: [Unicode.Scalar]) -> [ArraySlice<Unicode.Scalar>] {
+        func at(_ k: Int, _ ch: Character) -> Bool {
+            guard k < s.count, let a = ch.asciiValue else { return false }
+            let c = s[k].value
+            return c == UInt32(a) || (a >= 0x61 && a <= 0x7A && c == UInt32(a - 0x20))
+        }
+        func scheme(_ i: Int) -> Bool {
+            guard at(i, "h"), at(i + 1, "t"), at(i + 2, "t"), at(i + 3, "p") else { return false }
+            let k = at(i + 4, "s") ? i + 5 : i + 4
+            return at(k, ":") && at(k + 1, "/") && at(k + 2, "/")
+        }
+        var pieces: [ArraySlice<Unicode.Scalar>] = [], start = 0
+        for i in s.indices where i > 0 && scheme(i) {
+            pieces.append(s[start..<i]); start = i
+        }
+        pieces.append(s[start..<s.count])
+        return pieces
     }
 
     /* SHARE-R9-02 and SHARE-R9-03 (build 34): the first TikTok or Instagram host in a word, found the way the
@@ -184,7 +208,7 @@ enum SharedInbox {
         }
         /* ROUND 9C parity (build 34), the page's word_search_skip: the run of URL characters right before the
            host, back to the start of the word or the last character a URL can't hold, holds another host name
-           and then a / or ? (/[A-Za-z0-9-]\.[A-Za-z0-9-].*[\/?]/), so the host sits in that link's path or query
+           and then a / ? or # (/[A-Za-z0-9-]\.[A-Za-z0-9-].*[\/?#]/), so the host sits in that link's path, query or fragment
            ("example.com/tiktok.com/...", "evil.com/?u=tiktok.com/...") and the word has none. A host after an
            emoji or a scheme alone ("https:/www.instagram.com/...") is not in another link. */
         func inOtherLink(before i: Int) -> Bool {
@@ -193,7 +217,7 @@ enum SharedInbox {
             let run = Array(u[s..<i])
             guard run.count >= 4 else { return false }
             for a in 0..<(run.count - 3) where label(run[a]) && run[a + 1] == 0x2E && label(run[a + 2]) {
-                return run[(a + 3)...].contains(where: { $0 == 0x2F || $0 == 0x3F })
+                return run[(a + 3)...].contains(where: { $0 == 0x2F || $0 == 0x3F || $0 == 0x23 })
             }
             return false
         }

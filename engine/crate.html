@@ -2719,16 +2719,20 @@ function parseLink(raw){raw=(raw||'').trim(); var all=(raw.match(LINK_RE)||[]).m
   // the word before it (an emoji, an em dash, a colon or a full-width colon: "song:tiktok.com/...") is found too; the match
   // ends at the first character a URL cannot hold. Word by word, the first clip either reading finds wins. With no clip
   // anywhere and no page from the http(s) links, the first page this search found names the app ("omg tiktok.com/@u lol"
-  // says "a TikTok page", as its https form does). A host that comes after another host name and a / or ? in the same run
+  // says "a TikTok page", as its https form does). A host that comes after another host name and a / ? or # in the same run
   // of URL characters is in that link's path or query ("example.com/tiktok.com/...", "google.com/search?q=tiktok.com/..."),
   // so that word has none. The share extension reads words by the same rule.
-  {var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/), wpage=null;
-    for(var j=0;j<tk.length;j++){var w=tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,''), t=linkTrim(w
+  // Build 34 parity: a word also ends where an http:// or https:// starts inside it, as a LINK_RE link does, so a link glued
+  // to the one before it ("tiktok.com/@u/video/1https://example.com") is read on its own, the way the share reads it.
+  {var tk=[], wpage=null;
+    raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/).forEach(function(x){
+      x.replace(/[\u200B-\u200D\u2060\uFEFF]/g,'').split(/(?=https?:\/\/)/i).forEach(function(y){tk.push(y);});});
+    for(var j=0;j<tk.length;j++){var w=tk[j], t=linkTrim(w
         .replace(/^(?:[(\[{<"']|[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%])+/,'').replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,'')),
       r2=t?clipShape(t):{};
       if(r2.host) return {host:r2.host,url:r2.url||(/^https?:\/\//i.test(t)?t:'https://'+t)};
       var m=w.match(/(?:^|[^A-Za-z0-9.-])((?:[a-z0-9-]+\.)*(?:tiktok\.com|instagram\.com|instagr\.am)\/\S*)/i);
-      if(m&&/[A-Za-z0-9-]\.[A-Za-z0-9-].*[\/?]/.test(w.slice(0,m.index+m[0].length-m[1].length).match(/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*$/)[0])) m=null;
+      if(m&&/[A-Za-z0-9-]\.[A-Za-z0-9-].*[\/?#]/.test(w.slice(0,m.index+m[0].length-m[1].length).match(/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*$/)[0])) m=null;
       var h=m?linkTrim(m[1].replace(/[^A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%][\s\S]*$/,'')):'', r3=h?clipShape(h):{};
       if(r3.host) return {host:r3.host,url:r3.url||'https://'+h};
       if(r3.page&&!wpage) wpage=r3.page;}

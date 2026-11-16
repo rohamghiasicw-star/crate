@@ -797,6 +797,19 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
              "https://tiktok.com/@bouch.szn/video/7651437319941066005", "clip", "an emoji ends the other link, so the clip after it is found (r9-clip-after-other-link-emoji)"),
             ("lol https:/www.instagram.com/reel/DeE4Gy2xjUN/", "https://www.instagram.com/reel/DeE4Gy2xjUN/", "clip",
              "a scheme alone is no other link (r9-clip-after-one-slash-scheme)"),
+            /* Build 34 parity: a word ends where an http:// or https:// starts inside it (the page's split), and a host
+               after another host name and a # is in that link's fragment. */
+            ("tiktok.com/@flprobe/video/7123456789012345611https://example.com", "https://tiktok.com/@flprobe/video/7123456789012345611", "clip",
+             "a link glued after the clip ends the clip's word (b34-glued-scheme-after-clip)"),
+            ("omg tiktok.com/@u/video/7651437319941066005https://www.youtube.com/watch?v=x", "https://tiktok.com/@u/video/7651437319941066005", "clip",
+             "the same after a word (b34-glued-scheme-after-word-clip)"),
+            ("look instagram.com/reel/DeE4Gy2xjUN/https://x.y/watch?v=x", "https://instagram.com/reel/DeE4Gy2xjUN/", "clip",
+             "a reel with a link glued after it (b34-glued-scheme-after-reel)"),
+            ("www.instagram.com/mako_cars/https://vm.tiktok.com/ZMhvqKj8L/", "https://vm.tiktok.com/ZMhvqKj8L/", "clip",
+             "a page, then a clip glued after it with https:// (b34-page-then-glued-clip)"),
+            ("example.com#tiktok.com/@a/video/7651437319941066005", nil, nil, "a host in another link's fragment (b34-host-in-fragment)"),
+            ("TIKTOK.COM#xomg,www.tiktok.com/t/ZTRabcde1/", "https://TIKTOK.COM#xomg,www.tiktok.com/t/ZTRabcde1/", "TikTok",
+             "a short link in a TikTok page's fragment is that page (b34-clip-in-page-fragment)"),
         ]
         for c in r9 {
             let got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
