@@ -3,7 +3,8 @@ browser against the page file and the promise-ledger mock engine. No network, no
 is stubbed. The /feedback row-id change on the server side has its own offline test (test_feedback_ids.py).
 
   E29 A version check that fails AFTER the 4 s budget (the stream and /edits refused, /edits answering an error late,
-      the phone going offline right after /base, or nothing answering at all until the 90 s cap) ends like one that
+      the phone going offline right after /base, or nothing answering at all: since round 6c it ends SCAN_STILL (30 s)
+      after the check last moved, not at the 90 s cap) ends like one that
       fails before it: the card keeps its title and says "Couldn't check versions." with a 44 pt Try again, and never
       "The closest version we found ... The original release". Try again with the network back checks the versions
       (the crown lands). A crown that lands after the budget still upgrades the card (no note).
@@ -22,7 +23,8 @@ is stubbed. The /feedback row-id change on the server side has its own offline t
       YouTube playhead past 0.1 s is a start; a Pause before the start disarms it.
   E34 The sheet player (Search results, Finds rows) has the same 12 s watch: offline, a YouTube or SoundCloud row says
       "Couldn't load the player." with Open in app (the same upload) and Try again (44 pt), which with the network back
-      opens the player again and takes the focus; a sheet that starts, or is closed, is left alone.
+      opens the player again with the focus kept on the sheet (round 6, A11Y-R6-05: inside the player's frame Escape never
+      reached the page); a sheet that starts, or is closed, is left alone.
   E35 A preview on a dead network says "Couldn't load the player." with Open in app (the song's page) and Try again,
       at once, keeps both play buttons, and Try again with the network back opens the player again.
   E2  page-tests.yml runs this suite on WebKit and Chromium
@@ -99,7 +101,7 @@ SHEET = r"""()=>{var p=document.getElementById('player'), f=p&&p.querySelector('
   return {vis:!!p&&!p.hidden, frame:!!fr, src:fr?fr.getAttribute('src'):'', fail:f?f.querySelector('b').textContent:'',
     href:a?a.getAttribute('href'):null, openTxt:a?a.textContent:'', retry:r?r.textContent:'',
     hits:[a,r].filter(Boolean).map(function(x){return Math.round(x.getBoundingClientRect().height);}),
-    focus:ae?(ae.id||ae.tagName):null, body:(document.getElementById('playerbody')||{}).innerHTML||'',
+    focus:ae?(ae.id||ae.tagName):null, fdlg:!!ae&&!!p&&ae===p.querySelector('[role="dialog"]'), body:(document.getElementById('playerbody')||{}).innerHTML||'',
     outs:[].filter.call(p?p.querySelectorAll('a'):[],function(x){return /Open in app/.test(x.textContent)&&x.getBoundingClientRect().height>0;}).length};}"""
 
 
@@ -298,12 +300,12 @@ async def main(html, yml, only):
             ctx, pg = await page(routes={"/base?": answer(hunting(c)), "/progress": answer(DONE_P), "/edits": hold})
             await go(pg, c); t0 = time.time()
             await until(pg, FINAL, 25)
-            await pg.wait_for_timeout(60000); mid = await pg.evaluate(LOOK29)
+            await pg.wait_for_timeout(20000); mid = await pg.evaluate(LOOK29)   # ROUND 6C: the bound is SCAN_STILL after the last move
             await until(pg, "()=>!!document.querySelector('#result .vcheck')", 45)
             await pg.wait_for_timeout(600); z = await pg.evaluate(LOOK29); secs = round(time.time() - t0, 1)
-            ok = mid["track"] and not mid["notes"] and note_ok(z) and 88 <= secs <= 110 and not pg.errs
-            check("E29-hang", "Nothing answers the version check: the tracker until the 90 s cap (%.0f s), then \"Couldn't check versions.\" with Try again, not the closest-version card" % secs,
-                  ok, {"at60s": mid, "end": z, "secs": secs, "errs": pg.errs})
+            ok = mid["track"] and not mid["notes"] and note_ok(z) and 30 <= secs <= 46 and not pg.errs
+            check("E29-hang", "Nothing answers the version check: the tracker until SCAN_STILL after its last move (%.0f s), then \"Couldn't check versions.\" with Try again, not the closest-version card" % secs,
+                  ok, {"at20s": mid, "end": z, "secs": secs, "errs": pg.errs})
             await close(ctx)
         async def e29_late_crown():
             ctx, pg = await page()
@@ -599,13 +601,13 @@ async def main(html, yml, only):
             await close(ctx)
             ok = (a["vis"] and a["frame"] and not a["fail"] and a["outs"] == 1 and z["vis"] and plain(z["fail"]) == NOLOAD and not z["frame"] and z["outs"] == 1
                   and z["href"] == url and z["openTxt"] == "Open in app" and z["retry"] == "Try again" and len(z["hits"]) == 2 and all(h >= 44 for h in z["hits"])
-                  and y["vis"] and y["frame"] and not y["fail"] and y["outs"] == 1 and y["focus"] == "plframe" and y2["frame"] and not y2["fail"] and not pg.errs)
+                  and y["vis"] and y["frame"] and not y["fail"] and y["outs"] == 1 and y["fdlg"] and y2["frame"] and not y2["fail"] and not pg.errs)
             return ok, {"at1s": a, "at13s": z, "after_try": y, "13s_later": y2, "errs": pg.errs}
         try:
             if want(34):
                 YTU = "https://www.youtube.com/watch?v=LedgerTest1"
                 (oky, ey), (oks, es) = await asyncio.gather(e34("youtube", YTU), e34("soundcloud", LG.SC_CROWN))
-                check("E34-youtube", "Offline, a row's YouTube player in the sheet: at 12 s \"Couldn't load the player.\" with Open in app (the same upload, the sheet's only one) and Try again (44 pt); with the network back Try again opens it, takes the focus, and it starts (left alone)", oky, ey)
+                check("E34-youtube", "Offline, a row's YouTube player in the sheet: at 12 s \"Couldn't load the player.\" with Open in app (the same upload, the sheet's only one) and Try again (44 pt); with the network back Try again opens it with the focus on the sheet, and it starts (left alone)", oky, ey)
                 check("E34-soundcloud", "The same for a SoundCloud row in the sheet", oks, es)
                 # a sheet that starts, or that is closed before 12 s, is left alone
                 ctx, pg = await page(apis=True)

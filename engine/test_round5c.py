@@ -6,8 +6,8 @@ promise-ledger mock engine. No network, no live server: every outside request is
        through); with a scan left it asks for the mic; a listen result spends a scan the way a link scan does
   C2   The free-scan gate waits for the first entitlement answer: a subscriber's cold share with the status answer
        600 ms or 1.5 s late never shows the paywall or a "0 scans left" pill and scans uncounted; a non-subscriber
-       gets the paywall only once the answer is in; a status that never answers opens it after PRO_WAIT, and closing
-       it then keeps the clip, which scans when Plus turns on; openPaywall() does nothing with Plus on; a short link
+       gets the paywall only once the answer is in; a status that never answers opens no paywall (round 6, IAP-R6-01:
+       test_round6a A1 has the rest), and an answer of Plus then scans the clip; openPaywall() does nothing with Plus on; a short link
        whose lookup ends after Plus turned on scans with no paywall
   C3   A pending purchase (Ask to Buy) holds the sheet: the pending line, the button and both rows locked, a second
        tap or the other plan buys nothing, a reopened sheet keeps it all, a reload keeps it and polls again, the
@@ -99,6 +99,8 @@ PEND = "Your purchase is pending. Addify Plus turns on as soon as the App Store 
 YR_ID, MO_ID = "com.addify.app.unlimited.yearly", "com.addify.app.unlimited.monthly"
 SHA = {"apple": "fc209aa92f0f62b55beb6e3c7424d1bb96ebd558f896243fdb74f37d89f957cb",
        "spotify": "ead72f82725038389cca09f439fdb7807640e122500c934f2500c7036bf40dbb",
+       "spotify_white": "8929d148f54cede78f0f36ce90df815e5ea5e5559e7faeccad3669302ef2daa1",   # ROUND 6 (LAWYER-R6-04)
+       "spotify_black": "5595afea0e6f009b1dd8529511204d0fd5ca035e49c85409d1697063b3c27a05",
        "sc_black": "eaf93981ad9df90b2fe9bb529a5f76b425a946a2af4a86f92d8ae6d22413bf81",
        "sc_white": "dea261fe34e33abf7b14989c7581a11afa5ae4c024e041499f4840146693e590"}
 
@@ -260,12 +262,11 @@ async def main(html, yml, only):
                 res["free"] = {"first_open": first, "pill_blank_early": blank, "pill_end": sm[-1]["pill"] if sm else None,
                                "pill_shown_end": sm[-1]["pillShown"] if sm else None}
                 await close(ctx)
-                # StoreKit never answers: the paywall after PRO_WAIT; closed meanwhile, the clip waits for the answer
+                # StoreKit never answers: ROUND 6 (IAP-R6-01): no paywall; an answer of Plus then scans the clip
                 ctx, pg, sm = await cold(8, {"statusMs": "hang", "pro": False}, 4.2)
                 t_st = await pg.evaluate(ST0)
                 first = next(((s["t"] - t_st) / 1000.0 for s in sm if s["pw"]), None)
-                await pg.evaluate("()=>document.getElementById('pwx').click()"); await pg.wait_for_timeout(300)
-                kept = await pg.evaluate("()=>PW_AFTER")
+                kept = clip(8)
                 await pg.evaluate("()=>{__sk.pro=true; __sk.statusMs=0; storeRefresh();}")
                 ran = await until(pg, "()=>{var s=document.getElementById('app').getAttribute('data-state'); return s==='scanning'||s==='locked';}", 5)
                 res["hang"] = {"first_open": first, "kept": kept, "ran": bool(ran), "errs": pg.errs}
@@ -292,13 +293,13 @@ async def main(html, yml, only):
                           and res[k]["pill"] == "Unlimited" and not res[k]["errs"] for k in ("sub600", "sub1500"))
                       and res["free"]["first_open"] is not None and res["free"]["first_open"] >= 0.85 and res["free"]["pill_blank_early"]
                       and res["free"]["pill_shown_end"] and res["free"]["pill_end"] == "0 scans left"
-                      and res["hang"]["first_open"] is not None and 2.5 <= res["hang"]["first_open"] <= 3.9
+                      and res["hang"]["first_open"] is None
                       and res["hang"]["kept"] == clip(8) and res["hang"]["ran"] and not res["hang"]["errs"]
                       and not res["short"]["pro_open"] and not res["short"]["pw"] and res["short"]["st"] in ("scanning", "locked", "idle")
                       and not res["short"]["errs"])
                 check("C2", "A subscriber's cold share with a late status never sees the paywall or '0 scans left' and scans "
-                            "uncounted; a non-subscriber's paywall waits for the answer; a status that never answers opens it after "
-                            "PRO_WAIT and a close keeps the clip for Plus; no paywall with Plus on, nor after a short link's lookup", ok, res)
+                            "uncounted; a non-subscriber's paywall waits for the answer; a status that never answers opens no paywall "
+                            "and an answer of Plus scans the clip; no paywall with Plus on, nor after a short link's lookup", ok, res)
         except Exception as e:
             check("C2", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 
@@ -314,7 +315,7 @@ async def main(html, yml, only):
                 await pg.wait_for_timeout(300); a2 = await pg.evaluate(PW)
                 await pg.evaluate("()=>document.getElementById('pwx').click()"); await pg.wait_for_timeout(200)
                 await pg.evaluate("()=>openPaywall()"); await pg.wait_for_timeout(500); r = await pg.evaluate(PW)
-                key = await pg.evaluate("()=>sessionStorage.getItem('addify-pw-pending')")
+                key = await pg.evaluate("()=>localStorage.getItem('addify-pw-pending')")   # ROUND 6 (IAP-R6-03): localStorage
                 await pg.reload(wait_until="load"); await pg.wait_for_timeout(900)
                 await pg.evaluate("()=>{var o=document.getElementById('onb'); if(o) o.hidden=true; var s=document.getElementById('splash'); if(s) s.hidden=true;}")
                 polling = await pg.evaluate("()=>!!pendT&&PW_BUYING==='%s'&&PW_NOTE===%s" % (YR_ID, json.dumps(PEND)))
@@ -322,10 +323,10 @@ async def main(html, yml, only):
                 n0 = rl["status"]
                 await pg.evaluate("()=>{__sk.pro=true; window.dispatchEvent(new CustomEvent('addify:entitlements'));}")
                 await pg.wait_for_timeout(600)
-                on = await pg.evaluate("()=>({pw:!document.getElementById('paywall').hidden, pro:PRO, buying:PW_BUYING, key:sessionStorage.getItem('addify-pw-pending'), status:__calls.filter(function(c){return c.op==='status';}).length, pill:(document.getElementById('scanpill')||{}).textContent})")
+                on = await pg.evaluate("()=>({pw:!document.getElementById('paywall').hidden, pro:PRO, buying:PW_BUYING, key:localStorage.getItem('addify-pw-pending'), status:__calls.filter(function(c){return c.op==='status';}).length, pill:(document.getElementById('scanpill')||{}).textContent})")
                 errs = list(pg.errs); await close(ctx)
                 # the wait ends (the stored deadline passes): the button comes back and the line goes
-                ctx, pg = await page(init=scans(5) + "try{sessionStorage.setItem('addify-pw-pending',JSON.stringify({id:'%s',until:Date.now()+1800}));}catch(e){}" % YR_ID)
+                ctx, pg = await page(init=scans(5) + "try{localStorage.setItem('addify-pw-pending',JSON.stringify({id:'%s',until:Date.now()+1800}));}catch(e){}" % YR_ID)
                 await pg.evaluate("()=>openPaywall()"); await pg.wait_for_timeout(400); w0 = await pg.evaluate(PW)
                 await pg.wait_for_timeout(1800); w1 = await pg.evaluate(PW)
                 errs += pg.errs; await close(ctx)
@@ -567,16 +568,17 @@ async def main(html, yml, only):
                 await pg.evaluate("()=>{var b=document.getElementById('otherbtn'); if(b) b.click();}"); await pg.wait_for_timeout(200)
                 r = await pg.evaluate(r"""()=>{var q=function(s){return [].map.call(document.querySelectorAll(s),function(e){return e;});};
                   return {other:q('#otherwrap .prow').map(function(a){var i=a.querySelector('.pi img.bmk'), cs=i?getComputedStyle(i):null;
-                            return {t:a.textContent.trim(), img:!!i, w:i?Math.round(i.getBoundingClientRect().width):0, svg:!!a.querySelector('.pi svg')};}),
+                            return {t:a.textContent.trim(), img:!!i, w:i?Math.round(i.getBoundingClientRect().width):0, svg:!!a.querySelector('.pi svg'),
+                              vis:[].filter.call(a.querySelectorAll('.pi img'),function(x){return getComputedStyle(x).display!=='none';}).length};}),
                     chips:q('#result .src').map(function(c){return {t:c.textContent.trim(), img:!!c.querySelector('img'), svg:!!c.querySelector('svg')};}),
                     scShown:q('#otherwrap .prow .pi img.bmk-d,#otherwrap .prow .pi img.bmk-l').filter(function(i){return getComputedStyle(i).display!=='none';}).length,
                     broken:q('img.bmk').filter(function(i){return getComputedStyle(i).display!=='none'&&!(i.complete&&i.naturalWidth>0);}).length};}""")
                 errs = pg.errs; await close(ctx)
-                ok = (static["apple"] == [SHA["apple"]] and static["spotify"] == [SHA["spotify"]]
+                ok = (static["apple"] == [SHA["apple"]] and static["spotify"] == [SHA["spotify_white"], SHA["spotify"], SHA["spotify_black"]]
                       and static["soundcloud"] == [SHA["sc_white"], SHA["sc_black"]] and static["youtube"] == (72, 61)
                       and static["deezer"] is None and static["tt"] is None and not static["amg"] and not static["ttuse"]
                       and len(r["other"]) == 4 and all(x["img"] and not x["svg"] and x["w"] == 24 for x in r["other"])
-                      and r["scShown"] == 1 and r["broken"] == 0
+                      and r["scShown"] == 2 and all(x["vis"] == 1 for x in r["other"]) and r["broken"] == 0   # ROUND 6: SoundCloud's and Spotify's white
                       and all(not c["svg"] for c in r["chips"]) and all((not c["img"]) or c["t"] == "Apple Music" for c in r["chips"]) and not errs)
                 check("C12", "Apple Music, Spotify and SoundCloud marks are the brands' files byte for byte, YouTube's red icon scaled to 72x61; "
                              "no drawn Deezer or TikTok mark; the four 'Find it in another app' rows show them at 24 px; small chips keep only Apple Music's",
