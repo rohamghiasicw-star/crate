@@ -22,7 +22,7 @@ promise-ledger mock engine. No network, no live server: every outside request is
   A9   GAPS-R6-04: a ShazamKit answer by another artist whose name starts with the same word ("Test Crew" under "Test
        Artist") gives no Apple Music link; the same artist (or a credit list holding it) does; an answer naming no
        artist names the recording instead of "Open in Apple Music"
-  A10  LAWYER-R6-03: no Instagram mark is drawn: no IC.ig, no gradient tile; the scan chip says "Shared from Instagram"
+  A10  LAWYER-R6-03: no Instagram mark is drawn: no IC.ig, no gradient tile; the scan chip of a typed link says "Instagram link" (round 9)
        with no glyph and "Back to Instagram" carries the plain open arrow
   A11  LAWYER-R6-04: Spotify's icons are its own files byte for byte (white, green, black); in the dark theme every
        visible Spotify icon is the white one, and anywhere the green one shows its tile is pure white or black
@@ -445,9 +445,9 @@ async def main(html, yml, only):
                     if(!a) return null; var s=a.querySelector('svg'); return {t:a.textContent.trim(), path:s?(s.querySelector('path')||{getAttribute:function(){return '';}}).getAttribute('d'):'',
                       rect:!!(s&&s.querySelector('rect')), imgs:a.querySelectorAll('img').length};}""")
                 errs = pg.errs; await close(ctx)
-                ok = (not static["ig"] and not static["use"] and not static["grad"] and chip and chip["t"] == "Shared from Instagram" and chip["marks"] == 0
+                ok = (not static["ig"] and not static["use"] and not static["grad"] and chip and chip["t"] == "Instagram link" and chip["marks"] == 0
                       and back and back["path"] == "M8 16 16 8M9.5 8H16v6.5" and not back["rect"] and back["imgs"] == 0 and not errs)
-                check("A10", "No drawn Instagram mark: no IC.ig and no gradient tile; the chip reads 'Shared from Instagram' with no glyph and "
+                check("A10", "No drawn Instagram mark: no IC.ig and no gradient tile; the typed link's chip reads 'Instagram link' with no glyph and "
                              "'Back to Instagram' has the plain open arrow", ok, {"static": static, "chip": chip, "back": back, "errs": errs})
         except Exception as e:
             check("A10", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))

@@ -2467,7 +2467,8 @@ function appleMusicURL(d){return amLink(d).u;}
 // ROUND 8 (GAPS-R8-01): `raw` is the uncut upload title. When it says remix, cover, acoustic or mashup and the recording
 // does not, the hero (its tag cut, "Kesha - Blow #remix" shown as "Blow") is not that recording: the line says "Original"
 function amHeroLabel(n,shown,same,raw){var f=function(s){return String(s||'').normalize('NFKC').toLowerCase().replace(U_NW,' ').trim();};
-  if(same!==false&&(!n||f(n)===f(shown))&&Q_SAYS.test(raw||'')&&!Q_SAYS.test(n||shown)) return 'Original on Apple Music';
+  // ROUND 9 (GAPS-R9-01): the uncut title is read with the one set of version words (qSays): "| Piano Version", "#coversong"
+  if(same!==false&&(!n||f(n)===f(shown))&&qSays(raw)&&!qSays(n||shown)) return 'Original on Apple Music';
   return (same!==false&&(!n||f(n)===f(shown)))?'Open in Apple Music':String(n||shown).trim()+' on Apple Music';}
 function kitB64(blob){return new Promise(function(ok,no){var fr=new FileReader();
   fr.onload=function(){var r=String(fr.result||''); ok(r.slice(r.indexOf(',')+1));};
@@ -3477,9 +3478,12 @@ function hgDone(){
    so pass null for anything you are not changing. The audio tick only goes green once
    the server has actually handed back waveform data - it reports the one step in the
    chain most likely to fail, so it must never light up on hope. */
-var chipState={host:'',sub:'',thumb:'',audio:false};
-function showChip(host,sub,thumb,audio){
+/* ROUND 9 (LITERAL-R9-01): "Shared from TikTok" only for a share-sheet arrival (`via`: run()'s arrived flag, or the share
+   that opened the page, _viaSheet). A typed or pasted link is "TikTok link" / "Instagram link". */
+var chipState={host:'',sub:'',thumb:'',audio:false,via:false};
+function showChip(host,sub,thumb,audio,via){
   if(host!=null) chipState.host=host;
+  if(via!=null) chipState.via=!!via;
   if(sub!=null) chipState.sub=sub;
   if(thumb) chipState.thumb=thumb;
   if(audio!=null) chipState.audio=audio;
@@ -3487,10 +3491,10 @@ function showChip(host,sub,thumb,audio){
   scanbox.innerHTML='<div class="chip">'+
     (s.thumb?imgTag({'class':'th', src:s.thumb, alt:'', onerror:"this.remove()"})
             :'<span class="th"></span>')+
-    '<span class="ct"><b>'+'Shared from '+
-      (ig?'Instagram':'TikTok')+'</b><span>'+esc(s.sub||'')+'</span></span>'+
+    '<span class="ct"><b>'+(s.via?'Shared from ':'')+
+      (ig?'Instagram':'TikTok')+(s.via?'':' link')+'</b><span>'+esc(s.sub||'')+'</span></span>'+
     '<span class="abadge'+(s.audio?' on':'')+'">audio'+(s.audio?IC.tick:'')+'</span></div>';}
-function hideChip(){scanbox.innerHTML=''; chipState={host:'',sub:'',thumb:'',audio:false};}
+function hideChip(){scanbox.innerHTML=''; chipState={host:'',sub:'',thumb:'',audio:false,via:false};}
 
 /* ---------- scanning screen: equalizer + clip timeline ----------
    Both read the SAME array the result waveform uses - W.amp, the server's real amplitude
@@ -4845,10 +4849,11 @@ function mainVersion(d){
   // (Q_MOD's sound words only: #edit, #fyp, #live, #mix, #tiktok are tags and go)
   // ROUND 8 (GAPS-R8-01): so does a tag naming another recording (#acousticcover, #mashup, #tiktokremix); a lone #remix
   // or #cover is still a tag and goes (the Apple Music line then reads the uncut title, amHeroLabel)
-  var _hc='up|down|and|n|edit|version|mix|tiktok|[+_-]', _hr='remix(?:ed)?|rmx|covers?|acoustic|mash-?up',
-      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?!(?:remix(?:ed)?|rmx|covers?)$)(?:'+Q_MOD+'|'+_hr+'|'+_hc+')+$','i'), _cv=false;
+  // ROUND 9 (GAPS-R9-01): the tag rule reads the one set of version words (qTag, Q_REC): #pianocover, #coversong, #karaoke
+  var _cv=false;
   // a lone #cover goes too, but it still says the upload is a cover: the artist line below then names the song (_cv)
-  t=t.replace(/#[^\s#]+/g,function(h){if(_hv.test(h)) return ' '+h+' '; if(/^#covers?$/i.test(h)) _cv=true; return ' ';});
+  // ROUND 9 (GAPS-R9-02): so does every cover tag (#pianocover, #guitarcover), kept or not
+  t=t.replace(/#[^\s#]+/g,function(h){if(Q_COVER.test(h)) _cv=true; return qTag(h)?' '+h+' ':' ';});
   try{ t=t.replace(new RegExp('[\\p{Extended_Pictographic}\\uFE0F\\u200D]','gu'),''); }catch(e){}
   t=t.replace(/\s+/g,' ').trim();
   // "Flo Rida - Gdfr (Slowed + Reverb)" over "Flo Rida": drop the repeated artist prefix
@@ -4865,7 +4870,8 @@ function mainVersion(d){
   // ROUND 7 (GAPS-R7-02): a tail with a sound word in it (" | Nightcore", " | slowed + reverb") is the version: it stays;
   // " || Ringtone 2024 TikTok", " | Official Audio", " | Live" still go
   // ROUND 8 (GAPS-R8-01): so does a tail naming another recording (" | Remix", " | Cover by Jane", " || TikTok Remix")
-  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=new RegExp('\\b(?:'+Q_MOD+'|'+Q_REC+')\\b','i');
+  // ROUND 9 (GAPS-R9-01): and the one set of version words (" | Piano Version", " | Jersey Club Flip", " | Piano Ver.")
+  var _seg=t.split(/(\s+\|\|?\s+)/), _vw=Q_WORD;
   if(_seg.length>1 && bs && core(_seg[0]).indexOf(bs)>=0){var _k=_seg[0];
     for(var _i=2;_i<_seg.length;_i+=2) if(_vw.test(_seg[_i])) _k+=_seg[_i-1]+_seg[_i];
     t=_k;}
@@ -4904,9 +4910,25 @@ var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk
 /* ROUND 8 (GAPS-R8-01): the words of another recording. A pipe tail holding one ("| Remix", "| Acoustic Cover", "| Extended
    Mix", "|| TikTok Remix") names the version the card crowns and stays; Q_SAYS finds them in an uncut title, hashtags too
    ("#remix", "#acousticcover"); Q_COVER is a cover or a "remix by X", someone else's performance */
-var Q_REC='remix(?:ed)?|rmx|mix|covers?|acoustic|mash-?up|bootleg',
-    Q_SAYS=/remix|\brmx\b|acoustic|mash-?up|(?:\b|piano|guitar|tiktok)covers?\b|\bcovered\s+by\b/i,
-    Q_COVER=/(?:\b|acoustic|piano|guitar|tiktok)covers?\b|\b(?:covered|remix(?:ed)?)\s+by\b/i;   // not "Covered in Gold"
+/* ROUND 9 (GAPS-R9-01, GAPS-R9-02): ONE SET OF VERSION WORDS. Each rule kept its own list, so each round found a word one
+   rule knew and another missed ("| Piano Version", "| Jersey Club Flip", "#coversong" and "#pianocover" went, with "Open in
+   Apple Music" under them). Q_REC is every word of an arrangement or recording of the song, and the pipe tails (Q_WORD), the
+   hashtag rule (qTag), the Apple Music line (qSays) and the artist line (Q_COVER, its cover words Q_CVW) all read it. A word
+   ending in remix or cover counts ("#djremix", "#guitarcover", "#coversong"; never "discover" or "undercover").
+   Not a version, as round 7 set: what describes the upload itself ("| Official Audio", "| Lyrics", "| Live", HD, a year),
+   and an everyday tag alone (#edit #mix #version #tiktok are Q_WEAK; #fyp #viral #live hold no version word). A lone #remix
+   or #cover still goes from the hero (round 8), but the Apple Music line and the artist line still read it. */
+var Q_CVW='(?![a-z0-9]*(?:dis|re|un|under)cover)[a-z0-9]*covers?(?:songs?)?',
+    Q_REC=Q_MOD+'|[a-z0-9]*remix(?:ed)?|rmx|mix(?:ed)?|edit(?:ed)?|acoustic|piano|karaoke|a ?capp?ella|extended|flip|vip|'+
+      'bootleg|rework(?:ed)?|mash-?up|version|ver(?=\\.)|'+Q_CVW,
+    Q_WEAK='edit(?:ed)?|mix(?:ed)?|version|tiktok|songs?|up|down|and|n|[+_-]',
+    Q_WORD=new RegExp('\\b(?:'+Q_REC+')\\b|\\bcovered\\s+by\\b','i'),
+    Q_TAG=new RegExp('^#(?!(?:'+Q_WEAK+')+$)(?!(?:remix(?:ed)?|rmx|covers?)$)(?:'+Q_REC+'|'+Q_WEAK+')+$','i'),
+    Q_COVER=new RegExp('\\b'+Q_CVW+'\\b|\\b(?:covered|remix(?:ed)?)\\s+by\\b','i');   // not "Covered in Gold"
+function qTag(h){return h.length<=48&&Q_TAG.test(h);}   // a hashtag naming a version stays (a long one is not read)
+// the uncut upload title names a version: a version word, a version tag, or a lone #remix or #cover
+function qSays(s){return Q_WORD.test(String(s||'').replace(/#[^\s#]+/g,function(h){
+  return qTag(h)||/^#(?:remix(?:ed)?|rmx|covers?)$/i.test(h)?' '+h.slice(1)+' ':' ';}));}
 // ROUND 7 (FU-3): a bare "prod" that opens brackets ("(prod Kryd)", "[Prod Kryd]") is a credit too: read as "prod."
 var Q_PROD_BR=/([(\[]\s*)prod(?=\s+(?!by\b)[^\s()\[\]])/gi;
 // ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by" (or a bare "prod" opening brackets, Q_PROD_BR);
@@ -4983,7 +5005,10 @@ function renderResult(d,partial){
     result.innerHTML=errCard('sat',d.offline?"You're offline":d.stalled?'This scan took too long':"Couldn't reach Addify",
       d.offline?'No stress. We kept your scan.<br>Tap Try again when you’re back online.'
                :'Addify didn’t answer just now. We kept your scan.<br>Tap Try again.',
-      ((curURL||LISTEN_BLOB)?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'1 scan queued'+
+      // ROUND 9 (BAD-NETWORK-R9-01): the chip says only what is true. Nothing runs by itself while the phone is online
+      // (a 5xx, a stalled scan), so those cards have none; offline, the 'online' listener taps Try again while this card
+      // is up, so the chip says when it runs (was "1 scan queued" on all three, and nothing was queued)
+      ((d.offline&&(curURL||LISTEN_BLOB))?'<div class="guessrow" style="justify-content:center"><span style="font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:5px">'+IC.clock+'Runs when you’re back online'+
         '</span></div>':'')+'<button class="cta" id="retrybtn">Try again</button>');
     var rb=document.getElementById('retrybtn');
     if(rb) rb.onclick=function(){engineUp=null; var u=curURL, lb=(!u&&LISTEN_BLOB)?LISTEN_BLOB:null; goHome(); if(u) run(u); else if(lb) sendListen(lb);};
@@ -7263,7 +7288,7 @@ function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,ar
   SCAN_ID=rid('s'); KIT_MOVED=false; SCAN_TAP=Date.now();   // ROUND 3: the tap, for the liveness bound   // NAMING 2026-09-30: this scan's id (hunt fallback), fresh origin state
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
   setState('scanning'); hideChip();
-  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
+  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false,arrived||!!opt.share);   // ROUND 9 (LITERAL-R9-01)
   document.getElementById('tl1').textContent='--:--';
   document.getElementById('tlwin').textContent='reading audio';
   headline('Finding song'); say('Reading the clip');
@@ -8322,14 +8347,14 @@ function sendListen(blob){
 
 /* mic chip variant: reuse the source card, but honest about the source */
 var _showChip=showChip;
-showChip=function(host,sub,thumb,audio){
+showChip=function(host,sub,thumb,audio,via){
   if(host==='mic'){
     if(sub!=null) chipState.sub=sub; chipState.host='mic'; chipState.audio=!!audio;
     scanbox.innerHTML='<div class="chip"><span class="th" style="display:grid;place-items:center;color:var(--accent2)">'+IC.mic+'</span>'+
       '<span class="ct"><b>Listen mode</b><span>'+esc(chipState.sub||'')+'</span></span>'+
       '<span class="abadge'+(chipState.audio?' on':'')+'">audio'+(chipState.audio?IC.tick:'')+'</span></div>';
     return;}
-  _showChip(host,sub,thumb,audio);};
+  _showChip(host,sub,thumb,audio,via);};
 
 /* nav0: like nav() but never repaints - used mid-flow where state is a takeover */
 function nav0(s){setState(s);}
@@ -8477,7 +8502,7 @@ function shareFirstPaint(raw){try{
   var p=parseLink(raw); if(!p.host||busy) return;
   if(outOfScans()&&!scanCounted(p.url)&&!devHas(devKeyFor(p.url))&&!findReopen(p.url)) return;   // REVIEWER RUNS 2 (LA-1); ROUND 3: a find is free
   setState('scanning'); hideChip();
-  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false);
+  showChip(p.host,p.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,42),'',false,_viaSheet);   // ROUND 9 (LITERAL-R9-01)
   document.getElementById('tl1').textContent='--:--';
   document.getElementById('tlwin').textContent='reading audio';
   headline('Finding song'); live.innerHTML='Reading the clip';}catch(e){}}
@@ -8551,7 +8576,7 @@ if(_shared){
   // below. The screen run() paints first (scanning, the clip chip, "Finding song") is up from
   // the first frame; the 350 ms and every step of run() after it are unchanged.
   shareFirstPaint(_shared);
-  setTimeout(function(){onbQuiet=true; run(_shared); onbQuiet=false;},350);   // let the splash start first; boot counts the share below
+  setTimeout(function(){onbQuiet=true; run(_shared,{share:_viaSheet}); onbQuiet=false;},350);   // let the splash start first; boot counts the share below; ROUND 9 (LITERAL-R9-01): a share says "Shared from"
 } else splash();
 if(_sharedPage){   // ROUND 5B (GP-1): the link stays in the box, the address loses the share
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);

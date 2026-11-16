@@ -158,6 +158,12 @@ jobs:
           - id: round8a-cr
             name: 'Round 8a version labels, no-match wording and privacy path (Chromium)'
             run: PW_BROWSER=chromium python -u engine/test_round8a.py
+          - id: round9a-wk
+            name: 'Round 9a version words, scan chip and failed-scan chip (WebKit)'
+            run: python -u engine/test_round9a.py
+          - id: round9a-cr
+            name: 'Round 9a version words, scan chip and failed-scan chip (Chromium)'
+            run: PW_BROWSER=chromium python -u engine/test_round9a.py
           - id: round8b-wk
             name: 'Round 8b Finds, Search, keyboard and button names (WebKit)'
             run: python -u engine/test_round8b.py

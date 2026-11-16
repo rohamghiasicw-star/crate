@@ -300,7 +300,8 @@ async def main(html, pages_dir, yml, only):
                 ctx, pg = await page(routes={"/listen": listen})
                 await pg.evaluate(BLOB)
                 card = await until(pg, HAS, 20, NOT_REACH); n0 = st["n"]
-                q = await pg.evaluate("()=>document.getElementById('result').innerText.indexOf('1 scan queued')>=0")
+                # ROUND 9 (BAD-NETWORK-R9-01): the online card says it kept the scan, with no queue chip (nothing runs by itself)
+                q = await pg.evaluate("()=>{var t=document.getElementById('result').innerText; return t.indexOf('We kept your scan')>=0&&t.indexOf('queued')<0&&t.indexOf('Runs when')<0;}")
                 st["down"] = False
                 await pg.evaluate("()=>document.getElementById('retrybtn').click()")
                 song = await until(pg, HAS, 15, "Listen Song")
