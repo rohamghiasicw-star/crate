@@ -3,7 +3,7 @@
  "rule": [
   "1. Every http(s) link in the text is a candidate, in order; the first candidate that is a clip wins (unchanged).",
   "2. With no http(s) link, the leading run of URL characters (leading characters in strip_leading dropped first, trailing characters in strip_trailing dropped after; the whole text when that run is empty) is the next candidate (unchanged).",
-  "3. ROUND 7C, ROUND 8C, ROUND 9C: with no clip from steps 1 and 2 (whether or not the text holds http(s) links), split the text into words on the separators below. For each word, in order: remove every zero-width character, then search the word for its first TikTok or Instagram host with word_search (so a host glued to the word before it is found: an emoji, an em dash, a colon or a full-width colon before it), then cut the match at the first character not in url_chars, then drop the trailing characters in strip_trailing, then read it with the clip test (https:// is added). The first word that is a clip wins. A word whose match is a TikTok or Instagram page (not a clip) is kept as the word page; only the first one counts.",
+  "3. ROUND 7C, ROUND 8C, ROUND 9C: with no clip from steps 1 and 2 (whether or not the text holds http(s) links), split the text into words on the separators below. For each word, in order: remove every zero-width character, then search the word for its first TikTok or Instagram host with word_search (so a host glued to the word before it is found: an emoji, an em dash, a colon or a full-width colon before it), skip the match when word_search_skip says it sits in another link (ROUND 9C), then cut the match at the first character not in url_chars, then drop the trailing characters in strip_trailing, then read it with the clip test (https:// is added). The first word that is a clip wins. A word whose match is a TikTok or Instagram page (not a clip) is kept as the word page; only the first one counts.",
   "4. A profile, sound, tag, story or other page link, or another site's link, never wins over a clip anywhere in the text (ROUND 8C: an http(s) page or other link before or after a clip written without https:// included). With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2, else (ROUND 9C) the app of the first word page from step 3 ('page'), so 'omg tiktok.com/@u lol' names TikTok as its https form does. The share extension hands that page link over (https:// added)."
  ],
  "separators": "Unicode White_Space: U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000",
@@ -18,6 +18,7 @@
  "strip_trailing": ".,;:!?'\"()[]{}<>*",
  "url_chars": "A-Z a-z 0-9 - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = % (the characters LINK_RE reads as part of a link)",
  "word_search": "(?:^|[^A-Za-z0-9.-])((?:[a-z0-9-]+\\.)*(?:tiktok\\.com|instagram\\.com|instagr\\.am)\\/\\S*) (JavaScript, ignoring case; the link is group 1)",
+ "word_search_skip": "ROUND 9C: the run of url_chars right before the match's group 1 (back to the start of the word or to the last character not in url_chars) holds another host name and then a / or ?, as /[A-Za-z0-9-]\\.[A-Za-z0-9-].*[\\/?]/ finds: the host is in that link's path or query ('example.com/tiktok.com/...', 'evil.com/?u=tiktok.com/...', 'google.com/search?q=tiktok.com/...'), so the word has no TikTok or Instagram host. A host after an emoji or any other character not in url_chars is not in it ('youtube.com/watch?v=x<emoji>tiktok.com/...'), nor one after a scheme alone ('https:/www.instagram.com/reel/...').",
  "clip_shapes": "tiktok.com (www., m.): /@user/video/<6-25 digits>, /@user/photo/<6-25 digits>, /t/<5-16 alnum>, /v/<6-25 digits>(.html); vm.tiktok.com or vt.tiktok.com: /<5-16 alnum> or /t/<5-16 alnum>; instagram.com or instagr.am (www., m.): /(<user>/)(reel|reels|p|tv)/<5-40 code>. A trailing slash is allowed. instagr.am is handed on as www.instagram.com.",
  "fields": {
   "clip": "the link parseLink hands on to the scan, exactly, or null when the text names no clip",
@@ -656,6 +657,54 @@
    "clip": null,
    "key": null,
    "page": "TikTok"
+  },
+  {
+   "id": "r9-host-in-path",
+   "item": "rule",
+   "text": "https://example.com/tiktok.com/@a/video/1",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-clip-in-path",
+   "item": "rule",
+   "text": "https://example.com/tiktok.com/@a/video/7651437319941066005",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-host-in-query",
+   "item": "rule",
+   "text": "https://www.google.com/search?q=tiktok.com/@a/video/123",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-host-in-query-no-scheme",
+   "item": "rule",
+   "text": "evil.com/?u=tiktok.com/@x/video/1",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "r9-clip-after-other-link-emoji",
+   "item": "rule",
+   "text": "www.youtube.com/watch?v=dQw4w9WgXcQ😂tiktok.com/@bouch.szn/video/7651437319941066005",
+   "clip": "https://tiktok.com/@bouch.szn/video/7651437319941066005",
+   "key": "https://tiktok.com/@bouch.szn/video/7651437319941066005",
+   "page": null
+  },
+  {
+   "id": "r9-clip-after-one-slash-scheme",
+   "item": "rule",
+   "text": "lol https:/www.instagram.com/reel/DeE4Gy2xjUN/",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
   },
   {
    "id": "control-full-link-1",

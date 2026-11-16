@@ -17,8 +17,10 @@ no live server: every outside request is stubbed.
                   the paywall opens for it, and closing the paywall leaves it there with Find it beside it
   5  CHAOS-R9-01  window.addifyNotAClip(url) shows the page's not-a-clip message as the toast over the scan screen's tip
                   card while a scan runs, inside the screen, and leaves the scan alone (same scan, dial not reset, no new request) and returns true; false for
-                  a clip; on Home it is Home's message. A page shared while a scan ran (the app reloaded) keeps its
-                  message as the toast over the resumed scan
+                  a clip; on Home it is Home's message; on the card (and still on when the scan reaches its card) it
+                  takes the header's title slot with its first sentence, inside Back and Share at 320 wide. A page shared while a scan ran (build 33 reloads the page for it) keeps its message as the toast
+                  over the resumed scan, and the resumed scan's dial carries on from the number it showed before the
+                  reload (never back to 0%)
   Y  page-tests.yml runs this suite on WebKit and Chromium
 
 Usage: python engine/test_round9c.py [--file engine/crate.html] [--yml .github/workflows/page-tests.yml] [--only 1,3]
@@ -42,6 +44,7 @@ def vid(n):
 
 FIRE, EMDASH, FWCOLON, LQ, RQ = chr(0x1F525), chr(0x2014), chr(0xFF1A), chr(0x201C), chr(0x201D)
 PAGE_TT = "That link is a TikTok page, not a clip. Open the video, tap Share, then Copy link, and paste it here."
+PAGE_TT_SHORT = "That link is a TikTok page, not a clip."   # on the card the toast takes the title slot: the first sentence
 PROFILE = "https://www.tiktok.com/@bouch.szn"
 
 # A store whose status answers {pro} after statusMs (or when the test calls __skGo, for 'manual'), a clipboard that
@@ -81,8 +84,9 @@ PL = r"""(cs)=>cs.map(function(c){var p=parseLink(c.text), cl=p.host?p.url:null;
 # whether the tip it covers is hidden under it
 TOAST = r"""()=>{var n=document.getElementById('scannote'); if(!n) return null; var r=n.getBoundingClientRect(),
     host=n.parentNode, tt=document.getElementById('tiptxt');
-  return {host:host?host.id:'', text:n.textContent, on:n.classList.contains('on'), role:n.getAttribute('role'),
+  return {host:host?host.id:'', card:!!(host&&host.closest&&host.closest('#s-match')), text:n.textContent, on:n.classList.contains('on'), role:n.getAttribute('role'),
           w:Math.round(r.width), h:Math.round(r.height), top:Math.round(r.top), bottom:Math.round(r.bottom), vh:innerHeight,
+          left:Math.round(r.left), right:Math.round(r.right),
           under:tt?getComputedStyle(tt).visibility:''};}"""
 SCAN = r"""()=>({st:document.getElementById('app').getAttribute('data-state'), busy:busy, cur:curURL, tok:scanTok, sid:SCAN_ID,
     pct:+((document.getElementById('dpct')||{}).textContent||0)})"""
@@ -368,9 +372,46 @@ async def main(html, yml, only):
                 r["later"] = await pg.evaluate(SCAN); r["bases"] = len(bases(t0, vid(63))); r["errs"] = pg.errs
                 await close(ctx)
                 res["boot"] = r
-                h, hm, bt = res["hook"], res["home"], res["boot"]
+                # build 33 with a scan really running: its dial before the reload, and the resumed scan's after it
+                ctx, pg = await page(hang=(64,))
+                t0 = time.time()
+                await pg.evaluate("(u)=>{var e=document.getElementById('url'); e.value=u; e.dispatchEvent(new Event('input',{bubbles:true})); document.getElementById('gobtn').click();}", clip(64))
+                r = {"running": bool(await until(pg, "()=>busy&&document.getElementById('app').getAttribute('data-state')==='scanning'", 6))}
+                await pg.wait_for_timeout(2500)
+                r["before"] = await pg.evaluate(SCAN)
+                await pg.goto(origin + "/share?url=" + quote(PROFILE, safe=""), wait_until="load")
+                pg.errs.clear()   # a request the page that went had in flight (WebKit: "... due to access control checks")
+                r["resumed"] = bool(await until(pg, "(u)=>busy&&curURL===u&&document.getElementById('app').getAttribute('data-state')==='scanning'", 6, clip(64)))
+                await pg.wait_for_timeout(250)
+                r["at"] = await pg.evaluate(SCAN); r["toast"] = await pg.evaluate(TOAST)
+                await pg.wait_for_timeout(1500)
+                r["later"] = await pg.evaluate(SCAN); r["bases"] = len(bases(t0, vid(64))); r["box"] = await pg.evaluate(BOX); r["errs"] = pg.errs
+                await close(ctx)
+                res["reload"] = r
+                # the toast still on when the scan reaches its card goes to the card's header (Plus: no scan count toast),
+                # its first sentence between Back and Share at 320 wide; the hook on the card shows it there too
+                ctx, pg = await page(sk={"pro": True}, w=320, h=568)
+                await pg.evaluate("(u)=>{var e=document.getElementById('url'); e.value=u; e.dispatchEvent(new Event('input',{bubbles:true})); document.getElementById('gobtn').click();}", clip(6))
+                r = {"running": bool(await until(pg, "()=>busy&&document.getElementById('app').getAttribute('data-state')==='scanning'", 6))}
+                r["ret"] = await pg.evaluate("(u)=>typeof window.addifyNotAClip==='function'?window.addifyNotAClip(u):'missing'", PROFILE)
+                r["card"] = bool(await until(pg, "()=>document.getElementById('app').getAttribute('data-state')==='locked'", 8))
+                await pg.wait_for_timeout(300)
+                r["toast"] = await pg.evaluate(TOAST)
+                await pg.wait_for_timeout(6500)
+                r["gone"] = await pg.evaluate(TOAST)
+                r["ret2"] = await pg.evaluate("(u)=>typeof window.addifyNotAClip==='function'?window.addifyNotAClip(u):'missing'", PROFILE)
+                await pg.wait_for_timeout(400)
+                r["toast2"] = await pg.evaluate(TOAST); r["st2"] = await pg.evaluate(STATE)
+                r["bar"] = await pg.evaluate("()=>{var a=document.getElementById('back').getBoundingClientRect(), b=document.getElementById('share').getBoundingClientRect(), h=document.querySelector('#s-match .hd').getBoundingClientRect(); return {l:Math.round(a.right), r:Math.round(b.left), t:Math.round(h.top), b:Math.round(h.bottom)};}")
+                r["errs"] = pg.errs
+                await close(ctx)
+                res["card"] = r
+                h, hm, bt, rl, cd = res["hook"], res["home"], res["boot"], res["reload"], res["card"]
                 shown = lambda t: (bool(t) and t["host"] == "tip" and t["text"] == PAGE_TT and t["on"] and t["role"] == "status"
                                    and t["w"] > 200 and t["h"] > 20 and t["top"] >= 0 and t["bottom"] <= t["vh"] and t["under"] == "hidden")
+                on_card = lambda t, bar: (bool(t) and t["card"] and t["on"] and t["text"] == PAGE_TT_SHORT and t["top"] >= 0
+                                          and t["top"] >= bar["t"] - 6 and t["bottom"] <= bar["b"] + 6
+                                          and t["left"] >= bar["l"] and t["right"] <= bar["r"])
                 same = lambda a, z: (z["st"] == "scanning" and z["busy"] and z["cur"] == a["cur"] and z["tok"] == a["tok"] and z["sid"] == a["sid"]
                                      and z["pct"] >= a["pct"])
                 ok = (h["running"] and h["before"]["st"] == "scanning" and h["before"]["cur"] == clip(61) and h["ret"] is True
@@ -379,11 +420,19 @@ async def main(html, yml, only):
                       and not h["later"]["toast"]["on"] and same(h["before"], h["later"]["scan"]) and not h["errs"]
                       and hm["ret"] is True and hm["err"] == PAGE_TT and hm["st"] == "idle" and not hm["errs"]
                       and bt["running"] and shown(bt["toast"]) and bt["scan"]["cur"] == clip(63) and bt["box"] == PROFILE
-                      and same(bt["scan"], bt["later"]) and bt["bases"] == 1 and not bt["errs"])
+                      and same(bt["scan"], bt["later"]) and bt["bases"] == 1 and not bt["errs"]
+                      and rl["running"] and rl["before"]["cur"] == clip(64) and rl["before"]["pct"] >= 3 and rl["resumed"]
+                      and rl["at"]["cur"] == clip(64) and rl["at"]["pct"] >= rl["before"]["pct"] and shown(rl["toast"])
+                      and same(rl["at"], rl["later"]) and rl["bases"] == 2 and rl["box"] == PROFILE and not rl["errs"]
+                      and cd["running"] and cd["ret"] is True and cd["card"] and on_card(cd["toast"], cd["bar"])
+                      and not cd["gone"]["on"] and cd["ret2"] is True and cd["st2"] == "locked" and on_card(cd["toast2"], cd["bar"])
+                      and not cd["errs"])
                 check("CHAOS-R9-01", "window.addifyNotAClip shows 'That link is a TikTok page, not a clip.' as the toast over "
                                      "the scan screen's tip card and leaves the running scan as it was (same scan, dial not reset, no new request), "
-                                     "true when shown, false for a clip, Home's message with no scan; a page shared while a scan "
-                                     "ran keeps its message as the toast over the resumed scan", ok, res)
+                                     "true when shown, false for a clip, Home's message with no scan, carried to the card's header; "
+                                     "a page shared while a scan ran keeps its message as the toast over the resumed scan, whose "
+                                     "dial carries on from its number before the reload", ok,
+                      {"reload": rl, "card": cd, "boot": bt, "hook": h, "home": hm})
         except Exception as e:
             check("CHAOS-R9-01", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 
