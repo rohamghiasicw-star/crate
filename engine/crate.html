@@ -137,6 +137,10 @@ img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit
 #s-lib .search{margin-bottom:12px}
 .chipf.amber{color:var(--warn);background:transparent;border-color:color-mix(in oklab,var(--warn) 45%,transparent)}
 .chipf.amber.on{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn)}
+/* ROUND 9B (A11Y-R9-01): in the light theme the picked Unmatched chip (--warn on its own tint) was 3.84:1 as 11.5px text.
+   It takes the deeper amber the unmatched rows use. The dark theme and the other chips are unchanged. */
+:root[data-theme="light"] .chipf.amber.on{color:#805204}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) .chipf.amber.on{color:#805204}}
 .mrow{display:flex;gap:12px;overflow-x:auto;scrollbar-width:none;margin:0 -2px;padding:2px 2px 4px}
 .mrow::-webkit-scrollbar{display:none}
 .mtile{flex:none;width:102px;text-align:left;display:flex;flex-direction:column;gap:2px}
@@ -1779,6 +1783,10 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
 #sretry::before{content:"";position:absolute;inset:-3px 0}
 .vbtn::before{content:"";position:absolute;inset:-1px 0}
 .chipf::before{inset:-7px -3px}
+/* ROUND 9B (A11Y-R9-02): when the Finds chips wrap (320 wide, Unmatched or Liked on), the rows were 6 px apart and row 2's
+   44 pt area took the bottom 8 px of row 1's, so All and Edits were 37 pt to tap. 14 px between rows (7 + 7) gives each
+   row its whole area and no overlap. The chips keep their size; one line of chips is unchanged. */
+#libchips{row-gap:14px}
 
 /* APPLYALL 2026-09-29 (build 3c): two light-theme contrast misses. The paste error kept its
    dark-theme pink (#FFC2C2, 1.2:1 on the light card, unreadable) and the "Original" chip used
@@ -5971,10 +5979,28 @@ function dropUnmatched(url,d){var ks=scanKeys(url,d);
 /* ROUND 5C (RETURNING-USER-R5-01): the scan on screen named its song and the song is in Finds: its "Not matched yet" row
    has done its job. Called when the scan ends found and when the card's Add to Finds or Like saves it. */
 function unmatchedDone(d){if(!curURL||!d||!d.base_song||d.result==='no_match'||d.result==='uncertain'||d.unverified_base||d.base_uncertain) return;
-  var ks=scanKeys(curURL,d); if(!unmatched().some(function(x){return x.url===curURL||unSame(x,ks);})) return;   // ROUND 7C (RETURNING-R7-01)
-  // ROUND 6C (RETURNING-R6-03): with "Add every match to Finds" off the scan's card offers Add to Finds, and the row no
-  // longer says "Not matched yet" for a clip that just matched
-  if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL,d); try{renderLib();}catch(e){}}}
+  var ks=scanKeys(curURL,d); if(!unmatched().some(function(x){return x.url===curURL||unSame(x,ks);})){unVkeys(curURL,d); return;}   // ROUND 7C (RETURNING-R7-01)
+  unDrop(curURL,d);}
+// ROUND 6C (RETURNING-R6-03): with "Add every match to Finds" off the scan's card offers Add to Finds, and the row no
+// longer says "Not matched yet" for a clip that just matched
+function unDrop(u,d){
+  if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(u,d); try{renderLib();}catch(e){}}}
+/* ROUND 9B (RETURNING-R9-03): a row an older build saved from a short link has no vkey, and the phone may never have
+   learnt that link's video, so the video's full link never met it. When a scan names its song and no row matched, each
+   such row asks /vkey for its video once (once a session, one at a time, never at launch), keeps the key, and drops if
+   it is this scan's video. A row with a full link already reads its key off the link (devKeyFor). */
+var UN_ASKED={};
+function unVkeys(u,d){
+  var todo=unmatched().filter(function(x){return x&&!x.vkey&&devIsShort(x.url)&&!devKeyFor(x.url)&&!UN_ASKED[x.url];});
+  if(!todo.length) return;
+  var ks=scanKeys(u,d);
+  (function next(){var x=todo.shift(); if(!x) return; UN_ASKED[x.url]=1;
+    vkeyOf(x.url).then(function(k){
+      if(isVkey(k)){var a=unmatched(), ch=false;
+        a.forEach(function(y){if(y&&y.url===x.url&&!y.vkey){y.vkey=k; ch=true;}});
+        if(ch) lsSet('addify-unmatched',a);
+        if(ks.indexOf(k)>=0) unDrop(u,d);}
+      next();});})();}
 /* free scans - a real monthly counter, not a prop. The pill does paywall work all day:
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
@@ -6683,6 +6709,9 @@ function renderLib(){
     if(qk.length&&unSame(x,qk)) return true;
     // ROUND 8B (RETURNING-R8-03): and the words the row shows ("Not matched yet", "Retry")
     return [x.handle||'',x.url||'',clipShape(x.url||'').host||'','unmatched scan not matched yet retry'].join(' ').toLowerCase().indexOf(q)>=0;});
+  // ROUND 9B (RETURNING-R9-02): the sort button orders the "Not matched yet" rows too (on All and on Unmatched), by when
+  // each scan was made, as it orders the finds
+  unq.sort(function(p,q2){return libOldest?(p.ts||0)-(q2.ts||0):(q2.ts||0)-(p.ts||0);});
   var unShown=0, unHid=0, nList=0;
   if(libFilter!=='Unmatched'){
     var list=all.filter(function(x){
@@ -6706,10 +6735,12 @@ function renderLib(){
           '</div>';}).join('')+'</div>';});
     if(libFilter==='All'&&unq.length&&!libMonth){unShown=unq.length;
       html+='<div class="daylbl">Not matched yet</div><div class="flist">'+unq.map(unRow).join('')+'</div>';}
-    // ROUND 8B (RETURNING-R8-03): a month tile hides the "Not matched yet" rows; a search that matches one says so
-    else if(libFilter==='All'&&unq.length&&q) unHid=unq.length;
+    // ROUND 8B (RETURNING-R8-03): a month tile hides the "Not matched yet" rows; a search that matches one says so.
+    // ROUND 9B (RETURNING-R9-04): so does the Edits, Originals or Liked chip, and the line says to tap Unmatched
+    else if(unq.length&&q) unHid=unq.length;
   } else {unShown=unq.length; html=unq.length?'<div class="flist">'+unq.map(unRow).join('')+'</div>':'';}
-  var hidB=unHid+' unmatched scan'+(unHid===1?' matches':'s match'), hidS='Tap the month again to see '+(unHid===1?'it':'them')+'.';
+  var hidB=unHid+' unmatched scan'+(unHid===1?' matches':'s match'),
+      hidS=(libFilter==='All'?'Tap the month again':'Tap Unmatched')+' to see '+(unHid===1?'it':'them')+'.';
   if(unHid) html+='<div class="dashcard"><b>'+hidB+'</b><span>'+hidS+'</span></div>';
   // ROUND 8B (A11Y-R8-04): what the search found, for a screen reader, without moving the focus (as sSay on Search)
   var nShown=nList+unShown;
@@ -8574,8 +8605,8 @@ document.getElementById('onb').addEventListener('click',function(e){
 // free scan with nobody tapping anything); an older build's parked one is dropped
 try{localStorage.removeItem('addify-queue');}catch(e){}
 // ROUND 3: the Spotify playlist sync is gone from the page (its sign-in went on 2026-10-31), so a Spotify token
-// or playlist id an older build kept on this phone goes too
-try{['addify-sp-id','addify-sp-tok','addify-sp-ref','addify-sp-exp','addify-sp-playlist','addify-sp-plname','addify-sp-name','addify-monthly']
+// or playlist id an older build kept on this phone goes too. ROUND 9B (RETURNING-R9-05): and the sign-in's verifier
+try{['addify-sp-id','addify-sp-tok','addify-sp-ref','addify-sp-exp','addify-sp-ver','addify-sp-playlist','addify-sp-plname','addify-sp-name','addify-monthly']
   .forEach(function(k){localStorage.removeItem(k);});}catch(e){}
 window.addEventListener('keydown',function(e){if(e.key==='Escape'){
   var pwo=document.getElementById('paywall'); if(pwo&&!pwo.hidden){closePaywall(); return;}
