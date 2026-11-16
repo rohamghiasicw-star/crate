@@ -132,3 +132,42 @@ struct PendingShare {
         crashReloads = 0
     }
 }
+
+/* ---------- the held share across a relaunch ----------
+   NATIVE-R6-10 (build 31). PendingShare lives in memory, and the inbox copy is gone the moment the app
+   reads it, so when iOS ended the whole app (not just WebKit's page) during a shared clip's scan, the
+   next launch opened Home with nothing. The held link is now also written here, from the moment it
+   arrives until its scan is over (PendingShare lets go of it), and a launch picks it up again:
+   - within SharedInbox.maxAge of the share, and fewer than maxResumes launches in a row, the launch
+     opens its share page and the scan starts again, as a share does,
+   - otherwise it is not scanned out of nowhere: the app asks first (EngineBridge offerStale), so a
+     share that would end the app at every launch can't keep it from starting.
+   Foundation only: the host tests run it on a Mac. */
+enum HeldShare {
+    static let linkKey = "heldShareURL"
+    static let atKey = "heldShareAt"
+    static let resumesKey = "heldShareResumes"
+    static let maxResumes = 2
+
+    /* The held link changed: a new one is written with the time it arrived, nil clears it. */
+    static func save(_ link: String?, now: Date = Date(), in d: UserDefaults = .standard) {
+        guard let link = link else {
+            for k in [linkKey, atKey, resumesKey] { d.removeObject(forKey: k) }
+            return
+        }
+        d.set(link, forKey: linkKey)
+        d.set(now.timeIntervalSince1970, forKey: atKey)
+        d.set(0, forKey: resumesKey)
+    }
+
+    /* At launch: the link a previous run was still holding, and whether to resume it now (fresh) or
+       ask first. Each resume counts against maxResumes; an asked-about link is cleared here. */
+    static func restore(now: Date = Date(), in d: UserDefaults = .standard) -> (link: String, fresh: Bool)? {
+        guard let link = d.string(forKey: linkKey), !link.isEmpty else { return nil }
+        let at = d.double(forKey: atKey)
+        let resumes = d.integer(forKey: resumesKey)
+        let fresh = at > 0 && now.timeIntervalSince1970 - at <= SharedInbox.maxAge && resumes < maxResumes
+        if fresh { d.set(resumes + 1, forKey: resumesKey) } else { save(nil, in: d) }
+        return (link, fresh)
+    }
+}

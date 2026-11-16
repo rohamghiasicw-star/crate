@@ -39,6 +39,7 @@ struct EngineWebView: UIViewRepresentable {
            (ShazamProbe.swift). The page uses it only when the engine also says so. */
         let flag = "window.ADDIFY_NATIVE={platform:'ios',version:'\(Coordinator.appVersion)',share:true,shazamkit:\(ShazamProbe.protocolVersion),store:1};"
         ucc.addUserScript(WKUserScript(source: flag, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        ucc.addUserScript(WKUserScript(source: Coordinator.themeScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         ucc.add(context.coordinator, name: "addify")
         ucc.addScriptMessageHandler(ShazamKitHandler(), contentWorld: .page, name: ShazamKitHandler.name)
         ucc.addScriptMessageHandler(StoreKitHandler(), contentWorld: .page, name: StoreKitHandler.name)
@@ -64,11 +65,18 @@ struct EngineWebView: UIViewRepresentable {
             guard let c = coordinator, let wv = wv else { return }
             c.cancelReloads(wv)
         }
+        bridge.closeSheets = { [weak coordinator = context.coordinator, weak wv] done in
+            guard let c = coordinator, let wv = wv else { done(); return }
+            c.closeSheets(over: wv, then: done)
+        }
         context.coordinator.boot(wv)
         return wv
     }
 
     func updateUIView(_ wv: WKWebView, context: Context) {
+        /* NATIVE-R6-09 (build 31): while the loading or error screen covers the page, VoiceOver can't
+           reach the page (or what is left of an old one) underneath. */
+        wv.accessibilityElementsHidden = bridge.booting || bridge.unreachable
         if context.coordinator.seenReloadToken != bridge.reloadToken {
             context.coordinator.seenReloadToken = bridge.reloadToken
             context.coordinator.boot(wv)
@@ -97,11 +105,36 @@ struct EngineWebView: UIViewRepresentable {
         var lastEngineURL: URL?
         /* Only the newest boot loads: two quick Try again taps must not start two page loads. */
         var bootGeneration = 0
+        /* The page's alert or confirm that is up, answered the way its Cancel (or OK, for an alert)
+           would answer it. closeSheets uses it; nil once answered. */
+        var dialogAnswer: (() -> Void)?
         /* The #app check in flight (checkAppPage). A new main-frame load, a failed load or the
            check's own answer moves it on, and an answer for an older check is dropped. */
         var appCheck = 0
 
         init(bridge: EngineBridge) { self.bridge = bridge }
+
+        /* NATIVE-R6-06 (build 31): reports the theme the page shows (data-theme on <html>, which the
+           page always sets) when it loads and whenever it changes, so the status bar can follow it.
+           Only the engine's own page is listened to (userContentController). */
+        static let themeScript = "(function(){var w=window.webkit,h=w&&w.messageHandlers&&w.messageHandlers.addify,r=document.documentElement;"
+            + "if(!h||!r)return;var last='';function send(){var t=r.getAttribute('data-theme')==='light'?'light':'dark';"
+            + "if(t===last)return;last=t;try{h.postMessage({type:'theme',theme:t});}catch(e){}}send();"
+            + "try{new MutationObserver(send).observe(r,{attributes:true,attributeFilter:['data-theme']});}catch(e){}})();"
+
+        /* NATIVE-R6-02 (build 31): a share arrived. Whatever this app presented over the page goes away
+           first, so the scan, its banner and its haptic are not hidden behind it: an alert or confirm is
+           answered as Cancel would answer it (so the page's script goes on), then the Safari view, a
+           share sheet or the alert itself is dismissed. `done` runs once nothing is left over the page. */
+        func closeSheets(over wv: WKWebView, then done: @escaping () -> Void) {
+            if let answer = dialogAnswer { dialogAnswer = nil; answer() }
+            #if DEBUG
+            if bridge.showSettings { done(); return }   // the Debug address form is SwiftUI's own sheet
+            #endif
+            guard let base = baseController(of: wv), let shown = base.presentedViewController,
+                  !shown.isBeingDismissed else { done(); return }
+            base.dismiss(animated: true, completion: done)
+        }
 
         static var appVersion: String {
             (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
@@ -534,17 +567,33 @@ struct EngineWebView: UIViewRepresentable {
            or it is silently swallowed. */
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            var answered = false
+            let answer = { [weak self] in
+                guard !answered else { return }
+                answered = true
+                self?.dialogAnswer = nil
+                completionHandler()
+            }
             let ac = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-            ac.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
-            present(ac, over: webView) ?? completionHandler()
+            ac.addAction(UIAlertAction(title: "OK", style: .default) { _ in answer() })
+            dialogAnswer = answer
+            present(ac, over: webView) ?? answer()
         }
 
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            var answered = false
+            let answer = { [weak self] (ok: Bool) in
+                guard !answered else { return }
+                answered = true
+                self?.dialogAnswer = nil
+                completionHandler(ok)
+            }
             let ac = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-            ac.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
-            ac.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
-            present(ac, over: webView) ?? completionHandler(false)
+            ac.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in answer(false) })
+            ac.addAction(UIAlertAction(title: "OK", style: .default) { _ in answer(true) })
+            dialogAnswer = { answer(false) }
+            present(ac, over: webView) ?? answer(false)
         }
 
         private func present(_ controller: UIViewController, over view: UIView) -> Void? {
@@ -557,6 +606,10 @@ struct EngineWebView: UIViewRepresentable {
             guard message.name == "addify" else { return }
             /* Only the engine's own page may talk to the native side. */
             guard message.frameInfo.isTrustedEngineFrame else { return }
+            if let d = message.body as? [String: Any], (d["type"] as? String) == "theme" {
+                bridge.pageTheme = (d["theme"] as? String) == "light" ? "light" : "dark"
+                return
+            }
             /* The song's share button. WKWebView never exposes navigator.share, so the page
                hands the link here and we raise the real iOS share sheet. */
             if let d = message.body as? [String: Any], (d["type"] as? String) == "share" {
@@ -857,17 +910,21 @@ extension WKFrameInfo {
     }
 }
 
-/* The view controller that owns `view`, or whatever it is already presenting (and not closing). */
-func topController(over view: UIView) -> UIViewController? {
+/* The view controller that owns `view`. */
+func baseController(of view: UIView) -> UIViewController? {
     var responder: UIResponder? = view
     while let r = responder {
-        if var vc = r as? UIViewController {
-            while let p = vc.presentedViewController, !p.isBeingDismissed { vc = p }
-            return vc
-        }
+        if let vc = r as? UIViewController { return vc }
         responder = r.next
     }
     return nil
+}
+
+/* The view controller that owns `view`, or whatever it is already presenting (and not closing). */
+func topController(over view: UIView) -> UIViewController? {
+    guard var vc = baseController(of: view) else { return nil }
+    while let p = vc.presentedViewController, !p.isBeingDismissed { vc = p }
+    return vc
 }
 
 /* Presents from the view controller that owns `view`, or from whatever it is already presenting,
@@ -875,6 +932,9 @@ func topController(over view: UIView) -> UIViewController? {
 @discardableResult
 func presentOnTop(_ controller: UIViewController, over view: UIView) -> Bool {
     guard let vc = topController(over: view) else { return false }
+    /* NATIVE-R6-06 (build 31): the app follows the page's light theme for the status bar
+       (ContentView); what it presents keeps the dark look it has always had. */
+    controller.overrideUserInterfaceStyle = .dark
     vc.present(controller, animated: true)
     return true
 }

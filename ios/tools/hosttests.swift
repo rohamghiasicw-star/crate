@@ -52,65 +52,138 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         eq(SharedInbox.shareLink(in: "Check out this TikTok! https://vt.tiktok.com/ZS4a5JyXE/ nice"), "https://vt.tiktok.com/ZS4a5JyXE/", "shareLink from TikTok text")
         eq(SharedInbox.shareLink(in: "https://www.instagram.com/reel/abc/?igsh=1"), "https://www.instagram.com/reel/abc/?igsh=1", "shareLink clean IG url")
         eq(SharedInbox.shareLink(in: "no link here"), nil, "shareLink none")
-        // GAPS-KIT-R5-01/02/03: the testers' share corpus (reviewer-runs/r5/gaps-kit/corpus.json). For each
-        // input: the link the extension hands over (nil: it turns the share down), and whether the page's
-        // own parseLink scans the whole text when it is pasted (WebKit, links1.jsonl). Wherever the page
-        // scans the text, the share must hand over a clip; instagr.am goes over as www.instagram.com.
+        // GAPS-KIT-R5-01/02/03 (build 30) and NATIVE-R6-01, GAPS-R6-01/02/03, SHARE-R6-02 (build 31): the testers'
+        // share corpus (reviewer-runs/r6/gaps/corpus6.json, 95 rows), the native and share testers' texts and
+        // the edge cases found while porting. For each input: the link the extension hands over (nil: it
+        // turns the share down), and whether the page's own parseLink (crate.html at 3784333, WebKit and
+        // node agree on every row) scans the whole text when it is pasted. Wherever the page scans the text,
+        // the share hands over the same clip the page scans: the same link, except where the pasted text
+        // carries a zero-width space the page keeps and the share drops. Elsewhere the share hands over no
+        // clip. url: shared as a URL (Safari, Instagram), not as text.
         let corpus: [(url: Bool, input: String, link: String?, pageScans: Bool)] = [
-            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 0
-            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", true),   // 1
-            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", true),   // 2
-            (false, "https://vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // 3
-            (false, "https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 4
-            (false, "https://www.tiktok.com/t/ZTabc1234/", "https://www.tiktok.com/t/ZTabc1234/", true),   // 5
-            (false, "http://vm.tiktok.com/ZMabc1234/", "http://vm.tiktok.com/ZMabc1234/", true),   // 6
-            (false, "Check out this video! #fyp #remix https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 7
-            (false, "https://example.com/promo and the clip https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 8
-            (false, "https://linktr.ee/djuser https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 9
-            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 10
-            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789 https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // 11
-            (false, "Watch this: https://vm.tiktok.com/ZMabc1234/.", "https://vm.tiktok.com/ZMabc1234/.", true),   // 12
-            (false, "(https://vm.tiktok.com/ZMabc1234/)", "https://vm.tiktok.com/ZMabc1234/)", false),   // 13
-            (false, "https://vm.tiktok.com/ZMabc1234/,https://example.com", "https://vm.tiktok.com/ZMabc1234/,https://example.com", false),   // 14
-            (false, "vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // 15
-            (false, "HTTPS://VM.TIKTOK.COM/ZMabc1234/", "HTTPS://VM.TIKTOK.COM/ZMabc1234/", true),   // 16
-            (false, "Https://vm.tiktok.com/ZMabc1234/", "Https://vm.tiktok.com/ZMabc1234/", true),   // 17
-            (false, "https://m.tiktok.com/v/7234567890123456789.html", "https://m.tiktok.com/v/7234567890123456789.html", true),   // 18
-            (false, "https://www.tiktok.com/@dj.user/photo/7234567890123456789", "https://www.tiktok.com/@dj.user/photo/7234567890123456789", true),   // 19
-            (false, "https://www.tiktok.com/embed/v2/7234567890123456789", "https://www.tiktok.com/embed/v2/7234567890123456789", false),   // 20
-            (false, "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", false),   // 21
-            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789", "https://www.tiktok.com/music/original-sound-7234567890123456789", false),   // 22
-            (false, "https://www.tiktok.com/tag/fyp", "https://www.tiktok.com/tag/fyp", false),   // 23
-            (false, "https://www.tiktok.com/@dj.user/live", "https://www.tiktok.com/@dj.user/live", false),   // 24
-            (false, "https://www.tiktok.com/search?q=song", "https://www.tiktok.com/search?q=song", false),   // 25
-            (false, "https://tiktok.com.evil.example/@u/video/7234567890123456789", "https://tiktok.com.evil.example/@u/video/7234567890123456789", false),   // 26
-            (false, "https://notinstagram.com/reel/C9abcDEFghi/", "https://notinstagram.com/reel/C9abcDEFghi/", false),   // 27
-            (false, "https://example.com/?next=https://www.tiktok.com/@u/video/7234567890123456789", "https://example.com/?next=https://www.tiktok.com/@u/video/7234567890123456789", false),   // 28
-            (false, "https://lite.tiktok.com/@dj.user/video/7234567890123456789", "https://lite.tiktok.com/@dj.user/video/7234567890123456789", false),   // 29
-            (false, "https://www.tiktokv.com/share/video/7234567890123456789/", nil, false),   // 30
-            (true, "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", true),   // 31
-            (true, "https://www.instagram.com/reels/C9abcDEFghi/", "https://www.instagram.com/reels/C9abcDEFghi/", true),   // 32
-            (true, "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", true),   // 33
-            (true, "https://www.instagram.com/tv/C9abcDEFghi/", "https://www.instagram.com/tv/C9abcDEFghi/", true),   // 34
-            (true, "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", true),   // 35
-            (true, "https://instagr.am/p/C9abcDEFghi/", "https://www.instagram.com/p/C9abcDEFghi/", false),   // 36
-            (true, "https://instagr.am/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", false),   // 37
-            (true, "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", false),   // 38
-            (true, "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", false),   // 39
-            (true, "https://www.instagram.com/dj.user?igsh=abc", "https://www.instagram.com/dj.user?igsh=abc", false),   // 40
-            (true, "https://www.instagram.com/reel/C9abcDEFghi/audio/", "https://www.instagram.com/reel/C9abcDEFghi/audio/", false),   // 41
-            (true, "https://www.instagram.com/reels/audio/1234567890123456/", "https://www.instagram.com/reels/audio/1234567890123456/", false),   // 42
-            (true, "https://www.instagram.com/explore/tags/fyp/", "https://www.instagram.com/explore/tags/fyp/", false),   // 43
-            (true, "https://www.threads.net/@dj.user/post/C9abcDEFghi", nil, false),   // 44
-            (true, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // 45
-            (false, "Instagram reel https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", true),   // 46
-            (false, "https://www.instagram.com/reel/C9abcDEFghi/\u{A0}shared via Instagram", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // 47
-            (false, "\u{1F525}https://vt.tiktok.com/ZSabc1234/\u{1F525}", "https://vt.tiktok.com/ZSabc1234/\u{1F525}", false),   // 48
-            (false, "https://vt.tiktok.com/ZSabc1234/\u{200B}", "https://vt.tiktok.com/ZSabc1234/\u{200B}", false),   // 49
-            (false, "https://vt.tiktok.com/ZSabc1234/\u{FEFF}", "https://vt.tiktok.com/ZSabc1234/", true),   // 50
-            (false, "https://vt.tiktok.com/ZSabc1234/\u{B}next", "https://vt.tiktok.com/ZSabc1234/", true),   // 51
-            (false, "https://vt.tiktok.com/ZSabc1234/\u{85}next", "https://vt.tiktok.com/ZSabc1234/", false),   // 52
-            (false, "https://vt.tiktok.com/ZSabc1234/\u{3000}next", "https://vt.tiktok.com/ZSabc1234/", true),   // 53
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=0
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", "https://www.tiktok.com/@dj.user/video/7234567890123456789?is_from_webapp=1&sender_device=pc&web_id=7301", true),   // r6 gaps corpus6 i=1
+            (false, "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", "https://www.tiktok.com/@dj.user/video/7234567890123456789?_r=1&_t=ZT-8rDq1aBc", true),   // r6 gaps corpus6 i=2
+            (false, "https://vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=3
+            (false, "https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=4
+            (false, "https://www.tiktok.com/t/ZTabc1234/", "https://www.tiktok.com/t/ZTabc1234/", true),   // r6 gaps corpus6 i=5
+            (false, "http://vm.tiktok.com/ZMabc1234/", "http://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=6
+            (false, "Check out this video! #fyp #remix https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=7
+            (false, "https://example.com/promo and the clip https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=8
+            (false, "https://linktr.ee/djuser https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=9
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=10
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789 https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=11
+            (false, "Watch this: https://vm.tiktok.com/ZMabc1234/.", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=12
+            (false, "(https://vm.tiktok.com/ZMabc1234/)", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=13
+            (false, "https://vm.tiktok.com/ZMabc1234/,https://example.com", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=14
+            (false, "vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=15
+            (false, "HTTPS://VM.TIKTOK.COM/ZMabc1234/", "HTTPS://VM.TIKTOK.COM/ZMabc1234/", true),   // r6 gaps corpus6 i=16
+            (false, "Https://vm.tiktok.com/ZMabc1234/", "Https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=17
+            (false, "https://m.tiktok.com/v/7234567890123456789.html", "https://m.tiktok.com/v/7234567890123456789.html", true),   // r6 gaps corpus6 i=18
+            (false, "https://www.tiktok.com/@dj.user/photo/7234567890123456789", "https://www.tiktok.com/@dj.user/photo/7234567890123456789", true),   // r6 gaps corpus6 i=19
+            (false, "https://www.tiktok.com/embed/v2/7234567890123456789", "https://www.tiktok.com/embed/v2/7234567890123456789", false),   // r6 gaps corpus6 i=20
+            (false, "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", "https://www.tiktok.com/@dj.user?_t=8abc&_r=1", false),   // r6 gaps corpus6 i=21
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789", "https://www.tiktok.com/music/original-sound-7234567890123456789", false),   // r6 gaps corpus6 i=22
+            (false, "https://www.tiktok.com/tag/fyp", "https://www.tiktok.com/tag/fyp", false),   // r6 gaps corpus6 i=23
+            (false, "https://www.tiktok.com/@dj.user/live", "https://www.tiktok.com/@dj.user/live", false),   // r6 gaps corpus6 i=24
+            (false, "https://www.tiktok.com/search?q=song", "https://www.tiktok.com/search?q=song", false),   // r6 gaps corpus6 i=25
+            (false, "https://tiktok.com.evil.example/@u/video/7234567890123456789", "https://tiktok.com.evil.example/@u/video/7234567890123456789", false),   // r6 gaps corpus6 i=26
+            (false, "https://notinstagram.com/reel/C9abcDEFghi/", "https://notinstagram.com/reel/C9abcDEFghi/", false),   // r6 gaps corpus6 i=27
+            (false, "https://example.com/?next=https://www.tiktok.com/@u/video/7234567890123456789", "https://www.tiktok.com/@u/video/7234567890123456789", true),   // r6 gaps corpus6 i=28
+            (false, "https://lite.tiktok.com/@dj.user/video/7234567890123456789", "https://lite.tiktok.com/@dj.user/video/7234567890123456789", false),   // r6 gaps corpus6 i=29
+            (false, "https://www.tiktokv.com/share/video/7234567890123456789/", nil, false),   // r6 gaps corpus6 i=30
+            (true, "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1ZGUxMzBkMA==", true),   // r6 gaps corpus6 i=31
+            (true, "https://www.instagram.com/reels/C9abcDEFghi/", "https://www.instagram.com/reels/C9abcDEFghi/", true),   // r6 gaps corpus6 i=32
+            (true, "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", "https://www.instagram.com/p/C9abcDEFghi/?utm_source=ig_web_copy_link", true),   // r6 gaps corpus6 i=33
+            (true, "https://www.instagram.com/tv/C9abcDEFghi/", "https://www.instagram.com/tv/C9abcDEFghi/", true),   // r6 gaps corpus6 i=34
+            (true, "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", "https://www.instagram.com/dj.user/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=35
+            (true, "https://instagr.am/p/C9abcDEFghi/", "https://www.instagram.com/p/C9abcDEFghi/", true),   // r6 gaps corpus6 i=36
+            (true, "https://instagr.am/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=37
+            (true, "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", "https://www.instagram.com/stories/dj.user/3412345678901234567?utm_source=ig_story_item_share&igsh=abc", false),   // r6 gaps corpus6 i=38
+            (true, "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", "https://www.instagram.com/s/aGlnaGxpZ2h0OjE3OTk5?story_media_id=341", false),   // r6 gaps corpus6 i=39
+            (true, "https://www.instagram.com/dj.user?igsh=abc", "https://www.instagram.com/dj.user?igsh=abc", false),   // r6 gaps corpus6 i=40
+            (true, "https://www.instagram.com/reel/C9abcDEFghi/audio/", "https://www.instagram.com/reel/C9abcDEFghi/audio/", false),   // r6 gaps corpus6 i=41
+            (true, "https://www.instagram.com/reels/audio/1234567890123456/", "https://www.instagram.com/reels/audio/1234567890123456/", false),   // r6 gaps corpus6 i=42
+            (true, "https://www.instagram.com/explore/tags/fyp/", "https://www.instagram.com/explore/tags/fyp/", false),   // r6 gaps corpus6 i=43
+            (true, "https://www.threads.net/@dj.user/post/C9abcDEFghi", nil, false),   // r6 gaps corpus6 i=44
+            (true, "https://www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=45
+            (false, "Instagram reel https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=MWQ1", true),   // r6 gaps corpus6 i=46
+            (false, "https://www.instagram.com/reel/C9abcDEFghi/\u{A0}shared via Instagram", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=47
+            (false, "\u{1F525}https://vt.tiktok.com/ZSabc1234/\u{1F525}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=48
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{200B}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=49
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{FEFF}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=50
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{B}next", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=51
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{85}next", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=52
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{3000}next", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=53
+            (false, "https://www.tiktok.com/@dj.user (https://vt.tiktok.com/ZSabc1234/)", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=54
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/,", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=55
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/.", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=56
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789 https://vt.tiktok.com/ZSabc1234/\u{1F525}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=57
+            (false, "https://www.tiktok.com/music/original-sound-7234567890123456789 https://vt.tiktok.com/ZSabc1234/\u{200B}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=58
+            (false, "https://www.tiktok.com/@dj.user https://www.tiktok.com/@dj.user/video/7234567890123456789!", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=59
+            (false, "https://www.instagram.com/dj.user https://www.instagram.com/reel/C9abcDEFghi/.", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=60
+            (false, "https://www.instagram.com/stories/dj.user/3412345678901234567 https://www.instagram.com/reel/C9abcDEFghi/)", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=61
+            (false, "\"https://www.tiktok.com/@dj.user\" \"https://vt.tiktok.com/ZSabc1234/\"", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=62
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/\u{2026}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=63
+            (false, "https://www.tiktok.com/@dj.user https://vt.tiktok.com/ZSabc1234/\u{3002}", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=64
+            (false, "(https://vt.tiktok.com/ZSabc1234/) vs https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=65
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{1F525} https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=66
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{200B} https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=67
+            (false, "https://vt.tiktok.com/ZSabc1234/\u{2026} https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=68
+            (false, "vm.tiktok.com/ZMabc1234/ lol", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=69
+            (false, "look vm.tiktok.com/ZMabc1234/", nil, false),   // r6 gaps corpus6 i=70
+            (false, "vm.tiktok.com/ZMabc1234/\u{1F525}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=71
+            (false, "www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=72
+            (false, "instagr.am/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=73
+            (false, "HTTPS://WWW.TIKTOK.COM/@DJ.USER/VIDEO/7234567890123456789", "HTTPS://WWW.TIKTOK.COM/@DJ.USER/VIDEO/7234567890123456789", false),   // r6 gaps corpus6 i=74
+            (false, "https://www.google.com/search?q=tiktok.com", "https://www.google.com/search?q=tiktok.com", false),   // r6 gaps corpus6 i=75
+            (false, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&from=instagram.com", "https://www.youtube.com/watch?v=dQw4w9WgXcQ&from=instagram.com", false),   // r6 gaps corpus6 i=76
+            (false, "https://www.tiktok.com/@dj.userhttps://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=77
+            (false, "<a href=\"https://vt.tiktok.com/ZSabc1234/\">clip</a>", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=78
+            (false, "Look:https://vt.tiktok.com/ZSabc1234/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=79
+            (false, "https://instagr.am/reel/C9abcDEFghi/?igsh=abc", "https://www.instagram.com/reel/C9abcDEFghi/?igsh=abc", true),   // r6 gaps corpus6 i=80
+            (false, "https://INSTAGR.AM/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=81
+            (true, "https://www.tiktok.com/@dj.user/video/7234567890123456789?lang=en", "https://www.tiktok.com/@dj.user/video/7234567890123456789?lang=en", true),   // r6 gaps corpus6 i=82
+            (true, "https://youtu.be/dQw4w9WgXcQ", nil, false),   // r6 gaps corpus6 i=83
+            (true, "https://www.tiktok.com/@dj.user/live", "https://www.tiktok.com/@dj.user/live", false),   // r6 gaps corpus6 i=84
+            (false, "https://vm.tiktok.com/ZMabc1234/\u{2060}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=85
+            (false, "https://vm.tiktok.com/ZMabc1234/\u{AD}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=86
+            (false, "https://vm.tiktok.com/ZMabc1234/\u{200E}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=87
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/\u{200E}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=88
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/'", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=89
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/;", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=90
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/]", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=91
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/*", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=92
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/>", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=93
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/!?", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=94
+            (false, "Sound: https://www.tiktok.com/music/original-sound-7651437319941066005 clip (https://vm.tiktok.com/ZMabc1234/)", "https://vm.tiktok.com/ZMabc1234/", true),   // NATIVE-R6-01 a
+            (false, "https://www.tiktok.com/@bouch.szn, video: https://www.tiktok.com/@bouch.szn/video/7651437319941066005,", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005", true),   // NATIVE-R6-01 b
+            (false, "https://www.instagram.com/bouch.szn/ reel https://www.instagram.com/reel/C9abcDEFgh1/\u{1F525}", "https://www.instagram.com/reel/C9abcDEFgh1/", true),   // NATIVE-R6-01 c
+            (false, "https://www.tiktok.com/@bouch.szn https://www.tiktok.com/@bouch.szn/video/7651437319941066005\u{200B}", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005", true),   // NATIVE-R6-01 d
+            (false, "https://www.tiktok.com/@bouch.szn/video/7651437319941066005.", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005", true),   // NATIVE-R6-01 e
+            (false, "https://www.tiktok.com/@dj.user (https://vt.tiktok.com/ZSabc1234/)", "https://vt.tiktok.com/ZSabc1234/", true),   // GAPS-R6-01 repro
+            (false, "(https://vt.tiktok.com/ZSabc1234/) vs https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // GAPS-R6-02 repro
+            (false, "vm.tiktok.com/ZMabc1234/ lol", "https://vm.tiktok.com/ZMabc1234/", true),   // GAPS-R6-03 repro
+            (false, "vm.tiktok.com/ZMabc1234/\u{1F525}", "https://vm.tiktok.com/ZMabc1234/", true),   // GAPS-R6-03 repro
+            (false, "https://www.tiktok.com/@flprobe/video/7123456789012345611", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 clip-only
+            (false, "(https://www.tiktok.com/@flprobe/video/7123456789012345611)", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 clip-paren
+            (false, "https://www.tiktok.com/@flprobe/video/7123456789012345611\u{1F525}", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 clip-emoji
+            (false, "https://www.tiktok.com/@flprobe/video/7123456789012345611\u{200B}", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 clip-zwsp
+            (false, "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 profile-then-clip
+            (false, "by https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 (https://www.tiktok.com/@flprobe/video/7123456789012345611)", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 profile-then-clip-paren
+            (false, "Follow https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 and watch https://www.tiktok.com/@flprobe/video/7123456789012345611.", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 profile-then-clip-period
+            (false, "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611\u{1F525}", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 profile-then-clip-emoji
+            (false, "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611\u{200B}", "https://www.tiktok.com/@flprobe/video/7123456789012345611", true),   // SHARE-R6-02 profile-then-clip-zwsp
+            (false, "https://www.instagram.com/flprobe https://www.instagram.com/reel/DeE4Gy2xjUN/,", "https://www.instagram.com/reel/DeE4Gy2xjUN/", true),   // SHARE-R6-02 igprofile-then-reel-comma
+            (false, "https://www.tiktok.com/tag/fyp https://instagr.am/reel/C9abcDEFghi/!", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // instagr.am after a tag page
+            (false, "instagr.am/p/C9abcDEFghi/?igsh=x lol", "https://www.instagram.com/p/C9abcDEFghi/?igsh=x", true),   // instagr.am without https://
+            (false, "https://instagr.am/reel/C9abcDEFghi/?a='b'#frag", "https://www.instagram.com/reel/C9abcDEFghi/?a=%27b%27", true),   // instagr.am: query kept as the parser writes it, no #fragment
+            (false, "https://www.tiktok.com/@dj.user/live https://www.instagram.com/stories/dj.user/3412345678901234567 https://www.tiktok.com/t/ZTabc1234/\u{3002}", "https://www.tiktok.com/t/ZTabc1234/", true),   // live page and story before a clip
+            (false, "\u{200B}vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // a zero-width space before a link with no https://
+            (false, "https://vm.tiktok.com:abc/ZMabc1234/ https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSzzz9999/", true),   // a link with a port that is not a number is not a clip
+            (false, "https:///vm.tiktok.com/ZMabc1234/", "https:///vm.tiktok.com/ZMabc1234/", true),   // extra slashes after the scheme
+            (false, "https://vm%2Etiktok.com/ZMabc1234/", "https://vm%2Etiktok.com/ZMabc1234/", true),   // a percent-encoded host
+            (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/\u{85}", "https://vm.tiktok.com/ZMabc1234/", true),   // U+0085 after a clip
         ]
         for (n, c) in corpus.enumerated() {
             let got: String?
@@ -124,6 +197,8 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             eq(got, c.link, "corpus \(n): link handed over")
             if c.pageScans {
                 eq(got.flatMap { SharedInbox.clipLink($0) } != nil, true, "corpus \(n): the page scans this text, so the share hands over a clip")
+            } else {
+                eq(got.flatMap { SharedInbox.clipLink($0) } == nil, true, "corpus \(n): the page turns this text down, so the share hands over no clip")
             }
             if let g = got { eq(SharedInbox.shareLink(in: g), g, "corpus \(n): the app reads the same link back") }
         }
@@ -147,6 +222,46 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         AppGroup.defaults.set("https://vt.tiktok.com/old/", forKey: SharedInbox.urlKey)
         AppGroup.defaults.set(Date().timeIntervalSince1970 - 3600, forKey: SharedInbox.atKey)
         eq(SharedInbox.drain(), nil, "stale inbox (1h) is dropped")
+        // NATIVE-R6-08 (build 31): a parked share past maxAge comes back marked expired, so the app can ask
+        // about it instead of dropping it without a word; it is still read once only.
+        SharedInbox.write("https://vt.tiktok.com/ZS4a5JyXE/")
+        let fresh = SharedInbox.drainParked()
+        eq(fresh?.link, "https://vt.tiktok.com/ZS4a5JyXE/", "parked: a fresh share comes back")
+        eq(fresh?.expired, false, "parked: a fresh share is not expired")
+        AppGroup.defaults.set("https://vt.tiktok.com/ZSold1234/", forKey: SharedInbox.urlKey)
+        AppGroup.defaults.set(Date().timeIntervalSince1970 - 11 * 60, forKey: SharedInbox.atKey)
+        let old = SharedInbox.drainParked()
+        eq(old?.link, "https://vt.tiktok.com/ZSold1234/", "parked: a share 11 minutes old comes back")
+        eq(old?.expired, true, "parked: a share 11 minutes old is marked expired")
+        eq(SharedInbox.drainParked() == nil, true, "parked: read once only")
+        eq(SharedInbox.hasPending, false, "parked: the extension sees it was taken")
+
+        // NATIVE-R6-10 (build 31): the held share survives the app being ended, and a launch picks it up.
+        let suite = UserDefaults(suiteName: "addify-hosttests-heldshare")!
+        HeldShare.save(nil, in: suite)
+        eq(HeldShare.restore(in: suite) == nil, true, "held: nothing held, nothing restored")
+        let t0 = Date()
+        HeldShare.save("https://vt.tiktok.com/ZSabc1234/", now: t0, in: suite)
+        let r1 = HeldShare.restore(now: t0.addingTimeInterval(60), in: suite)
+        eq(r1?.link, "https://vt.tiktok.com/ZSabc1234/", "held: a launch a minute later gets the link back")
+        eq(r1?.fresh, true, "held: a minute later it resumes")
+        let r2 = HeldShare.restore(now: t0.addingTimeInterval(120), in: suite)
+        eq(r2?.fresh, true, "held: the second launch in a row still resumes")
+        let r3 = HeldShare.restore(now: t0.addingTimeInterval(180), in: suite)
+        eq(r3?.link, "https://vt.tiktok.com/ZSabc1234/", "held: the third launch in a row still names it")
+        eq(r3?.fresh, false, "held: the third launch in a row asks instead of resuming (a share that ends the app can't loop)")
+        eq(HeldShare.restore(now: t0.addingTimeInterval(240), in: suite) == nil, true, "held: asked about once, then gone")
+        HeldShare.save("https://vt.tiktok.com/ZSabc1234/", now: t0, in: suite)
+        let late = HeldShare.restore(now: t0.addingTimeInterval(11 * 60), in: suite)
+        eq(late?.fresh, false, "held: 11 minutes later it is asked about, not resumed")
+        HeldShare.save("https://vt.tiktok.com/ZSabc1234/", now: t0, in: suite)
+        HeldShare.save(nil, in: suite)
+        eq(HeldShare.restore(now: t0.addingTimeInterval(60), in: suite) == nil, true, "held: a scan that ended leaves nothing to restore")
+        HeldShare.save("https://vt.tiktok.com/ZSabc1234/", now: t0, in: suite)
+        _ = HeldShare.restore(now: t0.addingTimeInterval(60), in: suite)
+        HeldShare.save("https://vm.tiktok.com/ZMabc1234/", now: t0.addingTimeInterval(90), in: suite)
+        eq(HeldShare.restore(now: t0.addingTimeInterval(120), in: suite)?.fresh, true, "held: a new share starts its own count")
+        HeldShare.save(nil, in: suite)
 
         // the allowlist: compiled-in origins only (scheme, host and port)
         eq(EngineConfig.knownBaseURLs, ["https://addify.app"], "build 29: addify.app is the only compiled-in address")

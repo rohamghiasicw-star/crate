@@ -43,6 +43,8 @@ struct ResultToast: View {
             .padding(.horizontal, 12)
         }
         .buttonStyle(.plain)
-        .preferredColorScheme(.dark)
+        /* Dark whatever the app's appearance (the page's light theme sets it light, ContentView). An
+           environment value, not preferredColorScheme, so the toast does not set the app's appearance. */
+        .environment(\.colorScheme, .dark)
     }
 }

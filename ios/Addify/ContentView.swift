@@ -1,7 +1,20 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var bridge: EngineBridge
+    /* NATIVE-R6-05 (build 31): with Reduce Motion on, the result banner fades in and out instead of
+       sliding down from the top. */
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /* NATIVE-R6-09 (build 31): which native screen covers the page, if any (VoiceOver is told when it
+       changes). */
+    private var nativeScreen: Int { bridge.unreachable ? 2 : (bridge.booting ? 1 : 0) }
+
+    /* NATIVE-R6-06 (build 31): the page's light theme paints a near-white strip under the status bar,
+       so the app takes the light appearance there and the status bar's time and battery turn dark.
+       The loading and error screens are dark, so they keep the dark appearance. */
+    private var lightPage: Bool { bridge.pageTheme == "light" && nativeScreen == 0 }
 
     var body: some View {
         GeometryReader { geo in
@@ -60,10 +73,16 @@ struct ContentView: View {
                     withAnimation { bridge.toast = nil }
                 }
                 .padding(.top, 8)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 .zIndex(2)
             }
         }
+        }
+        .preferredColorScheme(lightPage ? .light : .dark)
+        /* The loading screen, the error screen or the page took over: VoiceOver starts again at the top
+           of what is now on screen (the error's title, the page) instead of on what went away. */
+        .onChange(of: nativeScreen) { _ in
+            DispatchQueue.main.async { UIAccessibility.post(notification: .screenChanged, argument: nil) }
         }
         /* Debug builds only, like every way in: Release builds compile no Settings screen. */
         #if DEBUG
@@ -87,6 +106,7 @@ struct BootView: View {
             Image(systemName: "waveform")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(Color(red: 0.36, green: 0.29, blue: 0.91))
+                .accessibilityHidden(true)
             Text("Addify")
                 .font(.title2.weight(.semibold))
             ProgressView()
@@ -100,6 +120,9 @@ struct BootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea())
         .foregroundStyle(.white)
+        /* NATIVE-R6-09 (build 31): VoiceOver stays on this screen while it covers the page. */
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
         .task {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             slow = true
@@ -119,6 +142,7 @@ struct UnreachableView: View {
             Image(systemName: "waveform.slash")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(Color(red: 0.36, green: 0.29, blue: 0.91))
+                .accessibilityHidden(true)
             /* CALL-RETRY: "check your internet" only when the phone said it has none. An engine
                that did not answer while the Wi-Fi is fine is not the user's connection
                (Konnor: "it says you're not on Wi-Fi, but we are"). */
@@ -153,5 +177,8 @@ struct UnreachableView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.090, green: 0.078, blue: 0.122).ignoresSafeArea())
         .foregroundStyle(.white)
+        /* NATIVE-R6-09 (build 31): VoiceOver stays on this screen while it covers the page. */
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
     }
 }
