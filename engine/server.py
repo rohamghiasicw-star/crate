@@ -9110,11 +9110,13 @@ def _s_genius_raw(kind, q, per_page):
         _S_G_SEM.release()
 
 
-def _s_genius(kind, q, per_page):
+def _s_genius(kind, q, per_page, lyrics=False):
     if _s_genius_mode() == "api":
         # one official search serves both kinds (it has no separate lyric search)
         hits = _s_cached(("genius", "api", q.lower()), lambda: _s_genius_raw("song", q, 20))
         hits = (hits or [])[:per_page]
+        if lyrics and hits:
+            hits = _s_lrc_fill(hits)
     else:
         hits = _s_cached(("genius", kind, q.lower(), per_page),
                          lambda: _s_genius_raw(kind, q, per_page))
@@ -9122,6 +9124,82 @@ def _s_genius(kind, q, per_page):
         if not h["artist"].startswith("Genius "):
             _s_know(_s_akey(h["artist"]))
     return hits
+
+
+# LRCLIB (2026-11-17). The web endpoint 403s the live server, so it runs on the official
+# API (GENIUS_ACCESS_TOKEN), whose hits carry no lyric excerpt: lyric search could never
+# check the typed words and every row stayed "lyric not confirmed". For the top few API
+# hits of a LYRIC SEARCH only, the song's plain lyrics come from LRCLIB (lrclib.net, free,
+# no key) and stand in as the excerpt, so _s_phrase_hit checks the typed words against the
+# song's real words. Only the hit's title and artist are sent, never the user's words.
+# The scan path's lyric step (_lyric_cands) is untouched.
+_S_LRC_GET = "https://lrclib.net/api/get?track_name=%s&artist_name=%s"
+_S_LRC_FIND = "https://lrclib.net/api/search?track_name=%s&artist_name=%s"
+_S_LRC_TOP = 4
+_S_LRC_TTL, _S_LRC_NEG_TTL = 7 * 86400, 3600
+_S_LRC_CACHE = {}
+_S_LRC_LOCK = threading.Lock()
+
+
+def _s_lrc_json(url, timeout):
+    req = _ureq.Request(url, headers={"User-Agent": "Addify/1.0 (https://addify.app)",
+                                      "Accept": "application/json"})
+    try:
+        with _ureq.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+
+
+def _s_lrclib(title, artist, timeout=1.6):
+    """-> the song's plain lyrics from LRCLIB, or "" (not found, instrumental, or down)."""
+    key = ((title or "").strip().lower(), (artist or "").strip().lower())
+    if not key[0] or not key[1]:
+        return ""
+    now = time.time()
+    with _S_LRC_LOCK:
+        hit = _S_LRC_CACHE.get(key)
+        if hit and now - hit[0] < (_S_LRC_TTL if hit[1] else _S_LRC_NEG_TTL):
+            return hit[1]
+    t, a = _quote(title.strip()), _quote(artist.strip())
+    d = _s_lrc_json(_S_LRC_GET % (t, a), timeout)
+    text = (d or {}).get("plainLyrics") if isinstance(d, dict) else None
+    if not text:
+        found = _s_lrc_json(_S_LRC_FIND % (t, a), timeout)
+        ak = _s_akey(artist)
+        for x in (found if isinstance(found, list) else [])[:5]:
+            if (isinstance(x, dict) and x.get("plainLyrics") and ak
+                    and _s_akey(x.get("artistName") or "") == ak
+                    and _s_core(x.get("trackName") or "") == _s_core(title)):
+                text = x["plainLyrics"]
+                break
+    text = text or ""
+    with _S_LRC_LOCK:
+        if len(_S_LRC_CACHE) > 4000:
+            _S_LRC_CACHE.clear()
+        _S_LRC_CACHE[key] = (now, text)
+    return text
+
+
+def _s_lrc_fill(hits):
+    """A copy of `hits` whose top _S_LRC_TOP entries with no excerpt carry the song's
+    LRCLIB lyrics as `highlight` (frags left empty: the whole text is checked)."""
+    want = [i for i, h in enumerate(hits[:_S_LRC_TOP])
+            if not (h.get("highlight") or "").strip() and h.get("title") and h.get("artist")]
+    if not want:
+        return hits
+    out = list(hits)
+    ex = ThreadPoolExecutor(max_workers=len(want))
+    try:
+        futs = {i: ex.submit(_s_lrclib, hits[i]["title"], hits[i]["artist"]) for i in want}
+        _cf.wait(list(futs.values()), timeout=2.0)
+        for i, f in futs.items():
+            text = f.result() if f.done() and not f.exception() else ""
+            if text:
+                out[i] = dict(hits[i], highlight=text, frags=[])
+    finally:
+        ex.shutdown(wait=False)
+    return out
 
 
 def _s_genius_budget(n):
@@ -9383,7 +9461,7 @@ def _search_lyric(q, deadline):
     strong_ok = not one_word and (len(set(ptoks)) >= 3 or len(phrase) >= 12)
     ex = ThreadPoolExecutor(max_workers=4)
     try:
-        f_gl = ex.submit(_s_genius, "lyric", q, 20) if info else None
+        f_gl = ex.submit(_s_genius, "lyric", q, 20, True) if info else None
         f_gs = ex.submit(_s_genius, "song", q, 5)
         f_yt = ex.submit(_s_yt, q, 10)
         f_sc = ex.submit(_s_sc, q, 15)
