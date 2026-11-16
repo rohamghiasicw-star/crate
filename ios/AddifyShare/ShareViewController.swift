@@ -5,22 +5,14 @@ import UniformTypeIdentifiers
    This target is what puts Addify in the TikTok / Instagram "Share to" row. It is a plain
    UIViewController rather than SLComposeServiceViewController on purpose: the compose
    sheet asks the user to type a caption and tap Post, and a share is already the user
-   saying "this one". When the open works nothing is drawn: the extension grabs the link,
-   parks it in the app group, opens the app and closes itself. When iOS does not open the
-   app, a small dark card says so and offers an Open Addify button, so a share is never
-   silently swallowed.
-
-   Delivery is two-layered because the direct open is not guaranteed:
-   1. SharedInbox.write(link)          - always works (app group)
-   2. open addify://scan?url=<link>    - responder-chain trick, best effort
-   The app drains the inbox on every activation, so if step 2 fails the scan starts the
-   next time the user opens Addify. */
+   saying "this one". FALLBACK BUILD (guideline 4.4, parked, ship only on the owners' go): the
+   extension never opens the app. It grabs the link, parks it in the app group and shows a
+   small dark card that says so, with Done. The app drains the inbox on every activation,
+   so the scan starts the next time the user opens Addify. */
 final class ShareViewController: UIViewController {
     private var started = false
     private var finished = false
     private var link: String?
-    private var attempt = 0
-    private var answeredAttempt = 0
     private weak var card: UIView?
 
     override func viewDidLoad() {
@@ -57,41 +49,7 @@ final class ShareViewController: UIViewController {
             }
             self.link = link
             SharedInbox.write(link)
-            self.openAddify(afterTap: false)
-        }
-    }
-
-    /* Try to bring Addify forward with addify://scan?url=<link>. iOS answers through the
-       completion handler: true means the app is on its way, so this card closes. False,
-       no application object, or no answer at all within 1.5 s means the open did not
-       happen, and the card says so with a button instead of closing silently (which is
-       exactly what "I click addify and nothing happens" looked like). The link is already
-       in the inbox, so the scan still starts the next time Addify opens. */
-    private func openAddify(afterTap: Bool) {
-        guard !finished, let link = link else { return }
-        var comps = URLComponents()
-        comps.scheme = "addify"
-        comps.host = "scan"
-        comps.queryItems = [URLQueryItem(name: "url", value: link)]
-        guard let url = comps.url else { showFallback(afterTap: afterTap); return }
-        attempt += 1
-        let mine = attempt
-        let fired = openHostApp(url) { [weak self] ok in
-            DispatchQueue.main.async {
-                guard let self = self, !self.finished, mine == self.attempt else { return }
-                self.answeredAttempt = mine
-                if ok {
-                    self.finish(error: false)
-                } else {
-                    self.showFallback(afterTap: afterTap)
-                }
-            }
-        }
-        if !fired { showFallback(afterTap: afterTap); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self = self, !self.finished, self.answeredAttempt != mine, mine == self.attempt else { return }
-            /* If the app already drained the inbox it got the link, whatever iOS said. */
-            if !SharedInbox.hasPending { self.finish(error: false) } else { self.showFallback(afterTap: afterTap) }
+            self.showSaved()
         }
     }
 
@@ -102,28 +60,21 @@ final class ShareViewController: UIViewController {
         if !SharedInbox.hasPending { finish(error: false) }
     }
 
-    private func showFallback(afterTap: Bool) {
+    /* FALLBACK BUILD: no open from the extension (guideline 4.4). The link is in the inbox, so
+       opening Addify by hand scans it (within ten minutes at once, later it asks first). */
+    private func showSaved() {
         guard !finished else { return }
-        if !SharedInbox.hasPending { finish(error: false); return }
-        if afterTap {
-            if AppGroup.isShared {
-                /* LAWYER-R7-05 (build 32): no "starts scanning right away". Opened within ten minutes the
-                   app scans it; later it asks first (EngineBridge offerStale). */
-                showCard(title: "Open Addify to scan it",
-                         body: "iOS did not let Addify open from here. Open Addify from your home screen to scan this video.",
-                         primary: nil)
-            } else {
-                /* No app group in this build: the inbox stays in the extension, so hand the user
-                   the link instead of promising a scan that would never start. */
-                UIPasteboard.general.string = link
-                showCard(title: "Link copied",
-                         body: "iOS did not let Addify open from here. Open Addify and paste the link on Home to scan it.",
-                         primary: nil)
-            }
+        if AppGroup.isShared {
+            showCard(title: "Saved to Addify",
+                     body: "Open Addify from your home screen to scan this video.",
+                     primary: nil)
         } else {
-            showCard(title: "Addify has this video",
-                     body: "Tap Open Addify to scan it now.",
-                     primary: "Open Addify")
+            /* No app group in this build: the inbox stays in the extension, so hand the user
+               the link instead of promising a scan that would never start. */
+            UIPasteboard.general.string = link
+            showCard(title: "Link copied",
+                     body: "Open Addify and paste the link on Home to scan it.",
+                     primary: nil)
         }
     }
 
@@ -178,7 +129,7 @@ final class ShareViewController: UIViewController {
             go.layer.cornerRadius = 14
             go.layer.cornerCurve = .continuous
             go.heightAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
-            go.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
+            go.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
             stack.addArrangedSubview(go)
         }
         let done = UIButton(type: .system)
@@ -225,8 +176,6 @@ final class ShareViewController: UIViewController {
         UIAccessibility.post(notification: .screenChanged, argument: t)
     }
 
-    /* A real tap: the retry runs with a user gesture behind it. */
-    @objc private func openTapped() { openAddify(afterTap: true) }
     /* Done on the no-link card cancels the request, as its timed close did (finish). */
     @objc private func doneTapped() { finish(error: link == nil) }
 
@@ -263,41 +212,6 @@ final class ShareViewController: UIViewController {
             }
         }
         next()
-    }
-
-    /* Extensions have no UIApplication.shared, so there is no sanctioned way to open the
-       host app from a Share Extension. The responder chain still ends in the extension's
-       UIApplication object, and asking THAT object to open the URL is the workaround every
-       share-to-app extension ships.
-
-       iOS 18 CHANGED THE RULES (2026-09-25, Roham: "the share extension doesn't work").
-       The old call here was perform(openURL:) on that object. From iOS 18 the deprecated
-       openURL: is a no-op that always returns NO and logs "The caller of
-       UIApplication.openURL(_:) needs to migrate to the non-deprecated
-       UIApplication.open(_:options:completionHandler:). Force returning false (NO)." So the
-       share sheet grabbed the link, parked it in the inbox, and Addify never came forward:
-       exactly what testers saw. Casting the responder to UIApplication and calling the
-       modern open(_:options:completionHandler:) is the fix; the type is available to
-       extensions, only .shared is not. The inbox stays as the backup path.
-
-       Returns false when no application object was found (nothing was attempted), and
-       hands iOS's own yes/no to `answer` when the open was attempted. */
-    private func openHostApp(_ url: URL, answer: @escaping (Bool) -> Void) -> Bool {
-        guard let application = hostApplication() else { return false }
-        application.open(url, options: [:], completionHandler: answer)
-        return true
-    }
-
-    /* The responder chain only. Build 29 (hostile round 4, NATIVE-R4-2): no runtime selector
-       lookup of sharedApplication. When the chain does not reach the application, nothing is
-       attempted and the share stays in the inbox with the "Open Addify" card, so it is never lost. */
-    private func hostApplication() -> UIApplication? {
-        var responder: UIResponder? = self
-        while let r = responder {
-            if let application = r as? UIApplication { return application }
-            responder = r.next
-        }
-        return nil
     }
 
     private func finish(error: Bool) {
