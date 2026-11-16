@@ -4825,6 +4825,7 @@ function mainVersion(d){
   // ROUND 6 (LITERAL-R6-01): the search words, from the upload alone: its title (with the artist only when the title
   // itself starts with it). A title that does not name the song searches nothing of its own (searchQ uses the song).
   var q=(bs && core(t).indexOf(bs)>=0) ? qTidy((named?named+' ':'')+t) : '';
+  if(q && core(q).indexOf(bs)<0) q='';   // ROUND 6D (FU-3): a credit before the song took it: search the song instead
   // YouTube stays on mqdefault: hqdefault is 4:3 with black letterbox bars, which the
   // square cover crop leaves on screen. SoundCloud serves the same art at 500px.
   var art=rowArt(ex).replace(/-t\d+x\d+(\.\w+)$/,'-t500x500$1');
@@ -4833,9 +4834,23 @@ function mainVersion(d){
    the Shazam artist with the crowned upload's title ("Hoodfellas THIS PLACE ABOUT TO BLOW (...) Prod. Kryd"), words no
    catalogue holds together. They now search the upload's own title (mainVersion's q), else the song and its artist as
    Shazam named them, and a "Prod. X" credit is left out of the search (the card still shows it). */
-function qTidy(s){return String(s||'').replace(/[\(\[]\s*prod(?:uced)?\b\.?[^\)\]]*[\)\]]/gi,' ')
-  .replace(/\s+[-|\u2013\u2014]?\s*\bprod(?:uced)?\b(?:\.|\s)\s*(?:by\s+)?\S.*$/i,'').replace(/\s+/g,' ').trim();}
-function searchQ(d,mv){return (mv&&mv.q)||qTidy((d.base_artist?d.base_artist+' ':'')+(d.base_song||''));}
+/* ROUND 6D (FU-3): only the credit goes. It ends at its closing bracket, a " - " " | " " / " separator, a new bracket or
+   the next version word, so "Prod. Kryd (slowed + reverb)" or "prod by X sped up" keep their version words. The search
+   is never empty or one letter: it falls back to the song and artist as Shazam named them. */
+var Q_VER='(?:slowed|sped|speed|super|reverb(?:ed)?|remix(?:ed)?|edit(?:ed)?|hoodtrap|bass|boosted|nightcore|daycore|lo-?fi|'+
+  'extended|instrumental|acapella|mashup|bootleg|flip|remaster(?:ed)?|version|mix|cover|live|tiktok|8d|phonk|chopped|screwed|pitched)\\b';
+var Q_PROD=new RegExp('\\bprod(?:uced)?(?:[.:]\\s*|\\s+)(?:by\\b[.:]?\\s*)?(?:(?!\\s+[-|/\\u2013\\u2014])(?!\\s*\\b'+Q_VER+')[^()\\[\\]])*','gi');
+function qTidy(s){s=String(s||'').replace(/\uE000/g,' ').replace(Q_PROD,'\uE000');   // \uE000 marks where a credit was
+  [[/[(\[]\s*\uE000\s*[)\]]/g,' '],                                   // "(Prod. X)": its brackets go too
+   [/([(\[])\s*\uE000\s*(?:[-|\/\u2013\u2014]+\s*)?/g,'$1'],          // "(Prod. X - slowed)": "(slowed)"
+   [/\s*(?:[-|\/\u2013\u2014]+\s*)?\uE000\s*([)\]])/g,'$1'],          // "(slowed - prod. X)": "(slowed)"
+   [/\s([-|\/\u2013\u2014]+)\s*\uE000\s*[-|\/\u2013\u2014]+\s/g,' $1 '], // "Song - Prod. X - Remix": one separator
+   [/^\s*\uE000\s*(?:[-|\/\u2013\u2014]+\s*)?/,''],                    // a title that starts with the credit
+   [/\s*(?:[-|\/\u2013\u2014]+\s*)?\uE000\s*$/,'']                     // and one that ends with it
+  ].forEach(function(r){s=s.replace(r[0],r[1]);});
+  return s.replace(/\uE000/g,' ').replace(/\s+/g,' ').trim();}
+function searchQ(d,mv){var a=(d.base_artist?d.base_artist+' ':'')+(d.base_song||''), q=(mv&&mv.q)||'';
+  if(q.length<2) q=qTidy(a); if(q.length<2) q=a.replace(/\s+/g,' ').trim(); return q;}
 /* THE HEADER NAMES THE CARD UNDER IT (FLOW-AUDIT 5). finish() wrote "No match" over every
    result without a song, so a "TikTok is busy" card (own1, a TikTok rate limit, not a miss)
    sat under a header saying the song was not found. Only a real miss says "No match". */
@@ -5896,7 +5911,7 @@ var PW_AFTER='', pendT=0;
    only. Until then the pill, the You card's plan line and the paywall wait, and Home says "Checking your plan..." while a
    scan or Listen waits. If no answer has come after PRO_CAP ms, the waiting scan (and any scan after it) goes ahead
    uncounted (PRO_LET) rather than being blocked; the first real answer ends that. */
-var PRO_KNOWN=!STORE, STATUS_IN=!STORE, PRO_CAP=10000, PRO_LET=false, proWaiters=[];
+var PRO_KNOWN=!STORE, STATUS_IN=!STORE, PRO_CAP=10000, PRO_LET=false, proWaiters=[], PRO_T0=Date.now(), proRetryT=0, proRetryN=0;
 function proRelease(){var w=proWaiters; proWaiters=[]; w.forEach(function(f){try{f();}catch(e){}});}
 function proKnownNow(){if(PRO_KNOWN) return; PRO_KNOWN=true; PRO_LET=false; paintPill(); try{renderProf();}catch(e){} proRelease();}
 function proCapNow(){if(PRO_KNOWN||PRO_LET) return; PRO_LET=true; proRelease();}
@@ -5915,7 +5930,11 @@ function storeRefresh(){if(!STORE) return Promise.resolve(false);
     // ROUND 5C: a clip parked while the first answer was out (the paywall closed meanwhile) goes, now the answer is no
     var pw=document.getElementById('paywall'); if(first&&!PRO&&(!pw||pw.hidden)) PW_AFTER='';
     if(PRO&&!was) proOn(); else if(was&&!PRO){try{renderProf();}catch(e){}}
-    paintPill(); proKnownNow(); return PRO;},function(){STATUS_IN=true; proKnownNow(); return PRO;});}
+    paintPill(); proKnownNow(); return PRO;},function(){
+    // ROUND 6D (FU-1): an error is not an answer. Before the first real answer it asks again (0.5, 1, 2 s apart) while
+    // the PRO_CAP wait runs; with no answer by PRO_CAP the scan still goes uncounted (proCapNow)
+    if(!STATUS_IN&&Date.now()-PRO_T0<PRO_CAP){clearTimeout(proRetryT); proRetryT=setTimeout(storeRefresh,Math.min(2000,500*Math.pow(2,proRetryN++)));}
+    return PRO;});}
 /* ROUND 5C (IAP-R5-2, CHAOS-2-R5-03): a pending purchase (Ask to Buy) is checked every PEND_TICK ms, PEND_TICKS times */
 var PEND_TICK=15000, PEND_TICKS=40;
 function pollPending(){clearInterval(pendT); var n=0;
@@ -6133,7 +6152,10 @@ function openPaywall(){
     lg.textContent=(t?t.words+', then ':'')+q.price+' per '+pwPer(q)+'. Auto-renews until cancelled. '+
       'Cancel anytime in your Apple ID settings at least 24 hours before renewal.';
     lg.hidden=false; go.onclick=buy;
-    if(_fin) try{S.focus({preventScroll:true});}catch(e){}};
+    if(_fin){S._back=_af; try{S.focus({preventScroll:true});}catch(e){}}
+    // ROUND 6D (FU-2): the purchase ended (cancelled, failed) and its button is on again: the focus goes back to it
+    else if(!PW_BUYING&&S._back){var bk=S._back; S._back=null;
+      if(document.activeElement===S&&document.body.contains(bk)&&!bk.disabled) try{bk.focus({preventScroll:true});}catch(e){}}};
   var buy=function(){var q=plans[sel]; if(PW_BUYING||!q) return; PW_BUYING=q.id; PW_NOTE=''; pwMsg(''); paint();
     var done=pwDone, hold=pwHold;                 // ROUND 5C: shared with a reloaded page's pending wait (pendRestore)
     storeCall('buy',{id:q.id}).then(function(r){
@@ -7530,9 +7552,9 @@ function playHere(url, src, title){
    band's way, through the platform's own API: YouTube PLAYING or its playhead past 0.1 s, SoundCloud PLAY or a
    PLAY_PROGRESS past 0. A sheet with no start by then says "Couldn't load the player." with Open in app (the same
    upload) and Try again (opens it again). Closing the sheet, or another player opening, ends the watch (plOff). */
-var _plGen=0, _plT=0, _plTick=null, _plYT=null, _plSC=null, _plBack=false;
+var _plGen=0, _plT=0, _plTick=null, _plYT=null, _plSC=null;
 function plOff(){
-  _plGen++; clearTimeout(_plT); _plBack=false; if(_plTick){clearInterval(_plTick); _plTick=null;}
+  _plGen++; clearTimeout(_plT); if(_plTick){clearInterval(_plTick); _plTick=null;}
   try{if(_plSC&&window.SC&&SC.Widget){var E=SC.Widget.Events; [E.PLAY,E.PLAY_PROGRESS].forEach(function(ev){_plSC.unbind(ev);});}}catch(e){}
   _plSC=null; _plYT=null;}
 function plWatch(url,src,title,isYT){
@@ -7557,7 +7579,7 @@ function plWatch(url,src,title,isYT){
     }catch(_){} });}
 function plFail(url,src,title){
   var pb=document.getElementById('playerbody'), po=document.getElementById('playerout'), ae=document.activeElement,
-      had=!!(ae&&((pb&&pb.contains(ae))||ae===po||(_plBack&&ae===sheetDialog('player'))));   // ROUND 6: Try again left it on the sheet
+      had=!!(ae&&((pb&&pb.contains(ae))||ae===po||ae===sheetDialog('player')));   // ROUND 6D (FU-4): the sheet itself counts, first failure too
   plOff(); if(!pb) return;
   if(po) po.hidden=true;   // one Open in app on the sheet: the box's, beside Try again
   pb.innerHTML='<div class="plfail"><div class="ipfbox" role="status"><b>Couldn’t load the player.</b><span class="ipfrow">'+
@@ -7566,7 +7588,7 @@ function plFail(url,src,title){
   var rb=document.getElementById('plretry');
   // ROUND 6 (A11Y-R6-05): the focus stays on the sheet, not in the new player frame: a key pressed inside that
   // cross-origin frame never reaches the page, so Escape stopped closing the sheet. A second failure hands it to the new Try again.
-  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); _plBack=h; fkHand(h,sheetDialog('player'));};
+  rb.onclick=function(){var h=document.activeElement===rb; playHere(url,src,title); fkHand(h,sheetDialog('player'));};
   fkHand(had,rb);}
 /* THE INLINE COVER PLAYER (Konnor). The triangle turns into a round pause button with a
    purple progress ring and the YouTube video plays beside it, in the card, not a sheet.
