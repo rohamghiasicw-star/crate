@@ -1,0 +1,339 @@
+{
+ "about": "Which clip a shared or pasted text names. The page's parseLink (engine/crate.html) and the share extension's SharedInbox.shareLink (ios/Addify/SharedInbox.swift) read text by the same rule, so a share and a paste of the same text scan the same clip. engine/test_round7c.py checks parseLink against every case here.",
+ "rule": [
+  "1. Every http(s) link in the text is a candidate, in order; the first candidate that is a clip wins (unchanged).",
+  "2. With no http(s) link, the leading run of URL characters (leading characters in strip_leading dropped first, trailing characters in strip_trailing dropped after; the whole text when that run is empty) is the next candidate (unchanged).",
+  "3. ROUND 7C: with no http(s) link and no clip from step 2, split the text into words on the separators below. For each word, in order: remove every zero-width character, then drop the leading characters in strip_leading, then drop the trailing characters in strip_trailing, then test the word as a clip (https:// is added when it has no scheme). The first word that is a clip wins.",
+  "4. A profile, sound, tag, story or other page link never wins over a clip that comes after it. With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2 ('page')."
+ ],
+ "separators": "Unicode White_Space: U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000",
+ "zero_width": [
+  "U+200B",
+  "U+200C",
+  "U+200D",
+  "U+2060",
+  "U+FEFF"
+ ],
+ "strip_leading": "([{<\"'",
+ "strip_trailing": ".,;:!?'\"()[]{}<>*",
+ "clip_shapes": "tiktok.com (www., m.): /@user/video/<6-25 digits>, /@user/photo/<6-25 digits>, /t/<5-16 alnum>, /v/<6-25 digits>(.html); vm.tiktok.com or vt.tiktok.com: /<5-16 alnum> or /t/<5-16 alnum>; instagram.com or instagr.am (www., m.): /(<user>/)(reel|reels|p|tv)/<5-40 code>. A trailing slash is allowed. instagr.am is handed on as www.instagram.com.",
+ "fields": {
+  "clip": "the link parseLink hands on to the scan, exactly, or null when the text names no clip",
+  "key": "the video that link names: https:// + host in lower case without www. or m. + path without its trailing slash, no query (the page's stripClip). A port that hands on another spelling of the same link matches on key",
+  "page": "with no clip: the app whose page link the page names in its 'not a clip' message (TikTok or Instagram), else null"
+ },
+ "cases": [
+  {
+   "id": "noscheme-clip-words",
+   "item": "SHARE-R7-01",
+   "text": "omg listen www.tiktok.com/@flprobe/video/7123456789012345611 🔥",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "emoji-then-noscheme",
+   "item": "SHARE-R7-01",
+   "text": "🔥 tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "instagr.am-noscheme-words",
+   "item": "SHARE-R7-01",
+   "text": "look instagr.am/reel/DeE4Gy2xjUN",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "noscheme-prof-then-clip",
+   "item": "SHARE-R7-01",
+   "text": "tiktok.com/@flprobe and tiktok.com/@flprobe/video/7123456789012345611.",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-period",
+   "item": "SHARE-R7-01",
+   "text": "Check out flprobe's profile on TikTok! https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 and https://www.tiktok.com/@flprobe/video/7123456789012345611.",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-paren",
+   "item": "SHARE-R7-01",
+   "text": "by https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 (https://www.tiktok.com/@flprobe/video/7123456789012345611)",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-comma",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611, so good",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-excl",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611!",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-emoji",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611🔥",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "prof-then-clip-zwsp",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 https://www.tiktok.com/@flprobe/video/7123456789012345611​",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "sound-then-clip-emoji",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/music/original-sound-7123456789012345678 https://www.tiktok.com/@flprobe/video/7123456789012345611😭😭",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "igstory-then-reel-period",
+   "item": "SHARE-R7-01",
+   "text": "https://www.instagram.com/stories/flprobe/3512345678901234567?igsh=abc https://www.instagram.com/reel/DeE4Gy2xjUN/.",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "igprof-then-reel-zwsp",
+   "item": "SHARE-R7-01",
+   "text": "https://www.instagram.com/flprobe?igsh=abc123\nhttps://www.instagram.com/reel/DeE4Gy2xjUN/​",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "noscheme-clip-bare",
+   "item": "SHARE-R7-01",
+   "text": "tiktok.com/@flprobe/video/7123456789012345611?_r=1, so good",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611?_r=1",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "noscheme-vm-emoji",
+   "item": "SHARE-R7-01",
+   "text": "vm.tiktok.com/ZMabc1234/ 😭",
+   "clip": "https://vm.tiktok.com/ZMabc1234/",
+   "key": "https://vm.tiktok.com/ZMabc1234",
+   "page": null
+  },
+  {
+   "id": "noscheme-ig-emoji",
+   "item": "SHARE-R7-01",
+   "text": "instagram.com/reel/DeE4Gy2xjUN/🔥 look",
+   "clip": "https://instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "two-clips-comma",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe/video/7123456789012345611, https://www.tiktok.com/@flprobe/video/7123456789012345612",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "two-clips-emoji",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe/video/7123456789012345611🔥 https://www.tiktok.com/@flprobe/video/7123456789012345612",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "two-clips-zwsp",
+   "item": "SHARE-R7-01",
+   "text": "https://www.tiktok.com/@flprobe/video/7123456789012345611​ https://www.tiktok.com/@flprobe/video/7123456789012345612",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "clip-fullwidth-paren",
+   "item": "SHARE-R7-01",
+   "text": "（https://www.tiktok.com/@flprobe/video/7123456789012345611）",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "clip-nbsp-words",
+   "item": "SHARE-R7-01",
+   "text": "song? https://www.tiktok.com/@flprobe/video/7123456789012345611  lol",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "noscheme-tt-profile",
+   "item": "GAPS-R7-03",
+   "text": "www.tiktok.com/@bouch.szn",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "noscheme-ig-story",
+   "item": "GAPS-R7-03",
+   "text": "www.instagram.com/stories/mako_cars/3456789012345678901/",
+   "clip": null,
+   "key": null,
+   "page": "Instagram"
+  },
+  {
+   "id": "noscheme-tt-discover",
+   "item": "GAPS-R7-03",
+   "text": "www.tiktok.com/discover/funny.",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "noscheme-clip-tilde",
+   "item": "GAPS-R7-03",
+   "text": "www.tiktok.com/@bouch.szn/video/7651437319941066005~",
+   "clip": null,
+   "key": null,
+   "page": "TikTok"
+  },
+  {
+   "id": "pct-host-vm",
+   "item": "GAPS-R7-04",
+   "text": "https://vm.%74ik%74ok.com/ZMhvqKj8L/",
+   "clip": "https://vm.%74ik%74ok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "pct-dot-host",
+   "item": "GAPS-R7-04",
+   "text": "http://www.tiktok%2Ecom/t/ZTRabcde1/",
+   "clip": "http://www.tiktok%2Ecom/t/ZTRabcde1/",
+   "key": "https://tiktok.com/t/ZTRabcde1",
+   "page": null
+  },
+  {
+   "id": "fullwidth-host-backslash",
+   "item": "GAPS-R7-04",
+   "text": "ｖｍ.ｔｉｋｔｏｋ.ｃｏｍ\\ZMhvqKj8L\\",
+   "clip": "https://ｖｍ.ｔｉｋｔｏｋ.ｃｏｍ\\ZMhvqKj8L\\",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "zwsp-host-backslash",
+   "item": "GAPS-R7-04",
+   "text": "​vm.tiktok.com\\ZMhvqKj8L\\",
+   "clip": "https://​vm.tiktok.com\\ZMhvqKj8L\\",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "paren-zwsp-after-words",
+   "item": "rule",
+   "text": "see (​tiktok.com/@flprobe/video/7123456789012345611)",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "quoted-after-words",
+   "item": "rule",
+   "text": "see 'instagram.com/p/DeE4Gy2xjUN/', thanks",
+   "clip": "https://instagram.com/p/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/p/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "nbsp-words-short-link",
+   "item": "rule",
+   "text": "my fav vt.tiktok.com/ZSabc1234/",
+   "clip": "https://vt.tiktok.com/ZSabc1234/",
+   "key": "https://vt.tiktok.com/ZSabc1234",
+   "page": null
+  },
+  {
+   "id": "sound-then-clip-noscheme",
+   "item": "rule",
+   "text": "tiktok.com/music/original-sound-7123456789012345678 then www.tiktok.com/@flprobe/video/7123456789012345611!!",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "two-noscheme-clips",
+   "item": "rule",
+   "text": "a vm.tiktok.com/ZMabc1234/ b tiktok.com/@flprobe/video/7123456789012345612",
+   "clip": "https://vm.tiktok.com/ZMabc1234/",
+   "key": "https://vm.tiktok.com/ZMabc1234",
+   "page": null
+  },
+  {
+   "id": "page-after-words",
+   "item": "rule",
+   "text": "lol www.tiktok.com/@flprobe",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "words-only",
+   "item": "rule",
+   "text": "no link in this one",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "lookalike-host",
+   "item": "rule",
+   "text": "see tiktok.com.evil.io/@u/video/7123456789012345611 and notinstagram.com/reel/DeE4Gy2xjUN/",
+   "clip": null,
+   "key": null,
+   "page": null
+  },
+  {
+   "id": "control-full-link-1",
+   "item": "control",
+   "text": "https://www.tiktok.com/@bouch.szn/video/7651437319941066005",
+   "clip": "https://www.tiktok.com/@bouch.szn/video/7651437319941066005",
+   "key": "https://tiktok.com/@bouch.szn/video/7651437319941066005",
+   "page": null
+  },
+  {
+   "id": "control-full-link-2",
+   "item": "control",
+   "text": "https://www.tiktok.com/@_joeybateman/video/7697240897204899103",
+   "clip": "https://www.tiktok.com/@_joeybateman/video/7697240897204899103",
+   "key": "https://tiktok.com/@_joeybateman/video/7697240897204899103",
+   "page": null
+  }
+ ]
+}

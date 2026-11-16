@@ -710,6 +710,9 @@ html.native .tabbar{margin-bottom:min(0px,calc(env(safe-area-inset-bottom) - 10p
    the card's play buttons at 375x667; centred with left:50% on a fixed box it shrank to half the screen. */
 #s-match .hd{position:relative}
 #s-match .hd>#back{grid-column:1} #s-match .hd>#share{grid-column:3}
+/* ROUND 7C (A11Y-R7-04): Back and Share sit over the clip pill's hit area (z-index 2, below), so at 320 wide its taller
+   area never takes the bottom rows of their 44 pt targets */
+#s-match .hd>#back,#s-match .hd>#share{z-index:3}
 #s-match .hd:has(>.scannote.on)>#matchttl{display:none}
 @media (prefers-reduced-motion:reduce){.scannote{transition:none}}
 /* PAYWALL, Option A (Konnor, Telegram 2061-2063, 2026-11-10; branch kfix-9-paywall). A half-screen
@@ -1752,6 +1755,7 @@ a.clippill{text-decoration:none;color:var(--muted);cursor:pointer;transition:fil
 #pastebtn::before,#gobtn::before{content:"";position:absolute;inset:-3px 0}
 .chipf::before{content:"";position:absolute;inset:-7px 0}
 .urow .retry::before,.unm .retry::before,a.clippill::before{content:"";position:absolute;inset:-5px 0}
+a.clippill::before{inset:-6px 0}   /* ROUND 7C (A11Y-R7-04): the pill is 33.75 pt tall, so 5 pt each way made 43.75 */
 .oblater::before{content:"";position:absolute;inset:-12px 0}
 #seeall::before{content:"";position:absolute;inset:-12px -8px}
 /* the Finds search box had outline:none on its input and no focus style of its own */
@@ -1974,7 +1978,9 @@ html.native .app[data-state="idle"]{height:100vh;height:100dvh}
              placeholder="a lyric, a vibe, or a creator" aria-label="Search by lyric, vibe or creator">
       <button type="button" class="sclear" id="sclear" hidden aria-label="Clear search"></button>
     </form>
-    <div id="sbody" aria-live="polite"></div>
+    <!-- ROUND 7C (A11Y-R7-07): a short status line is announced (how many results, Looking, Nothing close), not the list -->
+    <p id="sstat" class="vh" role="status"></p>
+    <div id="sbody"></div>
   </section>
 
   <!-- ============ LIBRARY ============ -->
@@ -2674,6 +2680,13 @@ function parseLink(raw){raw=(raw||'').trim(); var all=(raw.match(LINK_RE)||[]).m
   // ROUND 5B: a clip pasted without its scheme ("vt.tiktok.com/...") gets https://, as the engine reads it, so /base and
   // the /progress poll name the same clip (the scan's liveness reads that poll, see SCAN_STILL)
   for(var i=0;i<cands.length;i++){var r=clipShape(cands[i]); if(r.host) return {host:r.host,url:r.url||(/^https?:\/\//i.test(cands[i])?cands[i]:'https://'+cands[i])}; if(r.page&&!page) page=r.page;}
+  // ROUND 7C (SHARE-R7-01): with no http(s) link the clip can come after words or an emoji ("omg listen tiktok.com/@a/video/1").
+  // Every word between Unicode spaces is tried, without zero-width characters, the ( [ { < " ' before it or the punctuation
+  // after it (linkTrim), and the first CLIP wins: a profile, sound or other page link before it never does. The share
+  // extension reads shared text by the same rule; engine/link_corpus_r7.json holds the rule and its texts.
+  if(!all.length){var tk=raw.split(/[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/);
+    for(var j=0;j<tk.length;j++){var t=linkTrim(tk[j].replace(/[\u200B-\u200D\u2060\uFEFF]/g,'').replace(/^[(\[{<"']+/,'')), r2=t?clipShape(t):{};
+      if(r2.host) return {host:r2.host,url:r2.url||(/^https?:\/\//i.test(t)?t:'https://'+t)};}}
   return {host:null,url:all[0]||raw,page:page};}
 function notClipMsg(p){return p&&p.page
   ? 'That link is '+(p.page==='Instagram'?'an ':'a ')+p.page+' page, not a clip. Open the video, tap Share, then Copy link, and paste it here.'
@@ -5870,17 +5883,21 @@ function logScan(d,ts){var a=scanLog(), e={song:d.base_song,artist:d.base_artist
   lsSet('addify-scanlog',a.slice(0,500)); return e.ts;}
 /* failed scans wait here - the Library shows them as pending, not lost */
 function unmatched(){return lsGet('addify-unmatched','[]');}
-function logUnmatched(url,handle){var a=unmatched();
-  if(a.some(function(x){return x.url===url;})) return;
+/* ROUND 7C (RETURNING-R7-01): one row per VIDEO, not per link. A fresh share link of the same clip (new ?_r= or ?_t=,
+   no www., its short link once known, the scan's own video key) is the same row, as for the scan counter (scanKeys). */
+function unSame(u,ks){return scanKeys(u).some(function(k){return ks.indexOf(k)>=0;});}
+function logUnmatched(url,handle){var a=unmatched(), ks=scanKeys(url);
+  if(a.some(function(x){return x.url===url||unSame(x.url,ks);})) return;
   a.unshift({url:url,handle:handle||'',ts:Date.now()}); lsSet('addify-unmatched',a.slice(0,50));}
-function dropUnmatched(url){lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url;}));}
+function dropUnmatched(url,d){var ks=scanKeys(url,d);
+  lsSet('addify-unmatched',unmatched().filter(function(x){return x.url!==url&&!unSame(x.url,ks);}));}
 /* ROUND 5C (RETURNING-USER-R5-01): the scan on screen named its song and the song is in Finds: its "Not matched yet" row
    has done its job. Called when the scan ends found and when the card's Add to Finds or Like saves it. */
 function unmatchedDone(d){if(!curURL||!d||!d.base_song||d.result==='no_match'||d.result==='uncertain'||d.unverified_base||d.base_uncertain) return;
-  if(!unmatched().some(function(x){return x.url===curURL;})) return;
+  var ks=scanKeys(curURL,d); if(!unmatched().some(function(x){return x.url===curURL||unSame(x.url,ks);})) return;   // ROUND 7C (RETURNING-R7-01)
   // ROUND 6C (RETURNING-R6-03): with "Add every match to Finds" off the scan's card offers Add to Finds, and the row no
   // longer says "Not matched yet" for a clip that just matched
-  if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL); try{renderLib();}catch(e){}}}
+  if(!autoOn()||loadCrate().some(function(x){return x.song===d.base_song&&x.artist===d.base_artist;})){dropUnmatched(curURL,d); try{renderLib();}catch(e){}}}
 /* free scans - a real monthly counter, not a prop. The pill does paywall work all day:
    users always know where they stand (brief). No payment rail on the prototype, so at
    zero it says so instead of ambushing anyone. */
@@ -6110,6 +6127,12 @@ function openPaywall(){
   var live=function(){return document.body.contains(S);};   // false once a reopened sheet replaced this one
   try{S.focus({preventScroll:true});}catch(e){}
   document.getElementById('pwx').onclick=closePaywall;
+  // ROUND 7C (A11Y-R7-03): the plan radios answer the arrow keys as a radio group does: selection and focus move together
+  document.getElementById('pwb').onkeydown=function(e){var d={ArrowDown:1,ArrowRight:1,ArrowUp:-1,ArrowLeft:-1}[e.key],
+      r=e.target&&e.target.closest?e.target.closest('.pwplan'):null;
+    if(!d||!r||PW_BUYING||plans.length<2) return; e.preventDefault();
+    sel=(+r.getAttribute('data-i')+d+plans.length)%plans.length; pwMsg(''); paint();
+    var n=this.querySelector('.pwplan[data-i="'+sel+'"]'); if(n) try{n.focus({preventScroll:true});}catch(x){}};
   ov.onclick=function(e){if(e.target===ov) closePaywall();};
   // drag the sheet down to close it (the handle says it can be dragged)
   var y0=null, dy=0;
@@ -6207,7 +6230,9 @@ function openPaywall(){
       // so the locked button always has its reason under it
       if(PW_NOTE){pwMsg((e==='cancelled'?'':e==='failed'?'Couldn’t reach the App Store. ':'No active subscription yet. ')+PW_NOTE); return;}
       pwMsg(e==='cancelled'?'':e==='failed'?'Couldn’t reach the App Store. Try again.':'No active subscription found on this Apple ID.');},
-      function(){PW_RESTORING=false; pwRestoreBusy(false); pwMsg('Couldn’t reach the App Store. '+(PW_NOTE||'Try again.'));});};}
+      function(){PW_RESTORING=false; pwRestoreBusy(false); pwMsg('Couldn’t reach the App Store. '+(PW_NOTE||'Try again.'));});};
+  // ROUND 7C (A11Y-R7-03): Restore purchases is a link that acts as a button, so Space presses it too (Enter already does)
+  document.getElementById('pwr').onkeydown=function(e){if(e.key===' '||e.key==='Spacebar'){e.preventDefault(); this.click();}};}
 if(STORE){setTimeout(storeRefresh,0); setTimeout(proCapNow,PRO_CAP); pendRestore();}   // ROUND 6 (IAP-R6-01): PRO_CAP caps the wait
 function speedLabel(x){return (x.speed&&x.speed!=='as posted')?x.speed:(x.edit||x.note||'original');}   // APPLYALL (finding 20); REVIEWER RUNS 2: a crowned remix says so
 function ago(ts){if(!ts) return ''; var m=(Date.now()-ts)/6e4;
@@ -6563,6 +6588,11 @@ function renderLib(){
     var app=x.clip?(clipShape(x.clip).host||''):'';
     return [x.title||'',x.by||'',x.song,x.artist,x.handle,x.speed,x.listen?'listen mode':'',x.via==='search'?'search':'',
             x.clip||'',app].join(' ').toLowerCase().indexOf(q)>=0;}
+  // ROUND 7C (RETURNING-R7-02): the search reads the "Not matched yet" rows too (on All and on Unmatched): their reel link
+  // (any share of it, by the video), the creator, the app and the row's own words
+  var unq=un.filter(function(x){if(!q) return true;
+    if(qk.length&&scanKeys(x.url).some(function(k){return qk.indexOf(k)>=0;})) return true;
+    return [x.handle||'',x.url||'',clipShape(x.url||'').host||'','unmatched scan'].join(' ').toLowerCase().indexOf(q)>=0;});
   if(libFilter!=='Unmatched'){
     var list=all.filter(function(x){
       if(!match(x)) return false;
@@ -6583,9 +6613,9 @@ function renderLib(){
             '<span class="fmeta">'+vchip(x)+(x.fixed?'<span class="vchip fixd">Fixed</span>':'')+(sl?'<span class="fsrc">'+sl+'</span>':'')+'</span></span></button>'+
           (x.url?fpHTML(x):'')+   // ROUND 5D: FINDS PLAY (below)
           '</div>';}).join('')+'</div>';});
-    if(libFilter==='All'&&un.length&&!q&&!libMonth)
-      html+='<div class="daylbl">Not matched yet</div><div class="flist">'+un.map(unRow).join('')+'</div>';
-  } else html=un.length?'<div class="flist">'+un.map(unRow).join('')+'</div>':'';
+    if(libFilter==='All'&&unq.length&&!libMonth)
+      html+='<div class="daylbl">Not matched yet</div><div class="flist">'+unq.map(unRow).join('')+'</div>';
+  } else html=unq.length?'<div class="flist">'+unq.map(unRow).join('')+'</div>':'';
   // ROUND 5D (GAPS-UI-R5-03): an empty filter says which finds it is waiting for, not "Nothing here yet"
   var fw={Edits:'edits',Originals:'originals',Liked:'liked finds'}[libFilter]||'';
   if(!html) html='<div class="dashcard"><b>'+(q?'No finds match that':(libMonth?(fw?'No '+fw+' from that month':'Nothing from that month here'):(fw?'No '+fw+' yet':'Nothing here yet')))+'</b>'+
@@ -6639,22 +6669,27 @@ var sState={q:'',mode:'auto',busy:false,res:null,err:''}, sSeq=0;
 function sRecent(){return lsGet('addify-recent-searches','[]');}
 function sRemember(q){var a=sRecent().filter(function(x){return x.toLowerCase()!==q.toLowerCase();});
   a.unshift(q); lsSet('addify-recent-searches',a.slice(0,8));}
+/* ROUND 7C (A11Y-R7-07): the list is no live region; this short line is what a screen reader hears for each search */
+function sSay(t){var s=document.getElementById('sstat'); if(s&&s.textContent!==t) s.textContent=t;}
 function renderSearch(){
   var body=document.getElementById('sbody'), inp=document.getElementById('sq');
   document.getElementById('sclear').hidden=!inp.value;
   if(sState.busy){
     body.innerHTML='<p class="sresh">Looking…</p><div class="slist"><div class="sskel"></div><div class="sskel"></div><div class="sskel"></div></div>';
-    return;}
+    sSay('Looking…'); return;}
   if(sState.err){
     body.innerHTML='<div class="smsg"><b>Search did not answer</b><span>'+esc(sState.err)+'</span>'+
       '<button type="button" id="sretry">Try again</button></div>';
-    document.getElementById('sretry').onclick=function(){sRun(sState.q,sState.mode);};
+    sSay('Search did not answer');
+    // ROUND 7C (A11Y-R7-02): a button the redraw takes away hands the focus to the results area, never the body
+    document.getElementById('sretry').onclick=function(){var had=document.activeElement===this; sRun(sState.q,sState.mode); fkHand(had,body);};
     return;}
   if(sState.res){
     var r=sState.res;
     if(!r.length){
       body.innerHTML='<div class="smsg"><b>Nothing close</b><span>Try fewer words, or the one line you remember best.</span></div>';
-      return;}
+      sSay('Nothing close'); return;}
+    sSay(r.length+(r.length===1?' result':' results'));
     /* Vibe search is honest but early (Konnor's own effort order puts it after lyric search:
        it needs a model over our edit database). Right now it matches words in upload titles,
        so say that, and a weak list reads as early rather than broken. */
@@ -6683,7 +6718,7 @@ function renderSearch(){
                  speed:x.version||'',handle:'',listen:false,via:'search'});
         b.classList.add('did'); b.innerHTML=IC.tick; b.setAttribute('aria-label',addLbl(x.title,true));};});   // POLISH 3 (LAWYER-05): Add, not Save
     return;}
-  var rec=sRecent();
+  var rec=sRecent(); sSay('');
   body.innerHTML='<div class="sect">Three ways to search</div>'+
     '<p class="sexcap">Tap one to try it. No reel needed.</p><div class="sex">'+
     S_EX.map(function(e){return '<button type="button" class="sexrow" data-q="'+esc(e[0])+'" data-m="'+e[1]+'">'+
@@ -6697,7 +6732,7 @@ function renderSearch(){
     '<div class="showsrch"><span class="sexi">'+IC.spark+'</span>'+
       '<span><b>What comes back</b>Tap one to hear a preview. Add the right one to your Finds.</span></div>';
   Array.prototype.forEach.call(body.querySelectorAll('[data-q]'),function(b){
-    b.onclick=function(){var q=b.getAttribute('data-q'); inp.value=q; sRun(q,b.getAttribute('data-m')||'auto');};});}
+    b.onclick=function(){var q=b.getAttribute('data-q'), had=document.activeElement===b; inp.value=q; sRun(q,b.getAttribute('data-m')||'auto'); fkHand(had,body);};});}
 function sRun(q,mode){
   q=(q||'').trim(); if(!q) return;
   /* A pasted clip link is a scan, not a search. Searching the URL text returned random
@@ -6705,11 +6740,13 @@ function sRun(q,mode){
   var _sp=parseLink(q);
   if(!_sp.host&&/^(https?:\/\/|www\.)/i.test(q)){   // REVIEWER RUNS: a non-clip link is neither a search nor a scan
     sState={q:q,mode:'link',busy:false,res:null,err:''};
+    sSay('Search is for words');
     document.getElementById('sbody').innerHTML='<div class="smsg"><b>Search is for words</b>'+
       '<span>'+(_sp.page?esc(notClipMsg(_sp)):'Addify scans TikTok and Instagram links. For a song on YouTube or SoundCloud, play it out loud and tap Scan on Home.')+'</span></div>';
     return;}
   if(_sp.host){
     sState={q:q,mode:'link',busy:false,res:null,err:''};
+    sSay('That is a clip link');
     document.getElementById('sbody').innerHTML='<div class="smsg"><b>That is a clip link</b>'+
       '<span>Search is for when the reel is gone. This one you can scan directly.</span>'+
       '<button type="button" id="sscan">Scan this clip</button></div>';
@@ -6749,7 +6786,10 @@ function sRun(q,mode){
   var f=document.getElementById('sform'), inp=document.getElementById('sq');
   document.querySelector('#sform .sico').innerHTML=IC.search;
   document.getElementById('sclear').innerHTML=IC.x;
-  f.onsubmit=function(e){e.preventDefault(); inp.blur(); sRun(inp.value,'auto');};
+  // ROUND 7C (A11Y-R7-02): the keyboard still closes, and the focus goes to the results area (Tab goes on into the
+  // results), never the body
+  f.onsubmit=function(e){e.preventDefault(); var had=document.activeElement===inp; inp.blur(); sRun(inp.value,'auto');
+    fkHand(had,document.getElementById('sbody'));};
   inp.oninput=function(){document.getElementById('sclear').hidden=!inp.value;
     if(!inp.value){sSeq++; sState={q:'',mode:'auto',busy:false,res:null,err:''}; renderSearch();}};
   document.getElementById('sclear').onclick=function(){inp.value=''; inp.oninput(); inp.focus();};
@@ -6793,13 +6833,15 @@ function renderProf(){
       '<button type="button" id="pfdelretry">Try again</button></div>';
   var _upbtn=document.getElementById('upbtn');   // PAYWALL 2026-09-29: absent while PAYWALL_ON is false
   if(_upbtn) _upbtn.onclick=openPaywall;
-  document.getElementById('pfauto').onclick=function(){
-    try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} renderProf();};
+  // ROUND 7C (A11Y-R7-01): the tab is redrawn under the switch (and under Clear finds): the one that had focus gets it back
+  document.getElementById('pfauto').onclick=function(){var had=document.activeElement===this;
+    try{localStorage.setItem('addify-autosave', autoOn()?'off':'on');}catch(e){} renderProf(); fkHand(had,document.getElementById('pfauto'));};
   var _pfexp=document.getElementById('pfexp'); if(_pfexp) _pfexp.onclick=exportFinds;
   var _pfh=document.getElementById('pfhowto'); if(_pfh) _pfh.onclick=function(){openOnb(1,'replay');};   // ONBOARDING v3
-  document.getElementById('pfclear').onclick=function(){
+  document.getElementById('pfclear').onclick=function(){var had=document.activeElement===this;
     // ROUND 6C (RETURNING-R6-02): the likes and the "Not matched yet" rows go too, so nothing cleared comes back in Finds
-    if(confirm('Clear all your finds?')){lsSet('addify-liked',[]); lsSet('addify-unmatched',[]); storeCrate([]); lsSet('addify-scanlog',[]); renderProf();}};
+    if(confirm('Clear all your finds?')){lsSet('addify-liked',[]); lsSet('addify-unmatched',[]); storeCrate([]); lsSet('addify-scanlog',[]); renderProf();
+      fkHand(had,document.getElementById('pfclear'));}};
   // Privacy and support sit next to the deletion path. Same engine-resolved URLs as the sheet.
   document.getElementById('pfpriv').href=legalURL('privacy');
   document.getElementById('pfsup').href=legalURL('support');
