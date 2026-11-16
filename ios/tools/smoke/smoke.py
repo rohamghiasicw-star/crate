@@ -23,6 +23,12 @@ iPhone and an iPad simulator. Scenarios:
   appkillresult the same after the page posted its result: the next launch opens Home (build 31)
   safarishare a share arrives while the Privacy page's Safari view is up: it closes, then the scan (build 31)
   staleshare a share parked 11 minutes before the app opens: not scanned on its own, the app asks (build 31)
+  stalekill  the same with the page down at that launch; the app is ended and opened again: it asks then (build 32)
+  killback   the page leaves its scan in the foreground (Back), then WebKit's page process is killed: Home (build 32)
+  sharewords a share whose text has words before a clip link with no https:// opens the clip's share page (build 32)
+  sharepage  a TikTok page link with no https:// opens its share page, where the page says it is a page (build 32)
+  slowboot   one compiled-in address, the page's first byte takes 25 s: the loading screen says it is still
+             connecting and offers Try again after 8 s, and the page opens from that first request (build 32)
   theme      the page's light theme gives dark status bar content, its dark theme light (build 31)
   entitlements a StoreKit transaction that arrives on its own tells the loaded page (addify:entitlements)
   privacy-*  the page opens /privacy (a target=_blank link, window.open, or the page itself):
@@ -182,8 +188,8 @@ def patch(ios_dir, variant):
     b = open(bpath).read()
     breps = [("            wv.evaluateJavaScript(js) { [weak self] value, _ in\n",
               "            NSLog(\"ADDIFY-SHARE run %@\", link)\n            wv.evaluateJavaScript(js) { [weak self] value, _ in\n"),
-             ("        if presentOnTop(ac, over: wv) { staleShare = nil }\n",
-              "        if presentOnTop(ac, over: wv) { staleShare = nil; NSLog(\"ADDIFY-STALE asked %@\", link) }\n"),
+             ("        if presentOnTop(ac, over: wv) { staleAlert = ac }\n",
+              "        if presentOnTop(ac, over: wv) { staleAlert = ac; NSLog(\"ADDIFY-STALE asked %@\", link) }\n"),
              ("            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n",
               "            if held.fresh { share.hold(held.link) } else { staleShare = held.link }\n"
               "            NSLog(\"ADDIFY-HELD restored fresh=%ld %@\", held.fresh ? 1 : 0, held.link)\n")]
@@ -202,6 +208,11 @@ def patch(ios_dir, variant):
             sys.exit("patch: ContentView.swift anchor matched %d times: %r" % (c.count(old), old.strip()))
         c = c.replace(old, old + "                    .onAppear { NSLog(\"ADDIFY-SCREEN %s shown\") }\n"
                                  "                    .onDisappear { NSLog(\"ADDIFY-SCREEN %s gone\") }\n" % (name, name))
+    # Build 32 (NATIVE-R7-02): when the loading screen says it is still connecting and shows Try again.
+    bold = "            slow = true\n"
+    if c.count(bold) != 1:
+        sys.exit("patch: ContentView.swift slow anchor matched %d times" % c.count(bold))
+    c = c.replace(bold, bold + "            NSLog(\"ADDIFY-BOOT slow\")\n")
     open(cpath, "w").write(c)
     # A share that opens the app: simctl openurl stops at "Open in Addify?" on these simulators, and
     # nothing can tap it. The lab copy takes the same addify://scan URL from its launch environment
@@ -249,9 +260,12 @@ def patch(ios_dir, variant):
     # would hand it to the next scenario's launch. Lab copies start with none unless the launch
     # environment has ADDIFY_LAB_HELD (appkill). ADDIFY_LAB_PARKED=<link> parks a share in the inbox
     # 11 minutes old, as if iOS had not opened the app from the share sheet (NATIVE-R6-08, staleshare).
+    # Build 32 (NATIVE-R7-03): a share waiting to be asked about outlives the process too, so it is
+    # cleared the same way unless the launch environment has ADDIFY_LAB_STALE (stalekill).
     a = a.replace(aold3, aold3 + "        NSLog(\"ADDIFY-LAB start\")\n"
                   "        let labEnv = ProcessInfo.processInfo.environment\n"
                   "        if labEnv[\"ADDIFY_LAB_HELD\"] == nil { HeldShare.save(nil) }\n"
+                  "        if labEnv[\"ADDIFY_LAB_STALE\"] == nil { StaleShare.save(nil) }\n"
                   "        if let parked = labEnv[\"ADDIFY_LAB_PARKED\"] {\n"
                   "            SharedInbox.write(parked)\n"
                   "            AppGroup.defaults.set(Date().timeIntervalSince1970 - 11 * 60, forKey: SharedInbox.atKey)\n"
@@ -514,6 +528,9 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       try { H.addify.postMessage({type: 'result', song: 'Smoke song', artist: 'Stub', speed: '', exact: null});
         send('result', {lid: lid, href: location.href}); }
       catch(e) { send('result', {lid: lid, err: String(e && e.message || e)}); } }, 500);
+    // Build 32 (NATIVE-R7-05): the page leaves its scan while the app is in front, as Back does.
+    if (__LEAVE__) setTimeout(function(){ document.getElementById('app').setAttribute('data-state', 'idle');
+        send('left', {lid: lid, href: location.href}); }, __LEAVE__);
     // Build 31 (NATIVE-R6-06): the page switches to its light theme and back, as You > Switch theme does.
     if (__THEME__) { setTimeout(function(){ document.documentElement.setAttribute('data-theme', 'light');
         send('theme', {lid: lid, theme: 'light'}); }, 1000);
@@ -640,6 +657,7 @@ class Handler(BaseHTTPRequestHandler):
             page = page.replace("__STATE__", json.dumps(cfg.get("state", "")))
             page = page.replace("__PRIVACY__", json.dumps(cfg.get("privacy", "")))
             page = page.replace("__THEME__", "true" if cfg.get("theme") else "false")
+            page = page.replace("__LEAVE__", str(int(cfg.get("leave_ms", 0))))
             return self.reply(200, page.encode())
         return self.reply(404)
 
@@ -1170,14 +1188,18 @@ def run_stub_suite(dev, app, version, ipad=False):
         shareretry(dev, app, version)
         sharewarm(dev, app, version)
         fixed_retry(dev, app, version)
-        for mode in ("scan", "result", "card"):
+        for mode in ("scan", "result", "card", "back"):
             killed_page(dev, app, version, mode)
         share_text(dev, app, version)
         share_text(dev, app, version, "sharetrim", "https://www.tiktok.com/@dj.user (" + SHARE_LINK + ")")
+        share_text(dev, app, version, "sharewords", "omg listen " + SHARE_LINK[len("https://"):] + " \U0001F525")
+        share_text(dev, app, version, "sharepage", "www.tiktok.com/@dj.user", want="https://www.tiktok.com/@dj.user")
         for mode in ("scan", "result"):
             app_killed(dev, app, version, mode)
         safari_share(dev, app, version)
         stale_share(dev, app, version)
+        stale_kill(dev, app, version)
+        slow_boot(dev, app, version)
         theme(dev, app, version)
 
     exp = {"A": {"health_ms": 20, "export": True}, "B": {"health_ms": 20, "export": True}, "G": {"pick": ""}, "X": {}}
@@ -1638,18 +1660,23 @@ def killed_page(dev, app, version, mode):
               and comes back: the reload reopens the share page with the same link, never Home.
       result  the page posted its result: the reload opens Home, the link is not scanned again.
       card    the page shows a card (data-state locked, a no-match ends this way and posts no result)
-              when the app goes to the background and comes back: the reload opens Home."""
+              when the app goes to the background and comes back: the reload opens Home.
+      back    build 32 (NATIVE-R7-05): the page leaves its scan (data-state scanning, then idle, as Back
+              does) while the app stays in front, then the kill: the reload opens Home."""
     label = "kill" + mode
-    cfg = {"A": {"health_ms": 20, "result": mode == "result", "state": {"scan": "scanning", "card": "locked"}.get(mode, "")},
+    cfg = {"A": {"health_ms": 20, "result": mode == "result",
+                 "state": {"scan": "scanning", "card": "locked", "back": "scanning"}.get(mode, ""),
+                 "leave_ms": 1000 if mode == "back" else 0},
            "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     # The share page's own report (with one address a Home load starts first and may report too),
     # and the first page report after the kill.
     on_share = lambda e: "/share?" in ((e.get("report") or {}).get("href") or "")
-    ready = nth(lambda e: e.get("kind") == ("result" if mode == "result" else "bridges") and on_share(e), 1)
+    ready = nth(lambda e: e.get("kind") == {"result": "result", "back": "left"}.get(mode, "bridges") and on_share(e), 1)
     after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
     dev.killed, dev.kill_note, dev.kill_t, dev.reload_shot, dev.reload_shot_t = [], [], None, "", None
     acts = []
-    if mode != "result":
+    trip = mode in ("scan", "card")
+    if trip:
         acts += [("leave", ready, 1.0, lambda d: d.to_background()), ("return", ready, 1.5, lambda d: d.launch())]
     acts += [("kill", ready, 2.0, lambda d: kill_webcontent(d, label)), ("settled", nth(after_kill, 1), 1.5, None)]
     env = dict(SINGLE, ADDIFY_LAB_OPEN="addify://scan?url=" + quote(SHARE_LINK, safe=""))
@@ -1658,10 +1685,13 @@ def killed_page(dev, app, version, mode):
     killed_at = res["done"].get("kill")
     check(dev, label, "WebKit page process killed", bool(dev.killed),
           "%s" % (dev.killed or "nothing matched, other WebKit processes %s" % dev.kill_note[:6]))
-    if mode != "result":
+    if trip:
         pids = list(dev.pids)
         check(dev, label, "came back to the same process before the kill", len(pids) == 2 and pids[0] is not None and pids[0] == pids[1],
               "pids %s" % pids)
+    if mode == "back":
+        check(dev, label, "the page left its scan in the foreground before the kill (no trip to the background)",
+              report(res, "left") is not None and len(dev.pids) == 1, "left %s, launches %s" % (report(res, "left"), dev.pids))
     reqs = [e for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] in ("/", "/share")]
     before = [(e["dt"], e["path"], e["status"]) for e in reqs if dev.kill_t is None or e["t"] < dev.kill_t]
     after = [(e["dt"], e["path"].split("?")[0], link_in(e["path"]) == SHARE_LINK, e["status"]) for e in reqs
@@ -1682,7 +1712,7 @@ def killed_page(dev, app, version, mode):
         check(dev, label, "Home never loaded after the kill", not [x for x in after if x[1] == "/"], json.dumps(after))
         check(dev, label, "the reloaded page carries the shared link", link_in(href) == SHARE_LINK, href or "no page after the kill")
     else:
-        what = "its result landed" if mode == "result" else "the page left its scan"
+        what = {"result": "its result landed", "back": "the page left its scan in the foreground"}.get(mode, "the page left its scan")
         check(dev, label, "the reload opened Home once %s, not the share page again" % what,
               bool(after) and after[0][1] == "/" and not [x for x in after if x[1] == "/share"], json.dumps(after))
         check(dev, label, "a page reported again after the reload", bool(loads), href or "no page after the kill")
@@ -1713,12 +1743,15 @@ def entitlements(dev, app, version):
     json.dump(res, open(os.path.join(dev.out, "%s-entitlements.json" % dev.tag), "w"), indent=1)
 
 
-def share_text(dev, app, version, label="sharetext", text=None):
+def share_text(dev, app, version, label="sharetext", text=None, want=SHARE_LINK):
     """GAPS-KIT-R5-01/03. A share whose text has another link ahead of the clip (here a TikTok
     profile, which used to open the app on "That link is a TikTok page, not a clip") reaches the app
     as addify://scan?url=<the text>. The app must open the clip's share page, the one the page itself
     scans from the same text. sharetrim (NATIVE-R6-01, GAPS-R6-01, build 31): the clip after the
-    profile is in brackets, so a ")" follows it, which the page trims and build 30 did not."""
+    profile is in brackets, so a ")" follows it, which the page trims and build 30 did not.
+    sharewords (SHARE-R7-01, build 32): words before a clip link with no https://, an emoji after it.
+    sharepage (GAPS-R7-03, build 32): a TikTok page with no https:// opens its share page (want), where the
+    page says it is a page, not a clip; the share card no longer says the share had no link."""
     text = text or ("https://www.tiktok.com/@dj.user and the clip " + SHARE_LINK)
     cfg = {"A": {"health_ms": 20}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
     # Waits for the share page's own report: with one address a Home load starts first and may report.
@@ -1728,10 +1761,12 @@ def share_text(dev, app, version, label="sharetext", text=None):
     timeline(res)
     shares = [(e["dt"], link_in(e["path"]), e["status"]) for e in res["entries"]
               if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
-    check(dev, label, "the share page opened with the clip, not the profile", bool(shares) and all(l == SHARE_LINK for _, l, _ in shares),
+    what = "the clip, not the profile" if want == SHARE_LINK else want
+    check(dev, label, "the share page opened with " + what, bool(shares) and all(l == want for _, l, _ in shares),
           json.dumps(shares))
     r = common(dev, label, res, version)
-    check(dev, label, "the page that loaded carries the clip", link_in((r or {}).get("href")) == SHARE_LINK, (r or {}).get("href", "no page"))
+    check(dev, label, "the page that loaded carries " + ("the clip" if want == SHARE_LINK else want),
+          link_in((r or {}).get("href")) == want, (r or {}).get("href", "no page"))
     json.dump(res, open(os.path.join(dev.out, "%s-%s.json" % (dev.tag, label)), "w"), indent=1)
 
 
@@ -1847,6 +1882,76 @@ def stale_share(dev, app, version):
           json.dumps([l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-STALE" in l or "ADDIFY-LAB" in l]))
     check(dev, "staleshare", "app still running", res["alive"], "")
     json.dump(res, open(os.path.join(dev.out, "%s-staleshare.json" % dev.tag), "w"), indent=1)
+
+
+def stale_kill(dev, app, version):
+    """NATIVE-R7-03 (build 32). A share parked 11 minutes before the app opens, and the app opens with its
+    page down (the error screen), so no page is up to ask about it. Build 31 kept it in memory only, and
+    the inbox copy was already gone, so closing the app dropped it without a word. The app is ended and
+    opened again with the page up: it asks then. The lab copy keeps the share waiting to be asked about
+    for that launch (ADDIFY_LAB_STALE)."""
+    cfg = {"A": {"health_ms": 20, "down": True}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    link = "https://vt.tiktok.com/ZSstale02/"
+    failed = nth(lambda e: e["role"] == "A" and e["status"] == 502, 1)
+    dev.kill_t = None
+
+    def end(d):
+        d.kill_t = time.time()
+        d.terminate()
+
+    after_kill = lambda e: e.get("kind") == "bridges" and dev.kill_t is not None and e["t"] > dev.kill_t
+    res = scenario(dev, app, "stalekill", cfg, fresh=False, timeout=60, launch_env=dict(SINGLE, ADDIFY_LAB_PARKED=link),
+                   actions=(("end", failed, 2.0, end), ("up", failed, 2.2, lambda d: set_cfg("A", "down", False)),
+                            ("relaunch", failed, 3.0, lambda d: d.launch(dict(SINGLE, ADDIFY_LAB_STALE="1"))),
+                            ("asked", nth(after_kill, 1), 2.0, None)))
+    timeline(res)
+    kill_at = round(dev.kill_t - res["t0"], 2) if dev.kill_t else None
+    asked = [lab_time(l, res["t0"]) for l in res["lab"] if "ADDIFY-STALE asked " + link in l]
+    stale = json.dumps([l[l.index("ADDIFY-"):] for l in res["lab"] if "ADDIFY-STALE" in l or "ADDIFY-LAB" in l or "ADDIFY-SCREEN" in l])
+    check(dev, "stalekill", "the share was parked 11 minutes before the first launch", lab_has(res, "ADDIFY-LAB parked 11 minutes ago " + link), stale)
+    check(dev, "stalekill", "the first launch got no page (the error screen), so nothing was asked then",
+          bool(screen_times(res, "error")) and kill_at is not None and not [t for t in asked if t is not None and t < kill_at],
+          "error screen %s, asked at %s, ended at %s" % (screen_times(res, "error"), asked, kill_at))
+    check(dev, "stalekill", "the app was ended and opened again", res["done"].get("end") is not None and len(dev.pids) == 2
+          and dev.pids[0] != dev.pids[1], "pids %s, done %s" % (dev.pids, res["done"]))
+    check(dev, "stalekill", "the launch after asked whether to scan it",
+          kill_at is not None and [t for t in asked if t is not None and t > kill_at] != [], "asked at %s, ended at %s; %s" % (asked, kill_at, stale))
+    shares = [(e["dt"], link_in(e["path"])) for e in res["entries"] if e["role"] == "A" and e["path"].split("?")[0] == "/share"]
+    check(dev, "stalekill", "not scanned on its own", not shares and report(res, "run") is None, json.dumps(shares))
+    check(dev, "stalekill", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-stalekill.json" % dev.tag), "w"), indent=1)
+
+
+def slow_boot(dev, app, version):
+    """NATIVE-R7-02 (build 32). One compiled-in address (like the shipped list) and a page whose first byte
+    takes 25 s. Build 31 cut every main-frame load at 20 s, so the page never opened: the error screen,
+    then four reloads cut the same way. Now the load gets WebKit's 60 s: the loading screen stays up, says
+    it is still connecting and shows Try again after 8 s (the lab copy logs ADDIFY-BOOT slow), and the page
+    opens from its first request with no error screen."""
+    cfg = {"A": {"health_ms": 20, "slow_ms": 25000}, "B": {"health": False, "down": True}, "G": {"pick": ""}, "X": {}}
+    res = scenario(dev, app, "slowboot", cfg, fresh=False, timeout=70, launch_env=SINGLE, shots=(("t13", 13.0),),
+                   after=(("settled", lambda e: e.get("kind") == "bridges", 1.0),))
+    timeline(res)
+    pages = page_requests(res, "A")
+    r = report(res, "bridges")
+    check(dev, "slowboot", "the page opened from its first request (no timeout, no reload)",
+          r is not None and len(pages) == 1 and pages[0][1] == 200, "page requests %s, page %s" % (pages, (r or {}).get("href")))
+    check(dev, "slowboot", "no error screen while the page took 25 s", not screen_times(res, "error"), json.dumps(screen_times(res, "error")))
+    slow = [lab_time(l, res["t0"]) for l in res["lab"] if "ADDIFY-BOOT slow" in l]
+    loaded = [lab_time(l, res["t0"]) for l in res["lab"] if "ADDIFY-PAGE loaded" in l]
+    check(dev, "slowboot", "the loading screen said it is still connecting, with Try again, before the page came",
+          bool(slow) and bool(loaded) and slow[0] is not None and loaded[0] is not None and slow[0] < loaded[0],
+          "slow at %s, page loaded at %s" % (slow, loaded))
+    # At 13 s: the loading screen's icon where it always was (a little above the middle) and the purple
+    # Try again below the middle, which pixel_class reads as the error screen's button.
+    shot = res["shots"].get("t13", "")
+    k, icon = pixel_class(shot), boot_icon(shot)
+    check(dev, "slowboot", "at 13 s the loading screen keeps its layout and shows Try again below it", k == "error" and icon >= 150,
+          "%s, icon %d px" % (k, icon))
+    k = pixel_class(res["shots"].get("settled", ""))
+    check(dev, "slowboot", "page on screen once it answered", k == "page", k)
+    check(dev, "slowboot", "app still running", res["alive"], "")
+    json.dump(res, open(os.path.join(dev.out, "%s-slowboot.json" % dev.tag), "w"), indent=1)
 
 
 def theme(dev, app, version):

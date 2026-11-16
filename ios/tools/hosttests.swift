@@ -131,7 +131,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             (false, "https://vt.tiktok.com/ZSabc1234/\u{200B} https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=67
             (false, "https://vt.tiktok.com/ZSabc1234/\u{2026} https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSabc1234/", true),   // r6 gaps corpus6 i=68
             (false, "vm.tiktok.com/ZMabc1234/ lol", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=69
-            (false, "look vm.tiktok.com/ZMabc1234/", nil, false),   // r6 gaps corpus6 i=70
+            (false, "look vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=70 (SHARE-R7-01, build 32: every word is tried)
             (false, "vm.tiktok.com/ZMabc1234/\u{1F525}", "https://vm.tiktok.com/ZMabc1234/", true),   // r6 gaps corpus6 i=71
             (false, "www.tiktok.com/@dj.user/video/7234567890123456789", "https://www.tiktok.com/@dj.user/video/7234567890123456789", true),   // r6 gaps corpus6 i=72
             (false, "instagr.am/reel/C9abcDEFghi/", "https://www.instagram.com/reel/C9abcDEFghi/", true),   // r6 gaps corpus6 i=73
@@ -182,7 +182,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             (false, "\u{200B}vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // a zero-width space before a link with no https://
             (false, "https://vm.tiktok.com:abc/ZMabc1234/ https://vt.tiktok.com/ZSzzz9999/", "https://vt.tiktok.com/ZSzzz9999/", true),   // a link with a port that is not a number is not a clip
             (false, "https:///vm.tiktok.com/ZMabc1234/", "https:///vm.tiktok.com/ZMabc1234/", true),   // extra slashes after the scheme
-            (false, "https://vm%2Etiktok.com/ZMabc1234/", "https://vm%2Etiktok.com/ZMabc1234/", true),   // a percent-encoded host
+            (false, "https://vm%2Etiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", true),   // a percent-encoded host goes over decoded (GAPS-R7-04, build 32)
             (false, "https://www.tiktok.com/@dj.user https://vm.tiktok.com/ZMabc1234/\u{85}", "https://vm.tiktok.com/ZMabc1234/", true),   // U+0085 after a clip
         ]
         for (n, c) in corpus.enumerated() {
@@ -205,7 +205,7 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         eq(SharedInbox.isScannable("https://instagr.am/reel/C9abcDEFghi/"), true, "instagr.am: scannable host")
         eq(SharedInbox.clipLink("https://instagr.am/p/C9abcDEFghi/?igsh=x"), "https://www.instagram.com/p/C9abcDEFghi/?igsh=x", "instagr.am: handed over as www.instagram.com, query kept")
         eq(SharedInbox.clipLink("vt.tiktok.com/ZSabc1234/"), "https://vt.tiktok.com/ZSabc1234/", "clip: a bare clip link gets https://")
-        eq(SharedInbox.shareLink(in: "see vt.tiktok.com/ZSabc1234/"), nil, "clip: a bare link inside other words is not read, as on the page")
+        eq(SharedInbox.shareLink(in: "see vt.tiktok.com/ZSabc1234/"), "https://vt.tiktok.com/ZSabc1234/", "clip: a bare link after other words is read, as on the page (SHARE-R7-01)")
         eq(SharedInbox.shareLink(in: "https://example.com https://www.tiktok.com/@dj.user"), "https://www.tiktok.com/@dj.user", "no clip: the first TikTok link still goes, so the page can say what it is")
 
         eq(SharedInbox.isScannable("https://vt.tiktok.com/ZS4a5JyXE/"), true, "scannable vt.tiktok")
@@ -592,6 +592,113 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
         eq(EngineConfig.opensInSafariView(URL(string: "https://open.spotify.com/track/x")), false, "not safari view: music links keep their handoff")
         eq(EngineConfig.opensInSafariView(URL(string: "spotify:track:x")), false, "not safari view: app scheme")
         eq(EngineConfig.opensInSafariView(nil), false, "not safari view: nil")
+
+        // SHARE-R7-01, GAPS-R7-03, GAPS-R7-04 (build 32): the testers' texts.
+        let r7: [(input: String, link: String?, what: String)] = [
+            ("omg listen www.tiktok.com/@flprobe/video/7123456789012345611 \u{1F525}", "https://www.tiktok.com/@flprobe/video/7123456789012345611", "SHARE-R7-01 words before a link with no https://"),
+            ("\u{1F525} tiktok.com/@flprobe/video/7123456789012345611", "https://tiktok.com/@flprobe/video/7123456789012345611", "SHARE-R7-01 an emoji before it"),
+            ("look instagr.am/reel/DeE4Gy2xjUN", "https://www.instagram.com/reel/DeE4Gy2xjUN", "SHARE-R7-01 instagr.am after a word"),
+            ("tiktok.com/@flprobe and tiktok.com/@flprobe/video/7123456789012345611.", "https://tiktok.com/@flprobe/video/7123456789012345611", "SHARE-R7-01 a profile, then the clip"),
+            ("www.tiktok.com/@bouch.szn", "https://www.tiktok.com/@bouch.szn", "GAPS-R7-03 a TikTok page with no https:// opens the app (the page says it is a page)"),
+            ("www.instagram.com/stories/mako_cars/3456789012345678901/", "https://www.instagram.com/stories/mako_cars/3456789012345678901/", "GAPS-R7-03 an Instagram story"),
+            ("www.tiktok.com/discover/funny.", "https://www.tiktok.com/discover/funny", "GAPS-R7-03 a TikTok page, trimmed"),
+            ("www.tiktok.com/@bouch.szn/video/7651437319941066005~", "https://www.tiktok.com/@bouch.szn/video/7651437319941066005~", "GAPS-R7-03 corpus7 #5671"),
+            ("(www.instagram.com\u{200B}/reel/DeE4Gy2xjUN/?a=%zz).", "https://www.instagram.com/reel/DeE4Gy2xjUN/?a=%zz", "SHARE-R7-01 a zero-width space inside a word is dropped, as on the page"),
+            ("(www.instagram.com\u{200B}/stories/u/3456789012345678901/).", "https://www.instagram.com", "GAPS-R7-03 a page cut at a zero-width space"),
+            ("lol www.tiktok.com/@flprobe", nil, "a page after words is not named by the page either (link_corpus_r7 page-after-words)"),
+            ("omg www.tiktok.com/@u/video/7123456789012345611\u{1F525}", nil, "an emoji stuck to a word's clip: the page reads it into the path too"),
+            ("look vm.ti\u{212A}to\u{212A}.com/ZMhvqKj8L/", "https://vm.tiktok.com/ZMhvqKj8L/", "a Kelvin sign for k goes over as k, which the app's link reader keeps"),
+            ("vm\u{2024}tiktok\u{2024}com/ZMhvqKj8L/", nil, "a one dot leader is no dot to the page's URL(), nor to the share"),
+            ("lol HTTPS://www.%74ik%74ok.com/ZMhvqKj8L/ \u{1F602}", "HTTPS://www.tiktok.com/ZMhvqKj8L/", "GAPS-R7-03 a page with a percent-encoded host"),
+            ("\u{200B}vm.tiktok.com/ZMabc1234/\u{1F602}x", "https://vm.tiktok.com", "GAPS-R7-03 a page whose cut path would read as a clip goes over as the host"),
+            ("www.tiktok.com/@u?next=1 vm.tiktok.com/ZMabc1234/", "https://vm.tiktok.com/ZMabc1234/", "a page before a clip: the clip wins"),
+            ("lite.tiktok.com/@u", nil, "no https:// and not a TikTok or Instagram host the page knows: no link"),
+            ("https://vm.%74ik%74ok.com/ZMhvqKj8L/", "https://vm.tiktok.com/ZMhvqKj8L/", "GAPS-R7-04 a percent-encoded host goes over decoded"),
+            ("http://www.tiktok%2Ecom/t/ZTRabcde1/", "http://www.tiktok.com/t/ZTRabcde1/", "GAPS-R7-04 an encoded dot"),
+            ("(https://vm%2etiktok%2ecom/ZMhvqKj8L/?x=1).", "https://vm.tiktok.com/ZMhvqKj8L/?x=1", "GAPS-R7-04 diff_host #12502"),
+            ("www.ins%EF%BD%94agram.com/reel/DeE4Gy2xjUN/", "https://www.instagram.com/reel/DeE4Gy2xjUN/", "GAPS-R7-04 an encoded full-width letter"),
+            ("\u{FF56}\u{FF4D}.\u{FF54}\u{FF49}\u{FF4B}\u{FF54}\u{FF4F}\u{FF4B}.\u{FF43}\u{FF4F}\u{FF4D}\\ZMhvqKj8L\\", "https://vm.tiktok.com/ZMhvqKj8L/", "GAPS-R7-04 a full-width host and a backslash path"),
+            ("\u{200B}vm.tiktok.com\\ZMhvqKj8L\\", "https://vm.tiktok.com/ZMhvqKj8L/", "GAPS-R7-04 a zero-width space and a backslash path"),
+        ]
+        for c in r7 {
+            let got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+            eq(got, c.link, "r7: " + c.what)
+            /* The app reads the link again from addify://scan?url= (EngineBridge handleIncoming). */
+            if let g = got { eq(SharedInbox.shareLink(in: g), g, "r7: the app reads the same link back: " + c.what) }
+        }
+        eq(SharedInbox.clipLink("https://vm.tiktok.com/ZMhvqKj8L/") != nil, true, "r7: the backslash clip reads as a clip once handed over")
+        eq(SharedInbox.pageLink("www.tiktok.com/@bouch.szn"), "https://www.tiktok.com/@bouch.szn", "r7: pageLink of a TikTok page")
+        eq(SharedInbox.pageLink("vt.tiktok.com/ZSabc1234/"), nil, "r7: pageLink of a clip is nil")
+        eq(SharedInbox.pageLink("www.threads.net/@u"), nil, "r7: pageLink of another app is nil")
+
+        // The share corpus (tools/share-corpus.json, built by tools/share_corpus.py from the round 7 testers'
+        // 631,707 texts, 54,011 more with words around a link and engine/link_corpus_r7.json's cases, and
+        // WebKit's run of the page's own parseLink (round 7c, rule 3: every word tried for a clip) over each
+        // text and over what the share hands over). Each row: the text, the link the share hands over (null: the share card says there is no
+        // link), and what the page does with the pasted text ("clip", "TikTok" or "Instagram" for its
+        // not-a-clip message, null for "That does not look like a TikTok or Instagram link"). Wherever the
+        // page scans, the share hands over a clip; wherever it names a page, the share opens the app on a page
+        // of that app; elsewhere it hands over neither. The app reads every handed link back as the same.
+        if let data = FileManager.default.contents(atPath: "tools/share-corpus.json"),
+           let rows = (try? JSONSerialization.jsonObject(with: data)) as? [[Any]] {
+            var bad = 0, n = 0
+            for row in rows {
+                guard row.count == 3, let text = row[0] as? String else { bad += 1; continue }
+                n += 1
+                let want = row[1] as? String, page = row[2] as? String
+                let got = SharedInbox.shareLink(in: text).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
+                var ok = got == want
+                switch page {
+                case "clip"?: ok = ok && got.flatMap(SharedInbox.clipLink) != nil
+                case "TikTok"?, "Instagram"?:
+                    /* The host as the link reader takes it: after the scheme and any slashes, up to / ? or #,
+                       less a user name and a port. */
+                    var rest = Substring(got ?? "")
+                    if let r = rest.range(of: "://") { rest = rest[r.upperBound...] }
+                    while rest.first == "/" { rest = rest.dropFirst() }
+                    var authority = rest.prefix(while: { !"/?#".contains($0) })
+                    if let at = authority.lastIndex(of: "@") { authority = authority[authority.index(after: at)...] }
+                    let host = String(authority.prefix(while: { $0 != ":" })).lowercased()
+                    let app = host.hasSuffix("tiktok.com") ? "TikTok" : (host.hasSuffix("instagram.com") || host.hasSuffix("instagr.am") ? "Instagram" : "")
+                    ok = ok && got.flatMap(SharedInbox.clipLink) == nil && got.flatMap(SharedInbox.pageLink) != nil && app == page
+                default: ok = ok && got.flatMap(SharedInbox.clipLink) == nil && got.flatMap(SharedInbox.pageLink) == nil
+                }
+                /* The app reads the handed link again from addify://scan?url= (EngineBridge handleIncoming):
+                   a page comes back unchanged; a clip comes back as the same clip, at most cut where its query
+                   holds a character a URL can't (it was so before build 32, and the clip is the same). */
+                if let g = got, let back = SharedInbox.shareLink(in: g) {
+                    ok = ok && (back == g || (page == "clip" && SharedInbox.clipLink(back) != nil
+                                              && g.unicodeScalars.starts(with: back.unicodeScalars)))
+                } else if got != nil { ok = false }
+                if !ok {
+                    bad += 1
+                    if bad <= 20 { print("  share corpus row: \(text.debugDescription) got=\(String(describing: got)) want=\(String(describing: want)) page=\(page ?? "none")") }
+                }
+            }
+            eq(bad, 0, "share corpus: \(n) texts, the share agrees with the page on every one")
+            eq(n >= 1000, true, "share corpus: at least 1000 texts read")
+        } else {
+            eq(false, true, "share corpus: tools/share-corpus.json read (run from ios/)")
+        }
+
+        // NATIVE-R7-03 (build 32): a share that is asked about stays on disk until the question is answered.
+        let staleSuite = UserDefaults(suiteName: "addify-hosttests-staleshare")!
+        StaleShare.save(nil, in: staleSuite)
+        eq(StaleShare.restore(in: staleSuite) == nil, true, "stale: nothing kept, nothing restored")
+        StaleShare.save("https://vt.tiktok.com/ZSold1234/", in: staleSuite)
+        eq(StaleShare.restore(in: staleSuite), "https://vt.tiktok.com/ZSold1234/", "stale: kept across a launch")
+        eq(StaleShare.restore(in: staleSuite), "https://vt.tiktok.com/ZSold1234/", "stale: a launch with no page loaded leaves it for the next")
+        StaleShare.save(nil, in: staleSuite)
+        eq(StaleShare.restore(in: staleSuite) == nil, true, "stale: answered, gone")
+        StaleShare.save("", in: staleSuite)
+        eq(StaleShare.restore(in: staleSuite) == nil, true, "stale: an empty link is not kept")
+        HeldShare.save("https://vt.tiktok.com/ZSabc1234/", now: Date().addingTimeInterval(-11 * 60), in: staleSuite)
+        let heldLate = HeldShare.restore(in: staleSuite)
+        eq(heldLate?.fresh, false, "stale: a held share 11 minutes old is asked about")
+        StaleShare.save(heldLate?.link, in: staleSuite)
+        eq(HeldShare.restore(in: staleSuite) == nil, true, "stale: the held copy is gone once it is asked about")
+        eq(StaleShare.restore(in: staleSuite), "https://vt.tiktok.com/ZSabc1234/", "stale: the link it was is kept until answered")
+        StaleShare.save(nil, in: staleSuite)
 
         print(failures == 0 ? "ALL PASS" : "FAILURES: \(failures)")
     }

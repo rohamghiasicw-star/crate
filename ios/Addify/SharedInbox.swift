@@ -82,9 +82,18 @@ enum SharedInbox {
        - the first one that is a clip wins, ahead of any profile, sound, tag, story or live page before it.
        A text with no http(s) link is read as the page reads it: leading brackets and quote marks
        dropped, then the run of URL characters it starts with, trimmed the same way ("vm.tiktok.com/...
-       lol"); a clip there gets https://. With no clip, the first TikTok or Instagram link still goes
-       through (isScannable), so the page can say what it is ("That link is a TikTok page, not a
-       clip"). nil when there is neither. */
+       lol"), or the whole text read by the URL parser when it starts with no URL character at all.
+       SHARE-R7-01 (build 32): with no clip there, each word of the text is tried for a clip, as the
+       page's parseLink tries them (engine/link_corpus_r7.json, rule 3): words between Unicode white
+       space, each without its zero-width characters, the ( [ { < " ' before it and the punctuation
+       after it (linkTrim) ("omg listen www.tiktok.com/@u/video/... \u{1F525}", "look instagr.am/reel/...").
+       A clip there gets https://.
+       With no clip anywhere, a TikTok or Instagram page found by the first two readings goes through,
+       so the app opens and the page says what it is ("That link is a TikTok page, not a clip").
+       GAPS-R7-03 (build 32): also a page with no https:// ("www.tiktok.com/@u") or with a
+       percent-encoded host, which isScannable can't read: it gets https:// and its host as the page
+       reads it (pageLink), instead of the share card saying the share had no link. Otherwise the
+       first http(s) link isScannable passes, as before. nil when there is none. */
     static func shareLink(in text: String) -> String? {
         let raw = text.trimmingCharacters(in: jsSpaces)
         let links = linkRuns(raw).map(linkTrim)
@@ -93,10 +102,39 @@ enum SharedInbox {
             let lead = linkTrim(leadingRun(raw))
             candidates = [lead.isEmpty ? asOneURL(raw) : lead]
         }
+        var page: String?
         for candidate in candidates {
-            if let clip = clipLink(candidate) { return clip }
+            guard let read = readLink(candidate) else { continue }
+            if read.clip { return read.link }
+            if page == nil { page = read.link }
         }
-        return links.first(where: isScannable)
+        if links.isEmpty {
+            for word in words(raw) {
+                if let clip = clipLink(word) { return clip }
+            }
+        }
+        return page ?? links.first(where: isScannable)
+    }
+
+    /* SHARE-R7-01 (build 32): the words of a text with no http(s) link, as the page's parseLink reads
+       each one for a clip: split on Unicode white space (U+0009 to U+000D, space, U+0085, U+00A0,
+       U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000), every zero-width character
+       (U+200B to U+200D, U+2060, U+FEFF) taken out, then the leading ( [ { < " ' and the trailing
+       punctuation (linkTrim) dropped, and what the URL parser drops at the end (control characters).
+       Read code point by code point. Empty words are left out. */
+    private static func words(_ raw: String) -> [String] {
+        let space: (Unicode.Scalar) -> Bool = {
+            switch $0.value {
+            case 0x09...0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000: return true
+            default: return false
+            }
+        }
+        let lead = Set("([{<\"'".unicodeScalars)
+        return raw.unicodeScalars.split(whereSeparator: space).compactMap { w in
+            let kept = w.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0x2060 && $0.value != 0xFEFF }
+            let word = asOneURL(linkTrim(text(kept.drop(while: { lead.contains($0) }))))
+            return word.isEmpty ? nil : word
+        }
     }
 
     /* The characters LINK_RE lets into a link: A-Z a-z 0-9 - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = % */
@@ -178,6 +216,20 @@ enum SharedInbox {
        hand over, or nil. GAPS-KIT-R5-02: instagr.am, Instagram's short host, is a clip host too, handed
        over as www.instagram.com with the same path, the host the engine reads. */
     static func clipLink(_ link: String) -> String? {
+        guard let read = readLink(link), read.clip else { return nil }
+        return read.link
+    }
+
+    /* The TikTok or Instagram page (not a clip) the page's clipShape() calls {page: ...}, handed over
+       so the app opens and the page says what it is, or nil (a clip, or not TikTok or Instagram). */
+    static func pageLink(_ link: String) -> String? {
+        guard let read = readLink(link), !read.clip else { return nil }
+        return read.link
+    }
+
+    /* One link read as clipShape() reads it: nil unless its host is TikTok's or Instagram's, else the
+       link to hand over and whether it is a clip. */
+    private static func readLink(_ link: String) -> (link: String, clip: Bool)? {
         /* Read code point by code point, as the parser does: a combining mark never hides a / or ?. */
         let u = Array(link.unicodeScalars)
         let scheme = schemeLength(Array(link.utf16), at: 0)   // ASCII, so also a count of code points
@@ -199,33 +251,46 @@ enum SharedInbox {
         var host = name
         if host.hasPrefix("www.") { host.removeFirst(4) } else if host.hasPrefix("m.") { host.removeFirst(2) }
         let tail = u[hostEnd...]
-        let path = urlPath(tail)
-        let encoded = path.unicodeScalars.contains { $0.value <= 0x20 || $0.value >= 0x7F || "\"<>`{}".unicodeScalars.contains($0) }
-        func shape(_ re: String) -> Bool { !encoded && path.range(of: re, options: .regularExpression) != nil }
-        let clip: Bool
-        switch host {
-        case "vt.tiktok.com", "vm.tiktok.com":
-            clip = shape("^/(?:t/)?[A-Za-z0-9]{5,16}/?$")
-        case "tiktok.com":
-            clip = shape("^/@[A-Za-z0-9_.\\-]{0,64}/(?:video|photo)/[0-9]{6,25}/?$") || shape("^/t/[A-Za-z0-9]{5,16}/?$")
-                || shape("^/v/[0-9]{6,25}(?:\\.html)?/?$")
-        case "instagram.com", "instagr.am":
-            clip = shape("^/(?:[A-Za-z0-9_.]{1,30}/)?(?:reel|reels|p|tv)/[A-Za-z0-9_-]{5,40}/?$")
-        default:
-            clip = false
+        func isClip(_ tail: ArraySlice<Unicode.Scalar>) -> Bool {
+            let path = urlPath(tail)
+            let encoded = path.unicodeScalars.contains { $0.value <= 0x20 || $0.value >= 0x7F || "\"<>`{}".unicodeScalars.contains($0) }
+            func shape(_ re: String) -> Bool { !encoded && path.range(of: re, options: .regularExpression) != nil }
+            switch host {
+            case "vt.tiktok.com", "vm.tiktok.com":
+                return shape("^/(?:t/)?[A-Za-z0-9]{5,16}/?$")
+            case "tiktok.com":
+                return shape("^/@[A-Za-z0-9_.\\-]{0,64}/(?:video|photo)/[0-9]{6,25}/?$") || shape("^/t/[A-Za-z0-9]{5,16}/?$")
+                    || shape("^/v/[0-9]{6,25}(?:\\.html)?/?$")
+            default:
+                return shape("^/(?:[A-Za-z0-9_.]{1,30}/)?(?:reel|reels|p|tv)/[A-Za-z0-9_-]{5,40}/?$")
+            }
         }
-        guard clip else { return nil }
+        guard ["vt.tiktok.com", "vm.tiktok.com", "tiktok.com", "instagram.com", "instagr.am"].contains(host) else { return nil }
+        let clip = isClip(tail)
         /* The page hands this over as 'https://www.instagram.com' + pathname + search: the resolved
            path, then the query without its #fragment ("" for a lone ?), percent-encoded as the parser
            writes it. */
-        if host == "instagr.am" { return "https://www.instagram.com" + path + urlSearch(tail) }
+        if clip, host == "instagr.am" { return ("https://www.instagram.com" + urlPath(tail) + urlSearch(tail), true) }
         /* As typed, so the page reads back the same link, except what its link reader could not read: a
-           host typed in other characters (full-width letters) goes over as the name it stands for, a
-           user name with such characters is left out, and a backslash after the scheme is a slash. */
+           host typed in other characters (full-width letters, a Kelvin sign for k) or percent-encoded goes
+           over as the name it stands for (GAPS-R7-04, build 32: "vm.%74ik%74ok.com" used to go over as typed, which
+           isScannable turned down), a user name with such characters is left out, and a backslash after
+           the scheme or in the path is a slash (GAPS-R7-04: the app reads the link again, and its link
+           reader stops at a backslash, which cut "vm.tiktok.com\ZM...\" down to the host). */
         let lead = text(u[..<restStart].map { $0 == "\\" ? "/" : $0 })
         let user = userinfo.allSatisfy({ $0.isASCII && isURLChar(UInt16($0.value)) }) ? text(userinfo) : ""
-        let handed = lead + user + (typed.unicodeScalars.allSatisfy(\.isASCII) ? typed : name) + text(port) + text(tail)
-        return scheme > 0 ? handed : "https://" + handed
+        let query = tail.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? tail.endIndex
+        let asTyped = typed.unicodeScalars.allSatisfy(\.isASCII) && typed.lowercased() == name
+        let head = lead + user + (asTyped ? typed : name) + text(port)
+        let withScheme = { (s: String) in scheme > 0 ? s : "https://" + s }
+        if clip { return (withScheme(head + text(tail[..<query].map { $0 == "\\" ? "/" : $0 }) + text(tail[query...])), true) }
+        /* GAPS-R7-03 (build 32): a page goes over only as far as the app's own link reader reads it back
+           (up to the first character a URL can't hold, trimmed as linkTrim trims), so the app and the page
+           see the same page. Should that shorter path read as a clip, only the host goes, which the page
+           still reads as the same app's page. */
+        let cut = Array(tail.map { $0 == "\\" ? "/" : $0 }.prefix(while: { $0.isASCII && isURLChar(UInt16($0.value)) }))
+        let kept = Array(linkTrim(text(cut)).unicodeScalars)
+        return (withScheme(head + (isClip(kept[...]) ? "" : text(kept))), false)
     }
 
     private static func text<S: Sequence>(_ scalars: S) -> String where S.Element == Unicode.Scalar {
@@ -238,7 +303,10 @@ enum SharedInbox {
        forms such as full-width letters, upper case, the ideographic full stop). nil when it can't be
        decoded. The ignored code points are already gone (hostIgnored). */
     private static func hostName(_ typed: String) -> String? {
-        guard let decoded = typed.removingPercentEncoding else { return nil }
+        guard let decoded = typed.removingPercentEncoding,
+              /* SHARE-R7-01 (build 32): the page's URL() turns down a host with a one dot leader or a small
+                 full stop (U+2024, U+FE52), which IDNA's folding would make a dot; so does the share. */
+              !decoded.unicodeScalars.contains(where: { $0.value == 0x2024 || $0.value == 0xFE52 }) else { return nil }
         let folded = String(String.UnicodeScalarView(decoded.unicodeScalars.filter { !hostIgnored($0) }))
         return folded.precomposedStringWithCompatibilityMapping.lowercased().replacingOccurrences(of: "\u{3002}", with: ".")
     }
