@@ -101,12 +101,12 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
 <body>
 <a class="backbar" id="backbar" href="/" hidden onclick="history.back();return false;" aria-label="Back to Addify">&#8249; Back</a>
 <!-- The bar only goes back. A page opened on its own (a new tab, the app's Safari view: history.length 1) has
-     nothing to go back to, and "/" is not the app, so it shows no bar there. -->
+     nothing to go back to, and "/" is not the app, so it shows no bar there. The brand is plain text for the same reason. -->
 <script>if(history.length>1)document.getElementById('backbar').hidden=false;</script>
 <style>.backbar{align-self:stretch;position:sticky;top:0;z-index:5;display:block;padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;font:600 16px/1.2 -apple-system,system-ui,sans-serif;color:#9d93f5;text-decoration:none;background:rgba(15,13,21,.92);backdrop-filter:blur(8px)}.backbar[hidden]{display:none}</style>
 <div class="page">
   <div class="top">
-    <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</a>
+    <span class="brand"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</span>
   </div>
   <h1>Terms of use</h1>
   <p class="lede">Short, because the service is simple. Using Addify means you agree to these.</p>
@@ -121,7 +121,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   <div class="card">
     <h2>Free scans and Addify Plus</h2>
     <p>Every new user gets 5 free scans. A scan that finds no song, or fails, does not use one. Addify Plus unlocks unlimited scans and is sold only through Apple's In-App Purchase, monthly or yearly. The app shows each plan's price in your currency before you buy.</p>
-    <p>Addify Plus is an auto-renewing subscription. Payment is charged to your Apple ID when you confirm the purchase, and it renews at the same price at the end of each period unless you turn off auto-renew at least 24 hours before the period ends. The yearly plan may start with a free trial for eligible new subscribers; it becomes a paid subscription unless you cancel at least 24 hours before the trial ends. You can manage or cancel in your Apple ID settings at any time. Refunds are handled by Apple. Restore Purchases in the app brings back a subscription on a new device.</p>
+    <p>Addify Plus is an auto-renewing subscription. Payment is charged to your Apple ID when you confirm the purchase, and it renews at the same price at the end of each period unless you turn off auto-renew at least 24 hours before the period ends. The yearly plan may start with a free trial for eligible new subscribers; it becomes a paid subscription unless you cancel at least 24 hours before the trial ends. You can manage or cancel in your Apple ID settings at any time. Refunds are handled by Apple. Restore purchases in the app brings back a subscription on a new device.</p>
   </div>
   <div class="card">
     <h2>Results are best-effort</h2>
@@ -146,7 +146,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
 
   <div class="sect">Your data</div>
   <div class="card">
-    <p>What we process and what we don't is in the <a href="privacy.html">privacy policy</a>. You can erase your data from inside the app under <span class="path">Profile &rsaquo; Delete account</span>.</p>
+    <p>What we process and what we don't is in the <a href="privacy.html">privacy policy</a>. You can erase your data from inside the app under <span class="path">You &rsaquo; Delete account</span>.</p>
   </div>
 
   <div class="sect">The legal part</div>

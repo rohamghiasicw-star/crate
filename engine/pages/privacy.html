@@ -101,12 +101,12 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
 <body>
 <a class="backbar" id="backbar" href="/" hidden onclick="history.back();return false;" aria-label="Back to Addify">&#8249; Back</a>
 <!-- The bar only goes back. A page opened on its own (a new tab, the app's Safari view: history.length 1) has
-     nothing to go back to, and "/" is not the app, so it shows no bar there. -->
+     nothing to go back to, and "/" is not the app, so it shows no bar there. The brand is plain text for the same reason. -->
 <script>if(history.length>1)document.getElementById('backbar').hidden=false;</script>
 <style>.backbar{align-self:stretch;position:sticky;top:0;z-index:5;display:block;padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;font:600 16px/1.2 -apple-system,system-ui,sans-serif;color:#9d93f5;text-decoration:none;background:rgba(15,13,21,.92);backdrop-filter:blur(8px)}.backbar[hidden]{display:none}</style>
 <div class="page">
   <div class="top">
-    <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</a>
+    <span class="brand"><svg width="26" height="26" viewBox="0 0 24 24"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B6BFF"/><stop offset="1" stop-color="#5B4BE8"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6.5" fill="url(#mg)"/><path d="M5 12c1.5-5.8 3.7-5.8 5.2 0s3.7 5.8 5.2 0 3.7-5.8 5.2 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>Addify</span>
   </div>
   <h1>Privacy policy</h1>
   <p class="lede">Addify names the song playing in a clip and finds the closest version. Here's what that takes, what it doesn't, and what happens to it. Written from what the app and its server actually do.</p>
@@ -118,7 +118,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
       <li><b>No accounts.</b> No sign-up, no email, no password. What you save lives on your phone.</li>
       <li><b>Audio is never kept.</b> Clip audio and your 12-second recordings are used for one lookup, then deleted.</li>
       <li><b>No analytics SDKs, no ads, no tracking.</b> The only outside code is YouTube's and SoundCloud's own players, loaded when you tap play. Nothing follows you across apps or websites.</li>
-      <li><b>You can erase what you sent.</b> <span class="path">Profile &rsaquo; Delete account</span> removes your votes from our server and clears the app.</li>
+      <li><b>You can erase what you sent.</b> <span class="path">You &rsaquo; Delete account</span> removes your votes from our server and clears the app.</li>
     </ul>
     <div class="callout"><b>We don't collect:</b> your name, email, phone number, contacts, location, photos, payment details, advertising ID or device identifiers. The microphone is used only for the 12 seconds after you tap to listen.</div>
   </div>
@@ -159,7 +159,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   </div>
   <div class="card">
     <h2>You rate a result</h2>
-    <p>The check or X under a result sends the clip link, the song and artist we named, the upload we picked (its title and link) and your answer. After an X, "Which one was it?" sends the title and link of the version you pick, or that it wasn't in the list. The yes or no on a no-match screen sends the clip link, the guessed song and artist and your answer. Each row is stored with a random id and a time. Nothing in it identifies you. Your phone keeps the ids so Delete account can erase the rows.</p>
+    <p>The check or X under a result sends the clip link, the song and artist we named, the upload we picked (its title and link) and your answer. After an X, "Which one was it?" sends the title and link of the version you pick, or that it wasn't in the list. "Yes, that&rsquo;s it" or "Not it" on a no-match screen sends the clip link, the guessed song and artist and your answer. Each row is stored with a random id and a time. Nothing in it identifies you. Your phone keeps the ids so Delete account can erase the rows.</p>
     <p>An X also goes on our fix list with the same id, and the developer gets a Telegram message with the clip link, the answer the app gave and your pick. When the right upload is found, the clip link and that upload go into our corrections list, so everyone who scans that clip gets the right answer. While a clip you marked wrong is waiting, the app sends its link to our server when you open it, to ask if the fix is ready, and tells you when it is.</p>
   </div>
 
@@ -172,7 +172,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
       <li>Your last 8 searches, your check or X votes and your picks after an X</li>
       <li>Clips you marked wrong that are still waiting for a fix</li>
       <li>The ids of rows you sent, so they can be erased</li>
-      <li>Settings: add every match to Finds, onboarding done, theme</li>
+      <li>The "Add every match to Finds" switch, your theme and whether onboarding is done</li>
     </ul>
   </div>
 
@@ -211,7 +211,7 @@ code{background:var(--raise2); padding:2px 6px; border-radius:6px; font-size:12.
   <div class="sect">Deleting your data</div>
   <div class="card">
     <ul>
-      <li><span class="path">Profile &rsaquo; Delete account</span> erases your votes, picks and fix-list rows on our server, clears everything the app stored on your phone and reloads the app. No email, no waiting.</li>
+      <li><span class="path">You &rsaquo; Delete account</span> erases your votes, picks and fix-list rows on our server, clears everything the app stored on your phone and reloads the app. No email, no waiting.</li>
       <li>It can't reach a Telegram message already sent to the developer or a fix already in the corrections list. Neither says who you are. Email <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--> with the clip link and we'll remove them.</li>
       <li>Microphone: turn access off any time in <span class="path">Settings &rsaquo; Addify &rsaquo; Microphone</span>.</li>
       <li>Deleted the app before you erased your votes? Email <!--email_off--><a href="mailto:kmacinnis30@gmail.com">kmacinnis30@gmail.com</a><!--/email_off--> with the link you rated and roughly when, and we'll erase the rows.</li>
