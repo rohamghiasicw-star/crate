@@ -1,10 +1,10 @@
 {
- "about": "Which clip a shared or pasted text names. The page's parseLink (engine/crate.html) and the share extension's SharedInbox.shareLink (ios/Addify/SharedInbox.swift) read text by the same rule, so a share and a paste of the same text scan the same clip. engine/test_round7c.py checks parseLink against every case here.",
+ "about": "Which clip a shared or pasted text names. The page's parseLink (engine/crate.html) and the share extension's SharedInbox.shareLink (ios/Addify/SharedInbox.swift) read text by the same rule, so a share and a paste of the same text scan the same clip. engine/test_round7c.py and engine/test_round8c.py check parseLink against every case here.",
  "rule": [
   "1. Every http(s) link in the text is a candidate, in order; the first candidate that is a clip wins (unchanged).",
   "2. With no http(s) link, the leading run of URL characters (leading characters in strip_leading dropped first, trailing characters in strip_trailing dropped after; the whole text when that run is empty) is the next candidate (unchanged).",
-  "3. ROUND 7C: with no http(s) link and no clip from step 2, split the text into words on the separators below. For each word, in order: remove every zero-width character, then drop the leading characters in strip_leading, then drop the trailing characters in strip_trailing, then test the word as a clip (https:// is added when it has no scheme). The first word that is a clip wins.",
-  "4. A profile, sound, tag, story or other page link never wins over a clip that comes after it. With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2 ('page')."
+  "3. ROUND 7C, ROUND 8C: with no clip from steps 1 and 2 (whether or not the text holds http(s) links), split the text into words on the separators below. For each word, in order: remove every zero-width character, then drop every leading character that is in strip_leading or is not in url_chars (an emoji, a curly quote, a full-width bracket), then cut the word at the first character not in url_chars, then drop the trailing characters in strip_trailing, then test the word as a clip (https:// is added when it has no scheme). The first word that is a clip wins.",
+  "4. A profile, sound, tag, story or other page link, or another site's link, never wins over a clip anywhere in the text (ROUND 8C: an http(s) page or other link before or after a clip written without https:// included). With no clip anywhere, the result is no clip; the page then names the app of a page link found in step 1 or 2 ('page')."
  ],
  "separators": "Unicode White_Space: U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000",
  "zero_width": [
@@ -16,6 +16,7 @@
  ],
  "strip_leading": "([{<\"'",
  "strip_trailing": ".,;:!?'\"()[]{}<>*",
+ "url_chars": "A-Z a-z 0-9 - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = % (the characters LINK_RE reads as part of a link)",
  "clip_shapes": "tiktok.com (www., m.): /@user/video/<6-25 digits>, /@user/photo/<6-25 digits>, /t/<5-16 alnum>, /v/<6-25 digits>(.html); vm.tiktok.com or vt.tiktok.com: /<5-16 alnum> or /t/<5-16 alnum>; instagram.com or instagr.am (www., m.): /(<user>/)(reel|reels|p|tv)/<5-40 code>. A trailing slash is allowed. instagr.am is handed on as www.instagram.com.",
  "fields": {
   "clip": "the link parseLink hands on to the scan, exactly, or null when the text names no clip",
@@ -317,6 +318,222 @@
    "text": "see tiktok.com.evil.io/@u/video/7123456789012345611 and notinstagram.com/reel/DeE4Gy2xjUN/",
    "clip": null,
    "key": null,
+   "page": null
+  },
+  {
+   "id": "r8-glued-emoji-after-word",
+   "item": "SHARE-R8-01",
+   "text": "omg listen tiktok.com/@flprobe/video/7123456789012345611🔥",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-glued-emoji-after-word-www",
+   "item": "SHARE-R8-01",
+   "text": "omg www.tiktok.com/@flprobe/video/7123456789012345611😭😭",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-curly-quotes-after-words",
+   "item": "SHARE-R8-01",
+   "text": "listen to “tiktok.com/@flprobe/video/7123456789012345611”",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-curly-quotes-only",
+   "item": "SHARE-R8-01",
+   "text": "“tiktok.com/@flprobe/video/7123456789012345611”",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-fullwidth-brackets",
+   "item": "SHARE-R8-01",
+   "text": "（tiktok.com/@flprobe/video/7123456789012345611）",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-ig-glued-emoji-after-word",
+   "item": "SHARE-R8-01",
+   "text": "look instagram.com/reel/DeE4Gy2xjUN/🔥",
+   "clip": "https://instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r8-zero-width-then-emoji",
+   "item": "SHARE-R8-01",
+   "text": "look tiktok.com/@flprobe/video/7123456789012345611​🔥",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-newline-after-word",
+   "item": "SHARE-R8-01",
+   "text": "omg\ntiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-https-glued-emoji-after-word",
+   "item": "control",
+   "text": "omg listen https://tiktok.com/@flprobe/video/7123456789012345611🔥",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-glued-emoji-no-word",
+   "item": "control",
+   "text": "tiktok.com/@flprobe/video/7123456789012345611🔥",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-youtube-then-noscheme-vm",
+   "item": "GAPS-R8-03",
+   "text": "https://www.youtube.com/watch?v=dQw4w9WgXcQ vm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-youtube-newline-noscheme-vm",
+   "item": "GAPS-R8-03",
+   "text": "https://www.youtube.com/watch?v=dQw4w9WgXcQ\nvm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-other-site-then-noscheme-reel",
+   "item": "GAPS-R8-03",
+   "text": "https://example.com/a www.instagram.com/reel/DeE4Gy2xjUN/",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r8-https-profile-then-noscheme-vm",
+   "item": "GAPS-R8-03",
+   "text": "https://www.tiktok.com/@bouch.szn vm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-spotify-then-noscheme-vm",
+   "item": "GAPS-R8-03",
+   "text": "https://open.spotify.com/track/1 and vm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-ig-profile-then-noscheme-post",
+   "item": "GAPS-R8-03",
+   "text": "https://www.instagram.com/mako_cars/ instagram.com/p/DeE4Gy2xjUN/",
+   "clip": "https://instagram.com/p/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/p/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r8-noscheme-vm-then-youtube",
+   "item": "GAPS-R8-03",
+   "text": "vm.tiktok.com/ZMhvqKj8L/ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-words-vm-then-linktree",
+   "item": "GAPS-R8-03",
+   "text": "Song from vm.tiktok.com/ZMhvqKj8L/ more at https://linktr.ee/x",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-noscheme-reel-then-ig-home",
+   "item": "GAPS-R8-03",
+   "text": "www.instagram.com/reel/DeE4Gy2xjUN/ (via https://instagram.com)",
+   "clip": "https://www.instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r8-vm-emoji-then-youtu.be",
+   "item": "GAPS-R8-03",
+   "text": "omg vm.tiktok.com/ZMhvqKj8L/ 🔥 https://youtu.be/dQw4w9WgXcQ",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-https-share-profile-then-noscheme-clip",
+   "item": "GAPS-R8-03",
+   "text": "https://www.tiktok.com/@flprobe?_t=ZT-8xYz&_r=1 www.tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-https-sound-then-noscheme-clip",
+   "item": "GAPS-R8-03",
+   "text": "sound https://www.tiktok.com/music/original-sound-7123456789012345678 and tiktok.com/@flprobe/video/7123456789012345611 lol",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-other-site-words-then-noscheme-clip",
+   "item": "GAPS-R8-03",
+   "text": "via https://example.com/x look tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
+   "page": null
+  },
+  {
+   "id": "r8-https-ig-profile-then-noscheme-reel",
+   "item": "GAPS-R8-03",
+   "text": "https://www.instagram.com/flprobe?igsh=abc123 instagram.com/reel/DeE4Gy2xjUN/",
+   "clip": "https://instagram.com/reel/DeE4Gy2xjUN/",
+   "key": "https://instagram.com/reel/DeE4Gy2xjUN",
+   "page": null
+  },
+  {
+   "id": "r8-noscheme-vm-alone",
+   "item": "control",
+   "text": "vm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-word-then-noscheme-vm",
+   "item": "control",
+   "text": "omg vm.tiktok.com/ZMhvqKj8L/",
+   "clip": "https://vm.tiktok.com/ZMhvqKj8L/",
+   "key": "https://vm.tiktok.com/ZMhvqKj8L",
+   "page": null
+  },
+  {
+   "id": "r8-noscheme-vm-then-https-clip",
+   "item": "rule",
+   "text": "vm.tiktok.com/ZMhvqKj8L/ https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "clip": "https://www.tiktok.com/@flprobe/video/7123456789012345611",
+   "key": "https://tiktok.com/@flprobe/video/7123456789012345611",
    "page": null
   },
   {
