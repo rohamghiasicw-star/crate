@@ -7,7 +7,9 @@ server: every outside request is stubbed.
                      result post, and the Apple Music line names the recording ("Blow on Apple Music"). A cover or a
                      "remix by X" gives the song line ("Blow · Kesha"), not Kesha as the performer. A lone #remix may
                      still go ("Kesha - Blow #remix #fyp" shows "Blow"), and then the line reads the uncut title: never
-                     "Open in Apple Music" or "Blow on Apple Music" under "Blow", but "Original on Apple Music". Round
+                     "Open in Apple Music" or "Blow on Apple Music" under "Blow", but "Original on Apple Music". A lone
+                     #cover goes too, and the line under it is the song line ("Blow · Kesha"); "Blow (Covered in Gold)"
+                     is not a cover and keeps "Kesha". Round
                      7's rules hold: everyday tags (#edit #fyp #viral #live #mix #cover #tiktok) and noise tails
                      ("|| Ringtone 2024 TikTok", "| Official Audio", "| Lyrics", "| Live") still go, " | Nightcore"
                      stays. The two review answers (testdata/layout bouch_crown, wildest_source_only) show the same
@@ -158,6 +160,8 @@ async def main(html, pages, yml, only):
                     (83, "pipe_ttremix", "Blow || TikTok Remix", ("Blow || TikTok Remix", "Kesha", "Blow on Apple Music", "Blow || TikTok Remix")),
                     (84, "hash_remix", "Kesha - Blow #remix #fyp", ("Blow", "Kesha", "Original on Apple Music", "Kesha Blow")),
                     (85, "hash_cover", "Blow #acousticcover", ("Blow #acousticcover", "Blow · Kesha", "Blow on Apple Music", "Blow acousticcover")),
+                    # a lone #cover goes (round 7), but the line under it is the song line, not Kesha as the performer
+                    (86, "hash_lonecover", "Kesha - Blow #cover #fyp", ("Blow", "Blow · Kesha", "Original on Apple Music", "Kesha Blow")),
                 )
                 res, bad = {}, []
                 for n, key, title, exp in CASES:
@@ -186,13 +190,16 @@ async def main(html, pages, yml, only):
                   var ko=ex('다이너마이트 | Remix','다이너마이트','방탄소년단'), kom=mainVersion(ko);
                   gen.push(['다이너마이트 | Remix',kom.title,searchQ(ko,kom)]);
                   var B=[['Blow | Cover by Jane','','Blow · Kesha'],['Blow | Remix by Jane','','Blow · Kesha'],['Blow #acousticcover','','Blow · Kesha'],
-                         ['Blow | Kesha Remix','','Kesha'],['Blow | Remix','','Kesha'],['Blow | Acoustic Cover','kesha','Kesha']];
+                         ['Blow | Kesha Remix','','Kesha'],['Blow | Remix','','Kesha'],['Blow | Acoustic Cover','kesha','Kesha'],
+                         ['Kesha - Blow #cover #fyp','','Blow · Kesha'],['Blow #covers','','Blow · Kesha'],['Blow #cover','kesha','Kesha'],
+                         ['Blow (Covered in Gold)','','Kesha'],['Blow | Covered in Gold','','Kesha'],['Blow (covered by Jane)','','Blow · Kesha']];
                   var by=B.map(function(c){return [c[0],cardName(ex(c[0],'','Kesha',c[1])).by,c[2]];});
                   by.push(['Cover Me (slowed)',cardName(ex('Cover Me (slowed)','Cover Me','Bruce Springsteen')).by,'Bruce Springsteen']);
                   var L=[['Blow','Blow','Blow #cover','Original on Apple Music'],['Blow','Blow','Kesha - Blow #remix #fyp','Original on Apple Music'],
                          ['Blow','Blow','Blow #edit #fyp','Open in Apple Music'],['Blow','Blow','Blow | Official Audio','Open in Apple Music'],
                          ['Blow (Remix)','Blow (Remix)','Blow (Remix) #remix','Open in Apple Music'],['Blow','Blow','','Open in Apple Music'],
-                         ['Blow','Blow | Remix','Blow | Remix','Blow on Apple Music']];
+                         ['Blow','Blow | Remix','Blow | Remix','Blow on Apple Music'],['Blow','Blow','Blow #covers','Original on Apple Music'],
+                         ['Blow','Blow','Blow | Covered in Gold','Open in Apple Music']];
                   var lab=L.map(function(c){return [c[2],amHeroLabel(c[0],c[1],true,c[2]),c[3]];});
                   return {gen:gen, by:by, lab:lab};}"""
                 fn = await pg.evaluate(FN)
@@ -221,7 +228,8 @@ async def main(html, pages, yml, only):
                 ok = not bad and fn["gen"] == want_gen and not bad_by and not bad_lab and not bad_rev and not errs
                 check("A1", "'Blow | Remix', 'Blow | Cover by Jane', 'Blow || TikTok Remix' and 'Blow #acousticcover' keep their version in the "
                             "hero, the searches and the result post, with 'Blow on Apple Music'; a cover or 'remix by' gives 'Blow · Kesha'; "
-                            "'Kesha - Blow #remix #fyp' shows 'Blow' with 'Original on Apple Music'; round 7's everyday tags and noise "
+                            "'Kesha - Blow #remix #fyp' shows 'Blow' with 'Original on Apple Music'; a lone #cover gives 'Blow · Kesha', "
+                            "'Covered in Gold' keeps 'Kesha'; round 7's everyday tags and noise "
                             "tails still go; both review answers unchanged", ok,
                       {"bad_rev": bad_rev, "bad_by": bad_by, "bad_lab": bad_lab, "errs": errs,
                        "gen": fn["gen"] if fn["gen"] != want_gen else "ok", "bad": bad})

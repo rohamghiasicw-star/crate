@@ -4840,8 +4840,9 @@ function mainVersion(d){
   // ROUND 8 (GAPS-R8-01): so does a tag naming another recording (#acousticcover, #mashup, #tiktokremix); a lone #remix
   // or #cover is still a tag and goes (the Apple Music line then reads the uncut title, amHeroLabel)
   var _hc='up|down|and|n|edit|version|mix|tiktok|[+_-]', _hr='remix(?:ed)?|rmx|covers?|acoustic|mash-?up',
-      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?!(?:remix(?:ed)?|rmx|covers?)$)(?:'+Q_MOD+'|'+_hr+'|'+_hc+')+$','i');
-  t=t.replace(/#[^\s#]+/g,function(h){return _hv.test(h)?' '+h+' ':' ';});
+      _hv=new RegExp('^#(?!(?:'+_hc+')+$)(?!(?:remix(?:ed)?|rmx|covers?)$)(?:'+Q_MOD+'|'+_hr+'|'+_hc+')+$','i'), _cv=false;
+  // a lone #cover goes too, but it still says the upload is a cover: the artist line below then names the song (_cv)
+  t=t.replace(/#[^\s#]+/g,function(h){if(_hv.test(h)) return ' '+h+' '; if(/^#covers?$/i.test(h)) _cv=true; return ' ';});
   try{ t=t.replace(new RegExp('[\\p{Extended_Pictographic}\\uFE0F\\u200D]','gu'),''); }catch(e){}
   t=t.replace(/\s+/g,' ').trim();
   // "Flo Rida - Gdfr (Slowed + Reverb)" over "Flo Rida": drop the repeated artist prefix
@@ -4871,7 +4872,7 @@ function mainVersion(d){
     if(_pc && _wa && core(_pc).indexOf(_wa)<0 && core(ex.uploader).indexOf(_wa)<0){who=d.base_song+' · '+who; of=true;}}
   // ROUND 8 (GAPS-R8-01): a cover ("| Cover by Jane", "#acousticcover") or a "remix by X" is someone else's performance, so
   // Shazam's artist is not printed as its performer: the line names the song and its artist. Not when they uploaded it.
-  if(!of && bs && who && Q_COVER.test(t) && !Q_COVER.test(d.base_song) && core(ex.uploader).indexOf(core(who))<0){who=d.base_song+' · '+who; of=true;}
+  if(!of && bs && who && (Q_COVER.test(t)||_cv) && !Q_COVER.test(d.base_song) && core(ex.uploader).indexOf(core(who))<0){who=d.base_song+' · '+who; of=true;}
   // ROUND 6 (LITERAL-R6-01): the search words, from the upload alone: its title (with the artist only when the title
   // itself starts with it). A title that does not name the song searches nothing of its own (searchQ uses the song).
   // ROUND 7 (GAPS-R7-02): a version hashtag searches as its words ("#nightcore" as "nightcore")
@@ -4898,8 +4899,8 @@ var Q_MOD='slowed|sped|speed ?up|reverb(?:ed)?|nightcore|daycore|lo-?fi|8d|phonk
    Mix", "|| TikTok Remix") names the version the card crowns and stays; Q_SAYS finds them in an uncut title, hashtags too
    ("#remix", "#acousticcover"); Q_COVER is a cover or a "remix by X", someone else's performance */
 var Q_REC='remix(?:ed)?|rmx|mix|covers?|acoustic|mash-?up|bootleg',
-    Q_SAYS=/remix|\brmx\b|acoustic|mash-?up|(?:\b|piano|guitar|tiktok)cover/i,
-    Q_COVER=/(?:\b|acoustic|piano|guitar|tiktok)cover|\bremix(?:ed)?\s+by\b/i;
+    Q_SAYS=/remix|\brmx\b|acoustic|mash-?up|(?:\b|piano|guitar|tiktok)covers?\b|\bcovered\s+by\b/i,
+    Q_COVER=/(?:\b|acoustic|piano|guitar|tiktok)covers?\b|\b(?:covered|remix(?:ed)?)\s+by\b/i;   // not "Covered in Gold"
 // ROUND 7 (FU-3): a bare "prod" that opens brackets ("(prod Kryd)", "[Prod Kryd]") is a credit too: read as "prod."
 var Q_PROD_BR=/([(\[]\s*)prod(?=\s+(?!by\b)[^\s()\[\]])/gi;
 // ROUND 7 (FU-3): a credit is "prod." / "prod:" / "prod by" / "produced by" (or a bare "prod" opening brackets, Q_PROD_BR);
