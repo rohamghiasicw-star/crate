@@ -375,7 +375,7 @@ async def main(html, yml, only):
                 sad = await scan_with(89, "Test Song", "Test Artist", "late night sad edit")
                 HQ = "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix)"
                 ok = (len(hood["rows"]) == 4 and all(x == HQ for x in hood["rows"]) and len(hood["tiles"]) >= 2 and all(x == HQ for x in hood["tiles"])
-                      and hood["title"] == HQ + " Prod. Kryd" and hood["artist"] == "Hoodfellas"
+                      and hood["title"] == HQ + " Prod. Kryd" and hood["artist"] == "Blow (Electro Remix) · Hoodfellas"   # ROUND 7 (LITERAL-R7-01)
                       and len(sad["rows"]) == 4 and all(x == "Test Artist Test Song" for x in sad["rows"]) and sad["tiles"]
                       and all(x == "Test Artist Test Song" for x in sad["tiles"]) and not hood["errs"] and not sad["errs"])
                 check("A7", "Open in tiles and Find it in another app search one source: the upload's title without 'Prod. Kryd' and without "
@@ -424,10 +424,9 @@ async def main(html, yml, only):
                     await pg.wait_for_timeout(300); r[key] = await pg.evaluate(HERO)
                 errs = pg.errs; await close(ctx)
                 ok = (r["other"]["link"] is None and r["same"]["link"] == "Open in Apple Music" and r["same"]["href"] == AMU
-                      and r["list"]["link"] == "Open in Apple Music" and r["none"]["link"] == "Test Song on Apple Music"
-                      and r["none"]["href"] == AMU and not errs)
+                      and r["list"]["link"] == "Open in Apple Music" and r["none"]["link"] is None and not errs)   # ROUND 7 (GAPS-R7-01)
                 check("A9", "A ShazamKit answer by 'Test Crew' under 'Test Artist' gives no Apple Music link; the same artist or a credit list "
-                            "holding it gives 'Open in Apple Music'; an answer naming no artist names the recording", ok, dict(r, errs=errs))
+                            "holding it gives 'Open in Apple Music'; an answer naming no artist gives no link (round 7)", ok, dict(r, errs=errs))
         except Exception as e:
             check("A9", "section finished", False, "%s: %s" % (type(e).__name__, str(e)[:300]))
 

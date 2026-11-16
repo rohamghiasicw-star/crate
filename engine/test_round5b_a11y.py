@@ -448,8 +448,8 @@ async def main(html, yml, only):
                 want_q = "THIS PLACE ABOUT TO BLOW (Hoodtrap / Mylancore Remix)"   # ROUND 6 (LITERAL-R6-01): one source, no Prod. credit
                 rq = [r["q"] for r in d["rows"]]
                 ok = (len(rq) == 4 and all(x == want_q for x in rq) and d["openin"] and all(x == want_q for x in d["openin"])
-                      and want_q in d["title"] and d["artist"] == "Hoodfellas" and all(x.replace(d["artist"], "", 1).strip() in d["text"] for x in rq)
-                      and "Electro" not in d["text"])
+                      and want_q in d["title"] and d["artist"] == "Blow (Electro Remix) · Hoodfellas"   # ROUND 7 (LITERAL-R7-01): the song line
+                      and all(x in d["text"] for x in rq) and not any("Electro" in x for x in rq + d["openin"]))
                 check("C17", "'Find it in another app' searches the crowned title the card shows (round 6: no Shazam artist, no Prod. credit), the same words as the Open in tiles, "
                              "never the song name the card does not show",
                       ok, {"rows": d["rows"], "openin": d["openin"], "title": d["title"], "artist": d["artist"]})
