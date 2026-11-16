@@ -5930,6 +5930,7 @@ function storeRefresh(){if(!STORE) return Promise.resolve(false);
     // ROUND 5C: a clip parked while the first answer was out (the paywall closed meanwhile) goes, now the answer is no
     var pw=document.getElementById('paywall'); if(first&&!PRO&&(!pw||pw.hidden)) PW_AFTER='';
     if(PRO&&!was) proOn(); else if(was&&!PRO){try{renderProf();}catch(e){}}
+    if(first) scanParkFlush();                   // ROUND 7 (IAP-R7-01): parked scans count only for a free user
     paintPill(); proKnownNow(); return PRO;},function(){
     // ROUND 6D (FU-1): an error is not an answer. Before the first real answer it asks again (0.5, 1, 2 s apart) while
     // the PRO_CAP wait runs; with no answer by PRO_CAP the scan still goes uncounted (proCapNow)
@@ -5971,7 +5972,14 @@ function vkeyOf(u){var k=devKeyFor(u); if(k||!devIsShort(u)) return Promise.reso
     fetch(ENGINE+'/vkey?url='+encodeURIComponent(u),{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
       .then(function(j){var k2=j&&j.vkey; if(k2) devLink(u,k2); return k2||null;}).catch(function(){return null;}),
     new Promise(function(r){setTimeout(function(){r(null);},1500);})]);}
-function useScan(u,d){if(!PAYWALL_ON||PRO) return; u=u||curURL||''; var keys=scanKeys(u,d), c=countedURLs();
+/* ROUND 7 (IAP-R7-01): A SCAN THAT ENDS BEFORE THE FIRST REAL STATUS ANSWER IS NOT COUNTED YET. A subscriber with free scans
+   left whose StoreKit answer came after the scan (or never) was counted as free and told "2 scans left". The scan's keys
+   wait in SCAN_PARK and count when the first answer says no Plus (scanParkFlush); with no answer they never count, as
+   PRO_LET scans do. scanNote says nothing while the plan is unknown or a purchase is in flight. */
+var SCAN_PARK=[];
+function scanParkFlush(){var pk=SCAN_PARK; SCAN_PARK=[]; if(!PRO) pk.forEach(function(a){try{useScan(a[0],a[1]);}catch(e){}});}
+function useScan(u,d){if(!PAYWALL_ON||PRO) return; if(!STATUS_IN){SCAN_PARK.push([u||curURL||'',d]); return;}
+  u=u||curURL||''; var keys=scanKeys(u,d), c=countedURLs();
   if(keys.length&&scanCounted(u,d)){             // the same video again is the same scan
     var nw=keys.filter(function(k){return c.indexOf(k)<0;}); if(nw.length) lsSet(scanKey()+'-urls',c.concat(nw));
     return;}
@@ -5983,7 +5991,7 @@ var PW_DUE=false;
 /* ROUND 4 (item 4): the toast belongs to the scan the user is watching. One that fires after they left it (Back while
    the hunt still ran, a listen answer after Back) went into the hidden result header and nobody saw it. Off this
    scan's screens it is dropped: Home's scans pill already shows the count, since useScan repaints it first. */
-function scanNote(failed){if(!PAYWALL_ON||PRO) return;
+function scanNote(failed){if(!PAYWALL_ON||PRO||!STATUS_IN||PW_BUYING) return;   // ROUND 7 (IAP-R7-01)
   var _st=document.getElementById('app').getAttribute('data-state');
   if(leftScan||(_st!=='scanning'&&_st!=='locked')) return;
   var left=Math.max(0,FREE_SCANS-scansUsed());
@@ -6058,6 +6066,9 @@ function pwEvery(q){return q.period==='year'?'yearly':q.period==='month'?'monthl
    PW_GOT_WAIT the button comes back with the line cleared, so the screen never asks for the same purchase twice. */
 var PW_BUYING=false, PW_RESTORING=false, PW_REPAINT=null, PW_LOADTOK=0, PW_BUSYT=0, PW_NOTE='', PW_GOT_WAIT=60000;
 var PW_GOT='We got your purchase. Addify Plus turns on as soon as the App Store confirms it.';
+// ROUND 7 (IAP-R7-02): the 'busy' hold's reason, so its locked button is never left with no line or under a bare
+// "No active subscription found" after Restore (the IAP-R6-04 branch keeps it)
+var PW_BUSY='A purchase is already in progress with the App Store.';
 /* ROUND 5C (IAP-R5-2, CHAOS-2-R5-03): A PENDING PURCHASE HOLDS THE SHEET LIKE PW_GOT. After Ask to Buy the button came
    back at once (each tap asked again, either plan) and a reopened sheet lost the pending line. Now the line is PW_NOTE,
    the button and the rows stay locked until Plus turns on or the pending poll ends (PEND_TICKS checks, PW_PEND_WAIT),
@@ -6161,9 +6172,9 @@ function openPaywall(){
     storeCall('buy',{id:q.id}).then(function(r){
       var e=(r&&r.error)||'';
       // build 28: the app answers 'busy' while an earlier purchase (say, from before a reload) is still on
-      // Apple's sheet. Say nothing and keep the button off; the entitlement check turns Plus on when it lands,
-      // and the button comes back after 30 s if it never does.
-      if(e==='busy'&&!(r&&r.pro)){hold(30000,''); return;}
+      // Apple's sheet. Keep the button off with its reason (ROUND 7, IAP-R7-02); the entitlement check turns Plus on
+      // when it lands, and the button comes back after 30 s if it never does.
+      if(e==='busy'&&!(r&&r.pro)){hold(30000,PW_BUSY); return;}
       if(r&&r.pro){done(); proOn(); return;}
       // IAP-2: the App Store took the purchase but Plus is not on yet (a verified buy whose entitlement lags,
       // or one the phone could not verify): say it was received and keep checking, never "did not go through".
@@ -6812,12 +6823,15 @@ function renderProf(){
     fbStop();                                   // ROUND 6C (BAD-NETWORK-R6-02): no try or retry still out sends or writes again
     lsSet(FB_OUT,[]);                           // ROUND 5E: feedback not sent yet is never sent now (its row ids are erased below)
     eraseMyFeedback().then(function(v){         // server rows first, then the local copy
-      if(v==='all'){ try{localStorage.clear();}catch(e){} location.reload(); return; }
+      if(v==='all'){ try{localStorage.clear();}catch(e){} pendDone(); location.reload(); return; }
       // ROUND 5 (item 4): the line is this attempt's own answer ('busy', 'some' or 'late')
       PF_DELETING=false; PF_DELFAIL=(v==='busy'||v==='late')?v:'some'; pfDelPaint();});};
   pfdel.onclick=function(){
     if(PF_DELETING) return;
-    if(!confirm('Delete your Addify data? This erases your finds, your scan history and any feedback you sent.'+
+    // ROUND 7 (LAWYER-R7-02): what the erase reaches, in the privacy policy's words, and what it can't
+    if(!confirm('Delete your Addify data? This erases everything Addify stored on this phone, your finds and scan history '+
+      'included, and your votes, picks and fix-list rows on our server. It can\'t reach a Telegram message already sent '+
+      'to the developer or a fix already in the corrections list. The privacy policy says how to remove those.'+
       (planOn()?' Your Addify Plus subscription keeps billing through Apple. Cancel it in Manage subscription first.':''))) return;
     erase();};
   document.getElementById('pfdelretry').onclick=function(){if(!PF_DELETING) erase();};
@@ -7046,8 +7060,20 @@ function baseCall(u,tok){var n=0, t0=Date.now(), tap=SCAN_TAP||t0, last=null, cu
    move (share?moved=1) and a share of the same video all run it free and never open the paywall. */
 function findReopen(u){var keys=scanKeys(u); if(!keys.length) return false;
   return loadCrate().some(function(x){return !!(x&&x.clip&&!x.listen)&&scanKeys(x.clip).some(function(k){return keys.indexOf(k)>=0;});});}
-var RUN_GATE=false, SCAN_FREE=false;
-function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
+/* ROUND 7 (CHAOS-R7-01): A LINK THAT COMES WHILE RUN_GATE HOLDS IS QUEUED, NOT DROPPED. run() returned with no word,
+   so a second share during "Checking your plan..." (which the app counts as taken) or a tap on Find it was lost and
+   the first clip went on instead. The newest link waits in RUN_NEXT and runs when the gate ends (runNext). */
+var RUN_GATE=false, SCAN_FREE=false, RUN_NEXT=null;
+/* ROUND 7 (NATIVE-R7-04): A RUNNING SCAN'S LINK IS PARKED IN sessionStorage addify-pending (the stale-shell reload's key,
+   resumed at boot) from the moment the scan starts until it ends, so a pasted link's scan that iOS cut off by killing
+   WebKit's page process starts again when the app reloads the page. A resumed scan is not parked again
+   (addify-pending-again), so a link that takes the page down every time is tried twice at most. */
+function pendPark(u){try{if(u&&sessionStorage.getItem('addify-pending-again')!==u) sessionStorage.setItem('addify-pending',u);}catch(e){}}
+function pendDone(u){try{if(!u||sessionStorage.getItem('addify-pending')===u) sessionStorage.removeItem('addify-pending');
+  sessionStorage.removeItem('addify-pending-again');}catch(e){}}
+function runNext(raw,opt,arr){var nx=RUN_NEXT; RUN_NEXT=null; if(nx){raw=nx.raw; opt=nx.opt; arr=nx.arr;}
+  var q0=onbQuiet; onbQuiet=!arr; try{run(raw,opt);}finally{onbQuiet=q0;}}
+function run(raw,opt){if(busy) return; if(RUN_GATE){RUN_NEXT={raw:raw,opt:opt,arr:shareArrival()}; return;} opt=opt||{};
   // ROUND 6C (SHARE-R6-01): a link that arrives while Listen records (a share, EngineBridge's run) ends the recording
   // first: the mic is released and nothing is sent, so the recording never replaces the link's card or spends a scan
   stopListen(); if(waveState==='listening') nav('idle');
@@ -7059,11 +7085,11 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
     // ROUND 5C (IAP-R5-1): before the first entitlement answer the gate waits for it (ROUND 6: PRO_CAP at most), then decides
     // again, so a subscriber's share scans and never flashes the paywall. A share still counts as one when it runs.
     if(!PRO_KNOWN){ RUN_GATE=true; planNote(true);
-      proWait().then(function(){RUN_GATE=false; planNote(false); var q0=onbQuiet; onbQuiet=!arrived; try{run(raw,opt);}finally{onbQuiet=q0;}});
+      proWait().then(function(){RUN_GATE=false; planNote(false); runNext(raw,opt,arrived);});
       return;}
     var _vk=devKeyFor(p.url);
     if(!_vk&&devIsShort(p.url)){ RUN_GATE=true;
-      vkeyOf(p.url).then(function(k){RUN_GATE=false;
+      vkeyOf(p.url).then(function(k){RUN_GATE=false; if(RUN_NEXT){runNext(); return;}   // ROUND 7 (CHAOS-R7-01)
         // ROUND 5C: Plus may have turned on while the lookup ran: the paywall only if still out of scans
         if(!outOfScans()||(k&&(scanCounted(p.url)||devHas(k)))){onbQuiet=true; try{run(raw);}finally{onbQuiet=false;}}
         else {sheetsOff(true); PW_AFTER=raw||''; openPaywall();}});
@@ -7083,7 +7109,7 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
     else showErr(notClipMsg(p));
     stopClock(); return;}
   endHunt();                       // never two hunts at once (see HUNT)
-  curURL=p.url;
+  curURL=p.url; pendPark(p.url);   // ROUND 7 (NATIVE-R7-04)
   var tok=++scanTok; p1Busy=true;   // APPLYALL 2026-09-29 (finding 15)
   SCAN_ID=rid('s'); KIT_MOVED=false; SCAN_TAP=Date.now();   // ROUND 3: the tap, for the liveness bound   // NAMING 2026-09-30: this scan's id (hunt fallback), fresh origin state
   busy=true; leftScan=false; document.getElementById('gobtn').setAttribute('disabled','');
@@ -7213,6 +7239,7 @@ function run(raw,opt){if(busy||RUN_GATE) return; opt=opt||{};
            the 90 s cap. It runs even after the user moved on, since it is this scan's record. */
         var finalize=function(fd){
           HUNT_ON=false;                      // TRACKER 2026-09-29
+          pendDone(scanURL);                  // ROUND 7 (NATIVE-R7-04): this scan is over
           if(huntPollU===scanURL) huntEnd();  // PROGRESS 2026-09-29: the hunt is over, so is its poll
           devPut(scanURL,fd);                 // SPEED FIX 1: the phone's copy (a soft one when not confirmed)
           if(scanFinal) return; scanFinal=true;
@@ -7452,6 +7479,7 @@ function postBridge(d){
 /* held: run() calls this at the hunt budget, before the answer is final. The scan-log entry
    and the bridge post are then left to run()'s finalize(), so each happens once. */
 function finish(d,held){stopClock(); busy=false; clearTimeout(phaseT);
+  if(!held) pendDone(curURL);                      // ROUND 7 (NATIVE-R7-04): the scan is over (a held one ends in finalize)
   // PROGRESS 2026-09-29: `held` = the hunt is still running (or has just run to 100 itself),
   // so its poll and its number are left alone; only a finished scan finishes the dial
   if(!held){ progPollOff(); pgDone(); }
@@ -7913,6 +7941,7 @@ document.getElementById('player').onclick=function(e){if(e.target.id==='player')
 /* ---------- nav ---------- */
 function goHome(){nav('idle'); try{if(PW_DUE&&outOfScans()){PW_DUE=false; setTimeout(openPaywall,450);}}catch(e){} endHunt();   // navigate FIRST: a throw in any teardown below must never leave the chevron looking dead
   leftScan=true;                 // a still-running hunt must not finish() us back onto the result
+  pendDone();                    // ROUND 7 (NATIVE-R7-04): a scan the user left is never resumed
   // APPLYALL 2026-09-29 (review finding 15): Back while the clip is still being read cancels
   // the scan. Its /base answer is ignored (the token moved on) and the next link can start.
   // ROUND 5 (item 2): Back during a listen scan does the same, and stops its /listen ask and /progress pings
@@ -7983,7 +8012,10 @@ var LISTEN_GATE=false;
 function listenGate(){
   if(LISTEN_GATE) return true;
   if(!(PAYWALL_ON&&!PRO&&scansUsed()>=FREE_SCANS)||PRO_LET) return false;   // ROUND 6 (IAP-R6-01): no answer by PRO_CAP: it goes
-  if(!PRO_KNOWN){LISTEN_GATE=true; planNote(true); proWait().then(function(){LISTEN_GATE=false; planNote(false); startListen();}); return true;}
+  // ROUND 7 (SHARE-R7-03): a share, Back or Cancel while it waits (stopListen bumps lGen) cancels the parked Listen,
+  // so the mic is never asked for after the user moved on
+  if(!PRO_KNOWN){var g0=lGen; LISTEN_GATE=true; planNote(true);
+    proWait().then(function(){LISTEN_GATE=false; planNote(false); if(g0===lGen) startListen();}); return true;}
   sheetsOff(true); PW_AFTER=''; openPaywall(); return true;}
 function startListen(){
   if(listenGate()) return;
@@ -8349,7 +8381,10 @@ var _shared=sharedLink(), _sharedPage=_shared?null:sharedPage();
 var _viaSheet=!!_shared&&!/[?&]moved=1/.test(location.search);   // ONBOARDING v3: opened from the share sheet (NAMING: not a page that moved engines)
 if(_viaSheet) onbSet('addify-sharedin','1');
 // a link parked by the stale-shell reload above resumes here, so the reload is invisible
-if(!_shared){try{var _pend=sessionStorage.getItem('addify-pending'); sessionStorage.removeItem('addify-pending'); if(_pend&&parseLink(_pend).host) _shared=_pend;}catch(e){}}
+// ROUND 7 (NATIVE-R7-04): and a scan iOS cut off by killing the page process (run() parks it). A share that opened this
+// page replaces it, and the key goes either way. A resumed link is marked, so it is not parked again
+try{var _pend=sessionStorage.getItem('addify-pending'); sessionStorage.removeItem('addify-pending');
+  if(!_shared&&_pend&&parseLink(_pend).host){_shared=_pend; sessionStorage.setItem('addify-pending-again',_pend);}}catch(e){}
 if(_shared){
   history.replaceState({},'',location.pathname==='/share'?'/':location.pathname);
   urlEl.value=_shared;

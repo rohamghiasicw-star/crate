@@ -433,7 +433,9 @@ async def main(html, only):
                 await ctx.close()
                 ctx, pg = await page(sk={"buy": "busy"})
                 await pg.evaluate(OPEN); await pg.wait_for_timeout(500); await pg.click("#pwgo"); await pg.wait_for_timeout(600); s = await pg.evaluate(SH)
-                check("R2-8b", "Build 28's 'busy' answer: no error text and the button stays off", s["goDis"] and not s["msg"], s)
+                # ROUND 7 (IAP-R7-02): the held button has its reason line, never an error
+                check("R2-8b", "Build 28's 'busy' answer: no error text; the button stays off with its reason line", s["goDis"]
+                      and s["msg"] == "A purchase is already in progress with the App Store.", s)
                 await ctx.close()
             if want(9):
                 for mode in ("okNoPro", "unverified"):
