@@ -182,10 +182,26 @@ enum SharedInbox {
             }
             return false
         }
+        /* ROUND 9C parity (build 34), the page's word_search_skip: the run of URL characters right before the
+           host, back to the start of the word or the last character a URL can't hold, holds another host name
+           and then a / or ? (/[A-Za-z0-9-]\.[A-Za-z0-9-].*[\/?]/), so the host sits in that link's path or query
+           ("example.com/tiktok.com/...", "evil.com/?u=tiktok.com/...") and the word has none. A host after an
+           emoji or a scheme alone ("https:/www.instagram.com/...") is not in another link. */
+        func inOtherLink(before i: Int) -> Bool {
+            var s = i
+            while s > 0 && isURLChar(u[s - 1]) { s -= 1 }
+            let run = Array(u[s..<i])
+            guard run.count >= 4 else { return false }
+            for a in 0..<(run.count - 3) where label(run[a]) && run[a + 1] == 0x2E && label(run[a + 2]) {
+                return run[(a + 3)...].contains(where: { $0 == 0x2F || $0 == 0x3F })
+            }
+            return false
+        }
         for i in u.indices where i == 0 || !(label(u[i - 1]) || u[i - 1] == 0x2E) {
             var p = i
             while true {
                 if name(at: p) {
+                    if inOtherLink(before: i) { return nil }
                     let end = u[i...].firstIndex(where: { !isURLChar($0) }) ?? u.endIndex
                     return linkTrim(String(decoding: u[i..<end], as: UTF16.self))
                 }

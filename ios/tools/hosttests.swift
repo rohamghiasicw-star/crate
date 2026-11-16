@@ -784,8 +784,19 @@ let S = URL(string: "https://203-0-113-7.sslip.io")!
             ("song\u{2014}tiktok.com:443/@u/video/7123456789012345611", nil, nil, "a port after the glued host: not found, as on the page"),
             ("song.tiktok.com/@u/video/7123456789012345611", nil, nil, "a dot before the host makes it part of the host name"),
             ("x_tiktok.com/@u/video/7123456789012345611", "https://tiktok.com/@u/video/7123456789012345611", "clip", "an underscore can't be part of a host name"),
-            ("https://example.com/?u=tiktok.com/@u/video/7123456789012345611", "https://tiktok.com/@u/video/7123456789012345611", "clip",
-             "a clip inside another site's link is found, as on the page"),
+            /* Round 9c (build 34), the page's word_search_skip: a host in another link's path or query is no host. */
+            ("https://example.com/?u=tiktok.com/@u/video/7123456789012345611", "https://example.com/?u=tiktok.com/@u/video/7123456789012345611", nil,
+             "a clip inside another site's query is that site's link, as on the page"),
+            ("https://example.com/tiktok.com/@a/video/7651437319941066005", "https://example.com/tiktok.com/@a/video/7651437319941066005", nil,
+             "a clip inside another site's path is that site's link (link_corpus_r7 r9-clip-in-path)"),
+            ("https://www.google.com/search?q=tiktok.com/@a/video/123", "https://www.google.com/search?q=tiktok.com/@a/video/123", nil,
+             "a host in a search query (r9-host-in-query)"),
+            ("evil.com/?u=tiktok.com/@x/video/1", nil, nil, "a host in another link's query with no https:// (r9-host-in-query-no-scheme)"),
+            ("notinstagram.com/reel/DeE4Gy2xjUN/vt.tiktok.com/ZSgxkbbqo/\u{1F602}", nil, nil, "a short link in another link's path"),
+            ("www.youtube.com/watch?v=dQw4w9WgXcQ\u{1F602}tiktok.com/@bouch.szn/video/7651437319941066005",
+             "https://tiktok.com/@bouch.szn/video/7651437319941066005", "clip", "an emoji ends the other link, so the clip after it is found (r9-clip-after-other-link-emoji)"),
+            ("lol https:/www.instagram.com/reel/DeE4Gy2xjUN/", "https://www.instagram.com/reel/DeE4Gy2xjUN/", "clip",
+             "a scheme alone is no other link (r9-clip-after-one-slash-scheme)"),
         ]
         for c in r9 {
             let got = SharedInbox.shareLink(in: c.input).flatMap { SharedInbox.isScannable($0) ? $0 : nil }
