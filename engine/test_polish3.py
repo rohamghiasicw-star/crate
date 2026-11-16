@@ -311,7 +311,8 @@ async def main(html, only):
                 fb = await pg.evaluate("()=>(document.getElementById('fbnote')||{}).textContent||''"); await sweep("guess card, after yes")
                 check("P4b", "Home with no finds says 'Every match goes to your Finds.'; empty Finds says 'No finds yet'; month tiles are 'Your finds by month'",
                       "Every match goes to your Finds." in home and libsub == "No finds yet" and months == "Your finds by month", {"home": home, "libsub": libsub, "months": months})
-                check("P4c", "Search's plus reads 'Added Song A to Finds' after a tap (was 'Saved to Finds'; ROUND 5D names the song)", sadd == "Added Song A to Finds", sadd)
+                # ROUND 8B (A11Y-R8-02): the name carries the row's artist line too, so versions of one song read apart
+                check("P4c", "Search's plus reads 'Added Song A by Artist A to Finds' after a tap (was 'Saved to Finds'; ROUND 5D names the song, ROUND 8B its artist)", sadd == "Added Song A by Artist A to Finds", sadd)
                 check("P4d", "Clear finds asks 'Clear all your finds?'", pg.dialogs and pg.dialogs[-1] == "Clear all your finds?", pg.dialogs)
                 check("P4e", "A link no-match card says the link is in Finds under Unmatched, and it is; a listen no-match makes no such claim",
                       "It’s in your Finds under Unmatched." in nm and (CLIP % 5) in unm and "Unmatched" not in nml and "pending" not in nml, {"link": nm[-200:], "listen": nml[-200:], "unmatched": unm})

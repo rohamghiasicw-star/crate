@@ -335,9 +335,11 @@ async def main(html, yml, only):
                 ok15 = (len(home) >= 3 and all(x["l"] == "Add %s to Finds" % x["t"] for x in home)
                         and [x["l"] for x in tr] == want_tr and len(set(want_tr)) == 15 and sorted(names) == sorted(want_tr)
                         and done["l"] == "Added %s to Finds" % rows[4]["title"] and done["f"]
-                        and s0 == ["Add Song A to Finds", "Add Song B to Finds"] and s1 == ["Added Song A to Finds", "Add Song B to Finds"])
+                        # ROUND 8B (A11Y-R8-02): Search's names carry the row's artist line too
+                        and s0 == ["Add Song A by Artist A to Finds", "Add Song B by Artist B to Finds"]
+                        and s1 == ["Added Song A by Artist A to Finds", "Add Song B by Artist B to Finds"])
                 if want(15):
-                    check("D15", "Trending (Home and the tab, 15 rows) and Search: each plus is 'Add <title> to Finds', all different, 'Added <title> to Finds' after a tap",
+                    check("D15", "Trending (Home and the tab, 15 rows) and Search: each plus is 'Add <title> to Finds' (Search: 'Add <title> by <artist> to Finds'), all different, 'Added ...' after a tap",
                           ok15 and not pg.errs, {"home": home, "trending": tr[:3], "a11y": len(names), "done": done, "search": [s0, s1], "errs": pg.errs})
                 trend_ok = (all(x[1] == ("true" if x[2] else "false") for x in tchips) and sum(1 for x in tchips if x[1] == "true") == 1
                             and any(x[0] == "Slowed" and x[1] == "true" for x in tchips2) and "|Slowed|" in tfoc)

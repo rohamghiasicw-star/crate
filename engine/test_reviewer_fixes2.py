@@ -258,7 +258,8 @@ async def main(html, only):
                         if mode == "abort": return await route.abort("failed")
                         return await route.fulfill(status=200, content_type="application/json", body='{"ok":true,"erased":1}')
                     return fn
-                DEL = "()=>{var b=document.getElementById('pfdel'), m=document.getElementById('pfdelmsg'); return {txt:b&&b.textContent, dis:!!(b&&b.disabled), msg:m&&!m.hidden?m.innerText:'', fb:localStorage.getItem('addify-fbids'), saved:localStorage.getItem('crate-saved'), mark:!!window.__mark};}"
+                # ROUND 8B (A11Y-R8-01): the row takes no taps through aria-disabled (it keeps the focus), not disabled
+                DEL = "()=>{var b=document.getElementById('pfdel'), m=document.getElementById('pfdelmsg'); return {txt:b&&b.textContent, dis:!!(b&&(b.disabled||b.getAttribute('aria-disabled')==='true')), msg:m&&!m.hidden?m.innerText:'', fb:localStorage.getItem('addify-fbids'), saved:localStorage.getItem('crate-saved'), mark:!!window.__mark};}"
                 for mode in ("slow500", "okfalse", "abort", "hang"):
                     ctx, pg = await page(init=SEED, routes={"/feedback/erase": erase_route(mode)}, dialogs="accept")
                     await pg.evaluate("()=>{window.__mark=1; nav('profile');}"); await pg.wait_for_timeout(500)
